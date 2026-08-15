@@ -3,7 +3,7 @@
 Fast-moving work state and chosen next step. This records the work, not machine state or
 uncommitted changes. Durable findings live in the linked docs.
 
-Last updated: **2026-08-15** (full MVP implemented and reviewed on macOS.)
+Last updated: **2026-08-15** (V1 aquarium direction chosen after the completed MVP.)
 
 ## Now
 
@@ -70,12 +70,17 @@ Last updated: **2026-08-15** (full MVP implemented and reviewed on macOS.)
   defamatory sexual claims, self-harm encouragement, and credible violence before inference.
 - Learned language exposure, scarce conversation, contextual follow-ups, resentment recovery,
   autonomous spite, affection, and every need-driven intention are authoritative simulation state.
+- The chosen V1 direction is the Aquarium & Expression Pass. It replaces the dollhouse projection
+  with a full-water environment, continuous intentional swimming, a larger expressive creature,
+  physical food dropping, and a persistent text/action interface. The full product and acceptance
+  direction is in [v1-plan.md](v1-plan.md).
 
 ## Next
 
-Build the distribution wrapper and prepare the Steam submission from the proven package manifest
-and disclosure draft. Before publishing platform-specific binaries, run the intentionally deferred
-native Windows/Linux acceptance passes and a physical-controller smoke on available hardware.
+Execute the first batch in [v1-plan.md](v1-plan.md): diagnose pixel softness, establish the aquarium
+and deterministic swimming foundation, add layered gaze/body/face expression, and replace the
+modal-heavy controls with the persistent text and action interface. Treat the four tracks as one
+coherent feel pass and validate them with the documented feeding scenario.
 
 ## Candidates Not Chosen
 
@@ -89,6 +94,16 @@ native Windows/Linux acceptance passes and a physical-controller smoke on availa
   first-class Windows route → [flite-release-candidate.md](flite-release-candidate.md).
 
 ## Learned Recently
+
+- The aquarium is the V1 product direction, not a cosmetic reskin. Open-water movement makes idle
+  motion legible, gives the creature room to express itself, and turns feeding and toys into physical
+  interactions → [v1-plan.md](v1-plan.md).
+- The renderer already uses a 320×180 logical target, nearest sampling, and integer viewport scaling.
+  Current softness must be isolated among source pixels, fractional placement, Retina sizing, and
+  final window composition before changing the renderer → [v1-plan.md](v1-plan.md).
+- V1 keeps text entry persistently focused, exposes shallow contextual actions, shows only broad
+  mood and behavior, and preserves discovery by withholding numeric need and relationship bars
+  → [v1-plan.md](v1-plan.md).
 
 - The MVP uses a fixed, slightly three-quarter dollhouse view; keyboard/mouse and controller share
   a minimal contextual interface; and the cozy-grotty pixel art uses warm light, deep shadow, awkward

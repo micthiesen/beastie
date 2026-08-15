@@ -16,8 +16,8 @@ cargo xtask dev --fake-ai
 `cargo xtask verify` requires no model, display, GPU, network connection, or asset-generation
 credential. The Mac-led MVP includes the playable three-day creature arc, deterministic saves and
 migration, generated room art, authored sound, a warm local Qwen dialogue runtime, and optional
-offline speech. See [the MVP specification](docs/mvp-spec.md) and
-[current project state](docs/STATE.md).
+offline speech. See [the MVP specification](docs/mvp-spec.md), the chosen
+[V1 aquarium plan](docs/v1-plan.md), and [current project state](docs/STATE.md).
 
 ## Workspace
 
