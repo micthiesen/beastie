@@ -21,6 +21,17 @@ pub const CREATURE_HIT_HEIGHT: i32 = 84;
 pub const SPEECH_LIFETIME_MS: u64 = 8_000;
 pub const CUE_QUEUE_LIMIT: usize = 8;
 
+/// Presentation cadence is deliberately independent from fixed simulation ticks.
+const AMBIENT_CAUSTICS_FRAME_MS: u64 = 900;
+const AMBIENT_BUBBLES_FRAME_MS: u64 = 700;
+const AMBIENT_BUBBLE_DRIFT_MS: u64 = 1_100;
+const AMBIENT_CAUSTIC_DRIFT_MS: u64 = 1_600;
+const AMBIENT_PARTICLE_DRIFT_MS: u64 = 420;
+const AMBIENT_BOB_STEP_MS: u64 = 100;
+const ACTION_SWIM_FRAME_MS: u64 = 160;
+const ACTION_GESTURE_FRAME_MS: u64 = 240;
+const ACTION_SLEEP_FRAME_MS: u64 = 1_200;
+
 const UI_SHADOW: [u8; 4] = [4, 10, 16, 220];
 const UI_EDGE: [u8; 4] = [129, 112, 76, 255];
 const UI_EDGE_LIT: [u8; 4] = [190, 169, 111, 255];
@@ -387,6 +398,16 @@ pub enum SpriteFlip {
     Horizontal,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SpriteHighlight {
+    #[default]
+    None,
+    Hover,
+    Focus,
+    HoverFocus,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpriteCommand {
@@ -401,6 +422,18 @@ pub struct SpriteCommand {
     pub source_rect: Option<Rect>,
     /// Positive integer nearest-neighbor scale.
     pub scale: u8,
+    /// Stable interactive target associated with this world sprite.
+    #[serde(default)]
+    pub hit_region_id: Option<String>,
+    /// Semantic highlight rendered from the sprite's opaque alpha, never a rectangular overlay.
+    #[serde(default)]
+    pub highlight: SpriteHighlight,
+    /// Presentation-only offset in half-logical-pixel units, applied after `x` and `y`.
+    #[serde(default)]
+    pub offset_x: i16,
+    /// Presentation-only offset in half-logical-pixel units, applied after `x` and `y`.
+    #[serde(default)]
+    pub offset_y: i16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -436,6 +469,21 @@ pub struct HitRegion {
     pub enabled: bool,
     pub label: String,
     pub cursor: CursorKind,
+    /// Exact alpha hit testing for linked sprites, with `Rect` retained for UI and asset fallback.
+    #[serde(default)]
+    pub shape: HitShape,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HitShape {
+    #[default]
+    Rect,
+    /// Use the alpha mask and transform of the [`SpriteCommand`] with this region's stable ID.
+    SpriteAlpha {
+        sprite_id: String,
+        source_rect: Option<Rect>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -529,10 +577,10 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (RenderPlan, AudioPlan) {
     let mut sprites = environment_sprites(state, view);
     let mut rects = environment_rects(state, view);
     let mut text = Vec::new();
-    let mut hit_regions = world_hit_regions(state, view.mode);
 
-    add_objects(state, &mut sprites);
+    add_objects(state, view, &mut sprites);
     add_creature(state, view, &mut sprites, &mut rects);
+    let mut hit_regions = world_hit_regions(state, view, &sprites);
     add_speech(state, view, &mut rects, &mut text, &mut hit_regions);
     add_persistent_bar(
         state,
@@ -606,20 +654,24 @@ fn environment_sprites(state: &WorldState, view: &ViewState) -> Vec<SpriteComman
                 h: 130,
             }),
             scale: 1,
+            hit_region_id: None,
+            highlight: SpriteHighlight::None,
+            offset_x: 0,
+            offset_y: 0,
         },
         framed_sprite(
             "aquarium/caustics",
             0,
             0,
             1,
-            u8::try_from((elapsed_ms / 900) % 4).unwrap_or_default(),
+            u8::try_from((elapsed_ms / AMBIENT_CAUSTICS_FRAME_MS) % 4).unwrap_or_default(),
         ),
         framed_sprite(
             "aquarium/distant-bubbles",
             0,
             0,
             3,
-            u8::try_from((elapsed_ms / 700) % 4).unwrap_or_default(),
+            u8::try_from((elapsed_ms / AMBIENT_BUBBLES_FRAME_MS) % 4).unwrap_or_default(),
         ),
     ]
 }
@@ -661,7 +713,7 @@ fn environment_rects(state: &WorldState, view: &ViewState) -> Vec<RectCommand> {
         ),
     ];
     for index in 0..7_i32 {
-        let phase = i32::try_from((elapsed_ms / 1_100) % 19).unwrap_or_default();
+        let phase = i32::try_from((elapsed_ms / AMBIENT_BUBBLE_DRIFT_MS) % 19).unwrap_or_default();
         let x = (index * 53 + phase * 2) % LOGICAL_WIDTH;
         let y = (index * 29 + phase * 3) % 108;
         rects.push(rect(
@@ -683,7 +735,9 @@ fn environment_rects(state: &WorldState, view: &ViewState) -> Vec<RectCommand> {
         ));
     }
     for index in 0..5_i32 {
-        let x = 18 + index * 70 + i32::try_from((elapsed_ms / 1_600) % 6).unwrap_or_default();
+        let x = 18
+            + index * 70
+            + i32::try_from((elapsed_ms / AMBIENT_CAUSTIC_DRIFT_MS) % 6).unwrap_or_default();
         rects.push(rect(
             &format!("aquarium/caustic-{index}"),
             Rect {
@@ -697,7 +751,8 @@ fn environment_rects(state: &WorldState, view: &ViewState) -> Vec<RectCommand> {
         ));
     }
     for index in 0..12_i32 {
-        let phase = i32::try_from((elapsed_ms / 420) % 31).unwrap_or_default();
+        let phase =
+            i32::try_from((elapsed_ms / AMBIENT_PARTICLE_DRIFT_MS) % 31).unwrap_or_default();
         let x = (index * 47 + phase * (index % 3 + 1)) % LOGICAL_WIDTH;
         let y = (index * 23 + phase) % 110;
         rects.push(rect(
@@ -710,16 +765,108 @@ fn environment_rects(state: &WorldState, view: &ViewState) -> Vec<RectCommand> {
     rects
 }
 
-fn add_objects(state: &WorldState, sprites: &mut Vec<SpriteCommand>) {
-    for object in state.aquarium.objects.values() {
-        let (asset, position, layer, source_rect) = match object {
-            WorldObject::Food(food) if !matches!(food.disposition, FoodDisposition::Consumed) => {
-                (food_asset(food.food), food.position, 10, None)
-            }
+/// Returns a sub-pixel presentation offset from the unmodified fixed-tick state.
+///
+/// Velocity is defined as fixed-point units per simulation tick, so this is exact integer
+/// extrapolation over the current remainder. It is deliberately a projection, never a state
+/// update. The result uses half logical pixels to stay smooth on the 640x360 2x target.
+fn presentation_offset(
+    position: NormalizedPosition,
+    velocity: beastie_core::NormalizedVelocity,
+    remainder_ms: u64,
+) -> (i16, i16) {
+    (
+        projected_axis_offset_half(position.x, velocity.x, remainder_ms, 4, 311),
+        projected_axis_offset_half(position.y, velocity.y, remainder_ms, 4, 121),
+    )
+}
+
+fn presentation_offset_for(
+    view: &ViewState,
+    position: NormalizedPosition,
+    velocity: beastie_core::NormalizedVelocity,
+    remainder_ms: u64,
+) -> (i16, i16) {
+    if view.reduced_motion {
+        (0, 0)
+    } else {
+        presentation_offset(position, velocity, remainder_ms)
+    }
+}
+
+fn projected_axis_offset_half(
+    position: i32,
+    velocity: i32,
+    remainder_ms: u64,
+    logical_min: i32,
+    logical_span: i32,
+) -> i16 {
+    let tick_ms = beastie_core::SIMULATION_TICK_MS as i128;
+    let scale = i128::from(NormalizedPosition::SCALE);
+    let remainder = i128::from(remainder_ms.min(beastie_core::SIMULATION_TICK_MS));
+    let current = i128::from(position.clamp(0, NormalizedPosition::SCALE));
+    let projected =
+        (current * tick_ms + i128::from(velocity) * remainder).clamp(0, scale * tick_ms);
+    let projected_half = i128::from(logical_min) * 2
+        + (projected * i128::from(logical_span) * 2 + scale * tick_ms / 2) / (scale * tick_ms);
+    let current_half = i128::from(world_axis_to_logical(position, logical_min, logical_span)) * 2;
+    i16::try_from(projected_half - current_half).unwrap_or({
+        if projected_half < current_half {
+            i16::MIN
+        } else {
+            i16::MAX
+        }
+    })
+}
+
+fn world_axis_to_logical(position: i32, logical_min: i32, logical_span: i32) -> i32 {
+    logical_min + rounded_ratio(position.clamp(0, NormalizedPosition::SCALE), logical_span)
+}
+
+fn half_offset_to_logical(offset: i16) -> i32 {
+    i32::from(offset).div_euclid(2)
+}
+
+fn highlight_for(view: &ViewState, region_id: &str) -> SpriteHighlight {
+    match (
+        view.hovered_region.as_deref() == Some(region_id),
+        view.focused_region.as_deref() == Some(region_id),
+    ) {
+        (true, true) => SpriteHighlight::HoverFocus,
+        (true, false) => SpriteHighlight::Hover,
+        (false, true) => SpriteHighlight::Focus,
+        (false, false) => SpriteHighlight::None,
+    }
+}
+
+fn sprite_hit_shape(sprites: &[SpriteCommand], region_id: &str) -> HitShape {
+    let Some(sprite) = sprites
+        .iter()
+        .find(|sprite| sprite.hit_region_id.as_deref() == Some(region_id))
+    else {
+        return HitShape::Rect;
+    };
+    HitShape::SpriteAlpha {
+        sprite_id: sprite.id.clone(),
+        source_rect: sprite.source_rect,
+    }
+}
+
+fn add_objects(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCommand>) {
+    for (object_id, object) in &state.aquarium.objects {
+        let (asset, position, velocity, layer, source_rect) = match object {
+            WorldObject::Food(food) if !matches!(food.disposition, FoodDisposition::Consumed) => (
+                food_asset(food.food),
+                food.position,
+                Some(food.velocity),
+                10,
+                None,
+            ),
             WorldObject::Food(_) => continue,
             WorldObject::Toy { toy, position } => (
                 "aquarium/toys",
                 *position,
+                None,
                 9,
                 Some(Rect {
                     x: toy_sheet_x(*toy),
@@ -731,6 +878,7 @@ fn add_objects(state: &WorldState, sprites: &mut Vec<SpriteCommand>) {
             WorldObject::Plant { position } => (
                 "aquarium/plants",
                 *position,
+                None,
                 6,
                 Some(Rect {
                     x: 0,
@@ -739,9 +887,12 @@ fn add_objects(state: &WorldState, sprites: &mut Vec<SpriteCommand>) {
                     h: 64,
                 }),
             ),
-            WorldObject::Cave { position } => ("aquarium/cave", *position, 5, None),
+            WorldObject::Cave { position } => ("aquarium/cave", *position, None, 5, None),
         };
         let (x, y) = world_to_logical(position);
+        let (offset_x, offset_y) = velocity.map_or((0, 0), |velocity| {
+            presentation_offset_for(view, position, velocity, state.simulation_remainder_ms)
+        });
         sprites.push(SpriteCommand {
             id: asset.to_owned(),
             x: x - 8,
@@ -751,6 +902,10 @@ fn add_objects(state: &WorldState, sprites: &mut Vec<SpriteCommand>) {
             flip: SpriteFlip::None,
             source_rect,
             scale: 1,
+            hit_region_id: Some(format!("target/object-{object_id}")),
+            highlight: highlight_for(view, &format!("target/object-{object_id}")),
+            offset_x,
+            offset_y,
         });
     }
 }
@@ -763,6 +918,12 @@ fn add_creature(
 ) {
     let creature = state.creature.aquarium;
     let (center_x, center_y) = world_to_logical(creature.position);
+    let (motion_offset_x, motion_offset_y) = presentation_offset_for(
+        view,
+        creature.position,
+        creature.velocity,
+        state.simulation_remainder_ms,
+    );
     let mut x =
         (center_x - CREATURE_CANVAS_SIZE / 2).clamp(-52, LOGICAL_WIDTH - CREATURE_CANVAS_SIZE + 52);
     let mut y = (center_y - CREATURE_CANVAS_SIZE / 2)
@@ -794,11 +955,8 @@ fn add_creature(
     } else {
         state.elapsed_ms
     };
-    let bob = if view.reduced_motion {
-        0
-    } else {
-        bob_offset(state)
-    };
+    let bob_offset_y = ambient_bob_offset_half(state, view);
+    let creature_offset_y = motion_offset_y.saturating_add(bob_offset_y);
     if !view.reduced_shake
         && matches!(
             view.active_cue(state.elapsed_ms),
@@ -815,35 +973,47 @@ fn add_creature(
     sprites.push(SpriteCommand {
         id: body_id,
         x,
-        y: y + bob,
+        y,
         layer: 12,
         frame,
         flip: body_flip,
         source_rect: None,
         scale: 2,
+        hit_region_id: Some("target/creature".to_owned()),
+        highlight: highlight_for(view, "target/creature"),
+        offset_x: motion_offset_x,
+        offset_y: creature_offset_y,
     });
     if !view.reduced_motion
         && creature.velocity.x.unsigned_abs() + creature.velocity.y.unsigned_abs() > 25
     {
-        sprites.push(framed_sprite(
-            "aquarium/wake",
-            if matches!(flip, SpriteFlip::Horizontal) {
-                x + 51
-            } else {
-                x - 13
-            },
-            y + 37,
-            11,
-            u8::try_from((elapsed_ms / 180) % 4).unwrap_or_default(),
+        sprites.push(with_presentation_offset(
+            framed_sprite(
+                "aquarium/wake",
+                if matches!(flip, SpriteFlip::Horizontal) {
+                    x + 51
+                } else {
+                    x - 13
+                },
+                y + 37,
+                11,
+                u8::try_from((elapsed_ms / 180) % 4).unwrap_or_default(),
+            ),
+            motion_offset_x,
+            creature_offset_y,
         ));
     }
     if let Some(cue) = view.active_cue(state.elapsed_ms) {
-        sprites.push(effect_sprite(
-            cue,
-            x,
-            y + bob,
-            body_flip,
-            u8::try_from((elapsed_ms / 180) % 4).unwrap_or_default(),
+        sprites.push(with_presentation_offset(
+            effect_sprite(
+                cue,
+                x,
+                y,
+                body_flip,
+                u8::try_from((elapsed_ms / 180) % 4).unwrap_or_default(),
+            ),
+            motion_offset_x,
+            creature_offset_y,
         ));
     }
     if matches!(creature.steering, SteeringMode::Settle) && center_y > 120 {
@@ -875,8 +1045,12 @@ fn add_creature(
     }
 }
 
-fn world_hit_regions(state: &WorldState, mode: UiMode) -> Vec<HitRegion> {
-    if let UiMode::FoodDrop(food) = mode {
+fn world_hit_regions(
+    state: &WorldState,
+    view: &ViewState,
+    sprites: &[SpriteCommand],
+) -> Vec<HitRegion> {
+    if let UiMode::FoodDrop(food) = view.mode {
         return vec![HitRegion {
             id: "world/drop-food".to_owned(),
             target: Some(UiTarget::OpenWater),
@@ -890,25 +1064,33 @@ fn world_hit_regions(state: &WorldState, mode: UiMode) -> Vec<HitRegion> {
             enabled: true,
             label: format!("Drop {}", food_name(food)),
             cursor: CursorKind::FoodDrop,
+            shape: HitShape::Rect,
         }];
     }
-    if !matches!(mode, UiMode::Compose) {
+    if !matches!(view.mode, UiMode::Compose) {
         return Vec::new();
     }
     let (x, y) = world_to_logical(state.creature.aquarium.position);
+    let (offset_x, offset_y) = presentation_offset_for(
+        view,
+        state.creature.aquarium.position,
+        state.creature.aquarium.velocity,
+        state.simulation_remainder_ms,
+    );
     let mut hits = vec![HitRegion {
         id: "target/creature".to_owned(),
         target: Some(UiTarget::Creature),
         action: UiAction::OpenContext(UiTarget::Creature),
         rect: Rect {
-            x: x - CREATURE_HIT_WIDTH / 2,
-            y: y - CREATURE_HIT_HEIGHT / 2,
+            x: x - CREATURE_HIT_WIDTH / 2 + half_offset_to_logical(offset_x),
+            y: y - CREATURE_HIT_HEIGHT / 2 + half_offset_to_logical(offset_y),
             w: CREATURE_HIT_WIDTH,
             h: CREATURE_HIT_HEIGHT,
         },
         enabled: true,
         label: state.creature.name.clone(),
         cursor: CursorKind::Pointer,
+        shape: sprite_hit_shape(sprites, "target/creature"),
     }];
     for (id, object) in &state.aquarium.objects {
         let (target, position, label) = match object {
@@ -939,19 +1121,32 @@ fn world_hit_regions(state: &WorldState, mode: UiMode) -> Vec<HitRegion> {
             WorldObject::Cave { position } => (UiTarget::Cave, *position, "Cave".to_owned()),
         };
         let (x, y) = world_to_logical(position);
+        let (offset_x, offset_y) = match object {
+            WorldObject::Food(food) => presentation_offset_for(
+                view,
+                food.position,
+                food.velocity,
+                state.simulation_remainder_ms,
+            ),
+            WorldObject::Toy { .. } | WorldObject::Plant { .. } | WorldObject::Cave { .. } => {
+                (0, 0)
+            }
+        };
+        let hit_id = format!("target/object-{id}");
         hits.push(HitRegion {
-            id: format!("target/object-{id}"),
+            id: hit_id.clone(),
             target: Some(target),
             action: UiAction::OpenContext(target),
             rect: Rect {
-                x: x - 10,
-                y: y - 10,
+                x: x - 10 + half_offset_to_logical(offset_x),
+                y: y - 10 + half_offset_to_logical(offset_y),
                 w: 20,
                 h: 20,
             },
             enabled: true,
             label,
             cursor: CursorKind::Pointer,
+            shape: sprite_hit_shape(sprites, &hit_id),
         });
     }
     hits
@@ -1150,14 +1345,12 @@ fn add_persistent_bar(
         31,
         rects,
     );
-    if send_enabled {
-        sprites.push(ui_sprite(
-            "ui/button-send",
-            send_rect.x + 2,
-            send_rect.y + 2,
-            35,
-        ));
-    }
+    sprites.push(ui_sprite(
+        "ui/button-send",
+        send_rect.x + 2,
+        send_rect.y + 2,
+        35,
+    ));
 }
 
 fn head_fit(value: &str, capacity: usize) -> String {
@@ -2020,6 +2213,9 @@ fn add_hover_and_focus(
         else {
             continue;
         };
+        if matches!(hit_region.shape, HitShape::SpriteAlpha { .. }) {
+            continue;
+        }
         rects.push(RectCommand {
             id: command_id.to_owned(),
             rect: grow(hit_region.rect, 1),
@@ -2227,12 +2423,13 @@ fn audio_for_cue(cue: PresentationCueKind) -> AudioCue {
 
 fn animation_frame(pose: &str, elapsed_ms: u64) -> u8 {
     let frame_ms = match pose {
-        "swim" => 160,
-        "turn" | "eat" | "play" => 240,
-        "sleep" => 1_200,
+        "swim" => ACTION_SWIM_FRAME_MS,
+        "turn" | "eat" | "play" => ACTION_GESTURE_FRAME_MS,
+        "sleep" => ACTION_SLEEP_FRAME_MS,
         _ => 700,
     };
-    u8::try_from((elapsed_ms / frame_ms) % 4).unwrap_or_default()
+    let frame_count = if pose == "swim" { 8 } else { 4 };
+    u8::try_from((elapsed_ms / frame_ms) % frame_count).unwrap_or_default()
 }
 
 fn body_sprite(
@@ -2282,10 +2479,22 @@ fn body_sprite(
         );
     }
     if let Some(asset) = action_body_asset(pose) {
+        let action_elapsed_ms = state
+            .creature
+            .aquarium
+            .action
+            .map_or(elapsed_ms, |action| action.elapsed_ms);
         return (
             asset.to_owned(),
             side_flip,
-            animation_frame(pose, elapsed_ms),
+            animation_frame(
+                pose,
+                if view.reduced_motion {
+                    0
+                } else {
+                    action_elapsed_ms
+                },
+            ),
         );
     }
     let direction = if faces_player { "south" } else { "east" };
@@ -2386,10 +2595,19 @@ fn visual_mood_name(state: &WorldState, cue: Option<PresentationCueKind>) -> &'s
     }
 }
 
-fn bob_offset(state: &WorldState) -> i32 {
-    const BOB: [i32; 8] = [0, -1, -1, -2, -1, -1, 0, 0];
-    let index = usize::try_from((state.elapsed_ms / 320 + state.seed % 8) % 8).unwrap_or_default();
-    BOB[index]
+fn ambient_bob_offset_half(state: &WorldState, view: &ViewState) -> i16 {
+    if view.reduced_motion {
+        return 0;
+    }
+    // Half-pixel steps make the intentional buoyancy cycle continuous at the 2x presentation
+    // scale while retaining deterministic, integer-only logical coordinates.
+    const BOB_HALF_PIXELS: [i16; 16] = [0, -1, -2, -3, -4, -4, -4, -3, -2, -1, 0, 1, 2, 2, 2, 1];
+    let index = usize::try_from(
+        (state.elapsed_ms / AMBIENT_BOB_STEP_MS + state.seed % BOB_HALF_PIXELS.len() as u64)
+            % BOB_HALF_PIXELS.len() as u64,
+    )
+    .unwrap_or_default();
+    BOB_HALF_PIXELS[index]
 }
 
 fn phase_color(phase: ActionPhase) -> [u8; 4] {
@@ -2412,7 +2630,21 @@ fn framed_sprite(id: &str, x: i32, y: i32, layer: i16, frame: u8) -> SpriteComma
         flip: SpriteFlip::None,
         source_rect: None,
         scale: 1,
+        hit_region_id: None,
+        highlight: SpriteHighlight::None,
+        offset_x: 0,
+        offset_y: 0,
     }
+}
+
+fn with_presentation_offset(
+    mut sprite: SpriteCommand,
+    offset_x: i16,
+    offset_y: i16,
+) -> SpriteCommand {
+    sprite.offset_x = offset_x;
+    sprite.offset_y = offset_y;
+    sprite
 }
 
 fn effect_sprite(
@@ -2473,6 +2705,10 @@ fn ui_sprite(id: &str, x: i32, y: i32, layer: i16) -> SpriteCommand {
         flip: SpriteFlip::None,
         source_rect: None,
         scale: 1,
+        hit_region_id: None,
+        highlight: SpriteHighlight::None,
+        offset_x: 0,
+        offset_y: 0,
     }
 }
 
@@ -2776,6 +3012,7 @@ fn hit(
         enabled,
         label: label.to_owned(),
         cursor: CursorKind::Pointer,
+        shape: HitShape::Rect,
     }
 }
 
@@ -3095,7 +3332,7 @@ mod tests {
     }
 
     #[test]
-    fn hover_and_controller_focus_use_the_same_stable_region() {
+    fn world_hover_and_focus_use_sprite_silhouettes_and_keep_contextual_labels() {
         let state = WorldState::new(7, "Mop");
         let view = ViewState {
             hovered_region: Some("target/creature".to_owned()),
@@ -3104,13 +3341,206 @@ mod tests {
         };
         let (render, _) = plan(&state, &view);
         assert!(render.rects.iter().all(|rect| rect.id != "ui/hover"));
-        assert!(render.rects.iter().any(|rect| rect.id == "ui/focus"));
+        assert!(render.rects.iter().all(|rect| rect.id != "ui/focus"));
+        let creature = render
+            .sprites
+            .iter()
+            .find(|sprite| sprite.hit_region_id.as_deref() == Some("target/creature"))
+            .expect("linked creature sprite");
+        assert_eq!(creature.highlight, SpriteHighlight::HoverFocus);
         assert!(
             render
                 .text
                 .iter()
                 .any(|text| text.id == "ui/hover-label" && text.text == "Mop")
         );
+    }
+
+    #[test]
+    fn ui_focus_retains_a_panel_outline() {
+        let state = WorldState::new(7, "Mop");
+        let render = plan(
+            &state,
+            &ViewState {
+                focused_region: Some("compose/food".to_owned()),
+                ..ViewState::default()
+            },
+        )
+        .0;
+        assert!(render.rects.iter().any(|rect| rect.id == "ui/focus"));
+        assert!(
+            render
+                .sprites
+                .iter()
+                .all(|sprite| sprite.highlight == SpriteHighlight::None)
+        );
+    }
+
+    #[test]
+    fn world_hit_regions_declare_linked_transparent_sprite_shapes() {
+        let mut state = WorldState::new(7, "Mop");
+        state.aquarium.objects.insert(
+            9,
+            WorldObject::Food(FoodObject {
+                id: 9,
+                food: FoodId::Berry,
+                position: NormalizedPosition::new(2_500, 7_500),
+                velocity: NormalizedVelocity::default(),
+                buoyancy: FoodBuoyancy::Sink,
+                disposition: FoodDisposition::Falling,
+                age_ms: 0,
+                lifetime_ms: 10_000,
+            }),
+        );
+        let render = plan(&state, &ViewState::default()).0;
+        for region_id in ["target/creature", "target/object-9"] {
+            let hit = render
+                .hit_regions
+                .iter()
+                .find(|hit| hit.id == region_id)
+                .expect("world hit region");
+            let HitShape::SpriteAlpha {
+                sprite_id,
+                source_rect,
+            } = &hit.shape
+            else {
+                panic!("world target must use sprite alpha");
+            };
+            let sprite = render
+                .sprites
+                .iter()
+                .find(|sprite| sprite.hit_region_id.as_deref() == Some(region_id))
+                .expect("linked world sprite");
+            assert_eq!(sprite.id, *sprite_id);
+            assert_eq!(sprite.source_rect, *source_rect);
+        }
+        assert_eq!(
+            render
+                .hit_regions
+                .iter()
+                .find(|hit| hit.id == "compose/input")
+                .expect("compose hit")
+                .shape,
+            HitShape::Rect
+        );
+    }
+
+    #[test]
+    fn creature_and_food_extrapolate_from_tick_remainder_without_mutating_state() {
+        let mut state = WorldState::new(0, "Mop");
+        state.simulation_remainder_ms = beastie_core::SIMULATION_TICK_MS / 2;
+        state.creature.aquarium.position = NormalizedPosition::new(5_000, 5_000);
+        state.creature.aquarium.velocity = NormalizedVelocity {
+            x: 1_000,
+            y: -1_000,
+        };
+        state.aquarium.objects.insert(
+            9,
+            WorldObject::Food(FoodObject {
+                id: 9,
+                food: FoodId::Berry,
+                position: NormalizedPosition::new(5_000, 5_000),
+                velocity: NormalizedVelocity {
+                    x: -1_000,
+                    y: 1_000,
+                },
+                buoyancy: FoodBuoyancy::Drift,
+                disposition: FoodDisposition::Falling,
+                age_ms: 0,
+                lifetime_ms: 10_000,
+            }),
+        );
+        let before = state.clone();
+        let render = plan(&state, &ViewState::default()).0;
+        let creature = render
+            .sprites
+            .iter()
+            .find(|sprite| sprite.hit_region_id.as_deref() == Some("target/creature"))
+            .expect("creature");
+        let food = render
+            .sprites
+            .iter()
+            .find(|sprite| sprite.hit_region_id.as_deref() == Some("target/object-9"))
+            .expect("food");
+        assert_eq!((creature.offset_x, creature.offset_y), (30, -13));
+        assert_eq!((food.offset_x, food.offset_y), (-32, 11));
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn action_animation_uses_phase_relative_elapsed_time_from_frame_zero() {
+        let mut state = WorldState::new(7, "Mop");
+        state.elapsed_ms = 9_999;
+        state.creature.aquarium.action = Some(ActionTimeline {
+            phase: ActionPhase::Approach,
+            elapsed_ms: 0,
+            phase_duration_ms: 1_000,
+            destination: SemanticDestination::Position(NormalizedPosition::new(5_000, 5_000)),
+            food_id: None,
+        });
+        let frame_zero = plan(&state, &ViewState::default())
+            .0
+            .sprites
+            .into_iter()
+            .find(|sprite| sprite.layer == 12)
+            .expect("action body");
+        assert_eq!(frame_zero.id, "creature-v1/swim");
+        assert_eq!(frame_zero.frame, 0);
+        state
+            .creature
+            .aquarium
+            .action
+            .as_mut()
+            .expect("action")
+            .elapsed_ms = 350;
+        let progressed = plan(&state, &ViewState::default())
+            .0
+            .sprites
+            .into_iter()
+            .find(|sprite| sprite.layer == 12)
+            .expect("action body");
+        assert_eq!(progressed.frame, 2);
+    }
+
+    #[test]
+    fn ambient_motion_is_deterministic_and_reduced_motion_freezes_presentation_motion() {
+        let mut state = WorldState::new(7, "Mop");
+        state.elapsed_ms = 750;
+        state.simulation_remainder_ms = 500;
+        state.creature.aquarium.velocity = NormalizedVelocity { x: 1_000, y: 1_000 };
+        state.creature.aquarium.action = Some(ActionTimeline {
+            phase: ActionPhase::Approach,
+            elapsed_ms: 350,
+            phase_duration_ms: 1_000,
+            destination: SemanticDestination::Player,
+            food_id: None,
+        });
+        assert_eq!(
+            plan(&state, &ViewState::default()),
+            plan(&state, &ViewState::default())
+        );
+        let standard = plan(&state, &ViewState::default()).0;
+        let reduced = plan(
+            &state,
+            &ViewState {
+                reduced_motion: true,
+                ..ViewState::default()
+            },
+        )
+        .0;
+        let standard_body = standard
+            .sprites
+            .iter()
+            .find(|sprite| sprite.layer == 12)
+            .expect("standard body");
+        let reduced_body = reduced
+            .sprites
+            .iter()
+            .find(|sprite| sprite.layer == 12)
+            .expect("reduced body");
+        assert_ne!(standard_body.offset_x, 0);
+        assert_eq!((reduced_body.offset_x, reduced_body.offset_y), (0, 0));
+        assert_eq!(reduced_body.frame, 0);
     }
 
     #[test]

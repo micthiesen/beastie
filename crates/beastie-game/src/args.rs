@@ -20,7 +20,7 @@ pub struct Args {
     /// Replay semantic commands through a fresh, non-persistent visible game.
     #[arg(long)]
     pub script: Option<PathBuf>,
-    /// Directory for named logical-framebuffer captures.
+    /// Directory for named 640x360 presentation captures.
     #[arg(long, requires = "script")]
     pub capture_dir: Option<PathBuf>,
     /// Keep a completed visible scenario open for native input inspection.

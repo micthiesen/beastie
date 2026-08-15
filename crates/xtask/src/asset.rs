@@ -246,6 +246,75 @@ pub(crate) fn generate(manifest_path: &Path, id: &str, force: bool) -> Result<()
     Ok(())
 }
 
+pub(crate) fn normalize_alpha(manifest_path: &Path, id: &str) -> Result<()> {
+    let source = fs::read_to_string(manifest_path)
+        .with_context(|| format!("failed to read asset manifest {}", manifest_path.display()))?;
+    let manifest: Manifest = toml::from_str(&source)
+        .with_context(|| format!("failed to parse asset manifest {}", manifest_path.display()))?;
+    let asset_root = manifest_path
+        .parent()
+        .context("asset manifest must have a parent directory")?;
+    if id == "all" {
+        for asset in manifest.asset.iter().filter(|asset| {
+            asset.alpha_policy == AlphaPolicy::Hard
+                && asset.transparent
+                && asset.status != Status::Reference
+        }) {
+            normalize_asset_alpha(asset, asset_root)?;
+        }
+        return Ok(());
+    }
+    let asset = manifest
+        .asset
+        .iter()
+        .find(|asset| asset.id == id)
+        .with_context(|| format!("asset manifest has no asset id {id}"))?;
+    normalize_asset_alpha(asset, asset_root)
+}
+
+fn normalize_asset_alpha(asset: &Asset, asset_root: &Path) -> Result<()> {
+    if asset.status == Status::Reference {
+        bail!("reference asset {} cannot be normalized in place", asset.id);
+    }
+    let palette = read_palette(asset, asset_root)?;
+    for frame in 0..asset.frames {
+        let path = candidate_path(
+            asset_root,
+            Source::Generated,
+            &asset.id,
+            asset.frames,
+            frame,
+        );
+        if !path.is_file() {
+            bail!("generated asset frame is missing: {}", path.display());
+        }
+        let mut rgba = image::open(&path)
+            .with_context(|| format!("failed to decode {}", path.display()))?
+            .to_rgba8();
+        let mut changed = 0_u64;
+        for pixel in rgba.pixels_mut() {
+            if pixel.0[3] == 0 && pixel.0[..3] != [0, 0, 0] {
+                pixel.0[..3].copy_from_slice(&[0, 0, 0]);
+                changed += 1;
+            }
+        }
+        if changed == 0 {
+            println!("{} already has canonical transparent RGB", path.display());
+            continue;
+        }
+        let mut bytes = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(rgba)
+            .write_to(&mut bytes, ImageFormat::Png)
+            .with_context(|| format!("failed to encode normalized {}", path.display()))?;
+        publish_png_frame(asset, asset_root, frame, &bytes.into_inner(), &palette)?;
+        println!(
+            "normalized {changed} transparent RGB pixel(s) in {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 fn generate_with_client(
     manifest_path: &Path,
     id: &str,
@@ -301,7 +370,7 @@ fn generate_with_client(
         init_image,
     };
     let response = client.create_image(token, &request)?;
-    let bytes = decode_response_image(&response.image)?;
+    let bytes = canonicalize_transparent_png(&decode_response_image(&response.image)?)?;
     validate_png_bytes(asset, &bytes, &palette)?;
     publish_png(asset, asset_root, &bytes, force, &palette)?;
 
@@ -462,6 +531,27 @@ fn validate_png_bytes(asset: &Asset, bytes: &[u8], palette: &[[u8; 3]]) -> Resul
     validate_decoded_png(asset, &image, "PixelLab response", palette).map(|_| ())
 }
 
+fn canonicalize_transparent_png(bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut rgba = image::load_from_memory_with_format(bytes, ImageFormat::Png)
+        .context("PixelLab response is not a valid PNG")?
+        .to_rgba8();
+    let mut changed = false;
+    for pixel in rgba.pixels_mut() {
+        if pixel.0[3] == 0 && pixel.0[..3] != [0, 0, 0] {
+            pixel.0[..3].copy_from_slice(&[0, 0, 0]);
+            changed = true;
+        }
+    }
+    if !changed {
+        return Ok(bytes.to_vec());
+    }
+    let mut normalized = Cursor::new(Vec::new());
+    DynamicImage::ImageRgba8(rgba)
+        .write_to(&mut normalized, ImageFormat::Png)
+        .context("failed to encode normalized PixelLab response")?;
+    Ok(normalized.into_inner())
+}
+
 fn publish_png(
     asset: &Asset,
     asset_root: &Path,
@@ -524,6 +614,51 @@ fn publish_png(
     }
     publish_result?;
     Ok(destination)
+}
+
+fn publish_png_frame(
+    asset: &Asset,
+    asset_root: &Path,
+    frame: u32,
+    bytes: &[u8],
+    palette: &[[u8; 3]],
+) -> Result<()> {
+    let destination = candidate_path(
+        asset_root,
+        Source::Generated,
+        &asset.id,
+        asset.frames,
+        frame,
+    );
+    let parent = destination
+        .parent()
+        .context("generated asset path must have a parent")?;
+    let sequence = NEXT_TEMP_FILE.fetch_add(1, Ordering::Relaxed);
+    let file_name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("generated asset path must have a UTF-8 filename")?;
+    let temporary = parent.join(format!(
+        ".{file_name}.normalize-{}-{sequence}",
+        std::process::id()
+    ));
+    let result = (|| -> Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .with_context(|| format!("failed to create {}", temporary.display()))?;
+        file.write_all(bytes)
+            .with_context(|| format!("failed to write {}", temporary.display()))?;
+        file.sync_all()
+            .with_context(|| format!("failed to sync {}", temporary.display()))?;
+        validate_png(asset, &temporary, "normalized temporary", palette)?;
+        atomic_replace(&temporary, &destination)
+    })();
+    if temporary.exists() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 #[cfg(not(windows))]
@@ -776,12 +911,13 @@ fn validate_asset(
 
 fn print_asset_diagnostics(asset: &Asset, source: &str, diagnostics: &AssetDiagnostics) {
     println!(
-        "    {} [{}]: colors={}, palette_distance={}, alpha_partial={}, interpolation_pixels={}, density={}",
+        "    {} [{}]: colors={}, palette_distance={}, alpha_partial={}, hidden_rgb={}, interpolation_pixels={}, density={}",
         asset.id,
         source,
         diagnostics.unique_opaque_colors,
         diagnostics.max_palette_distance,
         diagnostics.partial_alpha_pixels,
+        diagnostics.noncanonical_transparent_rgb_pixels,
         diagnostics.isolated_interpolation_pixels,
         diagnostics
             .native_pixel_density
@@ -1002,6 +1138,7 @@ pub(crate) struct AssetDiagnostics {
     pub opaque_pixels: u64,
     pub transparent_pixels: u64,
     pub partial_alpha_pixels: u64,
+    pub noncanonical_transparent_rgb_pixels: u64,
     pub unique_opaque_colors: usize,
     pub max_palette_distance: u8,
     pub isolated_interpolation_pixels: u64,
@@ -1042,6 +1179,7 @@ fn validate_decoded_png(
     let mut opaque_colors = HashSet::new();
     let mut transparent_pixels = 0_u64;
     let mut partial_alpha_pixels = 0_u64;
+    let mut noncanonical_transparent_rgb_pixels = 0_u64;
     let mut max_palette_distance = 0_u8;
     for pixel in rgba.pixels() {
         let alpha = pixel.0[3];
@@ -1051,6 +1189,9 @@ fn validate_decoded_png(
             max_palette_distance = max_palette_distance.max(palette_distance(rgb, palette));
         } else {
             transparent_pixels += 1;
+            if alpha == 0 && pixel.0[..3] != [0, 0, 0] {
+                noncanonical_transparent_rgb_pixels += 1;
+            }
             if alpha != 0 {
                 partial_alpha_pixels += 1;
             }
@@ -1080,6 +1221,18 @@ fn validate_decoded_png(
             asset.id,
             candidate,
             partial_alpha_pixels
+        );
+    }
+    if asset.alpha_policy == AlphaPolicy::Hard
+        && noncanonical_transparent_rgb_pixels > 0
+        && asset.status != Status::Reference
+    {
+        bail!(
+            "asset {} candidate {} has {} fully transparent pixel(s) with noncanonical RGB; run `cargo xtask asset normalize-alpha {}`",
+            asset.id,
+            candidate,
+            noncanonical_transparent_rgb_pixels,
+            asset.id
         );
     }
     if asset.status != Status::Reference && opaque_colors.len() > asset.max_colors as usize {
@@ -1115,6 +1268,7 @@ fn validate_decoded_png(
         opaque_pixels: u64::from(image.width()) * u64::from(image.height()) - transparent_pixels,
         transparent_pixels,
         partial_alpha_pixels,
+        noncanonical_transparent_rgb_pixels,
         unique_opaque_colors: opaque_colors.len(),
         max_palette_distance,
         isolated_interpolation_pixels: isolated,
@@ -1261,7 +1415,9 @@ terms = "test fixture"
 
         fn png(&self, source: Source, width: u32, height: u32, transparent: bool) {
             let alpha = if transparent { 0 } else { 255 };
-            let image = ImageBuffer::from_pixel(width, height, Rgba([17_u8, 34, 51, alpha]));
+            let rgb: [u8; 3] = if transparent { [0, 0, 0] } else { [17, 34, 51] };
+            let image =
+                ImageBuffer::from_pixel(width, height, Rgba([rgb[0], rgb[1], rgb[2], alpha]));
             image
                 .save_with_format(
                     candidate_path(&self.root, source, "creature.idle", 1, 0),
@@ -1384,8 +1540,16 @@ provenance = "docs/audio.md"
 
     fn png_bytes(transparent: bool, red: u8) -> Vec<u8> {
         let alpha = if transparent { 0 } else { u8::MAX };
-        let image =
-            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(16, 16, Rgba([red, 34, 51, alpha])));
+        let (red, green, blue) = if transparent {
+            (0, 0, 0)
+        } else {
+            (red, 34, 51)
+        };
+        let image = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            16,
+            16,
+            Rgba([red, green, blue, alpha]),
+        ));
         let mut bytes = Cursor::new(Vec::new());
         image
             .write_to(&mut bytes, ImageFormat::Png)
@@ -1484,7 +1648,7 @@ status = "planned"
         pixels[1] = blue;
         pixels[3] = blue;
         pixels[4] = blended;
-        pixels[8] = Rgba([17, 34, 51, 0]);
+        pixels[8] = Rgba([0, 0, 0, 0]);
         let error = validate_decoded_png(
             &asset,
             &fixture_image(3, 3, pixels),
@@ -1506,7 +1670,7 @@ status = "planned"
         let pixels = vec![
             Rgba([17, 34, 51, 255]),
             Rgba([17, 34, 51, 128]),
-            Rgba([171, 205, 239, 0]),
+            Rgba([0, 0, 0, 0]),
             Rgba([171, 205, 239, 255]),
         ];
         let error = validate_decoded_png(
@@ -1528,7 +1692,7 @@ status = "planned"
             Rgba([17, 34, 51, 255]),
             Rgba([171, 205, 239, 255]),
             Rgba([18, 35, 52, 255]),
-            Rgba([19, 36, 53, 0]),
+            Rgba([0, 0, 0, 0]),
         ];
         let error = validate_decoded_png(
             &asset,
@@ -1552,7 +1716,7 @@ status = "planned"
             Rgba([17, 34, 51, 255]),
             Rgba([90, 90, 90, 255]),
             Rgba([90, 90, 90, 255]),
-            Rgba([171, 205, 239, 0]),
+            Rgba([0, 0, 0, 0]),
         ];
         let error = validate_decoded_png(
             &asset,
@@ -1576,7 +1740,7 @@ status = "planned"
         let pixels = vec![
             Rgba([17, 34, 51, 255]),
             Rgba([171, 205, 239, 255]),
-            Rgba([171, 205, 239, 0]),
+            Rgba([0, 0, 0, 0]),
             Rgba([17, 34, 51, 255]),
         ];
         let diagnostics = validate_decoded_png(
@@ -1588,7 +1752,29 @@ status = "planned"
         .expect("clean hard-edge image should pass");
         assert_eq!(diagnostics.unique_opaque_colors, 2);
         assert_eq!(diagnostics.partial_alpha_pixels, 0);
+        assert_eq!(diagnostics.noncanonical_transparent_rgb_pixels, 0);
         assert_eq!(diagnostics.native_pixel_density, Some(1));
+    }
+
+    #[test]
+    fn rejects_hidden_rgb_behind_hard_transparency() {
+        let assets = TestAssets::new();
+        let asset = strict_asset(2, 2, 1, 0);
+        let pixels = vec![
+            Rgba([17, 34, 51, 255]),
+            Rgba([255, 255, 255, 0]),
+            Rgba([0, 0, 0, 0]),
+            Rgba([17, 34, 51, 255]),
+        ];
+        let error = validate_decoded_png(
+            &asset,
+            &fixture_image(2, 2, pixels),
+            "hidden RGB fixture",
+            &read_palette(&asset, &assets.root).expect("palette"),
+        )
+        .expect_err("hidden RGB should fail hard-alpha policy")
+        .to_string();
+        assert!(error.contains("noncanonical RGB"), "{error}");
     }
 
     #[test]
@@ -1603,10 +1789,10 @@ status = "planned"
         let frame0 = candidate_path(&assets.root, Source::Generated, &asset.id, 2, 0);
         let frame1 = candidate_path(&assets.root, Source::Generated, &asset.id, 2, 1);
         fs::create_dir_all(frame0.parent().expect("frame parent")).expect("frame directory");
-        ImageBuffer::from_pixel(16, 16, Rgba([17_u8, 34, 51, 0]))
+        ImageBuffer::from_pixel(16, 16, Rgba([0_u8, 0, 0, 0]))
             .save_with_format(frame0, ImageFormat::Png)
             .expect("frame 0");
-        ImageBuffer::from_pixel(17, 16, Rgba([17_u8, 34, 51, 0]))
+        ImageBuffer::from_pixel(17, 16, Rgba([0_u8, 0, 0, 0]))
             .save_with_format(frame1, ImageFormat::Png)
             .expect("frame 1");
         let error = validate_asset(&manifest.asset[0], &assets.root, false, &mut HashSet::new())

@@ -51,6 +51,7 @@ dist/
     assets/manifest.toml
     assets/generated/**
     assets/final/**          # when promoted assets exist
+    assets/licenses/**       # bundled font and asset license texts
     models/manifest.toml
     models/Qwen3.5-0.8B-Q4_0.gguf
     models/LICENSE

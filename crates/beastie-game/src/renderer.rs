@@ -1,8 +1,12 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use beastie_view::{RectCommand, RenderPlan, SpriteCommand, SpriteFlip, TextCommand};
+use beastie_view::{
+    HitRegion, HitShape, RectCommand, RenderPlan, SpriteCommand, SpriteFlip, SpriteHighlight,
+    TextCommand,
+};
 use font8x8::{BASIC_FONTS, UnicodeFonts};
 use ggez::graphics::{
     Canvas, Color, DrawMode, DrawParam, FontData, Image, ImageFormat, Mesh, MeshBuilder, Rect,
@@ -13,14 +17,39 @@ use image::{ColorType, ImageFormat as EncodingFormat};
 
 pub const LOGICAL_WIDTH: f32 = 320.0;
 pub const LOGICAL_HEIGHT: f32 = 180.0;
+pub const PRESENTATION_SCALE: f32 = 2.0;
+pub const PRESENTATION_WIDTH: f32 = LOGICAL_WIDTH * PRESENTATION_SCALE;
+pub const PRESENTATION_HEIGHT: f32 = LOGICAL_HEIGHT * PRESENTATION_SCALE;
 
 const RUNTIME_SPRITE_IDS: &str = include_str!("../../../assets/runtime-sprites.txt");
-const BEASTIE_FONT_NAME: &str = "Beastie Tide";
+const BEASTIE_FONT_NAME: &str = "Atkinson Hyperlegible Next Medium";
+
+struct LoadedSprite {
+    image: Image,
+    alpha: AlphaMask,
+}
+
+struct AlphaMask {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+}
+
+impl AlphaMask {
+    fn opaque(&self, x: u32, y: u32) -> bool {
+        let index = y
+            .checked_mul(self.width)
+            .and_then(|row| row.checked_add(x))
+            .and_then(|pixel| usize::try_from(pixel).ok());
+        index.is_some_and(|index| self.pixels.get(index).copied().unwrap_or_default() != 0)
+    }
+}
 
 /// Optional runtime art, decoded and uploaded exactly once during game startup.
 /// Each semantic id resolves through `assets/final`, then `assets/generated`.
 pub struct AssetCatalog {
-    images: HashMap<String, Image>,
+    images: HashMap<String, LoadedSprite>,
+    outlines: RefCell<HashMap<String, Image>>,
     custom_font: bool,
 }
 
@@ -37,11 +66,12 @@ impl AssetCatalog {
         let custom_font = load_font(ctx, assets_root);
         Self {
             images,
+            outlines: RefCell::new(HashMap::new()),
             custom_font,
         }
     }
 
-    fn image(&self, command: &SpriteCommand) -> Option<&Image> {
+    fn sprite(&self, command: &SpriteCommand) -> Option<&LoadedSprite> {
         self.images
             .get(&asset_key(&command.id, Some(command.frame)))
             .or_else(|| self.images.get(&asset_key(&command.id, None)))
@@ -66,11 +96,162 @@ impl AssetCatalog {
         self.images.contains_key(&asset_key(id, None))
             || self.images.contains_key(&asset_key(id, Some(0)))
     }
+
+    fn alpha_hit(&self, plan: &RenderPlan, hit: &HitRegion, x: f32, y: f32) -> bool {
+        let HitShape::SpriteAlpha {
+            sprite_id,
+            source_rect,
+        } = &hit.shape
+        else {
+            return hit.rect.contains(x.floor() as i32, y.floor() as i32);
+        };
+        let Some(command) = plan.sprites.iter().rev().find(|command| {
+            command.hit_region_id.as_deref() == Some(hit.id.as_str()) && command.id == *sprite_id
+        }) else {
+            return hit.rect.contains(x.floor() as i32, y.floor() as i32);
+        };
+        let Some(sprite) = self.sprite(command) else {
+            return hit.rect.contains(x.floor() as i32, y.floor() as i32);
+        };
+        let source = source_rect.as_ref().or(command.source_rect.as_ref());
+        let source_x = source.map_or(0, |rect| rect.x);
+        let source_y = source.map_or(0, |rect| rect.y);
+        let source_width = source.map_or_else(|| sprite.alpha.width as i32, |rect| rect.w);
+        let source_height = source.map_or_else(|| sprite.alpha.height as i32, |rect| rect.h);
+        if source_x < 0
+            || source_y < 0
+            || source_width <= 0
+            || source_height <= 0
+            || source_x.saturating_add(source_width) > sprite.alpha.width as i32
+            || source_y.saturating_add(source_height) > sprite.alpha.height as i32
+        {
+            return hit.rect.contains(x.floor() as i32, y.floor() as i32);
+        }
+        let scale = f32::from(command.scale.max(1));
+        let origin_x = command.x as f32 + f32::from(command.offset_x) / 2.0;
+        let origin_y = command.y as f32 + f32::from(command.offset_y) / 2.0;
+        let local_x = x - origin_x;
+        let local_y = y - origin_y;
+        if local_x < 0.0
+            || local_y < 0.0
+            || local_x >= source_width as f32 * scale
+            || local_y >= source_height as f32 * scale
+        {
+            return false;
+        }
+        let column = (local_x / scale).floor() as i32;
+        let row = (local_y / scale).floor() as i32;
+        let image_x = match command.flip {
+            SpriteFlip::None => source_x + column,
+            SpriteFlip::Horizontal => source_x + source_width - 1 - column,
+        };
+        sprite.alpha.opaque(image_x as u32, (source_y + row) as u32)
+    }
+
+    fn outline(&self, ctx: &mut Context, command: &SpriteCommand, sprite: &LoadedSprite) -> Image {
+        let key = outline_key(command);
+        if let Some(image) = self.outlines.borrow().get(&key) {
+            return image.clone();
+        }
+        let source = command.source_rect.as_ref();
+        let source_x = source.map_or(0, |rect| rect.x.max(0) as u32);
+        let source_y = source.map_or(0, |rect| rect.y.max(0) as u32);
+        let source_width = source.map_or(sprite.alpha.width, |rect| rect.w.max(0) as u32);
+        let source_height = source.map_or(sprite.alpha.height, |rect| rect.h.max(0) as u32);
+        let scale = u32::from(command.scale.max(1)) * PRESENTATION_SCALE as u32;
+        let width = source_width.saturating_mul(scale);
+        let height = source_height.saturating_mul(scale);
+        let mut opaque = vec![false; width.saturating_mul(height) as usize];
+        for source_row in 0..source_height {
+            for source_column in 0..source_width {
+                if !sprite
+                    .alpha
+                    .opaque(source_x + source_column, source_y + source_row)
+                {
+                    continue;
+                }
+                for y in source_row * scale..(source_row + 1) * scale {
+                    for x in source_column * scale..(source_column + 1) * scale {
+                        opaque[(y * width + x) as usize] = true;
+                    }
+                }
+            }
+        }
+        let outlined_width = width + 2;
+        let outlined_height = height + 2;
+        let mut pixels = vec![
+            0;
+            outlined_width
+                .saturating_mul(outlined_height)
+                .saturating_mul(4) as usize
+        ];
+        for y in 0..height {
+            for x in 0..width {
+                if !opaque[(y * width + x) as usize] {
+                    continue;
+                }
+                for dy in [-1_i32, 0, 1] {
+                    for dx in [-1_i32, 0, 1] {
+                        if dx == 0 && dy == 0 {
+                            continue;
+                        }
+                        let outline_x = x as i32 + dx + 1;
+                        let outline_y = y as i32 + dy + 1;
+                        if outline_x < 0
+                            || outline_y < 0
+                            || outline_x >= outlined_width as i32
+                            || outline_y >= outlined_height as i32
+                        {
+                            continue;
+                        }
+                        let source_x = x as i32 + dx;
+                        let source_y = y as i32 + dy;
+                        if source_x >= 0
+                            && source_y >= 0
+                            && source_x < width as i32
+                            && source_y < height as i32
+                            && opaque[(source_y as u32 * width + source_x as u32) as usize]
+                        {
+                            continue;
+                        }
+                        let index =
+                            ((outline_y as u32 * outlined_width + outline_x as u32) * 4) as usize;
+                        pixels[index..index + 4].copy_from_slice(&[181, 228, 224, 255]);
+                    }
+                }
+            }
+        }
+        let image = Image::from_pixels(
+            ctx,
+            &pixels,
+            ImageFormat::Rgba8UnormSrgb,
+            outlined_width,
+            outlined_height,
+        );
+        self.outlines.borrow_mut().insert(key, image.clone());
+        image
+    }
+}
+
+#[must_use]
+pub fn hit_region_at<'a>(
+    plan: &'a RenderPlan,
+    assets: &AssetCatalog,
+    x: f32,
+    y: f32,
+) -> Option<&'a HitRegion> {
+    plan.hit_regions.iter().rev().find(|hit| {
+        hit.enabled
+            && hit.rect.contains(x.floor() as i32, y.floor() as i32)
+            && assets.alpha_hit(plan, hit, x, y)
+    })
 }
 
 fn load_font(ctx: &mut Context, assets_root: &Path) -> bool {
     for source in ["final", "generated"] {
-        let path = assets_root.join(source).join("ui/beastie-tide.ttf");
+        let path = assets_root
+            .join(source)
+            .join("ui/atkinson-hyperlegible-next-medium.ttf");
         let Ok(bytes) = fs::read(path) else { continue };
         let Ok(font) = FontData::from_vec(bytes) else {
             continue;
@@ -86,7 +267,7 @@ fn load_variant(
     assets_root: &Path,
     id: &str,
     frame: Option<u8>,
-    images: &mut HashMap<String, Image>,
+    images: &mut HashMap<String, LoadedSprite>,
 ) {
     let relative = asset_relative_path(id, frame);
     for source in ["final", "generated"] {
@@ -94,10 +275,23 @@ fn load_variant(
         let Ok(encoded) = fs::read(path) else {
             continue;
         };
-        let Ok(image) = Image::from_bytes(ctx, &encoded) else {
+        let Ok(decoded) = image::load_from_memory(&encoded) else {
             continue;
         };
-        images.insert(asset_key(id, frame), image);
+        let rgba = decoded.to_rgba8();
+        let alpha = AlphaMask {
+            width: rgba.width(),
+            height: rgba.height(),
+            pixels: rgba.pixels().map(|pixel| pixel[3]).collect(),
+        };
+        let image = Image::from_pixels(
+            ctx,
+            rgba.as_raw(),
+            ImageFormat::Rgba8UnormSrgb,
+            rgba.width(),
+            rgba.height(),
+        );
+        images.insert(asset_key(id, frame), LoadedSprite { image, alpha });
         return;
     }
 }
@@ -109,6 +303,17 @@ fn asset_relative_path(id: &str, frame: Option<u8>) -> std::path::PathBuf {
 
 fn asset_key(id: &str, frame: Option<u8>) -> String {
     frame.map_or_else(|| id.to_owned(), |frame| format!("{id}#{frame}"))
+}
+
+fn outline_key(command: &SpriteCommand) -> String {
+    let source = command.source_rect.as_ref().map_or_else(
+        || "full".to_owned(),
+        |rect| format!("{}:{}:{}:{}", rect.x, rect.y, rect.w, rect.h),
+    );
+    format!(
+        "{}#{}#{source}#{}",
+        command.id, command.frame, command.scale
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -128,15 +333,15 @@ impl Viewport {
                 x: 0.0,
                 y: 0.0,
                 scale: 1.0,
-                width: LOGICAL_WIDTH,
-                height: LOGICAL_HEIGHT,
+                width: PRESENTATION_WIDTH,
+                height: PRESENTATION_HEIGHT,
             };
         }
-        let scale = ((width / LOGICAL_WIDTH).min(height / LOGICAL_HEIGHT))
+        let scale = ((width / PRESENTATION_WIDTH).min(height / PRESENTATION_HEIGHT))
             .floor()
             .max(1.0);
-        let viewport_width = LOGICAL_WIDTH * scale;
-        let viewport_height = LOGICAL_HEIGHT * scale;
+        let viewport_width = PRESENTATION_WIDTH * scale;
+        let viewport_height = PRESENTATION_HEIGHT * scale;
         Self {
             x: ((width - viewport_width) / 2.0).floor(),
             y: ((height - viewport_height) / 2.0).floor(),
@@ -149,7 +354,7 @@ impl Viewport {
     #[must_use]
     pub fn window_dimensions(scale: u8) -> (f32, f32) {
         let scale = f32::from(scale.clamp(1, 6));
-        (LOGICAL_WIDTH * scale, LOGICAL_HEIGHT * scale)
+        (PRESENTATION_WIDTH * scale, PRESENTATION_HEIGHT * scale)
     }
 
     #[must_use]
@@ -162,13 +367,13 @@ impl Viewport {
             return None;
         }
         Some((
-            (physical_x - self.x) / self.scale,
-            (physical_y - self.y) / self.scale,
+            (physical_x - self.x) / self.scale / PRESENTATION_SCALE,
+            (physical_y - self.y) / self.scale / PRESENTATION_SCALE,
         ))
     }
 }
 
-pub fn save_logical_png(ctx: &Context, frame: &Image, path: &Path) -> GameResult {
+pub fn save_presentation_png(ctx: &Context, frame: &Image, path: &Path) -> GameResult {
     let mut pixels = frame.to_pixels(ctx)?;
     match frame.format() {
         ImageFormat::Rgba8Unorm | ImageFormat::Rgba8UnormSrgb => {}
@@ -237,10 +442,10 @@ pub fn execute_plan(
 
 fn draw_rect(ctx: &mut Context, canvas: &mut Canvas, command: &RectCommand) -> GameResult {
     let rect = Rect::new(
-        command.rect.x as f32,
-        command.rect.y as f32,
-        command.rect.w as f32,
-        command.rect.h as f32,
+        command.rect.x as f32 * PRESENTATION_SCALE,
+        command.rect.y as f32 * PRESENTATION_SCALE,
+        command.rect.w as f32 * PRESENTATION_SCALE,
+        command.rect.h as f32 * PRESENTATION_SCALE,
     );
     let color = Color::from_rgba(
         command.color[0],
@@ -249,7 +454,7 @@ fn draw_rect(ctx: &mut Context, canvas: &mut Canvas, command: &RectCommand) -> G
         command.color[3],
     );
     let mode = if command.outline {
-        DrawMode::stroke(1.0)
+        DrawMode::stroke(PRESENTATION_SCALE)
     } else {
         DrawMode::fill()
     };
@@ -266,10 +471,11 @@ fn draw_sprite(
     command: &SpriteCommand,
     assets: &AssetCatalog,
 ) -> GameResult {
-    let x = command.x as f32;
-    let y = command.y as f32;
-    if let Some(image) = assets.image(command) {
-        let integer_scale = f32::from(command.scale.max(1));
+    let x = command.x as f32 + f32::from(command.offset_x) / 2.0;
+    let y = command.y as f32 + f32::from(command.offset_y) / 2.0;
+    if let Some(sprite) = assets.sprite(command) {
+        let image = &sprite.image;
+        let integer_scale = f32::from(command.scale.max(1)) * PRESENTATION_SCALE;
         let source = command.source_rect.map(|source| {
             Rect::new(
                 source.x as f32 / image.width() as f32,
@@ -282,14 +488,33 @@ fn draw_sprite(
             .source_rect
             .map_or(image.width() as f32, |source| source.w as f32);
         let (destination_x, scale_x) = match command.flip {
-            SpriteFlip::None => (x, integer_scale),
-            SpriteFlip::Horizontal => (x + source_width * integer_scale, -integer_scale),
+            SpriteFlip::None => (x * PRESENTATION_SCALE, integer_scale),
+            SpriteFlip::Horizontal => (
+                x * PRESENTATION_SCALE + source_width * integer_scale,
+                -integer_scale,
+            ),
         };
         let mut parameters = DrawParam::default()
-            .dest([destination_x, y])
+            .dest([destination_x, y * PRESENTATION_SCALE])
             .scale([scale_x, integer_scale]);
         if let Some(source) = source {
             parameters = parameters.src(source);
+        }
+        if !matches!(command.highlight, SpriteHighlight::None) {
+            let outline = assets.outline(ctx, command, sprite);
+            let (outline_destination, outline_scale_x) = match command.flip {
+                SpriteFlip::None => (x * PRESENTATION_SCALE - 1.0, 1.0),
+                SpriteFlip::Horizontal => (
+                    x * PRESENTATION_SCALE + source_width * integer_scale + 1.0,
+                    -1.0,
+                ),
+            };
+            canvas.draw(
+                &outline,
+                DrawParam::default()
+                    .dest([outline_destination, y * PRESENTATION_SCALE - 1.0])
+                    .scale([outline_scale_x, 1.0]),
+            );
         }
         canvas.draw(image, parameters);
         return Ok(());
@@ -441,9 +666,9 @@ fn draw_aquatic_creature(ctx: &mut Context, canvas: &mut Canvas, x: f32, y: f32)
         [177, 199, 130, 255],
     )?;
     let tail = [
-        [x + 47.0, y + 79.0],
-        [x + 20.0, y + 61.0],
-        [x + 25.0, y + 98.0],
+        presentation_point(x + 47.0, y + 79.0),
+        presentation_point(x + 20.0, y + 61.0),
+        presentation_point(x + 25.0, y + 98.0),
     ];
     canvas.draw(
         &Mesh::new_polygon(ctx, DrawMode::fill(), &tail, rgba([151, 183, 124, 255]))?,
@@ -513,8 +738,16 @@ fn draw_creature(ctx: &mut Context, canvas: &mut Canvas, pose: &str, x: f32, y: 
     };
     let squash = if pose == "creature/sleep" { 10.0 } else { 15.0 };
     ellipse(ctx, canvas, x + 16.0, y + 19.0, 15.0, squash, body)?;
-    let ear = [[x + 5.0, y + 9.0], [x + 9.0, y], [x + 13.0, y + 10.0]];
-    let other_ear = [[x + 19.0, y + 10.0], [x + 24.0, y], [x + 28.0, y + 11.0]];
+    let ear = [
+        presentation_point(x + 5.0, y + 9.0),
+        presentation_point(x + 9.0, y),
+        presentation_point(x + 13.0, y + 10.0),
+    ];
+    let other_ear = [
+        presentation_point(x + 19.0, y + 10.0),
+        presentation_point(x + 24.0, y),
+        presentation_point(x + 28.0, y + 11.0),
+    ];
     canvas.draw(
         &Mesh::new_polygon(ctx, DrawMode::fill(), &ear, rgba(body))?,
         DrawParam::default(),
@@ -552,23 +785,26 @@ fn draw_text(
         let mut rendered = Text::new(
             TextFragment::new(command.text.clone())
                 .font(BEASTIE_FONT_NAME)
-                .scale(8.0 * f32::from(command.scale.clamp(1, 2)))
+                .scale(16.0 * f32::from(command.scale.clamp(1, 2)))
                 .color(text_color(&command.id)),
         );
-        rendered.set_bounds([maximum_width, f32::INFINITY]);
+        rendered.set_bounds([maximum_width * PRESENTATION_SCALE, f32::INFINITY]);
         canvas.draw(
             &rendered,
-            DrawParam::default().dest([command.x as f32, command.y as f32]),
+            DrawParam::default().dest([
+                command.x as f32 * PRESENTATION_SCALE,
+                command.y as f32 * PRESENTATION_SCALE,
+            ]),
         );
         return Ok(());
     }
-    let pixel_scale = i32::from(command.scale.clamp(1, 2));
+    let pixel_scale = i32::from(command.scale.clamp(1, 2)) * PRESENTATION_SCALE as i32;
     let glyph_advance = 6 * pixel_scale;
     let line_advance = 8 * pixel_scale;
     let maximum_width = if command.id == "speech/text" {
-        140
+        140 * PRESENTATION_SCALE as i32
     } else {
-        315 - command.x
+        (315 - command.x) * PRESENTATION_SCALE as i32
     };
     let mut cursor_x = 0;
     let mut cursor_y = 0;
@@ -592,8 +828,11 @@ fn draw_text(
                     builder.rectangle(
                         DrawMode::fill(),
                         Rect::new(
-                            (command.x + cursor_x + i32::from(column) * pixel_scale) as f32,
-                            (command.y
+                            (command.x * PRESENTATION_SCALE as i32
+                                + cursor_x
+                                + i32::from(column) * pixel_scale)
+                                as f32,
+                            (command.y * PRESENTATION_SCALE as i32
                                 + cursor_y
                                 + i32::try_from(row).unwrap_or_default() * pixel_scale)
                                 as f32,
@@ -635,7 +874,17 @@ fn rectangle(
     color: [u8; 4],
 ) -> GameResult {
     canvas.draw(
-        &Mesh::new_rectangle(ctx, DrawMode::fill(), Rect::new(x, y, w, h), rgba(color))?,
+        &Mesh::new_rectangle(
+            ctx,
+            DrawMode::fill(),
+            Rect::new(
+                x * PRESENTATION_SCALE,
+                y * PRESENTATION_SCALE,
+                w * PRESENTATION_SCALE,
+                h * PRESENTATION_SCALE,
+            ),
+            rgba(color),
+        )?,
         DrawParam::default(),
     );
     Ok(())
@@ -656,8 +905,13 @@ fn rounded_rectangle(
         &Mesh::new_rounded_rectangle(
             ctx,
             DrawMode::fill(),
-            Rect::new(x, y, w, h),
-            radius,
+            Rect::new(
+                x * PRESENTATION_SCALE,
+                y * PRESENTATION_SCALE,
+                w * PRESENTATION_SCALE,
+                h * PRESENTATION_SCALE,
+            ),
+            radius * PRESENTATION_SCALE,
             rgba(color),
         )?,
         DrawParam::default(),
@@ -674,7 +928,14 @@ fn circle(
     color: [u8; 4],
 ) -> GameResult {
     canvas.draw(
-        &Mesh::new_circle(ctx, DrawMode::fill(), [x, y], radius, 0.5, rgba(color))?,
+        &Mesh::new_circle(
+            ctx,
+            DrawMode::fill(),
+            [x * PRESENTATION_SCALE, y * PRESENTATION_SCALE],
+            radius * PRESENTATION_SCALE,
+            0.5,
+            rgba(color),
+        )?,
         DrawParam::default(),
     );
     Ok(())
@@ -693,9 +954,9 @@ fn ellipse(
         &Mesh::new_ellipse(
             ctx,
             DrawMode::fill(),
-            [x, y],
-            radius_x,
-            radius_y,
+            [x * PRESENTATION_SCALE, y * PRESENTATION_SCALE],
+            radius_x * PRESENTATION_SCALE,
+            radius_y * PRESENTATION_SCALE,
             0.5,
             rgba(color),
         )?,
@@ -708,6 +969,10 @@ fn rgba(color: [u8; 4]) -> Color {
     Color::from_rgba(color[0], color[1], color[2], color[3])
 }
 
+fn presentation_point(x: f32, y: f32) -> [f32; 2] {
+    [x * PRESENTATION_SCALE, y * PRESENTATION_SCALE]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -715,16 +980,16 @@ mod tests {
     #[test]
     fn letterboxes_at_integer_scale_and_maps_inside_points() {
         let viewport = Viewport::for_drawable(1_000.0, 700.0);
-        assert_eq!(viewport.scale, 3.0);
-        assert_eq!(viewport.width, 960.0);
-        assert_eq!(viewport.height, 540.0);
-        assert_eq!(viewport.logical_point(20.0, 80.0), Some((0.0, 0.0)));
+        assert_eq!(viewport.scale, 1.0);
+        assert_eq!(viewport.width, 640.0);
+        assert_eq!(viewport.height, 360.0);
+        assert_eq!(viewport.logical_point(180.0, 170.0), Some((0.0, 0.0)));
         assert_eq!(
-            viewport.logical_point(979.0, 619.0),
-            Some((959.0 / 3.0, 539.0 / 3.0))
+            viewport.logical_point(819.0, 529.0),
+            Some((639.0 / 2.0, 359.0 / 2.0))
         );
-        assert_eq!(viewport.logical_point(19.0, 80.0), None);
-        assert_eq!(viewport.logical_point(20.0, 620.0), None);
+        assert_eq!(viewport.logical_point(179.0, 170.0), None);
+        assert_eq!(viewport.logical_point(180.0, 530.0), None);
     }
 
     #[test]
@@ -747,6 +1012,12 @@ mod tests {
             assert_eq!(viewport.scale, f32::from(scale));
             assert_eq!((viewport.x, viewport.y), (0.0, 0.0));
         }
+    }
+
+    #[test]
+    fn presentation_target_and_default_window_are_exact() {
+        assert_eq!((PRESENTATION_WIDTH, PRESENTATION_HEIGHT), (640.0, 360.0));
+        assert_eq!(Viewport::window_dimensions(2), (1280.0, 720.0));
     }
 
     #[test]

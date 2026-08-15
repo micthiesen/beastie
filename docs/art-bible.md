@@ -50,24 +50,26 @@ temporary status sit above ordinary chrome. Speech chooses the side opposite the
 caption or reaction row cannot cover the face. Settings, food/toy trays, bindings, data management,
 the on-screen keyboard, and destructive confirmation reuse the same material and depth rules.
 
-Runtime text uses the PixelLab-generated `Beastie Tide` TrueType font at an integer logical size.
-It was generated as an 8-pixel mixed-case face specifically to avoid monospace terminal and arcade
-associations. The runtime loads `assets/generated/ui/beastie-tide.ttf` once, and retains the former
-hard-pixel built-in font only as a missing/corrupt-asset fallback. Font job
-`3598bda8-bbd9-4fa3-85fe-4594e28c4b4f`, provider-returned seed `4819`, used: “Highly legible
-friendly aquatic storybook pixel font for a cozy strange creature game. Soft squared curves, open
-counters, distinctive lowercase, compact proportions, warm handmade character, crisp at native
-size. Avoid monospace terminal, arcade, sci-fi, gothic, bubbly novelty, outlines, shadows,
-gradients, and distressed texture.” PixelLab reported three suspect glyphs, so visible scenario text
-and the complete supported input set remain regression surfaces.
+Runtime text uses Atkinson Hyperlegible Next Medium at 16 presentation pixels. Its open counters,
+distinct letter shapes, and real text metrics make ordinary mixed-case dialogue readable without
+turning the aquarium into a terminal or requiring the world art to be regenerated. The runtime
+loads `assets/generated/ui/atkinson-hyperlegible-next-medium.ttf` once and retains the hard-pixel
+built-in face only as a missing or corrupt asset fallback. The font is distributed under the SIL
+Open Font License 1.1, preserved in `assets/licenses/atkinson-hyperlegible-next-OFL.txt` and
+`THIRD_PARTY_NOTICES`. The checked-in font came from the upstream
+`googlefonts/atkinson-hyperlegible-next` repository and has SHA-256
+`dd50b08b3c560846097d23baaaf6a97ffa20dd077115d23c59df68083b9ea05e`; the bundled license has
+SHA-256 `aca6a428580965d2297d1b718042dd427c2a9443ece3b0d02d758e161e0c4030`.
 
 ## Pixel contract
 
-- The logical framebuffer remains 320x180. Draw sprites on whole logical pixels.
+- World composition and declarative plan coordinates remain 320x180. The game projects every
+  world pixel exactly 2x onto a 640x360 presentation image, then rasterizes text and UI details at
+  presentation resolution.
 - Native hero state and speech art uses an 80x80 transparent canvas. Provider padding is cropped
   symmetrically only after proving every opaque pixel remains inside that canonical canvas.
-- Use nearest-neighbor sampling, integer viewport scales, and intentional letterboxing. Never bake
-  a bilinear resize into a runtime PNG.
+- Use nearest-neighbor sampling, fixed 16:9 window sizes, integer presentation scales, and
+  intentional letterboxing. Never bake a bilinear resize into a runtime PNG.
 - Runtime pixel art has hard alpha edges: every alpha is exactly 0 or 255. Opaque backgrounds are
   fully opaque. Transparent sprites must contain transparent pixels.
 - Every opaque RGB pixel must be in the declared palette or within its explicitly declared
@@ -100,9 +102,10 @@ they still need valid dimensions and transparency metadata but are not subject t
 ceiling.
 
 The asset checker returns color and alpha diagnostics for each decoded candidate, including opaque
-pixel count, transparent and partial-alpha counts, unique colors, maximum palette distance, and
-isolated interpolation pixels. These numbers are the first evidence to inspect when a capture looks
-soft.
+pixel count, transparent and partial-alpha counts, hidden RGB behind transparent pixels, unique
+colors, maximum palette distance, and isolated interpolation pixels. `cargo xtask asset
+normalize-alpha all` canonicalizes transparent RGB to black so future compositors cannot expose a
+white fringe. These numbers are the first evidence to inspect when a capture looks soft.
 
 ## Manifest and promotion
 

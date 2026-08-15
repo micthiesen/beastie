@@ -185,6 +185,11 @@ enum AssetTask {
         #[arg(long)]
         force: bool,
     },
+    /// Canonicalize fully transparent RGB pixels without changing visible art.
+    NormalizeAlpha {
+        /// Exact manifest asset id, or `all` for every hard-alpha runtime candidate.
+        id: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -232,6 +237,9 @@ fn main() -> Result<()> {
         Task::Asset {
             command: AssetTask::Generate { id, force },
         } => asset::generate(Path::new("assets/manifest.toml"), &id, force),
+        Task::Asset {
+            command: AssetTask::NormalizeAlpha { id },
+        } => asset::normalize_alpha(Path::new("assets/manifest.toml"), &id),
         Task::StoreAssets {
             command: StoreAssetsTask::Build,
         } => store_assets::build(Path::new(".")),

@@ -60,9 +60,10 @@ authored effects, direct-reaction cue preemption,
 persistent compose behavior, hover/focus parity, food-drop mode, controller hints, settings and
 bindings, save/reset controls, transcript controls, naming, and viewport calculations.
 
-The visible runner proves real plan execution and direct 320x180 capture without OS screenshot
-permissions. `cargo xtask verify` stays independent of display, model, GPU, audio device, network,
-and generation credentials.
+The visible runner proves real plan execution and direct 640x360 presentation capture without OS
+screenshot permissions. The underlying plan remains 320x180, so the capture also proves the exact
+2x world projection and native-resolution UI pass. `cargo xtask verify` stays independent of
+display, model, GPU, audio device, network, and generation credentials.
 
 ## Native host evidence
 

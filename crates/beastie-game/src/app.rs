@@ -11,19 +11,23 @@ use beastie_view::{
     BindableAction, BindingLabels, CursorKind, RenderPlan, UiAction, UiMode, ViewState,
     logical_to_world, plan,
 };
+use ggez::conf::{FullscreenType, WindowMode};
 use ggez::event::{Button, EventHandler, GamepadId};
 use ggez::graphics::{Canvas, Color, DrawParam, Image, Sampler};
 use ggez::input::keyboard::KeyInput;
 use ggez::input::mouse::MouseButton;
 use ggez::winit::keyboard::{Key, NamedKey};
-use ggez::winit::window::{CursorIcon, Fullscreen};
+use ggez::winit::window::CursorIcon;
 use ggez::{Context, GameError, GameResult};
 
 use crate::args::Args;
 use crate::audio::{AmbientBubbleSchedule, AudioBank, UI_CONFIRM, UI_SELECT, sound_for_event};
 use crate::dialogue::{DialogueManager, WorkerConfig};
-use crate::input::{action_at, append_text, cursor_at, focused_action, move_focus, region_at};
-use crate::renderer::{AssetCatalog, Viewport, execute_plan, save_logical_png};
+use crate::input::{
+    action_at_with_assets, append_text, cursor_at_with_assets, focused_action, move_focus,
+    region_at_with_assets,
+};
+use crate::renderer::{AssetCatalog, Viewport, execute_plan, save_presentation_png};
 use crate::save_store::{LoadedSave, SaveStore};
 use crate::scenario::{ScenarioRunner, ScenarioStep};
 use crate::settings::{BindingKey, KeyBindings, SettingsStore, TextScale, TextSpeed, UserSettings};
@@ -43,7 +47,7 @@ struct SpeechAnimation {
 pub struct Game {
     session: GameSession,
     view: ViewState,
-    logical_frame: Image,
+    presentation_frame: Image,
     assets: AssetCatalog,
     audio: AudioBank,
     queued_audio: Vec<&'static str>,
@@ -157,7 +161,7 @@ impl Game {
         let game = Self {
             session,
             view,
-            logical_frame: Image::new_canvas_image(ctx, 320, 180, 1),
+            presentation_frame: Image::new_canvas_image(ctx, 640, 360, 1),
             assets: AssetCatalog::load(ctx, &assets_root),
             audio,
             queued_audio: Vec::new(),
@@ -190,7 +194,7 @@ impl Game {
             transcript_export_path,
             renaming_with_osk: false,
         };
-        game.apply_window_settings(ctx);
+        game.apply_window_settings(ctx)?;
         if let Some(destination) = &args.export_transcript {
             game.transcripts
                 .export(destination)
@@ -203,18 +207,18 @@ impl Game {
         plan(self.session.world(), &self.view).0
     }
 
-    fn apply_window_settings(&self, ctx: &mut Context) {
-        let window = ctx.gfx.window();
-        if self.settings.fullscreen {
-            window.set_fullscreen(Some(Fullscreen::Borderless(window.current_monitor())));
+    fn apply_window_settings(&self, ctx: &mut Context) -> GameResult {
+        let mode = if self.settings.fullscreen {
+            WindowMode::default()
+                .fullscreen_type(FullscreenType::Desktop)
+                .resizable(false)
         } else {
-            window.set_fullscreen(None);
             let (width, height) = Viewport::window_dimensions(self.settings.window_scale);
-            let _ = window.request_inner_size(ggez::winit::dpi::PhysicalSize::new(
-                width as u32,
-                height as u32,
-            ));
-        }
+            WindowMode::default()
+                .dimensions(width, height)
+                .resizable(false)
+        };
+        ctx.gfx.set_mode(mode)
     }
 
     fn persist_settings(&self) -> GameResult {
@@ -226,7 +230,7 @@ impl Game {
     fn toggle_fullscreen(&mut self, ctx: &mut Context) -> GameResult {
         self.settings.fullscreen = !self.settings.fullscreen;
         self.view.fullscreen = self.settings.fullscreen;
-        self.apply_window_settings(ctx);
+        self.apply_window_settings(ctx)?;
         self.persist_settings()
     }
 
@@ -238,7 +242,7 @@ impl Game {
             .saturating_add(i16::from(delta))
             .clamp(1, 6) as u8;
         self.view.window_scale = self.settings.window_scale;
-        self.apply_window_settings(ctx);
+        self.apply_window_settings(ctx)?;
         self.persist_settings()
     }
 
@@ -835,7 +839,7 @@ impl Game {
 impl EventHandler for Game {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
         if self.window_settings_dirty {
-            self.apply_window_settings(ctx);
+            self.apply_window_settings(ctx)?;
             self.window_settings_dirty = false;
         }
         let speech_was_visible = self.view.speech.is_some();
@@ -904,18 +908,21 @@ impl EventHandler for Game {
                 .as_ref()
                 .map(|scenario| scenario.capture_dir.as_path())
                 .ok_or_else(|| GameError::ConfigError("capture has no scenario".to_owned()))?;
-            save_logical_png(
+            save_presentation_png(
                 ctx,
-                &self.logical_frame,
+                &self.presentation_frame,
                 &directory.join(format!("{name}.png")),
             )?;
         }
 
         let render = self.render_plan();
-        let mut logical =
-            Canvas::from_image(ctx, self.logical_frame.clone(), Color::from_rgb(20, 18, 24));
-        execute_plan(ctx, &mut logical, &render, &self.assets)?;
-        logical.finish(ctx)?;
+        let mut presentation = Canvas::from_image(
+            ctx,
+            self.presentation_frame.clone(),
+            Color::from_rgb(20, 18, 24),
+        );
+        execute_plan(ctx, &mut presentation, &render, &self.assets)?;
+        presentation.finish(ctx)?;
 
         if mark_capture_rendered(&mut self.capture) {
             ctx.gfx.window().request_redraw();
@@ -926,7 +933,7 @@ impl EventHandler for Game {
         let mut frame = Canvas::from_frame(ctx, Color::from_rgb(12, 11, 15));
         frame.set_sampler(Sampler::nearest_clamp());
         frame.draw(
-            &self.logical_frame,
+            &self.presentation_frame,
             DrawParam::default()
                 .dest([self.viewport.x, self.viewport.y])
                 .scale([self.viewport.scale, self.viewport.scale]),
@@ -950,7 +957,7 @@ impl EventHandler for Game {
             return Ok(());
         };
         let render = self.render_plan();
-        if let Some(action) = action_at(&render, x, y) {
+        if let Some(action) = action_at_with_assets(&render, &self.assets, x, y) {
             if let UiAction::DropFood(food) = action {
                 let position = logical_to_world(x.floor() as i32, y.floor() as i32);
                 self.cursor_world = Some(position);
@@ -980,10 +987,11 @@ impl EventHandler for Game {
         self.pointer_logical = logical;
         let render = self.render_plan();
         self.view.hovered_region = logical.and_then(|(x, y)| {
-            region_at(&render, x as f32, y as f32).map(|region| region.id.clone())
+            region_at_with_assets(&render, &self.assets, x as f32, y as f32)
+                .map(|region| region.id.clone())
         });
         let cursor = logical.map_or(CursorKind::Default, |(x, y)| {
-            cursor_at(&render, x as f32, y as f32)
+            cursor_at_with_assets(&render, &self.assets, x as f32, y as f32)
         });
         ctx.gfx.window().set_cursor(match cursor {
             CursorKind::Default => CursorIcon::Default,
@@ -1174,29 +1182,8 @@ impl EventHandler for Game {
         Ok(false)
     }
 
-    fn resize_event(&mut self, ctx: &mut Context, width: f32, height: f32) -> GameResult {
+    fn resize_event(&mut self, _ctx: &mut Context, width: f32, height: f32) -> GameResult {
         self.viewport = Viewport::for_drawable(width, height);
-        if !self.settings.fullscreen {
-            let scale = ((width / 320.0).min(height / 180.0))
-                .round()
-                .clamp(1.0, 6.0) as u8;
-            let (snapped_width, snapped_height) = Viewport::window_dimensions(scale);
-            let scale_changed = self.settings.window_scale != scale;
-            self.settings.window_scale = scale;
-            self.view.window_scale = scale;
-            if scale_changed {
-                self.persist_settings()?;
-            }
-            if (width - snapped_width).abs() > 0.5 || (height - snapped_height).abs() > 0.5 {
-                let _ = ctx
-                    .gfx
-                    .window()
-                    .request_inner_size(ggez::winit::dpi::PhysicalSize::new(
-                        snapped_width as u32,
-                        snapped_height as u32,
-                    ));
-            }
-        }
         Ok(())
     }
 }

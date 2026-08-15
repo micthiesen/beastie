@@ -24,9 +24,8 @@ fn main() -> GameResult {
         .window_setup(WindowSetup::default().title("Beastie"))
         .window_mode(
             WindowMode::default()
-                .dimensions(960.0, 540.0)
-                .min_dimensions(320.0, 180.0)
-                .resizable(true),
+                .dimensions(1280.0, 720.0)
+                .resizable(false),
         )
         .build()?;
     let game = Game::new(&mut ctx, &args)?;

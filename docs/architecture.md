@@ -55,11 +55,13 @@ typed simulation events rather than visual guesses derived from model text. Cue-
 starts each reaction at frame zero and holds the final frame. Dialogue supersedes stale ambient
 punctuation, while direct refusal and comfort remain immediate.
 
-The game shell executes plans on a 320x180 logical framebuffer with nearest sampling, whole-pixel
-sprite placement, integer sprite scaling, and integer viewport scaling. The selected background is
-cropped at 1:1 to remove its generated surface opening. Shipped hero acting and effects are sprite
-art; the renderer keeps only a simple missing-asset creature and geometry fallback so a corrupt or
-absent optional file never blocks play.
+The game shell projects 320x180 plan coordinates directly onto a 640x360 presentation image. World
+pixels remain exact 2x blocks, while text is rasterized natively at 16 presentation pixels and
+silhouette focus outlines may use one presentation pixel. The finished image is nearest-scaled at
+integer sizes into a fixed 16:9 window or letterboxed fullscreen. The selected background is
+cropped at 1:1 before projection to remove its generated surface opening. Shipped hero acting and
+effects are sprite art; the renderer keeps only a simple missing-asset creature and geometry
+fallback so a corrupt or absent optional file never blocks play.
 
 The persistent compose bar, shallow contextual actions, food-drop mode, settings, input bindings,
 save recovery/reset confirmation, transcript controls, and naming are declarative UI. Exact need,
@@ -69,9 +71,11 @@ of shortcut prose. Modal chrome, text, authored icons, status, and focus rings o
 layer bands. Speech panels choose the side opposite the creature.
 
 Runtime sprite IDs resolve through the checked asset manifest, preferring `assets/final` over
-`assets/generated`. The shell decodes assets once at startup. Missing image, sound, speech, model,
-font, or audio-device paths degrade without blocking deterministic play. The PixelLab-generated
-mixed-case UI font loads once beside the sprite catalog, with a code-native bitmap fallback. See
+`assets/generated`. The shell decodes image and alpha data once at startup. Sprite-linked hit
+regions sample that alpha mask and fall back to their semantic rectangle when art is absent.
+Missing image, sound, speech, model, font, or audio-device paths degrade without blocking
+deterministic play. Atkinson Hyperlegible Next loads once beside the sprite catalog, with a
+code-native bitmap fallback. See
 [art-bible.md](art-bible.md) and [audio-direction.md](audio-direction.md).
 
 ## Local mouth and voice

@@ -426,24 +426,24 @@ id = "creature-v1/swim"
 kind = "animation"
 width = 80
 height = 80
-frames = 4
+frames = 8
 transparent = true
-palette = "style/creature-v1-action-v2.hex"
-max_colors = 28
+palette = "style/creature-v1-swim-v2.hex"
+max_colors = 35
 palette_tolerance = 0
 alpha_policy = "hard"
 native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
-generator = "pixellab"
-job_id = "279c0c17-9c99-4e53-a5c5-c508b2026740"
+generator = "pixellab-animate-image"
+job_id = "f2cff3cc-439f-48e0-8f3f-42558a9e442b"
 generated_at = "2026-08-15"
-prompt = "Polished seamless purposeful underwater swim cycle. Tail sweeps with clear propulsion, small fins paddle in opposition, body compresses by one pixel, and head filament trails while identity and canvas placement stay exact."
-seed = "service-generated"
+prompt = "Smooth, gentle underwater swimming cycle. The tail swishes side to side, fins paddle softly, body bobs by at most one pixel, and the head filament trails. Preserve the exact creature identity, face, shading, palette, canvas position, hard pixel edges, and transparent background. No bubbles, water, props, text, or added effects."
+seed = "82300"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["generated/creature-v1/mood/content-east-0.png"]
-human_modifications = "selected all four generated frames after rejecting the provider reference frame; symmetrically cropped 84x84 provider padding to 80x80 after verifying opaque bounds"
+human_modifications = "selected all eight generated frames after rejecting the unchanged provider input frame; no pixel edits"
 
 [[asset]]
 id = "creature-v1/reject-food"
@@ -998,22 +998,21 @@ kind = "sprite"
 width = 32
 height = 32
 transparent = true
-palette = "style/aquarium-effects.hex"
-max_colors = 18
+palette = "style/aquarium-sand.hex"
+max_colors = 4
 palette_tolerance = 0
 alpha_policy = "hard"
 native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
-generator = "pixellab"
-job_id = "9946470a-d7f5-44b7-a5d4-6354b8ef1385"
+generator = "pixellab-pixen"
+job_id = "fa9dafdc-c53e-4dd7-9f49-6f85e3c4b163"
 generated_at = "2026-08-15"
-prompt = "Polished compact pixel-art effect: two low dusty tan aquarium sand clouds and a few rising grains; transparent background and crisp hand-placed-looking pixels."
-seed = "812763"
+prompt = "Sparse aquarium sand puff effect on a transparent background. Use only the supplied four-color dusty sand palette. Two small low clouds and a few rising grains, no white, cream, mint, cyan, water, rectangle, glow, text, border, or shadow. Crisp clusters and hard pixel edges."
+seed = "82236"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
-references = ["generated/aquarium/background.png"]
-human_modifications = "selected after transparent-background review at native size and 2x game scale"
+human_modifications = "selected after transparent-background and exact-palette review at native size and 2x game scale"
 
 [[asset]]
 id = "aquarium/wake"
@@ -1021,7 +1020,7 @@ kind = "sprite"
 width = 32
 height = 32
 transparent = true
-palette = "style/aquarium-effects.hex"
+palette = "style/aquarium-wake.hex"
 max_colors = 18
 palette_tolerance = 0
 alpha_policy = "hard"
@@ -1029,14 +1028,13 @@ native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
-generator = "pixellab"
-job_id = "205e70d4-210e-49fa-a804-4c77dcc103b6"
+generator = "pixellab-pixen"
+job_id = "284ce08a-d11a-4d09-96a3-ae2fab95616a"
 generated_at = "2026-08-15"
-prompt = "Polished compact pixel-art effect: short curling trail of pale cyan bubbles and water streaks; transparent background and crisp hand-placed-looking pixels."
-seed = "812764"
+prompt = "Sparse tiny cyan aquarium bubble wake on a transparent background, only a few separated bubbles and short water streaks. No foam, scum, cloud, rectangle, patch, surface, text, border, or opaque background. Crisp hard pixel edges."
+seed = "82233"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
-references = ["generated/aquarium/background.png"]
-human_modifications = "selected after transparent-background review at native size and 2x game scale"
+human_modifications = "selected after rejecting filled-background and scum-like candidates; transparent RGB normalized by cargo xtask asset normalize-alpha"
 
 [[asset]]
 id = "creature-v1/effect/sleep"
@@ -1230,68 +1228,70 @@ human_modifications = "cropped the authored status pearl and resized it to 20x20
 [[asset]]
 id = "ui/button-food"
 kind = "sprite"
-width = 19
-height = 19
+width = 20
+height = 20
 transparent = true
-palette = "style/main.hex"
-max_colors = 256
-palette_tolerance = 255
-alpha_policy = "any"
+palette = "style/ui-polish.hex"
+max_colors = 32
+palette_tolerance = 0
+alpha_policy = "hard"
 native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
-generator = "pixellab"
-job_id = "a70a5b02-3ccf-4905-ae71-1bef41073264"
+generator = "pixellab-pixflux"
+job_id = "c8968e13-bade-4ddd-81e4-1f08e92af23b"
 generated_at = "2026-08-15"
-prompt = "Text-free polished pixel-art aquarium game HUD fixed to the bottom of the screen, with a tactile food icon button in midnight teal, aged brass, and warm coral."
-seed = "82731"
+prompt = "Single unmistakable berry in a tiny shallow feeding dish, bold simple 32x32 transparent silhouette, 8 to 16 flat palette colors, no card, panel, border, text, background, shadow, gradient, texture noise, white, cream, or microdetail."
+seed = "82131"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
-human_modifications = "cropped the authored food button and resized it to 19x19 with nearest-neighbor sampling"
+references = ["style/ui-anchor.png"]
+human_modifications = "selected after native-size review, then resized from 32x32 to 20x20 with nearest-neighbor sampling for the presentation deck"
 
 [[asset]]
 id = "ui/button-settings"
 kind = "sprite"
-width = 19
-height = 19
+width = 20
+height = 20
 transparent = true
-palette = "style/main.hex"
-max_colors = 256
-palette_tolerance = 255
-alpha_policy = "any"
+palette = "style/ui-polish.hex"
+max_colors = 32
+palette_tolerance = 0
+alpha_policy = "hard"
 native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
-generator = "pixellab"
-job_id = "a70a5b02-3ccf-4905-ae71-1bef41073264"
+generator = "pixellab-pixflux"
+job_id = "431be3dc-4bce-46f7-b04b-bf8b0f92eb24"
 generated_at = "2026-08-15"
-prompt = "Text-free polished pixel-art aquarium game HUD fixed to the bottom of the screen, with a tactile settings gear button in midnight teal, aged brass, and warm coral."
-seed = "82731"
+prompt = "Single unmistakable six-tooth settings gear with a large center hole, bold simple 32x32 transparent silhouette, 8 to 16 flat palette colors, no card, panel, border, text, background, shadow, gradient, texture noise, white, cream, or microdetail."
+seed = "82132"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
-human_modifications = "cropped the authored settings button and resized it to 19x19 with nearest-neighbor sampling"
+references = ["style/ui-anchor.png"]
+human_modifications = "selected after native-size review, then resized from 32x32 to 20x20 with nearest-neighbor sampling for the presentation deck"
 
 [[asset]]
 id = "ui/button-send"
 kind = "sprite"
-width = 19
-height = 19
+width = 20
+height = 20
 transparent = true
-palette = "style/main.hex"
-max_colors = 256
-palette_tolerance = 255
-alpha_policy = "any"
+palette = "style/ui-polish.hex"
+max_colors = 13
+palette_tolerance = 0
+alpha_policy = "hard"
 native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
-generator = "pixellab"
-job_id = "6ae3c126-12dd-4416-81c5-29ced6590d32"
+generator = "pixellab-pixflux"
+job_id = "4b2b4454-75a4-4123-94a2-002585839386"
 generated_at = "2026-08-15"
-prompt = "One single square pixel-art icon button for sending a creature message, with a clear right-pointing swimming-fin arrow inside a midnight teal inset, aged brass rim, and warm coral accent."
-seed = "82744"
+prompt = "Single unmistakable right-pointing send arrow shaped like a small swimming fin, bold simple 32x32 transparent silhouette, 8 to 16 flat palette colors, warm coral arrow with dark plum outline and tiny pale cyan highlight, no card, panel, border, text, background, shadow, gradient, texture noise, white, cream, or microdetail."
+seed = "82133"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
-human_modifications = "cropped the authored send button and resized it from 23x23 to 19x19 with nearest-neighbor sampling"
+human_modifications = "selected after native-size review, then resized from 32x32 to 20x20 with nearest-neighbor sampling for the presentation deck"
 
 [[audio]]
 id = "audio/ui/select"

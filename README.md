@@ -5,8 +5,9 @@ while a tiny local language model gives the creature an unreliable voice. The cr
 notices food and the player, develops habits and grudges, and expresses authoritative state through
 movement, face, sound, and scarce dialogue.
 
-The game uses a pure simulation core, a validated JSONL AI boundary, declarative 320x180 render
-plans, and a thin ggez shell. macOS, Windows, and Linux are first-class release targets.
+The game uses a pure simulation core, a validated JSONL AI boundary, declarative 320x180 world
+plans projected onto a crisp 640x360 presentation surface, and a thin ggez shell. macOS, Windows,
+and Linux are first-class release targets.
 
 ## Start here
 

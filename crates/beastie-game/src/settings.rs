@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub const SETTINGS_VERSION: u32 = 1;
+pub const SETTINGS_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -147,9 +147,7 @@ impl KeyBindings {
 #[serde(default, deny_unknown_fields)]
 pub struct UserSettings {
     pub version: u32,
-    /// Preferred integer logical scale while windowed. The OS may provide a
-    /// larger drawable on HiDPI screens; viewport calculation remains based on
-    /// drawable pixels so the final image is never fractionally sampled.
+    /// Preferred integer scale of the fixed 640x360 presentation image.
     pub window_scale: u8,
     pub fullscreen: bool,
     pub effects_volume: u8,
@@ -170,7 +168,7 @@ impl Default for UserSettings {
     fn default() -> Self {
         Self {
             version: SETTINGS_VERSION,
-            window_scale: 3,
+            window_scale: 2,
             fullscreen: false,
             effects_volume: 70,
             speech_volume: 70,
@@ -190,6 +188,11 @@ impl Default for UserSettings {
 
 impl UserSettings {
     fn sanitize(mut self) -> Self {
+        if self.version < SETTINGS_VERSION {
+            // Version 1 scaled the 320x180 logical buffer. Preserve the
+            // closest discrete size when moving to the 640x360 presentation.
+            self.window_scale = self.window_scale.saturating_add(1) / 2;
+        }
         self.version = SETTINGS_VERSION;
         self.window_scale = self.window_scale.clamp(1, 6);
         self.effects_volume = self.effects_volume.min(100);
@@ -327,6 +330,7 @@ mod tests {
         let settings = SettingsStore::new(path()).load().expect("defaults");
         assert_eq!(settings, UserSettings::default());
         assert!(settings.subtitles);
+        assert_eq!(settings.window_scale, 2);
     }
 
     #[test]
@@ -348,6 +352,18 @@ mod tests {
         assert!(!path.with_extension("json.tmp").exists());
         fs::remove_file(&path).expect("cleanup");
         fs::remove_file(path.with_extension("json.bak")).expect("cleanup backup");
+    }
+
+    #[test]
+    fn version_one_window_scale_migrates_to_presentation_scale() {
+        let settings = UserSettings {
+            version: 1,
+            window_scale: 3,
+            ..UserSettings::default()
+        }
+        .sanitize();
+        assert_eq!(settings.version, SETTINGS_VERSION);
+        assert_eq!(settings.window_scale, 2);
     }
 
     #[test]

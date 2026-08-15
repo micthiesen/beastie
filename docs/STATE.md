@@ -2,7 +2,7 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-15** (aquarium UI polish and layer pass complete).
+Last updated: **2026-08-15** (640x360 presentation polish pass complete).
 
 ## Now
 
@@ -11,14 +11,19 @@ Last updated: **2026-08-15** (aquarium UI polish and layer pass complete).
 - Core owns fixed-point position and velocity, facing, gaze, steering, action phases, physical food,
   stable aquarium objects, routines, memories, beliefs, development, initiated behavior, and
   versioned migration. Rendering owns logical pixels and never establishes facts.
-- View and game implement a cropped 320x180 aquarium and an integer-scaled, sprite-first PixelLab
+- View emits a cropped 320x180 aquarium plan and game projects it exactly 2x into a 640x360
+  presentation image before native-resolution UI and text. Fixed 16:9 window sizes default to
+  1280x720; fullscreen uses the largest integer presentation scale with letterboxing. Atkinson
+  Hyperlegible Next replaces the generated microfont, world hover/focus follows sprite alpha rather
+  than bounding rectangles, and deterministic half-pixel presentation offsets smooth motion
+  between simulation ticks. The sprite-first PixelLab
   actor. Six moods have side-facing and player-facing full-body art, every mood has three curated
   speech shapes, and accepted eating, food rejection, noticing, toy refusal, comfort, affection,
   and stronger swimming have distinct full-body acting. Attention, heart, mouth-particle, wake,
   sand, and sleep effects are authored sprites. These reactions project typed simulation events;
   model prose never chooses game outcomes. Procedural facial rectangles are gone from the
   normal path; the simple renderer creature exists only as a missing-asset safety net. The
-  persistent compose deck now uses a PixelLab mixed-case font, authored status/action icons,
+  persistent compose deck uses native-resolution mixed-case text, authored status/action icons,
   aquarium-material chrome, contextual help instead of permanent shortcut prose, and explicit
   panel/icon/text/focus layer bands. Speech chooses the side opposite the creature. Semantic
   pointer/keyboard/controller targets, accessibility settings, binding UI,
@@ -37,10 +42,13 @@ Last updated: **2026-08-15** (aquarium UI polish and layer pass complete).
   3.36-second mono PCM16 line at 22,050 Hz in under 10 ms and about 3.1 MB maximum RSS. Packaging
   must retain GPLv3 license and corresponding source. See
   [tooling-preflight.md](tooling-preflight.md).
-- Asset validation now checks 76 declared assets for provenance, palette policy, alpha, pixel
+- Asset validation now checks 76 declared assets for provenance, palette policy, alpha, transparent
+  RGB, pixel
   density, dimensions, animation completeness, and final-over-generated resolution. The expression
   pass normalizes provider-padded frames to the canonical 80x80 canvas only after opaque-bounds
-  checks. Aquarium provenance and deliberate rejected/curated-frame decisions are in
+  checks. The polished swim cycle has eight coherent frames; wake and sand effects were recurated
+  to remove foam-like and white-box artifacts. Aquarium provenance and deliberate
+  rejected/curated-frame decisions are in
   `assets/manifest.toml`; visual and audio contracts are in [art-bible.md](art-bible.md) and
   [audio-direction.md](audio-direction.md).
 - The semantic session boundary compacts accelerated `NeedChanged` noise without changing final
@@ -65,6 +73,12 @@ Last updated: **2026-08-15** (aquarium UI polish and layer pass complete).
   the creature, so speech now anchors to the opposite side. A subsequent modal-only GUI attempt did
   not receive a drawable and was stopped once; deterministic view/game tests cover every modal and
   the allow-listed UI scenario remains for a later foreground proof.
+- The presentation polish pass rendered successfully in a real 1280x720 macOS window. Native
+  inspection confirmed readable Atkinson text, crisp exact-pixel aquarium projection, clear
+  food/settings/send icons, coherent eight-frame swimming, and no generated white backdrop around
+  the creature or wake. The first scripted background launch again stalled before acquiring a
+  Metal drawable; activating and clicking the same build through Alacritty rendered normally.
+  Deterministic capture state and all semantic hover paths remain covered by the game/view suites.
 - Installer wrappers, CI configuration, Steam inputs, achievements, and store-asset tooling exist.
   A fresh ad hoc signed macOS app and DMG passed the 473-file, 666,289,145-byte offline package
   audit; its packaged Qwen warm server returned two grounded replies, packaged eSpeak generated a
@@ -74,7 +88,8 @@ Last updated: **2026-08-15** (aquarium UI polish and layer pass complete).
   physical-controller smoke, final store screenshots, and trailer remain release prerequisites.
 - Three independent review lenses covered general correctness, runtime/content boundaries, and V1
   acceptance. Their surviving findings and the subsequent release-script, capture, dialogue, and
-  staging findings were fixed. The final integrated `cargo xtask verify` gate is green.
+  staging findings were fixed. The final integrated `cargo xtask verify` gate is green after the
+  presentation pass.
 
 ## Next
 

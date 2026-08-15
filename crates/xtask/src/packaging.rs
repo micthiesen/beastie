@@ -309,6 +309,11 @@ pub fn build(options: PackageOptions<'_>) -> Result<PackageReport> {
         &assets_source.join("final"),
         &assets_destination.join("final"),
     )?;
+    copy_required_directory(
+        &assets_source.join("licenses"),
+        &assets_destination.join("licenses"),
+        "asset licenses",
+    )?;
 
     let models_destination = platform_root.join("models");
     copy_required_file(
@@ -412,6 +417,7 @@ pub fn check(
         platform.game_name(),
         platform.worker_name(),
         "assets/manifest.toml",
+        "assets/licenses/atkinson-hyperlegible-next-OFL.txt",
         "models/manifest.toml",
         "models/LICENSE",
         "models/README.md",
@@ -1214,6 +1220,10 @@ tracked = false
 "#,
         );
         write_file(&root.join("assets/manifest.toml"), b"version = 1\n");
+        write_file(
+            &root.join("assets/licenses/atkinson-hyperlegible-next-OFL.txt"),
+            b"OFL license fixture\n",
+        );
         write_file(&root.join("THIRD_PARTY_NOTICES"), b"test notices\n");
         write_file(&root.join("LICENSE"), b"MIT license\n");
         let game = root.join("inputs/game");
