@@ -1,0 +1,12 @@
+[package]
+name = "beastie-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+beastie-core = { path = "../beastie-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,4 @@
+version = 1
+
+# Generated assets are declared here before creation. Runtime resolution prefers
+# assets/final/<id>, then assets/generated/<id>.

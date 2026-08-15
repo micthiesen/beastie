@@ -1,0 +1,11 @@
+/target
+/.env
+/.DS_Store
+/dist
+/models/*.gguf
+/models/*.onnx
+/models/*.bin
+/assets/generated
+/assets/final
+/evals/reports
+/traces

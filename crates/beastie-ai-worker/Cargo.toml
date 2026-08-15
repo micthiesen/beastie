@@ -1,0 +1,10 @@
+[package]
+name = "beastie-ai-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+beastie-protocol = { path = "../beastie-protocol" }
+serde_json.workspace = true

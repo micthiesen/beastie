@@ -1,0 +1,1 @@
+{"protocol_version":1,"request_id":41,"creature_name":"Mop","mood":"wary","known_concepts":["you","food","bad","yesterday"],"candidate_memories":[{"id":41,"fact":"Yesterday the player gave you a berry.","feeling":"strong dislike"}],"player_said":"Do you remember the berry?","constraints":{"max_words":24,"allowed_gestures":["none","look_player"]}}

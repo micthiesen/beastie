@@ -1,0 +1,4 @@
+version = 1
+
+# Model artifacts are intentionally absent from git. Add exact source, version,
+# license, size, and SHA-256 metadata here before integrating a runtime.

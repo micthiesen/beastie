@@ -1,0 +1,10 @@
+[package]
+name = "beastie-view"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+beastie-core = { path = "../beastie-core" }
+serde.workspace = true
