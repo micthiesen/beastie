@@ -5,7 +5,8 @@ use std::path::Path;
 use beastie_view::{RectCommand, RenderPlan, SpriteCommand, SpriteFlip, TextCommand};
 use font8x8::{BASIC_FONTS, UnicodeFonts};
 use ggez::graphics::{
-    Canvas, Color, DrawMode, DrawParam, Image, ImageFormat, Mesh, MeshBuilder, Rect, Sampler,
+    Canvas, Color, DrawMode, DrawParam, FontData, Image, ImageFormat, Mesh, MeshBuilder, Rect,
+    Sampler, Text, TextFragment,
 };
 use ggez::{Context, GameError, GameResult};
 use image::{ColorType, ImageFormat as EncodingFormat};
@@ -14,11 +15,13 @@ pub const LOGICAL_WIDTH: f32 = 320.0;
 pub const LOGICAL_HEIGHT: f32 = 180.0;
 
 const RUNTIME_SPRITE_IDS: &str = include_str!("../../../assets/runtime-sprites.txt");
+const BEASTIE_FONT_NAME: &str = "Beastie Tide";
 
 /// Optional runtime art, decoded and uploaded exactly once during game startup.
 /// Each semantic id resolves through `assets/final`, then `assets/generated`.
 pub struct AssetCatalog {
     images: HashMap<String, Image>,
+    custom_font: bool,
 }
 
 impl AssetCatalog {
@@ -31,7 +34,11 @@ impl AssetCatalog {
                 load_variant(ctx, assets_root, id, Some(frame), &mut images);
             }
         }
-        Self { images }
+        let custom_font = load_font(ctx, assets_root);
+        Self {
+            images,
+            custom_font,
+        }
     }
 
     fn image(&self, command: &SpriteCommand) -> Option<&Image> {
@@ -59,6 +66,19 @@ impl AssetCatalog {
         self.images.contains_key(&asset_key(id, None))
             || self.images.contains_key(&asset_key(id, Some(0)))
     }
+}
+
+fn load_font(ctx: &mut Context, assets_root: &Path) -> bool {
+    for source in ["final", "generated"] {
+        let path = assets_root.join(source).join("ui/beastie-tide.ttf");
+        let Ok(bytes) = fs::read(path) else { continue };
+        let Ok(font) = FontData::from_vec(bytes) else {
+            continue;
+        };
+        ctx.gfx.add_font(BEASTIE_FONT_NAME, font);
+        return true;
+    }
+    false
 }
 
 fn load_variant(
@@ -209,7 +229,7 @@ pub fn execute_plan(
             draw_sprite(ctx, canvas, command, assets)?;
         }
         for command in plan.text.iter().filter(|command| command.layer == layer) {
-            draw_text(ctx, canvas, command)?;
+            draw_text(ctx, canvas, command, assets)?;
         }
     }
     Ok(())
@@ -517,12 +537,36 @@ fn draw_creature(ctx: &mut Context, canvas: &mut Canvas, pose: &str, x: f32, y: 
     Ok(())
 }
 
-fn draw_text(ctx: &mut Context, canvas: &mut Canvas, command: &TextCommand) -> GameResult {
+fn draw_text(
+    ctx: &mut Context,
+    canvas: &mut Canvas,
+    command: &TextCommand,
+    assets: &AssetCatalog,
+) -> GameResult {
+    if assets.custom_font {
+        let maximum_width = if command.id == "speech/text" {
+            140.0
+        } else {
+            (315 - command.x) as f32
+        };
+        let mut rendered = Text::new(
+            TextFragment::new(command.text.clone())
+                .font(BEASTIE_FONT_NAME)
+                .scale(8.0 * f32::from(command.scale.clamp(1, 2)))
+                .color(text_color(&command.id)),
+        );
+        rendered.set_bounds([maximum_width, f32::INFINITY]);
+        canvas.draw(
+            &rendered,
+            DrawParam::default().dest([command.x as f32, command.y as f32]),
+        );
+        return Ok(());
+    }
     let pixel_scale = i32::from(command.scale.clamp(1, 2));
     let glyph_advance = 6 * pixel_scale;
     let line_advance = 8 * pixel_scale;
     let maximum_width = if command.id == "speech/text" {
-        150
+        140
     } else {
         315 - command.x
     };
@@ -565,6 +609,20 @@ fn draw_text(ctx: &mut Context, canvas: &mut Canvas, command: &TextCommand) -> G
     }
     canvas.draw(&Mesh::from_data(ctx, builder.build()), DrawParam::default());
     Ok(())
+}
+
+fn text_color(id: &str) -> Color {
+    if id.ends_with("/title") || id.contains("warning") {
+        Color::from_rgb(239, 201, 123)
+    } else if id.contains("status/") || id.contains("summary-behavior") {
+        Color::from_rgb(137, 190, 182)
+    } else if id.contains("input-text") {
+        Color::from_rgb(202, 225, 209)
+    } else if id.ends_with("-value") {
+        Color::from_rgb(239, 174, 130)
+    } else {
+        Color::from_rgb(241, 224, 183)
+    }
 }
 
 fn rectangle(

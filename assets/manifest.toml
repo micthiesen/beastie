@@ -1205,6 +1205,94 @@ terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["generated/creature-v1/mood/resentful-south.png"]
 human_modifications = "selected the clean closed and open angry mouth positions; rejected the third generated position because it invented a red tongue"
 
+[[asset]]
+id = "ui/status-pearl"
+kind = "sprite"
+width = 20
+height = 20
+transparent = true
+palette = "style/main.hex"
+max_colors = 256
+palette_tolerance = 255
+alpha_policy = "any"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "a70a5b02-3ccf-4905-ae71-1bef41073264"
+generated_at = "2026-08-15"
+prompt = "Text-free polished pixel-art aquarium game HUD fixed to the bottom of the screen, with midnight teal glass, aged brass, sea-glass cyan, warm coral, and a creature-status pearl."
+seed = "82731"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+human_modifications = "cropped the authored status pearl and resized it to 20x20 with nearest-neighbor sampling"
+
+[[asset]]
+id = "ui/button-food"
+kind = "sprite"
+width = 19
+height = 19
+transparent = true
+palette = "style/main.hex"
+max_colors = 256
+palette_tolerance = 255
+alpha_policy = "any"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "a70a5b02-3ccf-4905-ae71-1bef41073264"
+generated_at = "2026-08-15"
+prompt = "Text-free polished pixel-art aquarium game HUD fixed to the bottom of the screen, with a tactile food icon button in midnight teal, aged brass, and warm coral."
+seed = "82731"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+human_modifications = "cropped the authored food button and resized it to 19x19 with nearest-neighbor sampling"
+
+[[asset]]
+id = "ui/button-settings"
+kind = "sprite"
+width = 19
+height = 19
+transparent = true
+palette = "style/main.hex"
+max_colors = 256
+palette_tolerance = 255
+alpha_policy = "any"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "a70a5b02-3ccf-4905-ae71-1bef41073264"
+generated_at = "2026-08-15"
+prompt = "Text-free polished pixel-art aquarium game HUD fixed to the bottom of the screen, with a tactile settings gear button in midnight teal, aged brass, and warm coral."
+seed = "82731"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+human_modifications = "cropped the authored settings button and resized it to 19x19 with nearest-neighbor sampling"
+
+[[asset]]
+id = "ui/button-send"
+kind = "sprite"
+width = 19
+height = 19
+transparent = true
+palette = "style/main.hex"
+max_colors = 256
+palette_tolerance = 255
+alpha_policy = "any"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "6ae3c126-12dd-4416-81c5-29ced6590d32"
+generated_at = "2026-08-15"
+prompt = "One single square pixel-art icon button for sending a creature message, with a clear right-pointing swimming-fin arrow inside a midnight teal inset, aged brass rim, and warm coral accent."
+seed = "82744"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+human_modifications = "cropped the authored send button and resized it from 23x23 to 19x19 with nearest-neighbor sampling"
+
 [[audio]]
 id = "audio/ui/select"
 sample_rate = 44100

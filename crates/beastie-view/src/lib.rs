@@ -21,6 +21,15 @@ pub const CREATURE_HIT_HEIGHT: i32 = 84;
 pub const SPEECH_LIFETIME_MS: u64 = 8_000;
 pub const CUE_QUEUE_LIMIT: usize = 8;
 
+const UI_SHADOW: [u8; 4] = [4, 10, 16, 220];
+const UI_EDGE: [u8; 4] = [129, 112, 76, 255];
+const UI_EDGE_LIT: [u8; 4] = [190, 169, 111, 255];
+const UI_PANEL: [u8; 4] = [12, 29, 39, 248];
+const UI_PANEL_INSET: [u8; 4] = [7, 19, 29, 255];
+const UI_BUTTON: [u8; 4] = [24, 52, 61, 255];
+const UI_BUTTON_DISABLED: [u8; 4] = [19, 31, 39, 230];
+const UI_CORAL: [u8; 4] = [194, 103, 84, 255];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rect {
@@ -524,8 +533,15 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (RenderPlan, AudioPlan) {
 
     add_objects(state, &mut sprites);
     add_creature(state, view, &mut sprites, &mut rects);
-    add_speech(view, &mut rects, &mut text, &mut hit_regions);
-    add_persistent_bar(state, view, &mut rects, &mut text, &mut hit_regions);
+    add_speech(state, view, &mut rects, &mut text, &mut hit_regions);
+    add_persistent_bar(
+        state,
+        view,
+        &mut sprites,
+        &mut rects,
+        &mut text,
+        &mut hit_regions,
+    );
     add_temporary_mode(view, &mut rects, &mut text, &mut hit_regions);
     add_status(view, state.elapsed_ms, &mut rects, &mut text);
     add_hover_and_focus(view, &hit_regions, &mut rects, &mut text);
@@ -752,9 +768,14 @@ fn add_creature(
     let mut y = (center_y - CREATURE_CANVAS_SIZE / 2)
         .clamp(-50, AQUARIUM_BOTTOM - CREATURE_CANVAS_SIZE + 50);
     let cue = view.active_cue(state.elapsed_ms);
-    if dialogue_active(view)
-        || matches!(creature.gaze, GazeTarget::Player)
-        || cue.is_some_and(cue_has_body_override)
+    if dialogue_active(view) {
+        x = if center_x >= LOGICAL_WIDTH / 2 {
+            x.clamp(168, 184)
+        } else {
+            x.clamp(-16, -12)
+        };
+        y = y.clamp(-20, -8);
+    } else if matches!(creature.gaze, GazeTarget::Player) || cue.is_some_and(cue_has_body_override)
     {
         // Full-body front-facing acting is the dialogue close-up. Keep every opaque pixel of the
         // largest curated state inside the 320x130 water stage even if world movement reached an
@@ -939,110 +960,124 @@ fn world_hit_regions(state: &WorldState, mode: UiMode) -> Vec<HitRegion> {
 fn add_persistent_bar(
     state: &WorldState,
     view: &ViewState,
+    sprites: &mut Vec<SpriteCommand>,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
     let summary = creature_summary(state);
     let text_scale = view.text_scale.clamp(1, 2);
-    let hint = input_hint(view.controller_active, text_scale);
     let glyph_width = i32::from(text_scale) * 6;
-    let hint_width = i32::try_from(hint.chars().count()).unwrap_or_default() * glyph_width;
-    let hint_x = LOGICAL_WIDTH - 5 - hint_width;
-    let summary_capacity = usize::try_from((hint_x - 11) / glyph_width).unwrap_or_default();
-    let summary_line = compact_summary(&summary, summary_capacity);
+    rects.push(rect(
+        "compose/bar-shadow",
+        Rect {
+            x: 0,
+            y: 129,
+            w: 320,
+            h: 51,
+        },
+        UI_SHADOW,
+        29,
+    ));
+    rects.push(rect(
+        "compose/bar-edge",
+        Rect {
+            x: 0,
+            y: 130,
+            w: 320,
+            h: 50,
+        },
+        UI_EDGE,
+        30,
+    ));
     rects.push(rect(
         "compose/bar",
         Rect {
-            x: 0,
-            y: COMPOSE_BAR_TOP,
-            w: LOGICAL_WIDTH,
-            h: LOGICAL_HEIGHT - COMPOSE_BAR_TOP,
+            x: 1,
+            y: 132,
+            w: 318,
+            h: 48,
         },
-        [19, 25, 38, 245],
-        30,
-    ));
-    if visible_status(view, state.elapsed_ms).is_none() {
-        text.push(label("compose/summary", &summary_line, 5, 135, 32));
-        text.push(label("compose/input-hints", hint, hint_x, 135, 32));
-    }
-
-    let (input_rect, food_rect, settings_rect, send_rect) = if text_scale >= 2 {
-        (
-            Rect {
-                x: 5,
-                y: 152,
-                w: 155,
-                h: 23,
-            },
-            Rect {
-                x: 163,
-                y: 152,
-                w: 50,
-                h: 23,
-            },
-            Rect {
-                x: 216,
-                y: 152,
-                w: 40,
-                h: 23,
-            },
-            Rect {
-                x: 259,
-                y: 152,
-                w: 57,
-                h: 23,
-            },
-        )
-    } else {
-        (
-            Rect {
-                x: 5,
-                y: 152,
-                w: 215,
-                h: 23,
-            },
-            Rect {
-                x: 223,
-                y: 152,
-                w: 29,
-                h: 23,
-            },
-            Rect {
-                x: 255,
-                y: 152,
-                w: 23,
-                h: 23,
-            },
-            Rect {
-                x: 281,
-                y: 152,
-                w: 35,
-                h: 23,
-            },
-        )
-    };
-    rects.push(rect(
-        "compose/input-background",
-        input_rect,
-        [39, 49, 65, 255],
+        UI_PANEL,
         31,
     ));
+    rects.push(rect(
+        "compose/bar-glint",
+        Rect {
+            x: 2,
+            y: 132,
+            w: 316,
+            h: 1,
+        },
+        UI_EDGE_LIT,
+        32,
+    ));
+
+    sprites.push(ui_sprite("ui/status-pearl", 4, 132, 33));
+    rects.push(rect(
+        "compose/mood-dot",
+        Rect {
+            x: 18,
+            y: 142,
+            w: 3,
+            h: 3,
+        },
+        mood_color(summary.mood),
+        34,
+    ));
+    if visible_status(view, state.elapsed_ms).is_none() {
+        text.push(label(
+            "compose/summary-name",
+            &head_fit(&summary.name, if text_scale >= 2 { 8 } else { 16 }),
+            28,
+            136,
+            34,
+        ));
+        text.push(label(
+            "compose/summary-behavior",
+            &head_fit(&summary.behavior, if text_scale >= 2 { 10 } else { 22 }),
+            if text_scale >= 2 { 135 } else { 142 },
+            136,
+            34,
+        ));
+    }
+
+    let input_rect = Rect {
+        x: 5,
+        y: 153,
+        w: 230,
+        h: 23,
+    };
+    let food_rect = Rect {
+        x: 240,
+        y: 153,
+        w: 23,
+        h: 23,
+    };
+    let settings_rect = Rect {
+        x: 267,
+        y: 153,
+        w: 23,
+        h: 23,
+    };
+    let send_rect = Rect {
+        x: 294,
+        y: 153,
+        w: 22,
+        h: 23,
+    };
+    add_inset("compose/input", input_rect, 31, rects);
     let input_value = if view.pending {
-        "Thinking...".to_owned()
+        format!("{} is thinking...", summary.name)
     } else if view.text_buffer.is_empty() {
-        if text_scale >= 2 {
-            "Message...".to_owned()
-        } else {
-            "Say something...".to_owned()
-        }
+        format!("Talk to {}...", summary.name)
     } else {
         tail_fit(
             &view.text_buffer,
             usize::try_from((input_rect.w - 11) / glyph_width).unwrap_or(1),
         )
     };
-    text.push(label("compose/input-text", &input_value, 10, 159, 32));
+    text.push(label("compose/input-text", &input_value, 11, 160, 34));
     hits.push(hit(
         "compose/input",
         Some(UiTarget::ComposeField),
@@ -1059,18 +1094,12 @@ fn add_persistent_bar(
         !view.pending,
         "Food",
     ));
-    rects.push(rect(
-        "compose/food-background",
-        hits.last().expect("action hit exists").rect,
-        [69, 75, 92, 255],
-        31,
-    ));
-    text.push(label(
-        "compose/food-label",
-        "Food",
-        food_rect.x + if text_scale >= 2 { 2 } else { 3 },
-        159,
-        32,
+    add_button_chrome("compose/food", food_rect, !view.pending, false, 31, rects);
+    sprites.push(ui_sprite(
+        "ui/button-food",
+        food_rect.x + 2,
+        food_rect.y + 2,
+        35,
     ));
     hits.push(hit(
         "compose/settings",
@@ -1080,18 +1109,19 @@ fn add_persistent_bar(
         !view.pending,
         "Settings",
     ));
-    rects.push(rect(
-        "compose/settings-background",
-        hits.last().expect("settings hit exists").rect,
-        [69, 75, 92, 255],
+    add_button_chrome(
+        "compose/settings",
+        settings_rect,
+        !view.pending,
+        false,
         31,
-    ));
-    text.push(label(
-        "compose/settings-label",
-        "Set",
-        settings_rect.x + if text_scale >= 2 { 2 } else { 3 },
-        159,
-        32,
+        rects,
+    );
+    sprites.push(ui_sprite(
+        "ui/button-settings",
+        settings_rect.x + 2,
+        settings_rect.y + 2,
+        35,
     ));
     let send_action = if matches!(view.mode, UiMode::Rename) {
         UiAction::SubmitName
@@ -1111,60 +1141,23 @@ fn add_persistent_bar(
         !view.pending && !view.text_buffer.trim().is_empty(),
         send_label,
     ));
-    rects.push(rect(
-        "compose/send-background",
-        hits.last().expect("send hit exists").rect,
-        if view.text_buffer.trim().is_empty() {
-            [44, 48, 59, 255]
-        } else {
-            [108, 91, 80, 255]
-        },
+    let send_enabled = !view.pending && !view.text_buffer.trim().is_empty();
+    add_button_chrome(
+        "compose/send",
+        send_rect,
+        send_enabled,
+        send_enabled,
         31,
-    ));
-    text.push(label(
-        "compose/send-label",
-        send_label,
-        send_rect.x + if text_scale >= 2 { 4 } else { 3 },
-        159,
-        32,
-    ));
-}
-
-fn input_hint(controller_active: bool, text_scale: u8) -> &'static str {
-    match (controller_active, text_scale >= 2) {
-        (true, true) => "[A]/[B]",
-        (true, false) => "[A] select [B] back",
-        (false, true) => "Ent/Esc",
-        (false, false) => "Enter send  Esc back",
+        rects,
+    );
+    if send_enabled {
+        sprites.push(ui_sprite(
+            "ui/button-send",
+            send_rect.x + 2,
+            send_rect.y + 2,
+            35,
+        ));
     }
-}
-
-fn compact_summary(summary: &CreatureSummary, capacity: usize) -> String {
-    let values = [
-        summary.name.as_str(),
-        summary.mood_label.as_str(),
-        summary.behavior.as_str(),
-    ];
-    let separators = values.len() - 1;
-    let available = capacity.saturating_sub(separators);
-    let mut budgets = values.map(|value| value.chars().count());
-    while budgets.iter().sum::<usize>() > available {
-        let Some((index, _)) = budgets
-            .iter()
-            .enumerate()
-            .filter(|(_, budget)| **budget > 2)
-            .max_by_key(|(index, budget)| (**budget, usize::MAX - *index))
-        else {
-            break;
-        };
-        budgets[index] -= 1;
-    }
-    values
-        .into_iter()
-        .zip(budgets)
-        .map(|(value, budget)| head_fit(value, budget))
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 fn head_fit(value: &str, capacity: usize) -> String {
@@ -1265,7 +1258,7 @@ fn add_settings(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    rects.push(rect(
+    add_panel_chrome(
         "settings/panel",
         Rect {
             x: 5,
@@ -1273,9 +1266,9 @@ fn add_settings(
             w: 310,
             h: 124,
         },
-        [19, 25, 38, 250],
-        27,
-    ));
+        25,
+        rects,
+    );
     text.push(label("settings/title", "Settings", 12, 8, 29));
     let settings = [
         (
@@ -1389,12 +1382,7 @@ fn add_settings(
             true,
             setting,
         ));
-        rects.push(rect(
-            &format!("settings/{id}-background"),
-            button,
-            [69, 75, 92, 255],
-            28,
-        ));
+        add_button_chrome(&format!("settings/{id}"), button, true, false, 25, rects);
         text.push(label(
             &format!("settings/{id}-value"),
             value,
@@ -1406,7 +1394,7 @@ fn add_settings(
 }
 
 fn add_rename(view: &ViewState, rects: &mut Vec<RectCommand>, text: &mut Vec<TextCommand>) {
-    rects.push(rect(
+    add_panel_chrome(
         "rename/prompt-background",
         Rect {
             x: 74,
@@ -1414,9 +1402,9 @@ fn add_rename(view: &ViewState, rects: &mut Vec<RectCommand>, text: &mut Vec<Tex
             w: 172,
             h: 27,
         },
-        [19, 25, 38, 245],
-        27,
-    ));
+        25,
+        rects,
+    );
     text.push(label(
         "rename/prompt",
         if view.text_buffer.trim().is_empty() {
@@ -1436,7 +1424,7 @@ fn add_data_management(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    rects.push(rect(
+    add_panel_chrome(
         "data/panel",
         Rect {
             x: 43,
@@ -1444,9 +1432,9 @@ fn add_data_management(
             w: 234,
             h: 108,
         },
-        [19, 25, 38, 250],
-        27,
-    ));
+        25,
+        rects,
+    );
     text.push(label("data/title", "Save & local data", 51, 23, 29));
     let actions = [
         ("recover", "Recover backup", UiAction::RecoverBackup, true),
@@ -1483,16 +1471,7 @@ fn add_data_management(
             enabled,
             name,
         ));
-        rects.push(rect(
-            &format!("data/{id}-background"),
-            button,
-            if enabled {
-                [69, 75, 92, 255]
-            } else {
-                [39, 43, 53, 255]
-            },
-            28,
-        ));
+        add_button_chrome(&format!("data/{id}"), button, enabled, false, 25, rects);
         text.push(label(
             &format!("data/{id}-label"),
             name,
@@ -1508,7 +1487,7 @@ fn add_reset_confirmation(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    rects.push(rect(
+    add_panel_chrome(
         "reset/panel",
         Rect {
             x: 49,
@@ -1516,9 +1495,9 @@ fn add_reset_confirmation(
             w: 222,
             h: 59,
         },
-        [35, 24, 32, 252],
-        31,
-    ));
+        29,
+        rects,
+    );
     text.push(label(
         "reset/warning",
         "Reset this creature? Backup stays recoverable.",
@@ -1544,16 +1523,14 @@ fn add_reset_confirmation(
             true,
             name,
         ));
-        rects.push(rect(
-            &format!("reset/{id}-background"),
+        add_button_chrome(
+            &format!("reset/{id}"),
             button,
-            if id == "confirm" {
-                [122, 61, 67, 255]
-            } else {
-                [69, 75, 92, 255]
-            },
-            32,
-        ));
+            true,
+            id == "confirm",
+            29,
+            rects,
+        );
         text.push(label(
             &format!("reset/{id}-label"),
             name,
@@ -1570,7 +1547,7 @@ fn add_bindings(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    rects.push(rect(
+    add_panel_chrome(
         "bindings/panel",
         Rect {
             x: 38,
@@ -1578,9 +1555,9 @@ fn add_bindings(
             w: 244,
             h: 110,
         },
-        [19, 25, 38, 250],
-        27,
-    ));
+        25,
+        rects,
+    );
     text.push(label("bindings/title", "Input bindings", 46, 20, 29));
     let rows = [
         (
@@ -1632,12 +1609,14 @@ fn add_bindings(
             true,
             &format!("Rebind {name}"),
         ));
-        rects.push(rect(
-            &format!("bindings/{}-background", bindable_id(action)),
+        add_button_chrome(
+            &format!("bindings/{}", bindable_id(action)),
             button,
-            [69, 75, 92, 255],
-            28,
-        ));
+            true,
+            false,
+            25,
+            rects,
+        );
         text.push(label(
             &format!("bindings/{}-value", bindable_id(action)),
             binding,
@@ -1653,7 +1632,7 @@ fn add_rebinding(
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
 ) {
-    rects.push(rect(
+    add_panel_chrome(
         "bindings/capture-panel",
         Rect {
             x: 53,
@@ -1661,9 +1640,9 @@ fn add_rebinding(
             w: 214,
             h: 42,
         },
-        [19, 25, 38, 252],
-        31,
-    ));
+        29,
+        rects,
+    );
     text.push(label(
         "bindings/capture-prompt",
         &format!("Press a key for {}", bindable_name(action)),
@@ -1744,7 +1723,7 @@ fn add_action_strip(
     let item_width = 72;
     let width = item_width * i32::try_from(actions.len()).unwrap_or_default() + 4;
     let start = (LOGICAL_WIDTH - width) / 2;
-    rects.push(rect(
+    add_panel_chrome(
         &format!("mode/{id}-panel"),
         Rect {
             x: start,
@@ -1752,9 +1731,9 @@ fn add_action_strip(
             w: width,
             h: 27,
         },
-        [19, 25, 38, 245],
-        27,
-    ));
+        25,
+        rects,
+    );
     for (index, action) in actions.iter().copied().enumerate() {
         let button_rect = Rect {
             x: start + 2 + i32::try_from(index).unwrap_or_default() * item_width,
@@ -1772,12 +1751,7 @@ fn add_action_strip(
             true,
             &label_text,
         ));
-        rects.push(rect(
-            &format!("{region_id}-background"),
-            button_rect,
-            [69, 75, 92, 255],
-            28,
-        ));
+        add_button_chrome(&region_id, button_rect, true, false, 25, rects);
         text.push(label(
             &format!("{region_id}-label"),
             &label_text,
@@ -1795,7 +1769,7 @@ fn add_keyboard(
     hits: &mut Vec<HitRegion>,
 ) {
     const KEYS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ .,?!";
-    rects.push(rect(
+    add_panel_chrome(
         "keyboard/panel",
         Rect {
             x: 6,
@@ -1803,9 +1777,9 @@ fn add_keyboard(
             w: 308,
             h: 124,
         },
-        [19, 25, 38, 248],
-        27,
-    ));
+        25,
+        rects,
+    );
     for (index, character) in KEYS.chars().enumerate() {
         let column = i32::try_from(index % 11).unwrap_or_default();
         let row = i32::try_from(index / 11).unwrap_or_default();
@@ -1877,16 +1851,7 @@ fn add_key(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    rects.push(rect(
-        &format!("{id}-background"),
-        key,
-        if enabled {
-            [69, 75, 92, 255]
-        } else {
-            [39, 43, 53, 255]
-        },
-        28,
-    ));
+    add_button_chrome(id, key, enabled, false, 25, rects);
     text.push(label(
         &format!("{id}-label"),
         shown,
@@ -1898,6 +1863,7 @@ fn add_key(
 }
 
 fn add_speech(
+    state: &WorldState,
     view: &ViewState,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
@@ -1910,26 +1876,62 @@ fn add_speech(
     else {
         return;
     };
-    rects.push(rect(
+    let (creature_x, _) = world_to_logical(state.creature.aquarium.position);
+    let panel_x = if creature_x >= LOGICAL_WIDTH / 2 {
+        5
+    } else {
+        155
+    };
+    add_panel_chrome(
         "speech/panel",
         Rect {
-            x: 73,
-            y: 7,
-            w: 174,
-            h: 43,
+            x: panel_x,
+            y: 5,
+            w: 160,
+            h: 47,
         },
-        [22, 31, 43, 238],
+        22,
+        rects,
+    );
+    rects.push(rect(
+        "speech/tail-edge",
+        Rect {
+            x: if panel_x < 100 {
+                panel_x + 148
+            } else {
+                panel_x + 3
+            },
+            y: 70,
+            w: 9,
+            h: 3,
+        },
+        UI_EDGE,
         24,
     ));
-    text.push(label("speech/text", speech, 80, 14, 25));
+    rects.push(rect(
+        "speech/tail",
+        Rect {
+            x: if panel_x < 100 {
+                panel_x + 150
+            } else {
+                panel_x + 5
+            },
+            y: 70,
+            w: 5,
+            h: 5,
+        },
+        UI_PANEL,
+        25,
+    ));
+    text.push(label("speech/text", speech, panel_x + 9, 13, 27));
     for (index, reaction) in [Reaction::Laugh, Reaction::Disapprove, Reaction::Comfort]
         .into_iter()
         .enumerate()
     {
         let reaction_rect = Rect {
-            x: 77 + i32::try_from(index).unwrap_or_default() * 56,
+            x: panel_x + 6 + i32::try_from(index).unwrap_or_default() * 50,
             y: 52,
-            w: 54,
+            w: 48,
             h: 18,
         };
         hits.push(hit(
@@ -1940,6 +1942,15 @@ fn add_speech(
             true,
             reaction_name(reaction),
         ));
+        add_button_chrome(
+            &format!("reaction/{}", reaction_name(reaction)),
+            reaction_rect,
+            true,
+            false,
+            26,
+            rects,
+        );
+        add_reaction_icon(reaction, reaction_rect, 30, rects);
     }
 }
 
@@ -1954,8 +1965,8 @@ fn add_status(
     };
     let text_scale = view.text_scale.clamp(1, 2);
     let glyph_width = usize::from(text_scale) * 6;
-    let fitted = head_fit(message, 300 / glyph_width);
-    rects.push(rect(
+    let fitted = head_fit(message, 288 / glyph_width);
+    add_panel_chrome(
         "status/background",
         Rect {
             x: 4,
@@ -1963,10 +1974,10 @@ fn add_status(
             w: 312,
             h: 22,
         },
-        [36, 29, 42, 246],
-        36,
-    ));
-    text.push(label("status/message", &fitted, 10, 133, 37));
+        35,
+        rects,
+    );
+    text.push(label("status/message", &fitted, 10, 136, 39));
 }
 
 fn visible_status(view: &ViewState, now_ms: u64) -> Option<&str> {
@@ -1990,7 +2001,9 @@ fn add_hover_and_focus(
 ) {
     for (id, color, command_id) in [
         (
-            view.hovered_region.as_deref(),
+            view.hovered_region
+                .as_deref()
+                .filter(|hovered| Some(*hovered) != view.focused_region.as_deref()),
             [142, 231, 202, 255],
             "ui/hover",
         ),
@@ -2014,26 +2027,35 @@ fn add_hover_and_focus(
             layer: 34,
             outline: true,
         });
-        if command_id == "ui/hover" && hit_region.target.is_some() {
-            let label_width = (i32::try_from(hit_region.label.chars().count()).unwrap_or(12) * 6
-                + 8)
-            .clamp(24, 120);
-            let x = hit_region.rect.x.clamp(2, LOGICAL_WIDTH - label_width - 2);
-            let y = (hit_region.rect.y - 15).clamp(2, AQUARIUM_BOTTOM - 15);
-            rects.push(rect(
-                "ui/hover-label-background",
-                Rect {
-                    x,
-                    y,
-                    w: label_width,
-                    h: 13,
-                },
-                [19, 25, 38, 235],
-                34,
-            ));
-            text.push(label("ui/hover-label", &hit_region.label, x + 4, y + 3, 35));
-        }
     }
+
+    let described = view.hovered_region.as_deref().or_else(|| {
+        view.controller_active
+            .then_some(view.focused_region.as_deref())
+            .flatten()
+    });
+    let Some(hit_region) = described.and_then(|id| {
+        hits.iter()
+            .find(|hit_region| hit_region.id == id && hit_region.enabled)
+    }) else {
+        return;
+    };
+    let label_width =
+        (i32::try_from(hit_region.label.chars().count()).unwrap_or(12) * 6 + 10).clamp(28, 140);
+    let x = hit_region.rect.x.clamp(2, LOGICAL_WIDTH - label_width - 2);
+    let y = (hit_region.rect.y - 16).clamp(2, AQUARIUM_BOTTOM - 16);
+    add_panel_chrome(
+        "ui/hover-label-background",
+        Rect {
+            x,
+            y,
+            w: label_width,
+            h: 14,
+        },
+        34,
+        rects,
+    );
+    text.push(label("ui/hover-label", &hit_region.label, x + 5, y + 4, 38));
 }
 
 fn add_pixel_grid(rects: &mut Vec<RectCommand>) {
@@ -2441,6 +2463,292 @@ fn rect(id: &str, dimensions: Rect, color: [u8; 4], layer: i16) -> RectCommand {
     }
 }
 
+fn ui_sprite(id: &str, x: i32, y: i32, layer: i16) -> SpriteCommand {
+    SpriteCommand {
+        id: id.to_owned(),
+        x,
+        y,
+        layer,
+        frame: 0,
+        flip: SpriteFlip::None,
+        source_rect: None,
+        scale: 1,
+    }
+}
+
+fn add_panel_chrome(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<RectCommand>) {
+    rects.push(rect(
+        &format!("{id}-shadow"),
+        Rect {
+            x: dimensions.x + 2,
+            y: dimensions.y + 2,
+            ..dimensions
+        },
+        UI_SHADOW,
+        layer,
+    ));
+    rects.push(rect(&format!("{id}-edge"), dimensions, UI_EDGE, layer + 1));
+    rects.push(rect(
+        id,
+        Rect {
+            x: dimensions.x + 1,
+            y: dimensions.y + 1,
+            w: dimensions.w - 2,
+            h: dimensions.h - 2,
+        },
+        UI_PANEL,
+        layer + 2,
+    ));
+    rects.push(rect(
+        &format!("{id}-glint"),
+        Rect {
+            x: dimensions.x + 2,
+            y: dimensions.y + 2,
+            w: dimensions.w - 4,
+            h: 1,
+        },
+        UI_EDGE_LIT,
+        layer + 3,
+    ));
+}
+
+fn add_reaction_icon(
+    reaction: Reaction,
+    dimensions: Rect,
+    layer: i16,
+    rects: &mut Vec<RectCommand>,
+) {
+    let center_x = dimensions.x + dimensions.w / 2;
+    let y = dimensions.y + 6;
+    let color = [235, 207, 148, 255];
+    match reaction {
+        Reaction::Laugh => {
+            rects.push(rect(
+                "reaction/laugh-left-eye",
+                Rect {
+                    x: center_x - 7,
+                    y,
+                    w: 3,
+                    h: 2,
+                },
+                color,
+                layer,
+            ));
+            rects.push(rect(
+                "reaction/laugh-right-eye",
+                Rect {
+                    x: center_x + 4,
+                    y,
+                    w: 3,
+                    h: 2,
+                },
+                color,
+                layer,
+            ));
+            rects.push(rect(
+                "reaction/laugh-mouth",
+                Rect {
+                    x: center_x - 6,
+                    y: y + 4,
+                    w: 12,
+                    h: 2,
+                },
+                color,
+                layer,
+            ));
+        }
+        Reaction::Disapprove => {
+            rects.push(rect(
+                "reaction/no-left-eye",
+                Rect {
+                    x: center_x - 6,
+                    y,
+                    w: 3,
+                    h: 3,
+                },
+                UI_CORAL,
+                layer,
+            ));
+            rects.push(rect(
+                "reaction/no-right-eye",
+                Rect {
+                    x: center_x + 3,
+                    y,
+                    w: 3,
+                    h: 3,
+                },
+                UI_CORAL,
+                layer,
+            ));
+            rects.push(rect(
+                "reaction/no-mouth",
+                Rect {
+                    x: center_x - 6,
+                    y: y + 6,
+                    w: 12,
+                    h: 2,
+                },
+                UI_CORAL,
+                layer,
+            ));
+        }
+        Reaction::Comfort => {
+            for (id, icon) in [
+                (
+                    "top",
+                    Rect {
+                        x: center_x - 5,
+                        y,
+                        w: 4,
+                        h: 3,
+                    },
+                ),
+                (
+                    "top-right",
+                    Rect {
+                        x: center_x + 1,
+                        y,
+                        w: 4,
+                        h: 3,
+                    },
+                ),
+                (
+                    "middle",
+                    Rect {
+                        x: center_x - 5,
+                        y: y + 2,
+                        w: 10,
+                        h: 3,
+                    },
+                ),
+                (
+                    "low",
+                    Rect {
+                        x: center_x - 3,
+                        y: y + 5,
+                        w: 6,
+                        h: 2,
+                    },
+                ),
+                (
+                    "tip",
+                    Rect {
+                        x: center_x - 1,
+                        y: y + 7,
+                        w: 2,
+                        h: 1,
+                    },
+                ),
+            ] {
+                rects.push(rect(&format!("reaction/heart-{id}"), icon, UI_CORAL, layer));
+            }
+        }
+    }
+}
+
+fn add_inset(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<RectCommand>) {
+    rects.push(rect(
+        &format!("{id}-shadow"),
+        Rect {
+            x: dimensions.x + 1,
+            y: dimensions.y + 1,
+            ..dimensions
+        },
+        UI_SHADOW,
+        layer,
+    ));
+    rects.push(rect(&format!("{id}-edge"), dimensions, UI_EDGE, layer + 1));
+    rects.push(rect(
+        &format!("{id}-background"),
+        Rect {
+            x: dimensions.x + 1,
+            y: dimensions.y + 1,
+            w: dimensions.w - 2,
+            h: dimensions.h - 2,
+        },
+        UI_PANEL_INSET,
+        layer + 2,
+    ));
+    rects.push(rect(
+        &format!("{id}-inner-glint"),
+        Rect {
+            x: dimensions.x + 2,
+            y: dimensions.y + 2,
+            w: dimensions.w - 4,
+            h: 1,
+        },
+        [50, 103, 105, 180],
+        layer + 3,
+    ));
+}
+
+fn add_button_chrome(
+    id: &str,
+    dimensions: Rect,
+    enabled: bool,
+    active: bool,
+    layer: i16,
+    rects: &mut Vec<RectCommand>,
+) {
+    rects.push(rect(
+        &format!("{id}-shadow"),
+        Rect {
+            x: dimensions.x + 1,
+            y: dimensions.y + 1,
+            ..dimensions
+        },
+        UI_SHADOW,
+        layer,
+    ));
+    rects.push(rect(
+        &format!("{id}-edge"),
+        dimensions,
+        if active { UI_CORAL } else { UI_EDGE },
+        layer + 1,
+    ));
+    rects.push(rect(
+        &format!("{id}-background"),
+        Rect {
+            x: dimensions.x + 1,
+            y: dimensions.y + 1,
+            w: dimensions.w - 2,
+            h: dimensions.h - 2,
+        },
+        if enabled {
+            UI_BUTTON
+        } else {
+            UI_BUTTON_DISABLED
+        },
+        layer + 2,
+    ));
+    rects.push(rect(
+        &format!("{id}-glint"),
+        Rect {
+            x: dimensions.x + 2,
+            y: dimensions.y + 2,
+            w: dimensions.w - 4,
+            h: 1,
+        },
+        if active {
+            [239, 159, 126, 230]
+        } else {
+            UI_EDGE_LIT
+        },
+        layer + 3,
+    ));
+}
+
+const fn mood_color(mood: Mood) -> [u8; 4] {
+    match mood {
+        Mood::Content => [123, 207, 177, 255],
+        Mood::Curious => [115, 191, 219, 255],
+        Mood::Hungry => [229, 168, 91, 255],
+        Mood::Sleepy => [153, 139, 195, 255],
+        Mood::Lonely => [113, 143, 179, 255],
+        Mood::Resentful => [213, 103, 91, 255],
+    }
+}
+
 fn label(id: &str, value: &str, x: i32, y: i32, layer: i16) -> TextCommand {
     TextCommand {
         id: id.to_owned(),
@@ -2795,7 +3103,7 @@ mod tests {
             ..ViewState::default()
         };
         let (render, _) = plan(&state, &view);
-        assert!(render.rects.iter().any(|rect| rect.id == "ui/hover"));
+        assert!(render.rects.iter().all(|rect| rect.id != "ui/hover"));
         assert!(render.rects.iter().any(|rect| rect.id == "ui/focus"));
         assert!(
             render
@@ -3253,42 +3561,41 @@ mod tests {
     }
 
     #[test]
-    fn controller_hints_replace_keyboard_hints() {
+    fn controls_are_explained_on_focus_instead_of_permanent_prose() {
         let state = WorldState::new(7, "Mop");
         let keyboard = plan(&state, &ViewState::default()).0;
         let controller = plan(
             &state,
             &ViewState {
                 controller_active: true,
+                focused_region: Some("compose/food".to_owned()),
                 ..ViewState::default()
             },
         )
         .0;
-        let hint = |render: &RenderPlan| {
-            render
+        assert!(
+            keyboard
                 .text
                 .iter()
-                .find(|text| text.id == "compose/input-hints")
-                .expect("input hints")
+                .all(|text| text.id != "compose/input-hints")
+        );
+        assert!(
+            controller
                 .text
-                .clone()
-        };
-        assert!(hint(&keyboard).contains("Enter"));
-        assert!(hint(&controller).contains("[A]"));
-        assert!(!hint(&controller).contains("Enter"));
+                .iter()
+                .all(|text| text.id != "compose/input-hints")
+        );
+        assert!(
+            controller
+                .text
+                .iter()
+                .any(|text| text.id == "ui/hover-label" && text.text == "Food")
+        );
     }
 
     #[test]
-    fn persistent_bar_keeps_long_summary_input_and_both_hint_styles_disjoint() {
+    fn persistent_bar_keeps_long_summary_input_and_icon_actions_disjoint() {
         let state = WorldState::new(7, "TwentyFourCharacterName!");
-        let longest = CreatureSummary {
-            name: "TwentyFourCharacterName!".to_owned(),
-            mood: Mood::Resentful,
-            mood_label: "resentful".to_owned(),
-            behavior: "noticed something".to_owned(),
-            stage: "day 99".to_owned(),
-            discovered_fact: None,
-        };
         for text_scale in [1, 2] {
             for controller_active in [false, true] {
                 let view = ViewState {
@@ -3299,16 +3606,16 @@ mod tests {
                     ..ViewState::default()
                 };
                 let render = plan(&state, &view).0;
-                let summary = render
+                let summary_name = render
                     .text
                     .iter()
-                    .find(|command| command.id == "compose/summary")
-                    .expect("summary");
-                let hint = render
+                    .find(|command| command.id == "compose/summary-name")
+                    .expect("summary name");
+                let summary_behavior = render
                     .text
                     .iter()
-                    .find(|command| command.id == "compose/input-hints")
-                    .expect("hint");
+                    .find(|command| command.id == "compose/summary-behavior")
+                    .expect("summary behavior");
                 let input = render
                     .text
                     .iter()
@@ -3320,32 +3627,138 @@ mod tests {
                     .find(|command| command.id == "compose/input-background")
                     .expect("input background")
                     .rect;
-                assert!(text_right(summary) < hint.x);
-                assert!(text_right(hint) <= LOGICAL_WIDTH - 5);
+                assert!(text_right(summary_name) < summary_behavior.x);
+                assert!(text_right(summary_behavior) <= LOGICAL_WIDTH - 5);
                 assert!(text_right(input) <= input_box.x + input_box.w - 5);
                 for action in ["food", "settings", "send"] {
-                    let label = render
-                        .text
+                    let icon = render
+                        .sprites
                         .iter()
-                        .find(|command| command.id == format!("compose/{action}-label"))
-                        .expect("action label");
+                        .find(|command| command.id == format!("ui/button-{action}"))
+                        .expect("action icon");
                     let background = render
                         .rects
                         .iter()
                         .find(|command| command.id == format!("compose/{action}-background"))
                         .expect("action background")
                         .rect;
-                    assert!(label.x >= background.x);
-                    assert!(text_right(label) <= background.x + background.w);
+                    assert!(icon.x >= background.x);
+                    assert!(icon.x + 19 <= background.x + background.w);
                     assert!(!rects_overlap(input_box, background));
                 }
+            }
+        }
+    }
 
-                let hint_capacity = usize::try_from((hint.x - 11) / (6 * i32::from(text_scale)))
-                    .expect("positive capacity");
-                let fitted = compact_summary(&longest, hint_capacity);
-                assert!(fitted.contains('/'));
-                assert_eq!(fitted.split('/').count(), 3);
-                assert!(fitted.chars().count() <= hint_capacity);
+    #[test]
+    fn ui_depth_bands_and_modal_hit_regions_are_unambiguous() {
+        let state = WorldState::new(7, "Mop");
+        for mode in [
+            UiMode::FoodChoice,
+            UiMode::ToyChoice,
+            UiMode::Settings,
+            UiMode::Bindings,
+            UiMode::DataManagement,
+            UiMode::ConfirmReset,
+            UiMode::OnScreenKeyboard,
+        ] {
+            let render = plan(
+                &state,
+                &ViewState {
+                    mode,
+                    ..ViewState::default()
+                },
+            )
+            .0;
+            for (index, left) in render
+                .hit_regions
+                .iter()
+                .filter(|hit| hit.enabled)
+                .enumerate()
+            {
+                for right in render
+                    .hit_regions
+                    .iter()
+                    .filter(|hit| hit.enabled)
+                    .skip(index + 1)
+                {
+                    assert!(
+                        !rects_overlap(left.rect, right.rect),
+                        "{mode:?}: {} overlaps {}",
+                        left.id,
+                        right.id
+                    );
+                }
+            }
+            for command in render.rects.iter().filter(|command| command.layer >= 22) {
+                assert!(
+                    command.rect.x >= 0
+                        && command.rect.y >= 0
+                        && command.rect.x + command.rect.w <= LOGICAL_WIDTH
+                        && command.rect.y + command.rect.h <= LOGICAL_HEIGHT,
+                    "{mode:?}: {} is outside the logical frame: {:?}",
+                    command.id,
+                    command.rect
+                );
+            }
+            let chrome_top = render
+                .rects
+                .iter()
+                .filter(|command| {
+                    !command.id.starts_with("compose/")
+                        && (command.id.contains("/panel") || command.id.ends_with("-background"))
+                })
+                .map(|command| command.layer)
+                .max()
+                .expect("modal chrome");
+            let modal_text_bottom = render
+                .text
+                .iter()
+                .filter(|command| !command.id.starts_with("compose/"))
+                .map(|command| command.layer)
+                .min()
+                .expect("modal text");
+            assert!(chrome_top <= modal_text_bottom, "{mode:?} depth order");
+        }
+    }
+
+    #[test]
+    fn speech_chooses_the_side_opposite_the_creature() {
+        for (creature_x, expect_panel_left) in [(8_500, true), (5_000, true), (1_500, false)] {
+            let mut state = WorldState::new(7, "Mop");
+            state.creature.aquarium.position = NormalizedPosition::new(creature_x, 4_000);
+            let render = plan(
+                &state,
+                &ViewState {
+                    speech: Some("berry remains bad".to_owned()),
+                    ..ViewState::default()
+                },
+            )
+            .0;
+            let panel = render
+                .rects
+                .iter()
+                .find(|command| command.id == "speech/panel")
+                .expect("speech panel")
+                .rect;
+            let body = render
+                .sprites
+                .iter()
+                .find(|command| command.layer == 12)
+                .expect("creature body");
+            if expect_panel_left {
+                assert!(panel.x + panel.w <= body.x);
+            } else {
+                assert!(body.x + CREATURE_CANVAS_SIZE <= panel.x);
+            }
+            let reactions = render
+                .hit_regions
+                .iter()
+                .filter(|hit| matches!(hit.target, Some(UiTarget::Reaction(_))))
+                .collect::<Vec<_>>();
+            assert_eq!(reactions.len(), 3);
+            for pair in reactions.windows(2) {
+                assert!(!rects_overlap(pair[0].rect, pair[1].rect));
             }
         }
     }
@@ -3399,7 +3812,9 @@ mod tests {
             assert!(text_right(message) <= status.x + status.w - 6);
             assert!(
                 render.text.iter().all(|command| {
-                    command.id != "compose/summary" && command.id != "compose/input-hints"
+                    command.id != "compose/summary-name"
+                        && command.id != "compose/summary-behavior"
+                        && command.id != "compose/input-hints"
                 }),
                 "status replaces, rather than overlaps, the summary row"
             );

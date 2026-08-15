@@ -820,6 +820,9 @@ impl Game {
                     self.persist()?;
                 }
             }
+            ScenarioStep::Ui(action) => {
+                self.apply_ui_action(action, false)?;
+            }
             ScenarioStep::Capture(name) => {
                 self.capture = Some(CaptureState::RenderPending(name));
                 ctx.gfx.window().request_redraw();

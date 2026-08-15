@@ -109,3 +109,8 @@ Before calling V1 accepted:
 Physical-controller and native Windows/Linux evidence remain honest release prerequisites unless
 the release scope is explicitly changed. Record dated evidence in the acceptance documents rather
 than turning an unperformed check into a prose claim.
+
+For interface-only work, `fixtures/scenarios/ui-polish-visible.jsonl` drives the same typed UI
+actions as real input and captures food, toy, settings, bindings, data, and reset-confirmation
+surfaces. The `ui` scenario command is intentionally allow-listed; it cannot inject arbitrary view
+state or bypass the ordinary `Game::apply_ui_action` path.

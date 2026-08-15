@@ -1,0 +1,14 @@
+{"version":1,"command":"ui","action":"open_food"}
+{"version":1,"command":"capture","name":"01-food-tray"}
+{"version":1,"command":"ui","action":"close"}
+{"version":1,"command":"ui","action":"open_toys"}
+{"version":1,"command":"capture","name":"02-toy-tray"}
+{"version":1,"command":"ui","action":"close"}
+{"version":1,"command":"ui","action":"open_settings"}
+{"version":1,"command":"capture","name":"03-settings"}
+{"version":1,"command":"ui","action":"open_bindings"}
+{"version":1,"command":"capture","name":"04-bindings"}
+{"version":1,"command":"ui","action":"open_data"}
+{"version":1,"command":"capture","name":"05-save-data"}
+{"version":1,"command":"ui","action":"request_reset"}
+{"version":1,"command":"capture","name":"06-reset-confirmation"}

@@ -3,12 +3,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use beastie_session::{CommandEnvelope, GameSession};
+use beastie_view::UiAction;
 use serde::Deserialize;
 use thiserror::Error;
 
 #[derive(Debug)]
 pub enum ScenarioStep {
     Session(CommandEnvelope),
+    Ui(UiAction),
     Capture(String),
 }
 
@@ -55,7 +57,45 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
         name: String,
     }
 
+    #[derive(Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum ScenarioUiAction {
+        OpenFood,
+        OpenToys,
+        OpenSettings,
+        OpenBindings,
+        OpenData,
+        RequestReset,
+        Close,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct UiControl {
+        version: u32,
+        command: String,
+        action: ScenarioUiAction,
+    }
+
     let kind: CommandKind = serde_json::from_str(line).map_err(ScenarioError::Json)?;
+    if kind.command == "ui" {
+        let control: UiControl = serde_json::from_str(line).map_err(ScenarioError::Json)?;
+        if control.version != beastie_session::SESSION_PROTOCOL_VERSION || control.command != "ui" {
+            return Err(ScenarioError::Command(
+                "unsupported UI control version".to_owned(),
+            ));
+        }
+        let action = match control.action {
+            ScenarioUiAction::OpenFood => UiAction::OpenFoodChoice,
+            ScenarioUiAction::OpenToys => UiAction::OpenToyChoice,
+            ScenarioUiAction::OpenSettings => UiAction::OpenSettings,
+            ScenarioUiAction::OpenBindings => UiAction::OpenBindings,
+            ScenarioUiAction::OpenData => UiAction::OpenDataManagement,
+            ScenarioUiAction::RequestReset => UiAction::RequestReset,
+            ScenarioUiAction::Close => UiAction::CancelMode,
+        };
+        return Ok(ScenarioStep::Ui(action));
+    }
     if kind.command != "capture" {
         return GameSession::parse_command(line)
             .map(ScenarioStep::Session)
@@ -112,6 +152,10 @@ mod tests {
         assert!(matches!(
             parse_step(r#"{"version":1,"command":"inspect"}"#),
             Ok(ScenarioStep::Session(_))
+        ));
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"ui","action":"open_settings"}"#),
+            Ok(ScenarioStep::Ui(UiAction::OpenSettings))
         ));
         assert!(matches!(
             parse_step(r#"{"version":1,"command":"capture","name":"room_1"}"#),

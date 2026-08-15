@@ -36,6 +36,31 @@ a more varied but incoherent loop. Repeated prompt violations are a reason to re
 existing animation, not to promote the least-bad reroll. The renderer's simple code-native
 creature remains only a missing-asset safety net and is never layered over shipped hero art.
 
+## Interface language
+
+The interface belongs to the aquarium rather than a terminal laid over it. Its compact interaction
+deck uses midnight teal glass, aged brass edges, sea-glass highlights, and warm coral only for an
+available primary action. The permanent surface contains one creature pearl, name, current visible
+behavior, the always-focused message well, and three icon-led actions. Keyboard instructions are
+not permanent prose. Hover and controller focus reveal the semantic label only when it is useful.
+
+Panels use four explicit depth bands: shadow, brass edge, dark inset, then a one-pixel lit rim.
+Authored icons sit above those bands; text sits above the panel that owns it; hover/focus and
+temporary status sit above ordinary chrome. Speech chooses the side opposite the creature so a
+caption or reaction row cannot cover the face. Settings, food/toy trays, bindings, data management,
+the on-screen keyboard, and destructive confirmation reuse the same material and depth rules.
+
+Runtime text uses the PixelLab-generated `Beastie Tide` TrueType font at an integer logical size.
+It was generated as an 8-pixel mixed-case face specifically to avoid monospace terminal and arcade
+associations. The runtime loads `assets/generated/ui/beastie-tide.ttf` once, and retains the former
+hard-pixel built-in font only as a missing/corrupt-asset fallback. Font job
+`3598bda8-bbd9-4fa3-85fe-4594e28c4b4f`, provider-returned seed `4819`, used: “Highly legible
+friendly aquatic storybook pixel font for a cozy strange creature game. Soft squared curves, open
+counters, distinctive lowercase, compact proportions, warm handmade character, crisp at native
+size. Avoid monospace terminal, arcade, sci-fi, gothic, bubbly novelty, outlines, shadows,
+gradients, and distressed texture.” PixelLab reported three suspect glyphs, so visible scenario text
+and the complete supported input set remain regression surfaces.
+
 ## Pixel contract
 
 - The logical framebuffer remains 320x180. Draw sprites on whole logical pixels.

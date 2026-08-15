@@ -63,12 +63,16 @@ absent optional file never blocks play.
 
 The persistent compose bar, shallow contextual actions, food-drop mode, settings, input bindings,
 save recovery/reset confirmation, transcript controls, and naming are declarative UI. Exact need,
-trust, and resentment values never appear in the player summary.
+trust, and resentment values never appear in the player summary. The compose deck is icon-led and
+always focused, while help is contextual to hover or controller focus rather than a permanent line
+of shortcut prose. Modal chrome, text, authored icons, status, and focus rings occupy explicit
+layer bands. Speech panels choose the side opposite the creature.
 
 Runtime sprite IDs resolve through the checked asset manifest, preferring `assets/final` over
 `assets/generated`. The shell decodes assets once at startup. Missing image, sound, speech, model,
-or audio-device paths degrade without blocking deterministic play. See [art-bible.md](art-bible.md)
-and [audio-direction.md](audio-direction.md).
+font, or audio-device paths degrade without blocking deterministic play. The PixelLab-generated
+mixed-case UI font loads once beside the sprite catalog, with a code-native bitmap fallback. See
+[art-bible.md](art-bible.md) and [audio-direction.md](audio-direction.md).
 
 ## Local mouth and voice
 

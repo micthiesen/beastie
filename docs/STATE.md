@@ -2,7 +2,7 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-15** (semantic action-animation pass complete and locally accepted).
+Last updated: **2026-08-15** (aquarium UI polish and layer pass complete).
 
 ## Now
 
@@ -17,8 +17,11 @@ Last updated: **2026-08-15** (semantic action-animation pass complete and locall
   and stronger swimming have distinct full-body acting. Attention, heart, mouth-particle, wake,
   sand, and sleep effects are authored sprites. These reactions project typed simulation events;
   model prose never chooses game outcomes. Procedural facial rectangles are gone from the
-  normal path; the simple renderer creature exists only as a missing-asset safety net. Persistent
-  compose UI, semantic pointer/keyboard/controller targets, accessibility settings, binding UI,
+  normal path; the simple renderer creature exists only as a missing-asset safety net. The
+  persistent compose deck now uses a PixelLab mixed-case font, authored status/action icons,
+  aquarium-material chrome, contextual help instead of permanent shortcut prose, and explicit
+  panel/icon/text/focus layer bands. Speech chooses the side opposite the creature. Semantic
+  pointer/keyboard/controller targets, accessibility settings, binding UI,
   naming, recoverable saves, and opt-in transcript export remain. See
   [architecture.md](architecture.md) and [art-bible.md](art-bible.md).
 - `fixtures/scenarios/aquarium-v1.jsonl` is the canonical headless V1 interaction. Its visible twin,
@@ -34,7 +37,7 @@ Last updated: **2026-08-15** (semantic action-animation pass complete and locall
   3.36-second mono PCM16 line at 22,050 Hz in under 10 ms and about 3.1 MB maximum RSS. Packaging
   must retain GPLv3 license and corresponding source. See
   [tooling-preflight.md](tooling-preflight.md).
-- Asset validation now checks 72 declared assets for provenance, exact palette, hard alpha, pixel
+- Asset validation now checks 76 declared assets for provenance, palette policy, alpha, pixel
   density, dimensions, animation completeness, and final-over-generated resolution. The expression
   pass normalizes provider-padded frames to the canonical 80x80 canvas only after opaque-bounds
   checks. Aquarium provenance and deliberate rejected/curated-frame decisions are in
@@ -56,6 +59,12 @@ Last updated: **2026-08-15** (semantic action-animation pass complete and locall
   forceful rejection now preempt stale low-priority presentation cues. The final packaged app also
   rendered and completed its earlier smoke run with yabai temporarily stopped, then exited without
   leaving game, model, or speech descendants.
+- The UI polish pass completed a fresh eight-frame foreground shell capture at
+  `target/captures/ui-polish-proof`. Native inspection confirmed crisp mixed-case text, an icon-led
+  interaction deck, and no permanent keyboard-instruction line. That proof exposed speech covering
+  the creature, so speech now anchors to the opposite side. A subsequent modal-only GUI attempt did
+  not receive a drawable and was stopped once; deterministic view/game tests cover every modal and
+  the allow-listed UI scenario remains for a later foreground proof.
 - Installer wrappers, CI configuration, Steam inputs, achievements, and store-asset tooling exist.
   A fresh ad hoc signed macOS app and DMG passed the 473-file, 666,289,145-byte offline package
   audit; its packaged Qwen warm server returned two grounded replies, packaged eSpeak generated a
