@@ -29,6 +29,7 @@ pub enum GameEvent {
     FoodConsumed(FoodId),
     FoodRejected(FoodId),
     ToyRejected(ToyId),
+    Comforted,
     SleepStarted,
     SleepEnded,
     SocialActExpressed(SocialAct),
@@ -290,7 +291,7 @@ fn enact_current_intention(
         Intention::RejectFood => reject_food(state, events),
         Intention::Sleep => state.creature.needs.energy += 0.12 * minutes,
         Intention::Play => play(state, rng, minutes, events),
-        Intention::ApproachPlayer => comfort(state),
+        Intention::ApproachPlayer => comfort(state, events),
         Intention::Idle => {}
     }
 }
@@ -410,7 +411,7 @@ fn play(
     }
 }
 
-fn comfort(state: &mut WorldState) {
+fn comfort(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     if !state.room.comfort_requested {
         return;
     }
@@ -424,6 +425,7 @@ fn comfort(state: &mut WorldState) {
         0.8,
         0.8,
     );
+    events.push(GameEvent::Comforted);
 }
 
 fn apply_reaction(state: &mut WorldState, reaction: Reaction) {

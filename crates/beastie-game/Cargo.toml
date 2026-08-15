@@ -13,6 +13,7 @@ beastie-view = { path = "../beastie-view" }
 clap.workspace = true
 ggez.workspace = true
 image.workspace = true
+rodio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

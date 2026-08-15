@@ -31,6 +31,13 @@ memory references are validated against the request and never mutate simulation 
 those plans and owns platform input/window/audio integration. This keeps most visual behavior
 testable without a GPU or display.
 
+Runtime sprite IDs resolve through the checked asset manifest, preferring `assets/final` over
+`assets/generated`. The shell decodes optional PNGs once at startup and retains geometry as a
+graceful fallback. Authored one-shot WAVs use the same final-over-generated resolution; simulation
+events and UI actions select sounds, while a missing output device, decode failure, or playback
+failure never blocks play. See
+[art-bible.md](art-bible.md) and [audio-direction.md](audio-direction.md).
+
 The AI worker is a child process using versioned JSONL over standard input/output. Heavy model and
 TTS runtimes stay out of the game executable. A fixture backend remains permanent for development,
 tests, and graceful fallback.

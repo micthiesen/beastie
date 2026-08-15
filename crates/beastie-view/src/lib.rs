@@ -83,6 +83,10 @@ pub struct SpriteCommand {
     pub x: i32,
     pub y: i32,
     pub layer: i16,
+    /// Zero-based deterministic animation frame. Runtime assets use
+    /// `<id>-<frame>.png`, falling back to the unnumbered `<id>.png`.
+    #[serde(default)]
+    pub frame: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,6 +154,7 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (RenderPlan, AudioPlan) {
         color: [38, 35, 44, 96],
         layer: 1,
     }];
+    add_room_lighting(state, &mut rects);
     let mut text = Vec::new();
     let mut hit_regions = room_hit_regions(creature_x, creature_y);
 
@@ -212,9 +217,11 @@ fn room_sprites(state: &WorldState, creature_x: i32, creature_y: i32) -> Vec<Spr
         Intention::Idle if state.creature.movement.is_some() => "creature/walk",
         Intention::Idle => "creature/idle",
     };
+    let creature_frame = animation_frame(creature_id, state.elapsed_ms);
+    let (creature_x_offset, creature_y_offset) = pose_offset(creature_id, creature_frame);
     let mut sprites = vec![
         sprite("room/background", 0, 0, 0),
-        sprite("room/window", 224, 18, 2),
+        framed_sprite("room/window", 140, 18, 2, window_frame(state.elapsed_ms)),
         sprite("room/bed", 22, 103, 2),
         sprite("room/bowl", 238, 132, 3),
         sprite("room/toy", 95, 139, 3),
@@ -241,17 +248,95 @@ fn room_sprites(state: &WorldState, creature_x: i32, creature_y: i32) -> Vec<Spr
             4,
         ));
     }
-    sprites.push(sprite(creature_id, creature_x, creature_y, 5));
+    sprites.push(framed_sprite(
+        creature_id,
+        creature_x + creature_x_offset,
+        creature_y + creature_y_offset,
+        5,
+        creature_frame,
+    ));
     sprites
 }
 
 fn sprite(id: &str, x: i32, y: i32, layer: i16) -> SpriteCommand {
+    framed_sprite(id, x, y, layer, 0)
+}
+
+fn framed_sprite(id: &str, x: i32, y: i32, layer: i16, frame: u8) -> SpriteCommand {
     SpriteCommand {
         id: id.to_owned(),
         x,
         y,
         layer,
+        frame,
     }
+}
+
+fn animation_frame(pose: &str, elapsed_ms: u64) -> u8 {
+    let frame_ms = match pose {
+        "creature/walk" => 250,
+        "creature/eat" => 400,
+        "creature/play" => 300,
+        "creature/annoyed" => 500,
+        "creature/sleep" => 1_600,
+        _ => 1_200,
+    };
+    u8::try_from((elapsed_ms / frame_ms) % 4).unwrap_or_default()
+}
+
+fn pose_offset(pose: &str, frame: u8) -> (i32, i32) {
+    if frame.is_multiple_of(2) {
+        return (0, 0);
+    }
+    match pose {
+        "creature/walk" | "creature/idle" | "creature/eat" => (0, -1),
+        "creature/play" => (0, -2),
+        "creature/annoyed" => (-1, 0),
+        "creature/sleep" => (1, 0),
+        _ => (0, 0),
+    }
+}
+
+fn window_frame(elapsed_ms: u64) -> u8 {
+    let phase = elapsed_ms % beastie_core::ACTIVE_DAY_MS;
+    let third = beastie_core::ACTIVE_DAY_MS / 3;
+    if phase < third {
+        0
+    } else if phase < third * 2 {
+        1
+    } else {
+        2
+    }
+}
+
+fn add_room_lighting(state: &WorldState, rects: &mut Vec<RectCommand>) {
+    let (window_color, room_color) = match window_frame(state.elapsed_ms) {
+        0 => ([151, 210, 230, 24], [255, 230, 184, 7]),
+        1 => ([224, 137, 100, 38], [114, 62, 75, 18]),
+        _ => ([67, 84, 142, 54], [23, 30, 66, 42]),
+    };
+    rects.push(RectCommand {
+        id: "room/window-light".to_owned(),
+        rect: Rect {
+            x: 146,
+            y: 23,
+            w: 76,
+            h: 61,
+        },
+        color: window_color,
+        layer: 7,
+    });
+    rects.push(RectCommand {
+        id: "room/lighting".to_owned(),
+        rect: Rect {
+            x: 0,
+            y: 0,
+            w: LOGICAL_WIDTH,
+            h: LOGICAL_HEIGHT,
+        },
+        color: room_color,
+        layer: 8,
+    });
 }
 
 fn room_hit_regions(creature_x: i32, creature_y: i32) -> Vec<HitRegion> {
@@ -259,10 +344,10 @@ fn room_hit_regions(creature_x: i32, creature_y: i32) -> Vec<HitRegion> {
         (
             UiTarget::Window,
             Rect {
-                x: 224,
+                x: 140,
                 y: 18,
-                w: 62,
-                h: 55,
+                w: 87,
+                h: 72,
             },
         ),
         (
@@ -856,6 +941,41 @@ mod tests {
         let (render, _) = plan(&state, &ViewState::default());
         let creature = sprite(&render, "creature/sleep");
         assert_eq!((creature.x, creature.y), (42, 104));
+    }
+
+    #[test]
+    fn pose_frames_are_deterministic_for_authoritative_time() {
+        let cases = [
+            (Intention::Idle, "creature/idle", 1_200),
+            (Intention::Eat, "creature/eat", 400),
+            (Intention::Sleep, "creature/sleep", 1_600),
+            (Intention::Play, "creature/play", 300),
+            (Intention::RejectFood, "creature/annoyed", 500),
+            (Intention::ApproachPlayer, "creature/walk", 250),
+        ];
+        for (intention, id, elapsed_ms) in cases {
+            let mut state = WorldState::new(42, "Mop");
+            state.creature.current_intention = intention;
+            state.elapsed_ms = elapsed_ms;
+            let (render, _) = plan(&state, &ViewState::default());
+            assert_eq!(sprite(&render, id).frame, 1, "{id}");
+        }
+    }
+
+    #[test]
+    fn identical_state_produces_an_identical_lit_plan() {
+        let mut state = WorldState::new(42, "Mop");
+        state.elapsed_ms = beastie_core::ACTIVE_DAY_MS * 2 / 3;
+        let first = plan(&state, &ViewState::default()).0;
+        let second = plan(&state, &ViewState::default()).0;
+        assert_eq!(first, second);
+        assert_eq!(sprite(&first, "room/window").frame, 2);
+        assert!(
+            first
+                .rects
+                .iter()
+                .any(|rect| { rect.id == "room/lighting" && rect.color == [23, 30, 66, 42] })
+        );
     }
 
     #[test]

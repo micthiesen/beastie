@@ -1,0 +1,7 @@
+room/background
+creature/idle
+creature/walk
+creature/eat
+creature/sleep
+creature/play
+creature/annoyed

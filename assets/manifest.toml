@@ -1,4 +1,277 @@
 version = 1
 
-# Generated assets are declared here before creation. Runtime resolution prefers
-# assets/final/<id>, then assets/generated/<id>.
+# Runtime lookup is per asset (and per frame for animations):
+# assets/final/<id>.png, then assets/generated/<id>.png.
+
+[[asset]]
+id = "room/background"
+kind = "background"
+width = 320
+height = 180
+transparent = false
+palette = "style/main.hex"
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "cc82731d-c546-4076-b7cd-4320d82c7296"
+generated_at = "2026-08-15"
+prompt = "fixed 320x180 mostly straight-on dollhouse room, slight three-quarter floor, cozy-grotty worn bedroom, warm mauves and browns, deep plum shadows, shabby bed left, cool cyan night window, no creature, player, UI, or text"
+seed = "5912203"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["style/room-concept.png"]
+human_modifications = "selected as the canonical runtime background; no pixel edits"
+
+[[asset]]
+id = "creature/idle"
+kind = "animation"
+width = 48
+height = 48
+frames = 4
+transparent = true
+palette = "style/main.hex"
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "af7225af-7972-4e52-b478-b46d6c8afa17"
+generated_at = "2026-08-15"
+prompt = "same exact awkward pear-shaped creature, restrained four-frame idle movement, preserve identity, palette, silhouette, and selective outline"
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["style/furniture-anchor.png"]
+human_modifications = "selected as the canonical idle loop; no pixel edits"
+
+[[asset]]
+id = "creature/walk"
+kind = "animation"
+width = 48
+height = 48
+frames = 4
+transparent = true
+palette = "style/main.hex"
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "bbf4197b-d08f-4c35-8af3-7c04189e90d5"
+generated_at = "2026-08-15"
+prompt = "same exact awkward pear-shaped creature, restrained four-frame walk, preserve identity, palette, silhouette, and selective outline"
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature/idle.png"]
+human_modifications = "selected as the canonical walk loop; no pixel edits"
+
+[[asset]]
+id = "creature/sleep"
+kind = "sprite"
+width = 48
+height = 48
+transparent = true
+palette = "style/main.hex"
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "0df7ec7f-e48b-417f-8ae1-9fb18866d9f2"
+generated_at = "2026-08-15"
+prompt = "same exact creature, preserve identity and palette, curled low asleep with eyes closed"
+seed = "5912210"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature/idle.png"]
+human_modifications = "selected as the canonical sleep pose; no pixel edits"
+
+[[asset]]
+id = "creature/eat"
+kind = "sprite"
+width = 48
+height = 48
+transparent = true
+palette = "style/main.hex"
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "7a106809-31d0-4a55-b5e2-ed7756b79489"
+generated_at = "2026-08-15"
+prompt = "same exact creature, preserve identity and palette, leaning to bite with suspicious eyes"
+seed = "5912211"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature/idle.png"]
+human_modifications = "selected as the canonical eating pose; no pixel edits"
+
+[[asset]]
+id = "creature/play"
+kind = "sprite"
+width = 48
+height = 48
+transparent = true
+palette = "style/main.hex"
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "aec8ffe0-995b-4275-b2b7-7b7d0ae19776"
+generated_at = "2026-08-15"
+prompt = "same exact creature, preserve identity and palette, awkward happy pose with one foot raised"
+seed = "5912212"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature/idle.png"]
+human_modifications = "selected as the canonical play pose; no pixel edits"
+
+[[asset]]
+id = "creature/annoyed"
+kind = "sprite"
+width = 48
+height = 48
+transparent = true
+palette = "style/main.hex"
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "c6f0c54d-6bc9-4630-b36d-6bd79dbcde83"
+generated_at = "2026-08-15"
+prompt = "same exact creature, preserve identity and palette, planted stubbornly and glaring sideways"
+seed = "5912213"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature/idle.png"]
+human_modifications = "selected as the canonical annoyed pose; no pixel edits"
+
+[[asset]]
+id = "style/room-concept"
+kind = "reference"
+width = 1672
+height = 941
+transparent = false
+palette = "style/main.hex"
+status = "reference"
+path = "style/room-concept.png"
+
+[asset.provenance]
+generator = "openai-imagegen"
+generated_at = "2026-08-15"
+prompt = "cozy-grotty fixed dollhouse room concept with warm lamplight, deep shadow, scuffed furniture, and cool electronic accents"
+seed = "provider-managed"
+terms = "OpenAI service terms, accessed 2026-08-15"
+human_modifications = "none"
+
+[[asset]]
+id = "style/furniture-anchor"
+kind = "reference"
+width = 128
+height = 64
+transparent = true
+palette = "style/main.hex"
+status = "reference"
+path = "style/furniture-anchor.png"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "0141985e-aa76-47d0-988f-7ea7bb9eb825"
+generated_at = "2026-08-15"
+prompt = "four separate patched bed, chipped blue bowl, rag mouse, and deep-blue window sprites in the cozy-grotty palette"
+seed = "5912204"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["style/room-concept.png"]
+human_modifications = "none"
+
+[[asset]]
+id = "style/ui-anchor"
+kind = "reference"
+width = 160
+height = 32
+transparent = true
+palette = "style/main.hex"
+status = "reference"
+path = "style/ui-anchor.png"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "5de18ed3-9dfe-4e7f-8bf0-4dc17a702fe3"
+generated_at = "2026-08-15"
+prompt = "five separate compact action-icon sprites for feeding, petting, playing, talking, and tidying in the cozy-grotty palette"
+seed = "5912220"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["style/furniture-anchor.png"]
+human_modifications = "none"
+
+[[asset]]
+id = "style/food-anchor"
+kind = "reference"
+width = 96
+height = 32
+transparent = true
+palette = "style/main.hex"
+status = "reference"
+path = "style/food-anchor.png"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "a284b29c-c54b-4fc4-913e-3ae40c17e3ca"
+generated_at = "2026-08-15"
+prompt = "three separate berry, mushroom, and pellet food sprites with readable silhouettes in the cozy-grotty palette"
+seed = "5912221"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["style/furniture-anchor.png"]
+human_modifications = "none"
+
+[[asset]]
+id = "style/creature-anchor"
+kind = "reference"
+width = 48
+height = 48
+transparent = true
+palette = "style/main.hex"
+status = "reference"
+path = "generated/creature/idle.png"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "d05c706a-378a-49c9-8cee-ad83ef4dd2c6"
+generated_at = "2026-08-15"
+prompt = "tiny awkward pear-shaped ageless pale dirty yellow-green pet, oversized near-black eyes, tiny feet, uneven tuft, hunched ugly-cute posture, selective outline and basic shading"
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["style/furniture-anchor.png"]
+human_modifications = "selected south-facing rotation as the pose-generation identity anchor"
+
+[[audio]]
+id = "audio/ui/select"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/ui/confirm"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/creature/mrr"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/creature/annoyed"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/creature/sleep"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"

@@ -1,5 +1,6 @@
 mod app;
 mod args;
+mod audio;
 mod dialogue;
 mod input;
 mod renderer;

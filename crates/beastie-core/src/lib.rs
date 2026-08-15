@@ -458,6 +458,20 @@ mod tests {
     }
 
     #[test]
+    fn comfort_emits_an_authoritative_event_after_arrival() {
+        let mut world = WorldState::new(73, "Mop");
+        let mut rng = SeededRandom::new(world.seed);
+        world.creature.needs.comfort = 0.0;
+
+        let requested = step(&mut world, &[PlayerEvent::Comfort], 1_000, &mut rng);
+        assert!(!requested.contains(&GameEvent::Comforted));
+        assert_eq!(world.creature.current_intention, Intention::ApproachPlayer);
+
+        let arrived = step(&mut world, &[], MOVEMENT_DURATION_MS, &mut rng);
+        assert!(arrived.contains(&GameEvent::Comforted));
+    }
+
+    #[test]
     fn offline_progress_is_bounded_nonlethal_and_records_return() {
         let mut world = WorldState::new(71, "Homebody");
         let mut rng = SeededRandom::new(world.seed);

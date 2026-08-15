@@ -3,7 +3,7 @@
 Fast-moving work state and chosen next step. This records the work, not machine state or
 uncommitted changes. Durable findings live in the linked docs.
 
-Last updated: **2026-08-15** (playable fixture-AI enclosure complete.)
+Last updated: **2026-08-15** (canonical art and authored sound integrated.)
 
 ## Now
 
@@ -37,20 +37,32 @@ Last updated: **2026-08-15** (playable fixture-AI enclosure complete.)
 - `fixtures/scenarios/room-shell.jsonl` drives the visible shell through ordinary session commands
   and produces deterministic 320×180 PNG evidence. Native macOS keyboard Talk submission is proven;
   pointer action delivery and physical-controller input still need a focused host check.
+- The canonical presentation pass is integrated. PixelLab-generated room and identity-consistent
+  creature poses replace geometry when valid, while corrupt or missing art falls back cleanly.
+  Deterministic idle/walk frames, pose offsets, and three-phase room/window lighting derive from
+  authoritative game time. The latest room-shell capture proves the full 320×180 art path.
+- `cargo xtask asset check` validates the manifest, palette, provenance, PNG dimensions/alpha,
+  animation completeness, final-over-generated resolution, and WAV format. The art bible is in
+  [art-bible.md](art-bible.md); sound provenance and measurements are in
+  [audio-direction.md](audio-direction.md).
+- Five original sounds cover selection, confirmation, comfort/noise, annoyance, and sleep. Runtime
+  playback is event-driven and degrades silently if assets, decoding, playback, or an output device
+  are unavailable.
 
 ## Next
 
-Establish canonical art and sound presentation: define the tiny art bible, generate and deliberately
-select the creature/furniture/UI anchors, add asset validation and provenance, then replace the
-geometric room with restrained animation, lighting/window variation, UI sounds, and authored
-nonverbal creature noises.
+Integrate the replaceable local mouth: build the checked-in dialogue evaluation corpus, benchmark
+small local model candidates for grounding, protocol compliance, latency, permitted sharpness, and
+prohibited-output escape, then integrate the winner behind the worker boundary. Compare the proven
+KittenTTS path with a practical pinned sherpa-onnx/Kokoro alternative using actual Beastie lines and
+ship the selected local voice without Python.
 
 ## Candidates Not Chosen
 
 - **Real local LLM benchmark**: the runtime smoke is complete; wait until the protocol fixture
   corpus can score candidates instead of selecting from one-off prompts.
-- **Local mouth integration**: first build the dialogue eval corpus so model and voice selection are
-  evidence-based rather than chosen from one-off prompts.
+- **Final hardening**: defer native Windows/Linux acceptance, save migrations, packaging inputs, and
+  the unresolved macOS pointer/controller checks until the real local worker exists end to end.
 
 ## Learned Recently
 
@@ -80,6 +92,9 @@ nonverbal creature noises.
 - Fixed simulation ticks make visible-frame and accelerated headless advancement equivalent. Room
   movement is semantic in core and pixel-positioned only in view; offline absence uses bounded
   analytic changes and does not consume RNG or advance active-play days.
+- Runtime art resolves `assets/final/<id>.png` before `assets/generated/<id>.png`; animation frames
+  use `<id>-<frame>.png`. Both candidates are validated so a promoted final cannot conceal a corrupt
+  generated source → [art-bible.md](art-bible.md).
 - The initial full build is Mac-led but preserves portable headless boundaries. Windows and Linux
   native acceptance remains part of MVP completion, not a blocker for the tooling preflight or
   first autonomous implementation pass → [build-plan.md](build-plan.md).

@@ -16,9 +16,10 @@ use ggez::winit::keyboard::{Key, NamedKey};
 use ggez::{Context, GameError, GameResult};
 
 use crate::args::Args;
+use crate::audio::{AudioBank, UI_CONFIRM, UI_SELECT, sound_for_event};
 use crate::dialogue;
 use crate::input::{action_at, append_text, focused_action, move_focus};
-use crate::renderer::{Viewport, execute_plan, save_logical_png};
+use crate::renderer::{AssetCatalog, Viewport, execute_plan, save_logical_png};
 use crate::save_store::SaveStore;
 use crate::scenario::{ScenarioRunner, ScenarioStep};
 
@@ -31,6 +32,9 @@ pub struct Game {
     session: GameSession,
     view: ViewState,
     logical_frame: Image,
+    assets: AssetCatalog,
+    audio: AudioBank,
+    queued_audio: Vec<&'static str>,
     viewport: Viewport,
     worker: Option<PathBuf>,
     dialogue_receiver: Option<Receiver<DialogueReply>>,
@@ -45,6 +49,7 @@ pub struct Game {
 
 impl Game {
     pub fn new(ctx: &mut Context, args: &Args) -> GameResult<Self> {
+        let assets_root = assets_root();
         let save_store = SaveStore::new(ctx.fs.user_config_dir().join("saves").join("main.json"));
         let (session, load_message, resumed, save_enabled) = if args.script.is_some() {
             (GameSession::new(42, "Mop"), None, false, false)
@@ -78,6 +83,9 @@ impl Game {
             session,
             view,
             logical_frame: Image::new_canvas_image(ctx, 320, 180, 1),
+            assets: AssetCatalog::load(ctx, &assets_root),
+            audio: AudioBank::load(&assets_root),
+            queued_audio: Vec::new(),
             viewport: Viewport::for_drawable(width, height),
             worker: args
                 .fake_ai
@@ -110,6 +118,8 @@ impl Game {
                 command,
             })
             .map_err(session_error)?;
+        self.queued_audio
+            .extend(observation.events.iter().filter_map(sound_for_event));
         if let Some(request) = observation.dialogue_request {
             self.view.pending = true;
             self.view.speech = None;
@@ -225,6 +235,12 @@ impl Game {
         self.apply_command(SessionCommand::Talk { text }, true)
     }
 
+    fn apply_confirmed_ui_action(&mut self, action: UiAction, controller: bool) -> GameResult {
+        self.apply_ui_action(action, controller)?;
+        self.queued_audio.push(UI_CONFIRM);
+        Ok(())
+    }
+
     fn close_menu(&mut self) {
         self.view.mode = UiMode::Idle;
         self.view.focused_region = None;
@@ -238,13 +254,17 @@ impl Game {
 
     fn navigate(&mut self, delta: i32) {
         let plan = self.render_plan();
+        let previous = self.view.focused_region.clone();
         self.view.focused_region = move_focus(&plan, self.view.focused_region.as_deref(), delta);
+        if self.view.focused_region != previous {
+            self.queued_audio.push(UI_SELECT);
+        }
     }
 
     fn activate_focus(&mut self, controller: bool) -> GameResult {
         let plan = self.render_plan();
         if let Some(action) = focused_action(&plan, self.view.focused_region.as_deref()) {
-            self.apply_ui_action(action, controller)?;
+            self.apply_confirmed_ui_action(action, controller)?;
         }
         Ok(())
     }
@@ -278,6 +298,8 @@ impl Game {
                         | SessionCommand::React { .. }
                 );
                 let observation = self.session.apply(envelope).map_err(session_error)?;
+                self.queued_audio
+                    .extend(observation.events.iter().filter_map(sound_for_event));
                 if let Some(request) = observation.dialogue_request {
                     self.view.pending = true;
                     self.view.speech = None;
@@ -326,6 +348,7 @@ impl EventHandler for Game {
                 ctx.request_quit();
             }
         }
+        self.audio.play_queued(&mut self.queued_audio);
         Ok(())
     }
 
@@ -349,7 +372,7 @@ impl EventHandler for Game {
         let render = self.render_plan();
         let mut logical =
             Canvas::from_image(ctx, self.logical_frame.clone(), Color::from_rgb(20, 18, 24));
-        execute_plan(ctx, &mut logical, &render)?;
+        execute_plan(ctx, &mut logical, &render, &self.assets)?;
         logical.finish(ctx)?;
 
         let (width, height) = ctx.gfx.drawable_size();
@@ -384,7 +407,7 @@ impl EventHandler for Game {
         };
         let render = self.render_plan();
         if let Some(action) = action_at(&render, x, y) {
-            self.apply_ui_action(action, false)?;
+            self.apply_confirmed_ui_action(action, false)?;
         }
         Ok(())
     }
@@ -430,17 +453,16 @@ impl EventHandler for Game {
             Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) => self.navigate(-1),
             Key::Named(NamedKey::Enter | NamedKey::Space) => self.activate_focus(false)?,
             Key::Character(character) if character.eq_ignore_ascii_case("f") => {
-                self.view.mode = UiMode::FoodChoice;
-                self.reset_focus();
+                self.apply_confirmed_ui_action(UiAction::OpenFoodChoice, false)?;
             }
             Key::Character(character) if character.eq_ignore_ascii_case("p") => {
-                self.apply_ui_action(UiAction::Play, false)?;
+                self.apply_confirmed_ui_action(UiAction::Play, false)?;
             }
             Key::Character(character) if character.eq_ignore_ascii_case("c") => {
-                self.apply_ui_action(UiAction::Comfort, false)?;
+                self.apply_confirmed_ui_action(UiAction::Comfort, false)?;
             }
             Key::Character(character) if character.eq_ignore_ascii_case("t") => {
-                self.apply_ui_action(UiAction::Talk, false)?;
+                self.apply_confirmed_ui_action(UiAction::Talk, false)?;
             }
             _ => {}
         }
@@ -506,6 +528,21 @@ fn load_session(store: &SaveStore) -> (GameSession, Option<String>, bool, bool) 
             false,
         ),
     }
+}
+
+fn assets_root() -> PathBuf {
+    if let Some(path) = std::env::var_os("BEASTIE_ASSETS") {
+        return PathBuf::from(path);
+    }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(directory) = executable.parent()
+    {
+        let packaged = directory.join("assets");
+        if packaged.is_dir() {
+            return packaged;
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets")
 }
 
 fn unix_time_ms() -> u64 {

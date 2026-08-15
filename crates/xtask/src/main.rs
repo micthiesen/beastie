@@ -14,6 +14,8 @@ use beastie_session::{
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
+mod asset;
+
 const BERRY_GRUDGE_SCENARIO: &str = "fixtures/scenarios/berry-grudge.jsonl";
 
 #[derive(Debug, Parser)]
@@ -27,6 +29,11 @@ struct Cli {
 enum Task {
     /// Run every headless verification gate.
     Verify,
+    /// Validate or generate manifest-backed art assets.
+    Asset {
+        #[command(subcommand)]
+        command: AssetTask,
+    },
     /// Run the game shell with fixture-backed AI.
     Dev {
         #[arg(long)]
@@ -60,9 +67,18 @@ enum Task {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum AssetTask {
+    /// Validate asset files, metadata, palette references, and runtime readiness.
+    Check,
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Task::Verify => verify(),
+        Task::Asset {
+            command: AssetTask::Check,
+        } => asset::check(Path::new("assets/manifest.toml"), true),
         Task::Dev {
             fake_ai,
             smoke,
@@ -88,7 +104,7 @@ fn main() -> Result<()> {
 }
 
 fn verify() -> Result<()> {
-    verify_manifest("assets/manifest.toml")?;
+    asset::check(Path::new("assets/manifest.toml"), true)?;
     verify_manifest("models/manifest.toml")?;
     run("cargo", &["fmt", "--all", "--", "--check"])?;
     run(

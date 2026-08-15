@@ -1,13 +1,79 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use beastie_view::{RectCommand, RenderPlan, SpriteCommand, TextCommand};
-use ggez::graphics::{Canvas, Color, DrawMode, DrawParam, Image, ImageFormat, Mesh, Rect, Text};
+use ggez::graphics::{
+    Canvas, Color, DrawMode, DrawParam, Image, ImageFormat, Mesh, Rect, Sampler, Text,
+};
 use ggez::{Context, GameError, GameResult};
 use image::{ColorType, ImageFormat as EncodingFormat};
 
 pub const LOGICAL_WIDTH: f32 = 320.0;
 pub const LOGICAL_HEIGHT: f32 = 180.0;
+
+const RUNTIME_SPRITE_IDS: &str = include_str!("../../../assets/runtime-sprites.txt");
+
+/// Optional runtime art, decoded and uploaded exactly once during game startup.
+/// Each semantic id resolves through `assets/final`, then `assets/generated`.
+pub struct AssetCatalog {
+    images: HashMap<String, Image>,
+}
+
+impl AssetCatalog {
+    #[must_use]
+    pub fn load(ctx: &mut Context, assets_root: &Path) -> Self {
+        let mut images = HashMap::new();
+        for id in RUNTIME_SPRITE_IDS.lines().filter(|id| !id.is_empty()) {
+            load_variant(ctx, assets_root, id, None, &mut images);
+            for frame in 0..=3 {
+                load_variant(ctx, assets_root, id, Some(frame), &mut images);
+            }
+        }
+        Self { images }
+    }
+
+    fn image(&self, command: &SpriteCommand) -> Option<&Image> {
+        self.images
+            .get(&asset_key(&command.id, Some(command.frame)))
+            .or_else(|| self.images.get(&asset_key(&command.id, None)))
+    }
+
+    fn has_base(&self, id: &str) -> bool {
+        self.images.contains_key(&asset_key(id, None))
+            || self.images.contains_key(&asset_key(id, Some(0)))
+    }
+}
+
+fn load_variant(
+    ctx: &mut Context,
+    assets_root: &Path,
+    id: &str,
+    frame: Option<u8>,
+    images: &mut HashMap<String, Image>,
+) {
+    let relative = asset_relative_path(id, frame);
+    for source in ["final", "generated"] {
+        let path = assets_root.join(source).join(&relative);
+        let Ok(encoded) = fs::read(path) else {
+            continue;
+        };
+        let Ok(image) = Image::from_bytes(ctx, &encoded) else {
+            continue;
+        };
+        images.insert(asset_key(id, frame), image);
+        return;
+    }
+}
+
+fn asset_relative_path(id: &str, frame: Option<u8>) -> std::path::PathBuf {
+    let suffix = frame.map_or_else(String::new, |frame| format!("-{frame}"));
+    std::path::PathBuf::from(format!("{id}{suffix}.png"))
+}
+
+fn asset_key(id: &str, frame: Option<u8>) -> String {
+    frame.map_or_else(|| id.to_owned(), |frame| format!("{id}#{frame}"))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Viewport {
@@ -81,7 +147,13 @@ pub fn save_logical_png(ctx: &Context, frame: &Image, path: &Path) -> GameResult
     .map_err(|error| GameError::ResourceLoadError(error.to_string()))
 }
 
-pub fn execute_plan(ctx: &mut Context, canvas: &mut Canvas, plan: &RenderPlan) -> GameResult {
+pub fn execute_plan(
+    ctx: &mut Context,
+    canvas: &mut Canvas,
+    plan: &RenderPlan,
+    assets: &AssetCatalog,
+) -> GameResult {
+    canvas.set_sampler(Sampler::nearest_clamp());
     let min_layer = plan
         .sprites
         .iter()
@@ -103,7 +175,7 @@ pub fn execute_plan(ctx: &mut Context, canvas: &mut Canvas, plan: &RenderPlan) -
             draw_rect(ctx, canvas, command)?;
         }
         for command in plan.sprites.iter().filter(|command| command.layer == layer) {
-            draw_sprite(ctx, canvas, command)?;
+            draw_sprite(ctx, canvas, command, assets)?;
         }
         for command in plan.text.iter().filter(|command| command.layer == layer) {
             draw_text(canvas, command);
@@ -137,9 +209,25 @@ fn draw_rect(ctx: &mut Context, canvas: &mut Canvas, command: &RectCommand) -> G
     Ok(())
 }
 
-fn draw_sprite(ctx: &mut Context, canvas: &mut Canvas, command: &SpriteCommand) -> GameResult {
+fn draw_sprite(
+    ctx: &mut Context,
+    canvas: &mut Canvas,
+    command: &SpriteCommand,
+    assets: &AssetCatalog,
+) -> GameResult {
     let x = command.x as f32;
     let y = command.y as f32;
+    if let Some(image) = assets.image(command) {
+        canvas.draw(image, DrawParam::default().dest([x, y]));
+        return Ok(());
+    }
+    // The canonical room background already includes these fixtures. Their
+    // fallback shapes are only needed when the background itself falls back.
+    if assets.has_base("room/background")
+        && matches!(command.id.as_str(), "room/window" | "room/bed")
+    {
+        return Ok(());
+    }
     match command.id.as_str() {
         "room/background" => {
             rectangle(ctx, canvas, x, y, 320.0, 180.0, [73, 55, 65, 255])?;
@@ -349,5 +437,17 @@ mod tests {
         );
         assert_eq!(viewport.logical_point(19.0, 80.0), None);
         assert_eq!(viewport.logical_point(20.0, 620.0), None);
+    }
+
+    #[test]
+    fn asset_paths_preserve_semantic_ids_and_frame_suffixes() {
+        assert_eq!(
+            asset_relative_path("creature/idle", None),
+            std::path::PathBuf::from("creature/idle.png")
+        );
+        assert_eq!(
+            asset_relative_path("creature/walk", Some(1)),
+            std::path::PathBuf::from("creature/walk-1.png")
+        );
     }
 }
