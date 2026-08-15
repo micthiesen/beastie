@@ -82,6 +82,7 @@ IDs, dimensions, hashes, and any manual edits in `assets/manifest.toml` when ass
 - PixelLab generation: operational; canonical art anchors are not selected yet.
 - Headless fixture path: remains the required default for `cargo xtask verify`.
 
-The remaining prerequisite is not another model or asset smoke. Before autonomous full-MVP work,
-prove the shared semantic headless/visible control loop, framebuffer capture, and one genuine macOS
-input path described in [development-harness.md](development-harness.md).
+Native macOS launch, window discovery, real rendered-window capture, pointer movement, and clicking
+have also been proven. This is enough to start autonomous full-MVP work. The richer shared semantic
+headless/visible control loop should grow incrementally with actual gameplay interactions rather
+than block them upfront; see [development-harness.md](development-harness.md).

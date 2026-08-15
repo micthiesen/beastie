@@ -3,7 +3,7 @@
 Fast-moving work state and chosen next step. This records the work, not machine state or
 uncommitted changes. Durable findings live in the linked docs.
 
-Last updated: **2026-08-15** (full-MVP build flow and agent control harness decided.)
+Last updated: **2026-08-15** (native game control derisk passed; full MVP ready to build.)
 
 ## Now
 
@@ -20,19 +20,23 @@ Last updated: **2026-08-15** (full-MVP build flow and agent control harness deci
 - The autonomous implementation target is the complete MVP. Its ordered slices and working rules
   are recorded in [build-plan.md](build-plan.md).
 - Headless interaction and visible-game scripting will share one semantic command protocol. The
-  required pre-build proof is recorded in [development-harness.md](development-harness.md).
+  protocol will grow with real gameplay rather than becoming a large upfront project; its direction
+  is recorded in [development-harness.md](development-harness.md).
+- Codex can launch, locate, focus, screenshot, and click the native macOS ggez window. Screen control
+  is approved and works alongside yabai; exact smoke evidence is in
+  [development-harness.md](development-harness.md).
 
 ## Next
 
-Build and prove the shared development harness before widening the MVP: semantic JSONL commands,
-headless observations, identical visible-game scenario replay, logical-framebuffer PNG capture, and
-one genuine macOS input path. Preserve the proof as a fixture, then begin the berry-memory slice.
+Build the deterministic berry-memory acceptance slice: preference formation, concrete memory,
+sleep/save/reload, candidate-memory selection, later recall, reaction-driven provocation, nonverbal
+dislike, and multi-day invariants. Add only the smallest semantic controls needed to replay the
+slice; do not build the full harness first.
 
 ## Candidates Not Chosen
 
-- **Berry-memory acceptance slice**: it remains the first product slice, but follows the small
-  harness gate because every later interaction becomes faster to implement and validate.
-- **Interactive room shell**: build after the harness and authoritative berry-memory spine.
+- **Interactive room shell**: build after the authoritative berry-memory spine, extending the
+  harness only as new interactions need it.
 - **Real local LLM benchmark**: the runtime smoke is complete; wait until the protocol fixture
   corpus can score candidates instead of selecting from one-off prompts.
 - **Pixel-art generation**: first create the approved art direction's anchor assets and
@@ -59,6 +63,9 @@ one genuine macOS input path. Preserve the proof as a fixture, then begin the be
 - Ordinary gameplay validation will use semantic commands, not coordinate clicks. Coordinate input
   is reserved for targeted mouse-mapping and real-device tests; rendered scenarios save the logical
   framebuffer directly → [development-harness.md](development-harness.md).
+- Native macOS host control is no longer a risk: the current fake-AI game was launched, focused via
+  yabai, captured by window ID, clicked at a known coordinate, and visually inspected. The current
+  scaffold has no click reaction yet, which is expected → [development-harness.md](development-harness.md).
 - The initial full build is Mac-led but preserves portable headless boundaries. Windows and Linux
   native acceptance remains part of MVP completion, not a blocker for the tooling preflight or
   first autonomous implementation pass → [build-plan.md](build-plan.md).

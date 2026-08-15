@@ -23,17 +23,19 @@ Claude Code compatibility, rulesync plumbing, or duplicated agent instructions.
 
 ## Ordered build flow
 
-### 0. Prove the agent feedback loop
+### 0. Use the proven host feedback loop
 
-Implement and pass the five-step gate in [development-harness.md](development-harness.md). This is
-the first task because every later slice benefits from semantic control, structured traces, and
-direct framebuffer capture.
+Native launch, window discovery, screenshot capture, pointer movement, and clicking are already
+proven on the development Mac. Begin product work immediately. Add semantic commands, structured
+traces, and direct framebuffer capture incrementally when each real interaction makes them useful;
+do not build a broad harness upfront.
 
 ### 1. Complete the authoritative berry-memory spine
 
 Build the acceptance scenario through pure logic first: preference formation, concrete event
 memory, candidate selection, sleep, save/reload, later recall, reaction-driven provocation, and a
-nonverbal expression of dislike. Add multi-day invariants and deterministic replay.
+nonverbal expression of dislike. Add multi-day invariants and deterministic replay. Add only the
+smallest headless controls needed to replay this slice.
 
 ### 2. Make the enclosure playable with fixture AI
 

@@ -1,8 +1,25 @@
 # Development harness
 
-The game must be controllable and inspectable by Codex without relying on coordinate clicks. Use
-one versioned semantic command protocol for both a fast headless session and the real rendered game.
-Coordinate-driven automation is reserved for testing coordinate mapping and actual device input.
+The game should become controllable and inspectable by Codex without relying on coordinate clicks
+for every interaction. Grow one versioned semantic command protocol alongside the MVP slices rather
+than building the entire harness before gameplay. Coordinate-driven automation remains useful for
+host smoke tests, coordinate mapping, and actual device input.
+
+## Host control derisk
+
+Completed on the development Mac on 2026-08-15:
+
+- launched `cargo xtask dev --fake-ai` as a native ggez window;
+- found and focused the Beastie window through macOS Accessibility and yabai;
+- captured the real rendered window by window ID to a valid RGBA PNG;
+- inspected the captured fixture dialogue and placeholder creature;
+- moved the host pointer to a known coordinate, clicked inside Beastie, and confirmed the game
+  retained focus.
+
+Alacritty required Screen Recording/Accessibility approval before window focus and clicks worked.
+With permission granted, yabai does not need to be stopped. Use yabai's window ID and frame instead
+of assuming the game is frontmost. The current scaffold has no click handler, so this smoke proves
+host control rather than an in-game reaction.
 
 ## Shared session boundary
 
@@ -108,9 +125,10 @@ tests must still exercise real input:
 Coordinate clicks are correct for these tests because pointer mapping is the behavior under test.
 They are not the default way to test creature interactions.
 
-## Pre-MVP harness gate
+## Incremental harness acceptance
 
-Do not begin the autonomous full-MVP build until this loop has passed on the development Mac:
+This is an MVP outcome, not a prerequisite to build in one upfront block. Add commands when the
+corresponding real interaction is implemented. By the end of the relevant slices, this loop passes:
 
 1. Feed a berry and advance time through the headless adapter.
 2. Run the identical scenario through the visible ggez game with fixture AI.
@@ -118,6 +136,7 @@ Do not begin the autonomous full-MVP build until this loop has passed on the dev
 4. Correlate authoritative state, emitted events, dialogue, and `RenderPlan` in one trace.
 5. Launch the real window and verify at least one genuine pointer or keyboard path.
 
-Once proven, keep the scenario as a permanent fixture and include the headless checks in
+Keep completed scenarios as permanent fixtures and include their headless checks in
 `cargo xtask verify`. Visible capture and host-input smoke tests remain explicit host checks when a
-display is unavailable.
+display is unavailable. Do not delay useful gameplay work to implement commands for features that
+do not exist yet.

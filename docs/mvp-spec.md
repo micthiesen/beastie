@@ -1062,7 +1062,7 @@ with scenario files instead of a socket; add a development-only live socket late
 workflow friction justifies it. Keep a small separate host-input suite for actual mouse mapping,
 keyboard text entry and controller navigation.
 
-The exact protocol, evidence contract and pre-build proof are specified in
+The exact protocol, evidence contract and incremental implementation direction are specified in
 [development-harness.md](development-harness.md).
 
 ### Make fake AI a first-class backend

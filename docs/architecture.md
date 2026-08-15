@@ -35,12 +35,12 @@ The AI worker is a child process using versioned JSONL over standard input/outpu
 TTS runtimes stay out of the game executable. A fixture backend remains permanent for development,
 tests, and graceful fallback.
 
-`GameSession` is the reusable orchestration layer above the pure core and below ggez. The headless
-and visible adapters accept the same versioned semantic commands, produce the same observations,
-and differ only in platform input/render execution. See
-[development-harness.md](development-harness.md). The initial visible harness uses deterministic
-scenario files and direct logical-framebuffer capture; it does not require coordinate automation or
-a development socket.
+`GameSession` is the intended reusable orchestration layer above the pure core and below ggez. Grow
+the headless and visible adapters incrementally so they accept the same versioned semantic commands
+and produce the same observations. See [development-harness.md](development-harness.md). Native
+window capture and pointer control are already proven for cheap host checks; scenario files and
+direct logical-framebuffer capture should arrive with the gameplay slices that need them rather
+than as a large prerequisite.
 
 Platform-specific packaging may vary, but the core, protocol, save format, assets, and worker
 contract remain identical across macOS, Windows, and Linux.
