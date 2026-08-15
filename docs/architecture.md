@@ -35,17 +35,18 @@ The AI worker is a child process using versioned JSONL over standard input/outpu
 TTS runtimes stay out of the game executable. A fixture backend remains permanent for development,
 tests, and graceful fallback.
 
-`GameSession` is the intended reusable orchestration layer above the pure core and below ggez. Grow
-the headless and visible adapters incrementally so they accept the same versioned semantic commands
-and produce the same observations. See [development-harness.md](development-harness.md). Native
-window capture and pointer control are already proven for cheap host checks; scenario files and
-direct logical-framebuffer capture should arrive with the gameplay slices that need them rather
-than as a large prerequisite.
+`GameSession` is the reusable orchestration layer above the pure core and below ggez. The headless
+and visible adapters accept the same versioned semantic commands. See
+[development-harness.md](development-harness.md). The visible adapter executes declarative plans at
+a fixed 320×180 resolution, replays deterministic scenario files, and captures the logical
+framebuffer directly. Durable wall-clock saves remain in the game shell so headless simulation stays
+portable and deterministic.
 
-The current headless adapter is `cargo xtask play --fake-ai`. It reads bounded JSONL commands from
-standard input or a scenario file and emits one structured observation or error per line. The
-checked-in berry-grudge scenario is replayed by the display-free verification gate. The visible
-adapter will consume this same `beastie-session` boundary as the room shell gains real interactions.
+The headless adapter is `cargo xtask play --fake-ai`. It reads bounded JSONL commands from standard
+input or a scenario file and emits one structured observation or error per line. The checked-in
+berry-grudge scenario is replayed by the display-free verification gate. The visible adapter uses
+the same `beastie-session` boundary; `fixtures/scenarios/room-shell.jsonl` exercises the room and
+produces named PNG evidence without reading or writing the player's persistent save.
 
 Platform-specific packaging may vary, but the core, protocol, save format, assets, and worker
 contract remain identical across macOS, Windows, and Linux.

@@ -13,19 +13,23 @@ Completed on the development Mac on 2026-08-15:
 - found and focused the Beastie window through macOS Accessibility and yabai;
 - captured the real rendered window by window ID to a valid RGBA PNG;
 - inspected the captured fixture dialogue and placeholder creature;
-- moved the host pointer to a known coordinate, clicked inside Beastie, and confirmed the game
-  retained focus.
+- submitted a real Talk interaction through the native keyboard path and observed its durable
+  dialogue request ID advance.
 
-Alacritty required Screen Recording/Accessibility approval before window focus and clicks worked.
-With permission granted, yabai does not need to be stopped. Use yabai's window ID and frame instead
-of assuming the game is frontmost. The current scaffold has no click handler, so this smoke proves
-host control rather than an in-game reaction.
+Alacritty required Screen Recording/Accessibility approval before capture and focus worked. Launching
+the Metal window directly from the automation backend can produce a blank or occluded window, while
+launching through Alacritty renders correctly. The current interactive room accepts pointer input in
+code and its logical coordinate mapping is unit-tested, but macOS host-driven clicks appeared to fall
+through to the Alacritty/loginwindow stack even after raising the Beastie window and temporarily
+stopping yabai. Treat real pointer delivery as unverified, not as a gameplay failure. Physical
+controller input is also still unverified.
 
 ## Shared session boundary
 
-Put orchestration that sits above `beastie-core` and below ggez in a reusable `GameSession`. It owns
-the authoritative state, injected clock and RNG, dialogue/TTS backends, save operations, and the
-latest render/audio plans. Neither harness adapter gets a second implementation of game rules.
+Orchestration that sits above `beastie-core` and below ggez lives in reusable `GameSession`. It owns
+authoritative state, RNG, semantic commands, and dialogue-request construction. The game shell owns
+wall-clock timestamps, durable file replacement, worker lifecycle, and plan execution. Neither
+harness adapter gets a second implementation of game rules.
 
 Commands are high-level player or test intentions, not renderer events:
 
@@ -38,14 +42,16 @@ Commands are high-level player or test intentions, not renderer events:
 {"version":1,"command":"capture","name":"after-second-berry"}
 ```
 
-The final command enum should cover every primary interaction and the small amount of test control
-needed to reproduce state:
+The current command enum covers the primary interactions and deterministic control used by the
+implemented scenarios:
 
 - player actions: feed, play, comfort, tidy, talk, and contextual speech reaction;
-- deterministic control: advance game time, wait for pending AI/TTS, save, load, and quit;
-- observation: inspect authoritative state, recent events, dialogue trace, `RenderPlan`, and
-  `AudioPlan`;
-- evidence: capture the logical framebuffer to a named PNG.
+- deterministic control: tick or advance game time and create/load an in-memory checkpoint;
+- observation: inspect authoritative state and emitted events.
+
+Visible scenario files add named framebuffer capture as a shell-level step. Waiting for pending
+AI/TTS, quitting, and unified trace artifacts should be added only when their corresponding runtime
+features need them.
 
 Do not expose arbitrary state mutation as a normal command. Purpose-built fixture setup may load a
 versioned save, but gameplay scenarios should reach states through ordinary actions whenever
@@ -99,13 +105,16 @@ The real game shell accepts the same scenario commands at deterministic update b
 
 ```bash
 cargo xtask dev --fake-ai \
-  --script fixtures/scenarios/berry-grudge.jsonl \
-  --capture-dir target/captures/berry-grudge
+  --script fixtures/scenarios/room-shell.jsonl \
+  --capture-dir target/captures/room-shell
 ```
 
 `capture` saves the 320×180 logical framebuffer directly as PNG before display scaling. This is
 stable evidence for visual review and avoids OS screenshot permissions, window overlap, and fragile
 screen coordinates. Captures supplement `RenderPlan` snapshots; neither replaces the other.
+
+Scripted visible runs implicitly start from seed 42, do not load a prior user save, and do not write
+the persistent save. This makes the documented command deterministic and safe to rerun.
 
 Start with scenario files, not a socket. They are deterministic, reviewable, and sufficient for an
 agent to edit, run, and inspect the game. Add an opt-in localhost JSONL control socket only if real
@@ -134,7 +143,8 @@ corresponding real interaction is implemented. By the end of the relevant slices
 2. Run the identical scenario through the visible ggez game with fixture AI.
 3. Produce and inspect a framebuffer PNG.
 4. Correlate authoritative state, emitted events, dialogue, and `RenderPlan` in one trace.
-5. Launch the real window and verify at least one genuine pointer or keyboard path.
+5. Launch the real window and verify at least one genuine pointer or keyboard path. Keyboard Talk is
+   proven on macOS; pointer delivery and physical controller input remain outstanding host checks.
 
 Keep completed scenarios as permanent fixtures and include their headless checks in
 `cargo xtask verify`. Visible capture and host-input smoke tests remain explicit host checks when a

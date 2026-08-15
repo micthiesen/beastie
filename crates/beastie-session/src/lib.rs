@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use beastie_core::{
-    Concept, FoodId, GameEvent, MemoryCue, MemoryQuery, PlayerEvent, Reaction, SaveGame,
-    SeededRandom, WorldState, step,
+    Concept, FoodId, GameEvent, MemoryCue, MemoryQuery, Mood, OfflineProgress, PlayerEvent,
+    Reaction, SeededRandom, ToyId, WorldState, advance_offline, step,
 };
 use beastie_protocol::{
     DialogueRequest, DialogueRequestContext, Gesture, build_dialogue_request, validate_request,
@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const SESSION_PROTOCOL_VERSION: u32 = 1;
+pub const SESSION_SAVE_VERSION: u32 = 2;
 pub const MAX_COMMAND_BYTES: usize = 4_096;
 pub const MAX_ADVANCE_MINUTES: u32 = 45;
 
@@ -26,13 +27,27 @@ pub struct CommandEnvelope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionCommand {
-    Feed { food: FoodId },
-    Play,
+    Feed {
+        food: FoodId,
+    },
+    Play {
+        #[serde(default)]
+        toy: ToyId,
+    },
     Comfort,
     Tidy,
-    Advance { minutes: u32 },
-    Talk { text: String },
-    React { reaction: Reaction },
+    Advance {
+        minutes: u32,
+    },
+    Tick {
+        milliseconds: u64,
+    },
+    Talk {
+        text: String,
+    },
+    React {
+        reaction: Reaction,
+    },
     Save,
     Load,
     Inspect,
@@ -58,7 +73,48 @@ pub struct GameSession {
     random: SeededRandom,
     sequence: u64,
     next_request_id: u64,
-    checkpoint: Option<String>,
+    checkpoint: Option<Checkpoint>,
+}
+
+#[derive(Debug, Clone)]
+struct Checkpoint {
+    world: WorldState,
+    random: SeededRandom,
+    next_request_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionSave {
+    pub version: u32,
+    pub saved_at_ms: u64,
+    pub world: WorldState,
+    pub random: SeededRandom,
+    pub sequence: u64,
+    pub next_request_id: u64,
+}
+
+impl SessionSave {
+    pub fn to_json(&self) -> Result<String, SessionError> {
+        self.validate()?;
+        serde_json::to_string_pretty(self).map_err(SessionError::Json)
+    }
+
+    pub fn from_json(source: &str) -> Result<Self, SessionError> {
+        let save = serde_json::from_str::<Self>(source).map_err(SessionError::Json)?;
+        save.validate()?;
+        Ok(save)
+    }
+
+    fn validate(&self) -> Result<(), SessionError> {
+        if self.version != SESSION_SAVE_VERSION {
+            return Err(SessionError::SaveVersion(self.version));
+        }
+        if self.next_request_id == 0 {
+            return Err(SessionError::RequestId);
+        }
+        self.world.validate().map_err(SessionError::State)
+    }
 }
 
 impl GameSession {
@@ -78,6 +134,43 @@ impl GameSession {
         &self.world
     }
 
+    #[must_use]
+    pub fn capture(&self, saved_at_ms: u64) -> SessionSave {
+        SessionSave {
+            version: SESSION_SAVE_VERSION,
+            saved_at_ms,
+            world: self.world.clone(),
+            random: self.random,
+            sequence: self.sequence,
+            next_request_id: self.next_request_id,
+        }
+    }
+
+    pub fn resume(
+        save: SessionSave,
+        resumed_at_ms: u64,
+    ) -> Result<(Self, OfflineProgress), SessionError> {
+        save.validate()?;
+        let offline_ms = resumed_at_ms.saturating_sub(save.saved_at_ms);
+        let mut session = Self {
+            world: save.world,
+            random: save.random,
+            sequence: save.sequence,
+            next_request_id: save.next_request_id,
+            checkpoint: None,
+        };
+        let progress = advance_offline(&mut session.world, offline_ms, &mut session.random);
+        session.world.validate().map_err(SessionError::State)?;
+        Ok((session, progress))
+    }
+
+    pub fn resume_json(
+        source: &str,
+        resumed_at_ms: u64,
+    ) -> Result<(Self, OfflineProgress), SessionError> {
+        Self::resume(SessionSave::from_json(source)?, resumed_at_ms)
+    }
+
     pub fn parse_command(line: &str) -> Result<CommandEnvelope, SessionError> {
         if line.len() > MAX_COMMAND_BYTES {
             return Err(SessionError::CommandTooLarge);
@@ -89,18 +182,19 @@ impl GameSession {
 
     pub fn apply(&mut self, envelope: CommandEnvelope) -> Result<Observation, SessionError> {
         validate_envelope(&envelope)?;
+        self.world.validate().map_err(SessionError::State)?;
         let next_sequence = self.sequence.saturating_add(1);
         let mut events = Vec::new();
         let mut dialogue_request = None;
         let mut inspected_world = None;
-        let mut save_json = None;
+        let save_json = None;
 
         match envelope.command {
             SessionCommand::Feed { food } => {
                 events = self.apply_player_event(PlayerEvent::Feed(food));
             }
-            SessionCommand::Play => {
-                events = self.apply_player_event(PlayerEvent::Play);
+            SessionCommand::Play { toy } => {
+                events = self.apply_player_event(PlayerEvent::Play(toy));
             }
             SessionCommand::Comfort => {
                 events = self.apply_player_event(PlayerEvent::Comfort);
@@ -112,6 +206,9 @@ impl GameSession {
                 for _ in 0..minutes {
                     events.extend(step(&mut self.world, &[], 60_000, &mut self.random));
                 }
+            }
+            SessionCommand::Tick { milliseconds } => {
+                events = step(&mut self.world, &[], milliseconds, &mut self.random);
             }
             SessionCommand::Talk { text } => {
                 events = self.apply_player_event(PlayerEvent::Talk);
@@ -145,22 +242,17 @@ impl GameSession {
                 events = self.apply_player_event(PlayerEvent::React(reaction));
             }
             SessionCommand::Save => {
-                let encoded = SaveGame::capture(&self.world, &self.random)
-                    .to_json()
-                    .map_err(SessionError::Save)?;
-                self.checkpoint = Some(encoded.clone());
-                save_json = Some(encoded);
+                self.checkpoint = Some(Checkpoint {
+                    world: self.world.clone(),
+                    random: self.random,
+                    next_request_id: self.next_request_id,
+                });
             }
             SessionCommand::Load => {
-                let encoded = self
-                    .checkpoint
-                    .as_deref()
-                    .ok_or(SessionError::NoCheckpoint)?;
-                let (world, random) = SaveGame::from_json(encoded)
-                    .map_err(SessionError::Save)?
-                    .resume();
-                self.world = world;
-                self.random = random;
+                let loaded = self.checkpoint.as_ref().ok_or(SessionError::NoCheckpoint)?;
+                self.world = loaded.world.clone();
+                self.random = loaded.random;
+                self.next_request_id = loaded.next_request_id;
             }
             SessionCommand::Inspect => inspected_world = Some(self.world.clone()),
         }
@@ -189,6 +281,11 @@ fn validate_envelope(envelope: &CommandEnvelope) -> Result<(), SessionError> {
     match &envelope.command {
         SessionCommand::Advance { minutes } if *minutes > MAX_ADVANCE_MINUTES => {
             Err(SessionError::Advance(*minutes))
+        }
+        SessionCommand::Tick { milliseconds }
+            if *milliseconds > u64::from(MAX_ADVANCE_MINUTES) * 60_000 =>
+        {
+            Err(SessionError::Tick(*milliseconds))
         }
         SessionCommand::Talk { text } if text.chars().count() > 512 => {
             Err(SessionError::TalkTooLong)
@@ -222,14 +319,13 @@ fn memory_query(text: &str) -> MemoryQuery {
 }
 
 fn mood(world: &WorldState) -> &'static str {
-    if world.creature.current_intention == beastie_core::Intention::Sleep {
-        "sleepy"
-    } else if world.creature.relationship.resentment > 0.25 {
-        "resentful"
-    } else if world.creature.needs.hunger > 0.75 {
-        "hungry"
-    } else {
-        "wary"
+    match world.mood() {
+        Mood::Content => "content",
+        Mood::Curious => "curious",
+        Mood::Hungry => "hungry",
+        Mood::Sleepy => "sleepy",
+        Mood::Lonely => "lonely",
+        Mood::Resentful => "resentful",
     }
 }
 
@@ -243,12 +339,16 @@ pub enum SessionError {
     Json(serde_json::Error),
     #[error("cannot advance {0} minutes in one command")]
     Advance(u32),
+    #[error("cannot tick {0} milliseconds in one command")]
+    Tick(u64),
     #[error("talk text exceeds 512 characters")]
     TalkTooLong,
     #[error("no in-memory checkpoint exists")]
     NoCheckpoint,
-    #[error("save operation failed: {0}")]
-    Save(beastie_core::SaveError),
+    #[error("session save version {0} is unsupported")]
+    SaveVersion(u32),
+    #[error("next dialogue request ID must be nonzero")]
+    RequestId,
     #[error("session state became invalid: {0}")]
     State(beastie_core::StateValidationError),
     #[error("dialogue request is invalid: {0}")]
@@ -284,7 +384,7 @@ mod tests {
             SessionCommand::Feed {
                 food: FoodId::Pellet,
             },
-            SessionCommand::Play,
+            SessionCommand::Play { toy: ToyId::Ball },
             SessionCommand::Comfort,
             SessionCommand::Tidy,
             SessionCommand::Talk {
@@ -299,7 +399,7 @@ mod tests {
     fn save_and_load_restore_world_and_random_state() {
         let mut session = GameSession::new(99, "Mrrp");
         session
-            .apply(command(SessionCommand::Play))
+            .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
             .expect("play should apply");
         let saved_world = session.world().clone();
         session
@@ -358,5 +458,162 @@ mod tests {
                 .iter()
                 .any(|memory| memory.fact.contains("berry"))
         );
+    }
+
+    #[test]
+    fn legacy_play_json_defaults_to_the_ball() {
+        let parsed = GameSession::parse_command(r#"{"version":1,"command":"play"}"#)
+            .expect("play without a toy remains compatible");
+        assert_eq!(parsed.command, SessionCommand::Play { toy: ToyId::Ball });
+    }
+
+    #[test]
+    fn tick_preserves_subsecond_remainder() {
+        let mut batched = GameSession::new(55, "Tock");
+        let mut split = GameSession::new(55, "Tock");
+        batched
+            .apply(command(SessionCommand::Tick {
+                milliseconds: 1_500,
+            }))
+            .expect("batched tick");
+        split
+            .apply(command(SessionCommand::Tick { milliseconds: 900 }))
+            .expect("first partial tick");
+        split
+            .apply(command(SessionCommand::Tick { milliseconds: 600 }))
+            .expect("second partial tick");
+        assert_eq!(batched.world(), split.world());
+        assert_eq!(batched.world().simulation_remainder_ms, 500);
+    }
+
+    #[test]
+    fn durable_save_resumes_in_a_new_process_once_and_preserves_request_ids() {
+        let mut original = GameSession::new(88, "Persist");
+        let first_talk = original
+            .apply(command(SessionCommand::Talk {
+                text: "hello".to_owned(),
+            }))
+            .expect("first talk");
+        assert_eq!(
+            first_talk
+                .dialogue_request
+                .expect("dialogue request")
+                .request_id,
+            1
+        );
+        original
+            .apply(command(SessionCommand::Tick {
+                milliseconds: 1_500,
+            }))
+            .expect("tick before save");
+
+        let saved_at = 1_000_000;
+        let encoded = original
+            .capture(saved_at)
+            .to_json()
+            .expect("durable session save");
+        let resumed_at = saved_at + beastie_core::MAX_OFFLINE_MS + 99_000;
+        let (mut resumed, progress) =
+            GameSession::resume_json(&encoded, resumed_at).expect("new process should resume");
+        assert_eq!(progress.applied_ms, beastie_core::MAX_OFFLINE_MS);
+        assert_eq!(resumed.world().simulation_remainder_ms, 500);
+        assert_eq!(
+            resumed
+                .world()
+                .creature
+                .memories
+                .iter()
+                .filter(|memory| {
+                    memory.kind == beastie_core::MemoryKind::PlayerReturnedAfterAbsence
+                })
+                .count(),
+            1
+        );
+        let second_talk = resumed
+            .apply(command(SessionCommand::Talk {
+                text: "again".to_owned(),
+            }))
+            .expect("second talk");
+        assert_eq!(second_talk.sequence, 3);
+        assert_eq!(
+            second_talk
+                .dialogue_request
+                .expect("dialogue request")
+                .request_id,
+            2
+        );
+
+        let after_resume = resumed
+            .capture(resumed_at)
+            .to_json()
+            .expect("second durable save");
+        let (resumed_again, no_progress) = GameSession::resume_json(&after_resume, resumed_at)
+            .expect("same timestamp should not reapply absence");
+        assert_eq!(no_progress.applied_ms, 0);
+        assert!(no_progress.events.is_empty());
+        assert_eq!(resumed_again.world(), resumed.world());
+    }
+
+    #[test]
+    fn durable_save_rejects_invalid_version_and_request_id() {
+        let session = GameSession::new(1, "Strict");
+        let mut save = session.capture(5);
+        save.version = 1;
+        assert!(matches!(save.to_json(), Err(SessionError::SaveVersion(_))));
+
+        save.version = SESSION_SAVE_VERSION;
+        save.next_request_id = 0;
+        assert!(matches!(save.to_json(), Err(SessionError::RequestId)));
+    }
+
+    #[test]
+    fn zero_offline_resume_preserves_future_rng_exactly() {
+        let mut uninterrupted = GameSession::new(404, "Random");
+        uninterrupted
+            .apply(command(SessionCommand::Tick {
+                milliseconds: 17_500,
+            }))
+            .expect("consume simulation randomness");
+        let timestamp = 55_000;
+        let encoded = uninterrupted
+            .capture(timestamp)
+            .to_json()
+            .expect("session save");
+        let (mut resumed, progress) =
+            GameSession::resume_json(&encoded, timestamp).expect("zero-offline resume");
+        assert_eq!(progress.applied_ms, 0);
+
+        let future = command(SessionCommand::Play { toy: ToyId::Bell });
+        let expected_play = uninterrupted
+            .apply(future.clone())
+            .expect("uninterrupted play");
+        let actual_play = resumed.apply(future).expect("resumed play");
+        assert_eq!(actual_play.events, expected_play.events);
+        let tick = command(SessionCommand::Tick {
+            milliseconds: 4_000,
+        });
+        let expected_tick = uninterrupted
+            .apply(tick.clone())
+            .expect("uninterrupted tick");
+        let actual_tick = resumed.apply(tick).expect("resumed tick");
+        assert_eq!(actual_tick.events, expected_tick.events);
+        assert_eq!(resumed.world(), uninterrupted.world());
+    }
+
+    #[test]
+    fn checkpoint_load_restores_state_without_rewinding_transport_sequence() {
+        let mut session = GameSession::new(9, "Sequence");
+        let save_observation = session
+            .apply(command(SessionCommand::Save))
+            .expect("save command");
+        assert_eq!(save_observation.sequence, 1);
+        assert_eq!(save_observation.save_json, None);
+        session
+            .apply(command(SessionCommand::Load))
+            .expect("load command");
+        let inspect = session
+            .apply(command(SessionCommand::Inspect))
+            .expect("next command");
+        assert_eq!(inspect.sequence, 3);
     }
 }

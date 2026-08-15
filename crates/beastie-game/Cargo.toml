@@ -8,6 +8,11 @@ rust-version.workspace = true
 [dependencies]
 beastie-core = { path = "../beastie-core" }
 beastie-protocol = { path = "../beastie-protocol" }
+beastie-session = { path = "../beastie-session" }
 beastie-view = { path = "../beastie-view" }
+clap.workspace = true
 ggez.workspace = true
+image.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true

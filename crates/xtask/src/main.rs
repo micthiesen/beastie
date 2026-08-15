@@ -33,6 +33,14 @@ enum Task {
         fake_ai: bool,
         #[arg(long)]
         smoke: bool,
+        #[arg(long)]
+        script: Option<PathBuf>,
+        #[arg(long, requires = "script")]
+        capture_dir: Option<PathBuf>,
+        #[arg(long, requires = "script")]
+        stay_open: bool,
+        #[arg(long)]
+        new_game: bool,
     },
     /// Run the deterministic simulation without rendering.
     Sim {
@@ -55,7 +63,21 @@ enum Task {
 fn main() -> Result<()> {
     match Cli::parse().command {
         Task::Verify => verify(),
-        Task::Dev { fake_ai, smoke } => dev(fake_ai, smoke),
+        Task::Dev {
+            fake_ai,
+            smoke,
+            script,
+            capture_dir,
+            stay_open,
+            new_game,
+        } => dev(
+            fake_ai,
+            smoke,
+            script.as_deref(),
+            capture_dir.as_deref(),
+            stay_open,
+            new_game,
+        ),
         Task::Sim { seed, days } => sim(seed, days),
         Task::Play {
             seed,
@@ -86,7 +108,14 @@ fn verify() -> Result<()> {
     replay_scenario(BERRY_GRUDGE_SCENARIO)
 }
 
-fn dev(fake_ai: bool, smoke: bool) -> Result<()> {
+fn dev(
+    fake_ai: bool,
+    smoke: bool,
+    script: Option<&Path>,
+    capture_dir: Option<&Path>,
+    stay_open: bool,
+    new_game: bool,
+) -> Result<()> {
     if !fake_ai {
         bail!("only --fake-ai is available until a local model backend is integrated");
     }
@@ -99,19 +128,31 @@ fn dev(fake_ai: bool, smoke: bool) -> Result<()> {
         .join("target")
         .join("debug")
         .join(format!("beastie-ai-worker{}", std::env::consts::EXE_SUFFIX));
-    let mut arguments = vec![
+    let mut command = Command::new("cargo");
+    command.args([
         "run",
         "--package",
         "beastie-game",
         "--locked",
         "--",
         "--fake-ai",
-    ];
+    ]);
     if smoke {
-        arguments.push("--smoke");
+        command.arg("--smoke");
     }
-    let status = Command::new("cargo")
-        .args(arguments)
+    if let Some(script) = script {
+        command.arg("--script").arg(script);
+    }
+    if let Some(capture_dir) = capture_dir {
+        command.arg("--capture-dir").arg(capture_dir);
+    }
+    if stay_open {
+        command.arg("--stay-open");
+    }
+    if new_game {
+        command.arg("--new-game");
+    }
+    let status = command
         .env("BEASTIE_AI_WORKER", worker)
         .status()
         .context("failed to start cargo")?;
@@ -148,7 +189,7 @@ fn play(seed: u64, scenario: Option<&Path>, fake_ai: bool) -> Result<()> {
 
 fn replay_scenario(path: &str) -> Result<()> {
     let file = File::open(path).with_context(|| format!("failed to open scenario {path}"))?;
-    let report = process_commands(BufReader::new(file), io::sink(), 1)?;
+    let report = process_commands(BufReader::new(file), io::sink(), 99)?;
     if report.accepted == 0 {
         bail!("scenario {path} contains no commands");
     }
@@ -322,9 +363,10 @@ impl AdapterError {
             SessionError::CommandTooLarge => "command_too_large",
             SessionError::Json(_) => "malformed_command",
             SessionError::Advance(_) => "invalid_advance",
+            SessionError::Tick(_) => "invalid_tick",
             SessionError::TalkTooLong => "talk_too_long",
             SessionError::NoCheckpoint => "no_checkpoint",
-            SessionError::Save(_) => "save_failed",
+            SessionError::SaveVersion(_) | SessionError::RequestId => "save_failed",
             SessionError::State(_) => "invalid_state",
             SessionError::Dialogue(_) => "invalid_dialogue_request",
         };
@@ -412,7 +454,7 @@ mod tests {
     fn talk_output_is_grounded_in_an_offered_memory() {
         let input = include_bytes!("../../../fixtures/scenarios/berry-grudge.jsonl");
         let mut output = Vec::new();
-        let report = process_commands(&input[..], &mut output, 1).expect("scenario should run");
+        let report = process_commands(&input[..], &mut output, 99).expect("scenario should run");
         let lines = String::from_utf8(output).expect("output should be UTF-8");
         let talk = lines
             .lines()

@@ -182,7 +182,18 @@ pub fn project_candidate_memory(memory: &Memory, current_day: u64) -> CandidateM
         MemoryKind::RejectedFood { food } => {
             format!("{when} you pushed away the {}.", food_name(food))
         }
-        MemoryKind::Played => format!("{when} the player played with you."),
+        MemoryKind::PlayedWith { toy } => {
+            format!(
+                "{when} the player played with you using the {}.",
+                toy_name(toy)
+            )
+        }
+        MemoryKind::DislikedToy { toy } => {
+            format!(
+                "{when} you discovered that you dislike the {}.",
+                toy_name(toy)
+            )
+        }
         MemoryKind::WasComforted => format!("{when} the player comforted you."),
         MemoryKind::PlayerReturnedAfterAbsence => {
             format!("{when} the player returned after being away.")
@@ -210,6 +221,14 @@ fn food_name(food: beastie_core::FoodId) -> &'static str {
         beastie_core::FoodId::Berry => "berry",
         beastie_core::FoodId::Mushroom => "mushroom",
         beastie_core::FoodId::Pellet => "pellet",
+    }
+}
+
+fn toy_name(toy: beastie_core::ToyId) -> &'static str {
+    match toy {
+        beastie_core::ToyId::Ball => "ball",
+        beastie_core::ToyId::Bell => "bell",
+        beastie_core::ToyId::Sock => "sock",
     }
 }
 
@@ -366,7 +385,9 @@ mod tests {
             1_000,
             &mut random,
         );
-        step(&mut world, &[], 1_000, &mut random);
+        for _ in 0..4 {
+            step(&mut world, &[], 1_000, &mut random);
+        }
         world.elapsed_ms = ACTIVE_DAY_MS;
 
         let request = build_dialogue_request(

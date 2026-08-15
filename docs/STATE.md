@@ -3,7 +3,7 @@
 Fast-moving work state and chosen next step. This records the work, not machine state or
 uncommitted changes. Durable findings live in the linked docs.
 
-Last updated: **2026-08-15** (authoritative berry-memory spine complete.)
+Last updated: **2026-08-15** (playable fixture-AI enclosure complete.)
 
 ## Now
 
@@ -19,11 +19,8 @@ Last updated: **2026-08-15** (authoritative berry-memory spine complete.)
   promoted generated art is integrated yet.
 - The autonomous implementation target is the complete MVP. Its ordered slices and working rules
   are recorded in [build-plan.md](build-plan.md).
-- Headless interaction and visible-game scripting will share one semantic command protocol. The
-  protocol will grow with real gameplay rather than becoming a large upfront project; its direction
-  is recorded in [development-harness.md](development-harness.md).
-- Codex can launch, locate, focus, screenshot, and click the native macOS ggez window. Screen control
-  is approved and works alongside yabai; exact smoke evidence is in
+- Headless interaction and visible-game scripting share one semantic `GameSession` command
+  boundary. Its current commands, evidence path, and remaining real-device checks are recorded in
   [development-harness.md](development-harness.md).
 - The deterministic berry-memory acceptance slice is implemented: seeded preferences, concrete
   memories, traceable beliefs, save/reload with RNG continuity, grounded recall, reaction-shaped
@@ -31,20 +28,29 @@ Last updated: **2026-08-15** (authoritative berry-memory spine complete.)
 - `beastie-session` now provides the reusable semantic command boundary. `cargo xtask play` accepts
   bounded versioned JSONL, survives malformed commands, and replays the checked-in berry-grudge
   fixture with deterministic fake AI. The replay is part of `cargo xtask verify`.
+- The fixture-AI enclosure is playable at a fixed 320×180 logical resolution: one-room projection,
+  semantic creature movement, contextual feeding/play/comfort/tidy/talk actions, reactions,
+  keyboard/controller focus, text entry and on-screen keyboard, and asynchronous dialogue fallback.
+- Durable session saves use schema version 2, preserve RNG/request continuity, recover an interrupted
+  replacement from backup, apply bounded non-lethal absence once, and keep offline time out of the
+  active-play development clock. Scripted visible runs start fresh and never touch the player save.
+- `fixtures/scenarios/room-shell.jsonl` drives the visible shell through ordinary session commands
+  and produces deterministic 320×180 PNG evidence. Native macOS keyboard Talk submission is proven;
+  pointer action delivery and physical-controller input still need a focused host check.
 
 ## Next
 
-Make the enclosure playable with fixture AI: complete the fixed 320x180 dollhouse room, project
-autonomous movement and intentions, add the five contextual verbs plus speech reactions, support
-mouse/keyboard/controller focus and Talk entry, implement durable save/continue, and grow the
-shared semantic scenario path only as those interactions require it.
+Establish canonical art and sound presentation: define the tiny art bible, generate and deliberately
+select the creature/furniture/UI anchors, add asset validation and provenance, then replace the
+geometric room with restrained animation, lighting/window variation, UI sounds, and authored
+nonverbal creature noises.
 
 ## Candidates Not Chosen
 
 - **Real local LLM benchmark**: the runtime smoke is complete; wait until the protocol fixture
   corpus can score candidates instead of selecting from one-off prompts.
-- **Pixel-art generation**: first create the approved art direction's anchor assets and
-  asset-validation contract.
+- **Local mouth integration**: first build the dialogue eval corpus so model and voice selection are
+  evidence-based rather than chosen from one-off prompts.
 
 ## Learned Recently
 
@@ -67,9 +73,13 @@ shared semantic scenario path only as those interactions require it.
 - Ordinary gameplay validation will use semantic commands, not coordinate clicks. Coordinate input
   is reserved for targeted mouse-mapping and real-device tests; rendered scenarios save the logical
   framebuffer directly → [development-harness.md](development-harness.md).
-- Native macOS host control is no longer a risk: the current fake-AI game was launched, focused via
-  yabai, captured by window ID, clicked at a known coordinate, and visually inspected. The current
-  scaffold has no click reaction yet, which is expected → [development-harness.md](development-harness.md).
+- The native macOS game launches reliably through Alacritty and produces direct logical-framebuffer
+  captures. Real keyboard navigation and Talk submission work. Pointer events currently appear to
+  fall through the visible game window in the Alacritty/Metal window stack despite successful focus;
+  controller hardware has not yet been exercised → [development-harness.md](development-harness.md).
+- Fixed simulation ticks make visible-frame and accelerated headless advancement equivalent. Room
+  movement is semantic in core and pixel-positioned only in view; offline absence uses bounded
+  analytic changes and does not consume RNG or advance active-play days.
 - The initial full build is Mac-led but preserves portable headless boundaries. Windows and Linux
   native acceptance remains part of MVP completion, not a blocker for the tooling preflight or
   first autonomous implementation pass → [build-plan.md](build-plan.md).

@@ -73,7 +73,8 @@ fn memory_food(kind: &MemoryKind) -> Option<FoodId> {
         MemoryKind::WasFed { food }
         | MemoryKind::DislikedFood { food }
         | MemoryKind::RejectedFood { food } => Some(*food),
-        MemoryKind::Played
+        MemoryKind::PlayedWith { .. }
+        | MemoryKind::DislikedToy { .. }
         | MemoryKind::WasComforted
         | MemoryKind::PlayerReturnedAfterAbsence
         | MemoryKind::PlayerReacted { .. } => None,

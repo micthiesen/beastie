@@ -21,6 +21,15 @@ pub enum FoodId {
     Pellet,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToyId {
+    #[default]
+    Ball,
+    Bell,
+    Sock,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Concept {
@@ -35,6 +44,99 @@ pub enum Concept {
     Again,
     Yesterday,
     Trust,
+    Give,
+    Friend,
+    Why,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mood {
+    Content,
+    Curious,
+    Hungry,
+    Sleepy,
+    Lonely,
+    Resentful,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LanguageStage {
+    #[default]
+    Hatch,
+    Words,
+    Phrases,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InteractionCounters {
+    pub feeds: u32,
+    pub plays: u32,
+    pub comforts: u32,
+    pub returns: u32,
+    pub talks: u32,
+}
+
+impl InteractionCounters {
+    #[must_use]
+    pub fn total(self) -> u32 {
+        self.feeds
+            .saturating_add(self.plays)
+            .saturating_add(self.comforts)
+            .saturating_add(self.returns)
+            .saturating_add(self.talks)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Development {
+    pub active_days_reached: u32,
+    pub language_stage: LanguageStage,
+    pub interactions: InteractionCounters,
+}
+
+impl Default for Development {
+    fn default() -> Self {
+        Self {
+            active_days_reached: 1,
+            language_stage: LanguageStage::Hatch,
+            interactions: InteractionCounters::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoomSpot {
+    Bed,
+    Bowl,
+    Toy,
+    Player,
+    #[default]
+    Center,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Movement {
+    pub from: RoomSpot,
+    pub to: RoomSpot,
+    pub elapsed_ms: u64,
+    pub duration_ms: u64,
+}
+
+impl Movement {
+    #[must_use]
+    pub fn progress(self) -> f32 {
+        if self.duration_ms == 0 {
+            1.0
+        } else {
+            (self.elapsed_ms as f32 / self.duration_ms as f32).clamp(0.0, 1.0)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -169,7 +271,7 @@ pub enum SocialAct {
 #[serde(rename_all = "snake_case")]
 pub enum NonverbalAct {
     PushFoodAway(FoodId),
-    TakeToyAway,
+    TakeToyAway(ToyId),
     RefuseToEat,
     UndoTidy,
 }
@@ -188,7 +290,8 @@ pub enum MemoryKind {
     WasFed { food: FoodId },
     DislikedFood { food: FoodId },
     RejectedFood { food: FoodId },
-    Played,
+    PlayedWith { toy: ToyId },
+    DislikedToy { toy: ToyId },
     WasComforted,
     PlayerReturnedAfterAbsence,
     PlayerReacted { reaction: Reaction, to: SocialAct },
@@ -222,12 +325,20 @@ pub struct Creature {
     pub traits: Traits,
     pub relationship: Relationship,
     pub preferences: BTreeMap<FoodId, f32>,
+    #[serde(default)]
+    pub toy_preferences: BTreeMap<ToyId, f32>,
     pub known_concepts: BTreeSet<Concept>,
     pub memories: Vec<Memory>,
     pub beliefs: Vec<Belief>,
     pub social_habits: SocialHabits,
     pub current_intention: Intention,
     pub last_social_act: Option<SocialAct>,
+    #[serde(default)]
+    pub position: RoomSpot,
+    #[serde(default)]
+    pub movement: Option<Movement>,
+    #[serde(default)]
+    pub development: Development,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -235,9 +346,15 @@ pub struct Creature {
 pub struct RoomState {
     pub food_in_bowl: Option<FoodId>,
     pub toy_available: bool,
+    #[serde(default)]
+    pub toy: ToyId,
     pub tidy: bool,
     pub player_present: bool,
     pub last_nonverbal_act: Option<NonverbalAct>,
+    #[serde(default)]
+    pub play_requested: bool,
+    #[serde(default)]
+    pub comfort_requested: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -246,6 +363,8 @@ pub struct WorldState {
     pub save_version: u32,
     pub seed: u64,
     pub elapsed_ms: u64,
+    #[serde(default)]
+    pub simulation_remainder_ms: u64,
     pub next_memory_id: u64,
     pub next_belief_id: u64,
     pub creature: Creature,
@@ -256,14 +375,22 @@ impl WorldState {
     #[must_use]
     pub fn new(seed: u64, name: impl Into<String>) -> Self {
         let mut genome = SeededRandom::new(seed ^ 0xa076_1d64_78bd_642f);
+        let requested_name = name.into();
+        let normalized_name = requested_name.trim().chars().take(64).collect::<String>();
+        let name = if normalized_name.is_empty() {
+            "Beastie".to_owned()
+        } else {
+            normalized_name
+        };
         Self {
             save_version: SAVE_VERSION,
             seed,
             elapsed_ms: 0,
+            simulation_remainder_ms: 0,
             next_memory_id: 1,
             next_belief_id: 1,
             creature: Creature {
-                name: name.into(),
+                name,
                 needs: Needs {
                     hunger: 0.25,
                     energy: 0.85,
@@ -287,6 +414,7 @@ impl WorldState {
                     resentment: 0.02,
                 },
                 preferences: BTreeMap::new(),
+                toy_preferences: BTreeMap::new(),
                 known_concepts: BTreeSet::from([
                     Concept::SelfIdentity,
                     Concept::You,
@@ -307,13 +435,19 @@ impl WorldState {
                 },
                 current_intention: Intention::Idle,
                 last_social_act: None,
+                position: RoomSpot::Center,
+                movement: None,
+                development: Development::default(),
             },
             room: RoomState {
                 food_in_bowl: None,
                 toy_available: true,
+                toy: ToyId::Ball,
                 tidy: true,
                 player_present: true,
                 last_nonverbal_act: None,
+                play_requested: false,
+                comfort_requested: false,
             },
         }
     }
@@ -321,6 +455,24 @@ impl WorldState {
     #[must_use]
     pub fn active_day(&self) -> u64 {
         self.elapsed_ms / ACTIVE_DAY_MS + 1
+    }
+
+    #[must_use]
+    pub fn mood(&self) -> Mood {
+        let creature = &self.creature;
+        if creature.relationship.resentment > 0.4 {
+            Mood::Resentful
+        } else if creature.needs.energy < 0.25 {
+            Mood::Sleepy
+        } else if creature.needs.hunger > 0.72 {
+            Mood::Hungry
+        } else if !self.room.player_present && creature.relationship.bond > 0.3 {
+            Mood::Lonely
+        } else if creature.needs.curiosity > 0.7 {
+            Mood::Curious
+        } else {
+            Mood::Content
+        }
     }
 
     pub(crate) fn remember(
@@ -373,6 +525,9 @@ impl WorldState {
         if self.save_version != SAVE_VERSION {
             return Err(StateValidationError::Version(self.save_version));
         }
+        if self.creature.name.is_empty() || self.creature.name.chars().count() > 64 {
+            return Err(StateValidationError::Name);
+        }
         let scalar_values = self
             .creature
             .needs
@@ -381,7 +536,8 @@ impl WorldState {
             .chain(self.creature.traits.values())
             .chain(self.creature.relationship.values())
             .chain(self.creature.social_habits.values())
-            .chain(self.creature.preferences.values().copied());
+            .chain(self.creature.preferences.values().copied())
+            .chain(self.creature.toy_preferences.values().copied());
         if scalar_values.clone().any(|value| !value.is_finite()) {
             return Err(StateValidationError::NonFiniteScalar);
         }
@@ -409,9 +565,33 @@ impl WorldState {
             .creature
             .preferences
             .values()
+            .chain(self.creature.toy_preferences.values())
             .any(|value| !(-1.0..=1.0).contains(value))
         {
             return Err(StateValidationError::Preference);
+        }
+        if self.simulation_remainder_ms >= crate::SIMULATION_TICK_MS {
+            return Err(StateValidationError::SimulationRemainder);
+        }
+        if let Some(movement) = self.creature.movement
+            && (movement.duration_ms == 0
+                || movement.elapsed_ms >= movement.duration_ms
+                || movement.from == movement.to
+                || movement.from != self.creature.position)
+        {
+            return Err(StateValidationError::Movement);
+        }
+        let development = self.creature.development;
+        if development.active_days_reached == 0
+            || u64::from(development.active_days_reached) > self.active_day()
+            || (development.language_stage >= LanguageStage::Words
+                && (development.active_days_reached < 2
+                    || !self.creature.known_concepts.contains(&Concept::Again)))
+            || (development.language_stage >= LanguageStage::Phrases
+                && (development.active_days_reached < 3
+                    || !self.creature.known_concepts.contains(&Concept::Yesterday)))
+        {
+            return Err(StateValidationError::Development);
         }
         let memory_ids = self
             .creature
@@ -482,6 +662,8 @@ impl WorldState {
 pub enum StateValidationError {
     #[error("save version {0} is unsupported")]
     Version(u32),
+    #[error("creature name must contain 1..=64 characters")]
+    Name,
     #[error("state contains a non-finite scalar")]
     NonFiniteScalar,
     #[error("trait values must be within 0..=1")]
@@ -490,6 +672,12 @@ pub enum StateValidationError {
     UnitScalar,
     #[error("food preferences must be within -1..=1")]
     Preference,
+    #[error("simulation remainder must be below one simulation tick")]
+    SimulationRemainder,
+    #[error("movement must be between distinct spots and strictly in progress")]
+    Movement,
+    #[error("development stage, active day, or required concepts are inconsistent")]
+    Development,
     #[error("memory IDs must be unique")]
     DuplicateMemory,
     #[error("memory IDs must be strictly increasing and below the next ID")]
