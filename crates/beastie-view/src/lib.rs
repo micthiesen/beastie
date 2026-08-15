@@ -143,6 +143,7 @@ pub enum PresentationCueKind {
     Delight,
     Suspicion,
     Affection,
+    Comfort,
     Spit,
     Crumbs,
     SandPuff,
@@ -301,9 +302,21 @@ impl ViewState {
 
     pub fn enqueue_cue(&mut self, kind: PresentationCueKind, duration_ms: u64, now_ms: u64) {
         self.cue_queue.retain(|cue| cue.expires_at_ms > now_ms);
+        if let Some(last) = self
+            .cue_queue
+            .last_mut()
+            .filter(|cue| cue.kind == kind && cue.expires_at_ms > now_ms)
+        {
+            last.expires_at_ms = last
+                .expires_at_ms
+                .max(now_ms.saturating_add(duration_ms.max(1)));
+            return;
+        }
         if matches!(
             kind,
             PresentationCueKind::Affection
+                | PresentationCueKind::Comfort
+                | PresentationCueKind::Suspicion
                 | PresentationCueKind::Spit
                 | PresentationCueKind::AquariumFull
         ) {
@@ -327,10 +340,14 @@ impl ViewState {
 
     #[must_use]
     pub fn active_cue(&self, now_ms: u64) -> Option<PresentationCueKind> {
+        self.active_cue_timing(now_ms).map(|(kind, _)| kind)
+    }
+
+    fn active_cue_timing(&self, now_ms: u64) -> Option<(PresentationCueKind, u64)> {
         self.cue_queue
             .iter()
             .find(|cue| now_ms >= cue.starts_at_ms && now_ms < cue.expires_at_ms)
-            .map(|cue| cue.kind)
+            .map(|cue| (cue.kind, now_ms.saturating_sub(cue.starts_at_ms)))
     }
 }
 
@@ -737,10 +754,7 @@ fn add_creature(
     let cue = view.active_cue(state.elapsed_ms);
     if dialogue_active(view)
         || matches!(creature.gaze, GazeTarget::Player)
-        || matches!(
-            cue,
-            Some(PresentationCueKind::Delight | PresentationCueKind::Affection)
-        )
+        || cue.is_some_and(cue_has_body_override)
     {
         // Full-body front-facing acting is the dialogue close-up. Keep every opaque pixel of the
         // largest curated state inside the 320x130 water stage even if world movement reached an
@@ -2148,13 +2162,12 @@ fn cue_for_event(event: &GameEvent) -> Option<(PresentationCueKind, u64)> {
     match event {
         GameEvent::FoodDropped { .. } => Some((PresentationCueKind::Notice, 700)),
         GameEvent::FoodConsumed(_) => Some((PresentationCueKind::Crumbs, 900)),
-        GameEvent::FoodRejected(_) | GameEvent::ToyRejected(_) => {
-            Some((PresentationCueKind::Spit, 1_100))
-        }
+        GameEvent::FoodRejected(_) => Some((PresentationCueKind::Spit, 1_100)),
+        GameEvent::ToyRejected(_) => Some((PresentationCueKind::Suspicion, 1_100)),
         GameEvent::FoodDropRejected(FoodDropRejectionReason::AquariumFull) => {
             Some((PresentationCueKind::AquariumFull, 1_300))
         }
-        GameEvent::Comforted => Some((PresentationCueKind::Affection, 1_200)),
+        GameEvent::Comforted => Some((PresentationCueKind::Comfort, 1_200)),
         GameEvent::SleepStarted => Some((PresentationCueKind::Sleep, 1_000)),
         GameEvent::FoodSettled(_) => Some((PresentationCueKind::SandPuff, 700)),
         GameEvent::NonverbalAct(act) => Some((cue_for_nonverbal(*act), 1_100)),
@@ -2184,7 +2197,7 @@ fn audio_for_cue(cue: PresentationCueKind) -> AudioCue {
         | PresentationCueKind::Spit => AudioCue::FoodReject,
         PresentationCueKind::AquariumFull => AudioCue::UiReject,
         PresentationCueKind::Delight | PresentationCueKind::Crumbs => AudioCue::FoodEat,
-        PresentationCueKind::Affection => AudioCue::Affection,
+        PresentationCueKind::Affection | PresentationCueKind::Comfort => AudioCue::Affection,
         PresentationCueKind::SandPuff => AudioCue::Sand,
         PresentationCueKind::Sleep => AudioCue::Sleep,
     }
@@ -2207,22 +2220,32 @@ fn body_sprite(
     elapsed_ms: u64,
     side_flip: SpriteFlip,
 ) -> (String, SpriteFlip, u8) {
-    let cue = view.active_cue(state.elapsed_ms);
+    let cue_timing = view.active_cue_timing(state.elapsed_ms);
+    let cue = cue_timing.map(|(kind, _)| kind);
     let mood = visual_mood_name(state, cue);
     let faces_player = view.speaking
         || matches!(state.creature.aquarium.gaze, GazeTarget::Player)
         || matches!(
             cue,
-            Some(PresentationCueKind::Delight | PresentationCueKind::Affection)
+            Some(
+                PresentationCueKind::Delight
+                    | PresentationCueKind::Affection
+                    | PresentationCueKind::Comfort
+            )
         );
-    if matches!(
-        cue,
-        Some(PresentationCueKind::Delight | PresentationCueKind::Affection)
-    ) {
+    if let Some((asset, flip)) = cue
+        .filter(|kind| !dialogue_active(view) || cue_preempts_dialogue(*kind))
+        .and_then(|kind| reaction_body_asset(kind, side_flip))
+    {
+        let cue_elapsed_ms = if view.reduced_motion {
+            0
+        } else {
+            cue_timing.map_or(0, |(_, elapsed_ms)| elapsed_ms)
+        };
         return (
-            "creature-v1/reaction/affection-south".to_owned(),
-            SpriteFlip::None,
-            animation_frame("hover", elapsed_ms),
+            asset.to_owned(),
+            flip,
+            u8::try_from((cue_elapsed_ms / 240).min(3)).unwrap_or_default(),
         );
     }
     if dialogue_active(view) {
@@ -2259,13 +2282,67 @@ fn dialogue_active(view: &ViewState) -> bool {
     view.speaking || view.speech.is_some()
 }
 
+const fn cue_has_body_override(cue: PresentationCueKind) -> bool {
+    matches!(
+        cue,
+        PresentationCueKind::Notice
+            | PresentationCueKind::Recoil
+            | PresentationCueKind::Delight
+            | PresentationCueKind::Suspicion
+            | PresentationCueKind::Affection
+            | PresentationCueKind::Comfort
+            | PresentationCueKind::Spit
+            | PresentationCueKind::Crumbs
+            | PresentationCueKind::AquariumFull
+    )
+}
+
+const fn cue_preempts_dialogue(cue: PresentationCueKind) -> bool {
+    matches!(
+        cue,
+        PresentationCueKind::Recoil
+            | PresentationCueKind::Suspicion
+            | PresentationCueKind::Affection
+            | PresentationCueKind::Comfort
+            | PresentationCueKind::Spit
+            | PresentationCueKind::AquariumFull
+    )
+}
+
+fn reaction_body_asset(
+    cue: PresentationCueKind,
+    side_flip: SpriteFlip,
+) -> Option<(&'static str, SpriteFlip)> {
+    match cue {
+        PresentationCueKind::Notice => {
+            Some(("creature-v1/reaction/notice-south", SpriteFlip::None))
+        }
+        PresentationCueKind::Recoil
+        | PresentationCueKind::Spit
+        | PresentationCueKind::AquariumFull => Some(("creature-v1/reject-food", side_flip)),
+        PresentationCueKind::Suspicion => {
+            Some(("creature-v1/reaction/toy-refusal-east", side_flip))
+        }
+        PresentationCueKind::Delight | PresentationCueKind::Affection => {
+            Some(("creature-v1/reaction/affection-south", SpriteFlip::None))
+        }
+        PresentationCueKind::Comfort => {
+            Some(("creature-v1/reaction/comfort-south", SpriteFlip::None))
+        }
+        PresentationCueKind::Crumbs => Some(("creature-v1/eat", side_flip)),
+        PresentationCueKind::SandPuff | PresentationCueKind::Wake | PresentationCueKind::Sleep => {
+            None
+        }
+    }
+}
+
 fn action_body_asset(pose: &str) -> Option<&'static str> {
     match pose {
         "swim" | "turn" => Some("creature-v1/swim"),
-        "eat" | "react" | "recover" => Some("creature-v1/eat-recoil"),
+        "eat" => Some("creature-v1/eat"),
         "sleep" => Some("creature-v1/sleep"),
         "play" => Some("creature-v1/play"),
-        "hover" | "inspect" | "settle" => None,
+        "hover" | "inspect" | "react" | "recover" | "settle" => None,
         _ => None,
     }
 }
@@ -2279,6 +2356,7 @@ fn visual_mood_name(state: &WorldState, cue: Option<PresentationCueKind>) -> &'s
         Some(PresentationCueKind::Sleep) => "sleepy",
         Some(PresentationCueKind::Delight)
         | Some(PresentationCueKind::Affection)
+        | Some(PresentationCueKind::Comfort)
         | Some(PresentationCueKind::Crumbs)
         | Some(PresentationCueKind::SandPuff)
         | Some(PresentationCueKind::Wake) => "content",
@@ -2332,7 +2410,9 @@ fn effect_sprite(
             body_x + if left { 10 } else { 116 },
             body_y + 8,
         ),
-        PresentationCueKind::Delight | PresentationCueKind::Affection => {
+        PresentationCueKind::Delight
+        | PresentationCueKind::Affection
+        | PresentationCueKind::Comfort => {
             ("creature-v1/effect/affection", body_x + 108, body_y + 4)
         }
         PresentationCueKind::Spit | PresentationCueKind::Crumbs => (
@@ -2657,10 +2737,41 @@ mod tests {
     #[test]
     fn cue_queue_is_bounded() {
         let mut view = ViewState::default();
-        for _ in 0..20 {
-            view.enqueue_cue(PresentationCueKind::Notice, 100, 0);
+        for index in 0..20 {
+            let cue = if index % 2 == 0 {
+                PresentationCueKind::Notice
+            } else {
+                PresentationCueKind::Wake
+            };
+            view.enqueue_cue(cue, 100, 0);
         }
         assert_eq!(view.cue_queue.len(), CUE_QUEUE_LIMIT);
+    }
+
+    #[test]
+    fn toy_rejection_coalesces_to_one_immediate_toy_refusal() {
+        let state = WorldState::new(7, "Mop");
+        let mut view = ViewState::default();
+        view.enqueue_cue(PresentationCueKind::Wake, 2_000, state.elapsed_ms);
+        view.observe_events(
+            &[
+                GameEvent::ToyRejected(ToyId::Sock),
+                GameEvent::NonverbalAct(NonverbalAct::TakeToyAway(ToyId::Sock)),
+            ],
+            state.elapsed_ms,
+        );
+        assert_eq!(view.cue_queue.len(), 1);
+        assert_eq!(
+            view.active_cue(state.elapsed_ms),
+            Some(PresentationCueKind::Suspicion)
+        );
+        let body = plan(&state, &view)
+            .0
+            .sprites
+            .into_iter()
+            .find(|command| command.layer == 12)
+            .expect("toy refusal body");
+        assert_eq!(body.id, "creature-v1/reaction/toy-refusal-east");
     }
 
     #[test]
@@ -2824,6 +2935,93 @@ mod tests {
     }
 
     #[test]
+    fn authored_reactions_start_at_the_first_frame_and_hold_the_last() {
+        let cases = [
+            (
+                PresentationCueKind::Notice,
+                "creature-v1/reaction/notice-south",
+            ),
+            (PresentationCueKind::Spit, "creature-v1/reject-food"),
+            (
+                PresentationCueKind::Suspicion,
+                "creature-v1/reaction/toy-refusal-east",
+            ),
+            (
+                PresentationCueKind::Comfort,
+                "creature-v1/reaction/comfort-south",
+            ),
+            (PresentationCueKind::Crumbs, "creature-v1/eat"),
+        ];
+        for (cue, expected_id) in cases {
+            let mut state = WorldState::new(7, "Mop");
+            state.elapsed_ms = 10_000;
+            let mut view = ViewState::default();
+            view.enqueue_cue(cue, 2_000, state.elapsed_ms);
+            let first = plan(&state, &view)
+                .0
+                .sprites
+                .into_iter()
+                .find(|command| command.layer == 12)
+                .expect("reaction body");
+            assert_eq!(first.id, expected_id);
+            assert_eq!(first.frame, 0);
+
+            state.elapsed_ms += 1_500;
+            let held = plan(&state, &view)
+                .0
+                .sprites
+                .into_iter()
+                .find(|command| command.layer == 12)
+                .expect("held reaction body");
+            assert_eq!(held.id, expected_id);
+            assert_eq!(held.frame, 3);
+        }
+    }
+
+    #[test]
+    fn dialogue_replaces_stale_punctuation_but_not_direct_reactions() {
+        let state = WorldState::new(7, "Mop");
+        let dialogue_body_for = |cue| {
+            let mut view = ViewState::default();
+            view.show_speech("berry again".to_owned(), state.elapsed_ms);
+            view.enqueue_cue(cue, 2_000, state.elapsed_ms);
+            plan(&state, &view)
+                .0
+                .sprites
+                .into_iter()
+                .find(|command| command.layer == 12)
+                .expect("dialogue body")
+                .id
+        };
+        assert!(dialogue_body_for(PresentationCueKind::Crumbs).starts_with("creature-v1/talk/"));
+        assert_eq!(
+            dialogue_body_for(PresentationCueKind::Spit),
+            "creature-v1/reject-food"
+        );
+        assert_eq!(
+            dialogue_body_for(PresentationCueKind::Comfort),
+            "creature-v1/reaction/comfort-south"
+        );
+    }
+
+    #[test]
+    fn authored_reaction_body_stays_legible_at_aquarium_edges() {
+        let mut state = WorldState::new(7, "Mop");
+        state.creature.aquarium.position = NormalizedPosition::new(10_000, 0);
+        let mut view = ViewState::default();
+        view.enqueue_cue(PresentationCueKind::Crumbs, 1_000, state.elapsed_ms);
+        let body = plan(&state, &view)
+            .0
+            .sprites
+            .into_iter()
+            .find(|command| command.layer == 12)
+            .expect("edge reaction body");
+        assert_eq!(body.id, "creature-v1/eat");
+        assert!((-16..=184).contains(&body.x));
+        assert!((-20..=-8).contains(&body.y));
+    }
+
+    #[test]
     fn key_cues_use_authored_sprite_effects() {
         let state = WorldState::new(7, "Mop");
         for cue in [
@@ -2974,8 +3172,9 @@ mod tests {
         assert_eq!(action_body_asset("settle"), None);
         assert_eq!(action_body_asset("swim"), Some("creature-v1/swim"));
         assert_eq!(action_body_asset("turn"), Some("creature-v1/swim"));
-        assert_eq!(action_body_asset("eat"), Some("creature-v1/eat-recoil"));
-        assert_eq!(action_body_asset("recover"), Some("creature-v1/eat-recoil"));
+        assert_eq!(action_body_asset("eat"), Some("creature-v1/eat"));
+        assert_eq!(action_body_asset("react"), None);
+        assert_eq!(action_body_asset("recover"), None);
         assert_eq!(action_body_asset("sleep"), Some("creature-v1/sleep"));
         assert_eq!(action_body_asset("play"), Some("creature-v1/play"));
         assert_eq!(action_body_asset("unknown"), None);

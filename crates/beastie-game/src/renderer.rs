@@ -43,7 +43,8 @@ impl AssetCatalog {
                     command.id.as_str(),
                     "creature-v1/hover"
                         | "creature-v1/swim"
-                        | "creature-v1/eat-recoil"
+                        | "creature-v1/eat"
+                        | "creature-v1/reject-food"
                         | "creature-v1/sleep"
                         | "creature-v1/play"
                 ) || command.id.starts_with("creature-v1/mood/")
@@ -333,7 +334,8 @@ fn draw_sprite(
         "creature-v1/base"
         | "creature-v1/hover"
         | "creature-v1/swim"
-        | "creature-v1/eat-recoil"
+        | "creature-v1/eat"
+        | "creature-v1/reject-food"
         | "creature-v1/sleep"
         | "creature-v1/play" => draw_aquatic_creature(ctx, canvas, x, y)?,
         id if id.starts_with("creature-v1/mood/")

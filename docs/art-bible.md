@@ -10,21 +10,31 @@ of the swimming volume.
 
 The hero creature is one recognizable 80x80 source rig rendered at an exact 2x logical scale. Its
 whole sprite carries mood as well as motion: content, curious, hungry, sleepy, lonely, and resentful
-each have side-facing and player-facing art, while swim, eat, sleep, play, affection, and speech use
-their own curated full-body frames. The face must never look pasted onto a neutral body. Eyes,
-mouth, fins, tail, posture, outline, palette, and shading act together in every normal runtime pose.
+each have side-facing and player-facing art, while swim, accepted eating, food rejection, sleep,
+play, noticing, toy refusal, comfort, affection, and speech use their own curated full-body frames.
+The face must never look pasted onto a neutral body. Eyes, mouth, fins, tail, posture, outline,
+palette, and shading act together in every normal runtime pose.
 Small bubbles, hearts, attention marks, crumbs, sand, wake, and sleep marks are authored sprites,
 not rectangle overlays. Gaze leads body turns; attention toward the player uses the south-facing
 state. A bespoke hero reaction is preferable to a generic pose when a moment matters. Horizontal
 flips are allowed only for side poses whose lighting and asymmetry remain credible.
+
+Animation projects authoritative semantic state. A food-consumed event selects accepted-eating
+acting, a food rejection selects disgust, a toy rejection selects toy refusal, and accepted comfort
+selects its own trusting transition. Presentation never guesses those outcomes from dialogue or
+from a generic mood. Low-priority punctuation such as crumbs may yield to a new conversation;
+direct refusal and comfort remain immediate. Every short reaction starts on its first authored
+frame, holds its last frame, and is kept inside the visible aquarium even when world movement has
+reached a permissive edge.
 
 Generated art is curated as if it were handcrafted. A provider result is source material, not an
 automatic acceptance. Inspect every frame at native size and at the actual 2x aquarium scale;
 reject identity drift, accidental props, expression changes, invented colors, edge clipping, and
 loops whose silhouette jumps. It is valid to use a clean static state with deterministic buoyancy
 when animation generation damages a fragile expression. Curated frame repetition is preferable to
-a more varied but incoherent loop. The renderer's simple code-native creature remains only a
-missing-asset safety net and is never layered over shipped hero art.
+a more varied but incoherent loop. Repeated prompt violations are a reason to retain the stronger
+existing animation, not to promote the least-bad reroll. The renderer's simple code-native
+creature remains only a missing-asset safety net and is never layered over shipped hero art.
 
 ## Pixel contract
 

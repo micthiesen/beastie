@@ -50,6 +50,10 @@ berry-grudge, Stage 5, and room-shell scenarios remain regression and migration 
 render and audio plans. It maps normalized coordinates to whole logical pixels; selects authored
 full-body mood, action, speech, and reaction sprites; queues important feedback with direct-reaction
 preemption; and emits semantic hit regions shared by pointer, keyboard, and controller.
+Accepted eating, food rejection, toy refusal, noticing, and comfort are distinct projections of
+typed simulation events rather than visual guesses derived from model text. Cue-relative playback
+starts each reaction at frame zero and holds the final frame. Dialogue supersedes stale ambient
+punctuation, while direct refusal and comfort remain immediate.
 
 The game shell executes plans on a 320x180 logical framebuffer with nearest sampling, whole-pixel
 sprite placement, integer sprite scaling, and integer viewport scaling. The selected background is

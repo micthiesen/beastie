@@ -25,11 +25,13 @@ without keeping room runtime fields.
 
 ### 2. Expression and movement
 
-Complete. The selected 80x80 creature art renders at exact 2x nearest scale. Hover, swim,
-eat/recoil, sleep, and play combine with whole-pixel buoyancy, six side/player-facing full-body mood
-sets, six three-shape speech sets, a bespoke affection loop, and authored wake, sand, attention,
-heart, mouth-particle, and sleep effects. Direct reactions preempt stale presentation cues. The
-code-native creature is a missing-asset safety net, not a layer over shipped art.
+Complete. The selected 80x80 creature art renders at exact 2x nearest scale. Stronger swimming,
+accepted eating, food rejection, noticing, toy refusal, comfort, sleep, and play combine with
+whole-pixel buoyancy, six side/player-facing full-body mood sets, six three-shape speech sets, a
+bespoke affection loop, and authored wake, sand, attention, heart, mouth-particle, and sleep
+effects. Typed simulation events select the matching acting; direct reactions preempt stale
+presentation cues, while dialogue supersedes low-priority punctuation. The code-native creature is
+a missing-asset safety net, not a layer over shipped art.
 
 ### 3. Persistent interaction and accessibility
 

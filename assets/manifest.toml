@@ -428,8 +428,8 @@ width = 80
 height = 80
 frames = 4
 transparent = true
-palette = "style/creature-v1-animation.hex"
-max_colors = 38
+palette = "style/creature-v1-action-v2.hex"
+max_colors = 28
 palette_tolerance = 0
 alpha_policy = "hard"
 native_pixel_density = 1
@@ -437,22 +437,22 @@ status = "runtime"
 
 [asset.provenance]
 generator = "pixellab"
-job_id = "e63443c3-658d-460c-a5ba-3c0b4c58e334"
+job_id = "279c0c17-9c99-4e53-a5c5-c508b2026740"
 generated_at = "2026-08-15"
-prompt = "purposeful underwater swimming loop, pear fish leans forward, tail sweeps and fins paddle, eyes lead, centered for locomotion, four frames"
+prompt = "Polished seamless purposeful underwater swim cycle. Tail sweeps with clear propulsion, small fins paddle in opposition, body compresses by one pixel, and head filament trails while identity and canvas placement stay exact."
 seed = "service-generated"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
-references = ["generated/creature-v1/base.png"]
-human_modifications = "selected four generated animation frames after the reference frame; no pixel edits"
+references = ["generated/creature-v1/mood/content-east-0.png"]
+human_modifications = "selected all four generated frames after rejecting the provider reference frame; symmetrically cropped 84x84 provider padding to 80x80 after verifying opaque bounds"
 
 [[asset]]
-id = "creature-v1/eat-recoil"
+id = "creature-v1/reject-food"
 kind = "animation"
 width = 80
 height = 80
 frames = 4
 transparent = true
-palette = "style/creature-v1-animation.hex"
+palette = "style/creature-v1-action-v2.hex"
 max_colors = 39
 palette_tolerance = 0
 alpha_policy = "hard"
@@ -467,7 +467,31 @@ prompt = "food interaction loop, pear fish anticipates, opens mouth and bites, r
 seed = "service-generated"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["generated/creature-v1/base.png"]
-human_modifications = "selected four generated animation frames after the reference frame; no pixel edits"
+human_modifications = "selected four generated animation frames after the reference frame; reclassified the existing disgust sequence as rejection-only so accepted eating never shares this acting"
+
+[[asset]]
+id = "creature-v1/eat"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-action-v2.hex"
+max_colors = 36
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "196a441f-3f6e-4d67-bb31-d53790673db1"
+generated_at = "2026-08-15"
+prompt = "Controlled subtle eating cycle. Preserve the exact hungry creature except for a two-pixel lean, small bite, cheek chew, and satisfied eye-close, with no object, tooth, tongue, red pixels, new mouth parts, or silhouette redesign."
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/mood/hungry-east-0.png"]
+human_modifications = "deleted white-mouth variant 76c39892-79e4-4e52-9af2-47258814ac96; curated provider frames 0,1,3,4 and symmetrically cropped 92x92 padding to 80x80 after verifying opaque bounds"
 
 [[asset]]
 id = "creature-v1/sleep"
@@ -515,7 +539,7 @@ prompt = "looping playful aquatic action, eyes focus, body anticipates, quick da
 seed = "service-generated"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["generated/creature-v1/base.png"]
-human_modifications = "selected all four generated animation frames; no pixel edits"
+human_modifications = "retained the original four-frame loop after deleting later rerolls 84f315fd-7c5e-4e78-aaed-b61073525aef and f07a55ee-84c4-4a66-9e35-4344a73572a3 because both invented a red tongue despite closed-mouth constraints"
 
 [[asset]]
 id = "creature-v1/mood/content-east"
@@ -826,6 +850,78 @@ seed = "812737"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["generated/creature-v1/base.png"]
 human_modifications = "curated frames 0,1,2,1 from the five-frame result so the loop stays tender instead of changing into a generic wide-eyed smile"
+
+[[asset]]
+id = "creature-v1/reaction/notice-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-action-v2.hex"
+max_colors = 34
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "31d63ec7-62a2-4e54-b14e-707613ca8e14"
+generated_at = "2026-08-15"
+prompt = "Polished front-facing notice reaction. Pause, raise the head filament, widen the eyes, tilt the whole body, and lean toward the viewer while preserving exact identity, anatomy, palette, and shading."
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/mood/curious-south-0.png"]
+human_modifications = "curated provider frames 0,1,3,4 for a blink-to-alert beat; symmetrically cropped 84x84 padding to 80x80 after verifying opaque bounds"
+
+[[asset]]
+id = "creature-v1/reaction/toy-refusal-east"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-action-v2.hex"
+max_colors = 21
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "7177933f-fddb-43e5-93ef-4fb8e0801977"
+generated_at = "2026-08-15"
+prompt = "Controlled closed-mouth refusal. Preserve the exact resentful creature while side-eyeing, nudging an unseen toy with the forehead, pulling back, and angling away, with no tongue, red pixels, prop, or anatomy change."
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/mood/resentful-east.png"]
+human_modifications = "deleted red-tongue variant 316e96dd-19bb-4c8b-8cb5-cc22a1d2fa98; curated provider frames 0,1,3,4 and symmetrically cropped 84x84 padding to 80x80 after verifying opaque bounds"
+
+[[asset]]
+id = "creature-v1/reaction/comfort-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-action-v2.hex"
+max_colors = 16
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "d561557e-7624-4516-90c8-f94568e7dab6"
+generated_at = "2026-08-15"
+prompt = "Polished affectionate comfort transition. Notice offered comfort, soften the eyes, lean toward the viewer, close the eyes briefly, and settle into a trusting pose while preserving exact identity and shading."
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/reaction/affection-south-0.png"]
+human_modifications = "curated provider frames 0,1,2,4; symmetrically cropped 88x88 padding to 80x80 after verifying opaque bounds"
 
 [[asset]]
 id = "creature-v1/effect/attention"

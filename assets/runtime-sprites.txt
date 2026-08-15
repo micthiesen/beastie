@@ -12,7 +12,8 @@ aquarium/toys
 creature-v1/base
 creature-v1/hover
 creature-v1/swim
-creature-v1/eat-recoil
+creature-v1/eat
+creature-v1/reject-food
 creature-v1/sleep
 creature-v1/play
 creature-v1/mood/content-east
@@ -34,6 +35,9 @@ creature-v1/talk/sleepy-south
 creature-v1/talk/lonely-south
 creature-v1/talk/resentful-south
 creature-v1/reaction/affection-south
+creature-v1/reaction/notice-south
+creature-v1/reaction/toy-refusal-east
+creature-v1/reaction/comfort-south
 creature-v1/effect/attention
 creature-v1/effect/affection
 creature-v1/effect/mouth-particles

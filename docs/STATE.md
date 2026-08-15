@@ -2,7 +2,7 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-15** (sprite-first expression pass complete and locally accepted).
+Last updated: **2026-08-15** (semantic action-animation pass complete and locally accepted).
 
 ## Now
 
@@ -13,8 +13,10 @@ Last updated: **2026-08-15** (sprite-first expression pass complete and locally 
   versioned migration. Rendering owns logical pixels and never establishes facts.
 - View and game implement a cropped 320x180 aquarium and an integer-scaled, sprite-first PixelLab
   actor. Six moods have side-facing and player-facing full-body art, every mood has three curated
-  speech shapes, affection has a bespoke reaction loop, and attention, heart, mouth-particle, wake,
-  sand, and sleep effects are authored sprites. Procedural facial rectangles are gone from the
+  speech shapes, and accepted eating, food rejection, noticing, toy refusal, comfort, affection,
+  and stronger swimming have distinct full-body acting. Attention, heart, mouth-particle, wake,
+  sand, and sleep effects are authored sprites. These reactions project typed simulation events;
+  model prose never chooses game outcomes. Procedural facial rectangles are gone from the
   normal path; the simple renderer creature exists only as a missing-asset safety net. Persistent
   compose UI, semantic pointer/keyboard/controller targets, accessibility settings, binding UI,
   naming, recoverable saves, and opt-in transcript export remain. See
@@ -32,7 +34,7 @@ Last updated: **2026-08-15** (sprite-first expression pass complete and locally 
   3.36-second mono PCM16 line at 22,050 Hz in under 10 ms and about 3.1 MB maximum RSS. Packaging
   must retain GPLv3 license and corresponding source. See
   [tooling-preflight.md](tooling-preflight.md).
-- Asset validation now checks 68 declared assets for provenance, exact palette, hard alpha, pixel
+- Asset validation now checks 72 declared assets for provenance, exact palette, hard alpha, pixel
   density, dimensions, animation completeness, and final-over-generated resolution. The expression
   pass normalizes provider-padded frames to the canonical 80x80 canvas only after opaque-bounds
   checks. Aquarium provenance and deliberate rejected/curated-frame decisions are in
@@ -44,7 +46,11 @@ Last updated: **2026-08-15** (sprite-first expression pass complete and locally 
   physical controller has been attached. Windows and Linux native install, launch, save-path, and
   child-cleanup evidence has not been produced. CI or cross-compilation is not native proof.
 - The final aquarium shell completed all eight logical captures from an Alacritty GUI child; the
-  sprite pass repeated that run several times and the inspected dialogue frame showed a complete,
+  sprite pass repeated that run several times and the action-animation pass completed another
+  eight-frame foreground run. Its inspected notice, swim, accepted-eating, dialogue, and comfort
+  frames remained crisp and fully legible at 2x. The dialogue frame no longer reuses stale eating
+  punctuation, and important reaction bodies stay inside the aquarium at permissive world edges.
+  The earlier inspected dialogue frame showed a complete,
   fully visible player-facing creature rather than a cropped procedural face. Six-mood and
   six-talking-state galleries were inspected at the real 2x aquarium scale. Direct affection and
   forceful rejection now preempt stale low-priority presentation cues. The final packaged app also
@@ -72,6 +78,7 @@ prose claims.
 ## Durable pointers
 
 - Product and acceptance direction: [v1-plan.md](v1-plan.md)
+- Canonical product philosophy: [game-design-philosophy.md](game-design-philosophy.md)
 - Runtime boundaries: [architecture.md](architecture.md)
 - Test and capture commands: [development-harness.md](development-harness.md)
 - Model and voice evidence: [local-mouth.md](local-mouth.md),
