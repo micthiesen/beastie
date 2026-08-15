@@ -5,8 +5,14 @@ small local model creates expression.
 
 > This is a living document. Update it as conventions emerge; don't ask, just update.
 
-**Read [docs/STATE.md](docs/STATE.md) first.** It holds the fast-moving work picture and chosen
-next step. Use `/next` when the next step is open and `/wrap` when ending a substantial session.
+**Read [docs/STATE.md](docs/STATE.md) first, then read
+[docs/game-design-philosophy.md](docs/game-design-philosophy.md) before designing or changing
+features.** STATE holds the fast-moving work picture; the philosophy is the canonical product
+authority. Use `/next` when the next step is open and `/wrap` when ending a substantial session.
+
+Feature plans, implementation choices, and reviews must preserve the philosophy's boundaries. If a
+requested change conflicts with it, surface the conflict explicitly instead of letting code or a
+lower-level milestone document redefine the game by accident.
 
 ## Always commit and push
 
