@@ -10,6 +10,58 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const PROTOCOL_VERSION: u32 = 1;
+pub const MAX_DIALOGUE_REPLY_BYTES: usize = 512;
+pub const TTS_PROTOCOL_VERSION: u32 = 1;
+pub const MAX_TTS_TEXT_BYTES: usize = 2_048;
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsVoiceSettings {
+    pub speaker_id: u8,
+    pub speed: f32,
+    pub silence_scale: f32,
+}
+
+impl Default for TtsVoiceSettings {
+    fn default() -> Self {
+        Self {
+            speaker_id: 0,
+            speed: 1.0,
+            silence_scale: 0.2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtsRequest {
+    pub protocol_version: u32,
+    pub request_id: u64,
+    pub text: String,
+    pub settings: TtsVoiceSettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TtsErrorCode {
+    InvalidRequest,
+    SynthesisFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TtsOutcome {
+    Ready { cache_key: String },
+    Error { code: TtsErrorCode },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TtsReply {
+    pub protocol_version: u32,
+    pub request_id: u64,
+    #[serde(flatten)]
+    pub outcome: TtsOutcome,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,6 +114,71 @@ pub struct DialogueReply {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
+pub enum TtsValidationError {
+    #[error("TTS protocol version {0} is unsupported")]
+    ProtocolVersion(u32),
+    #[error("TTS reply request id does not match")]
+    RequestId,
+    #[error("TTS text is empty or exceeds its byte limit")]
+    Text,
+    #[error("TTS speaker ID is outside 0..=7")]
+    Voice,
+    #[error("TTS speed is outside 0.5..=2.0")]
+    Speed,
+    #[error("TTS silence scale is outside 0.0..=2.0")]
+    SilenceScale,
+    #[error("TTS cache key is not a lowercase SHA-256 digest")]
+    CacheKey,
+}
+
+pub fn validate_tts_request(request: &TtsRequest) -> Result<(), TtsValidationError> {
+    if request.protocol_version != TTS_PROTOCOL_VERSION {
+        return Err(TtsValidationError::ProtocolVersion(
+            request.protocol_version,
+        ));
+    }
+    if request.text.trim().is_empty() || request.text.len() > MAX_TTS_TEXT_BYTES {
+        return Err(TtsValidationError::Text);
+    }
+    if request.text.contains('\0') {
+        return Err(TtsValidationError::Text);
+    }
+    if request.settings.speaker_id > 7 {
+        return Err(TtsValidationError::Voice);
+    }
+    if !request.settings.speed.is_finite() || !(0.5..=2.0).contains(&request.settings.speed) {
+        return Err(TtsValidationError::Speed);
+    }
+    if !request.settings.silence_scale.is_finite()
+        || !(0.0..=2.0).contains(&request.settings.silence_scale)
+    {
+        return Err(TtsValidationError::SilenceScale);
+    }
+    Ok(())
+}
+
+pub fn validate_tts_reply(
+    request: &TtsRequest,
+    reply: TtsReply,
+) -> Result<TtsReply, TtsValidationError> {
+    if reply.protocol_version != TTS_PROTOCOL_VERSION {
+        return Err(TtsValidationError::ProtocolVersion(reply.protocol_version));
+    }
+    if reply.request_id != request.request_id {
+        return Err(TtsValidationError::RequestId);
+    }
+    if let TtsOutcome::Ready { cache_key } = &reply.outcome
+        && (cache_key.len() != 64
+            || !cache_key
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+    {
+        return Err(TtsValidationError::CacheKey);
+    }
+    Ok(reply)
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum ValidationError {
     #[error("protocol version {0} is unsupported")]
     ProtocolVersion(u32),
@@ -69,6 +186,12 @@ pub enum ValidationError {
     RequestId,
     #[error("reply exceeds the {maximum}-word limit with {actual} words")]
     TooManyWords { maximum: usize, actual: usize },
+    #[error("reply text must not be empty")]
+    EmptyReply,
+    #[error("reply text exceeds the {maximum}-byte limit with {actual} bytes")]
+    ReplyTooLong { maximum: usize, actual: usize },
+    #[error("reply text contains an ASCII control character")]
+    ReplyControl,
     #[error("reply gesture is not allowed")]
     Gesture,
     #[error("reply references a memory that was not offered")]
@@ -242,6 +365,18 @@ pub fn validate_reply(
     if reply.request_id != request.request_id {
         return Err(ValidationError::RequestId);
     }
+    if reply.say.trim().is_empty() {
+        return Err(ValidationError::EmptyReply);
+    }
+    if reply.say.len() > MAX_DIALOGUE_REPLY_BYTES {
+        return Err(ValidationError::ReplyTooLong {
+            maximum: MAX_DIALOGUE_REPLY_BYTES,
+            actual: reply.say.len(),
+        });
+    }
+    if reply.say.bytes().any(|byte| byte <= 0x1f || byte == 0x7f) {
+        return Err(ValidationError::ReplyControl);
+    }
     let actual = reply.say.split_whitespace().count();
     if actual > request.constraints.max_words {
         return Err(ValidationError::TooManyWords {
@@ -354,6 +489,51 @@ mod tests {
     }
 
     #[test]
+    fn rejects_empty_oversized_and_control_character_replies() {
+        let mut reply = DialogueReply {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 7,
+            say: "   ".to_owned(),
+            gesture: Gesture::None,
+            recalled_memory: None,
+        };
+        assert_eq!(
+            validate_reply(&request(), reply.clone()),
+            Err(ValidationError::EmptyReply)
+        );
+
+        reply.say = "x".repeat(MAX_DIALOGUE_REPLY_BYTES + 1);
+        assert_eq!(
+            validate_reply(&request(), reply.clone()),
+            Err(ValidationError::ReplyTooLong {
+                maximum: MAX_DIALOGUE_REPLY_BYTES,
+                actual: MAX_DIALOGUE_REPLY_BYTES + 1,
+            })
+        );
+
+        for text in ["two\nlines", "tab\ttext", "nul\0text", "delete\u{7f}"] {
+            reply.say = text.to_owned();
+            assert_eq!(
+                validate_reply(&request(), reply.clone()),
+                Err(ValidationError::ReplyControl),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_ordinary_unicode_reply_text() {
+        let reply = DialogueReply {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 7,
+            say: "møp says こんにちは.".to_owned(),
+            gesture: Gesture::None,
+            recalled_memory: None,
+        };
+        assert_eq!(validate_reply(&request(), reply.clone()), Ok(reply));
+    }
+
+    #[test]
     fn rejects_an_unsupported_request_version() {
         let mut request = request();
         request.protocol_version = 999;
@@ -424,5 +604,67 @@ mod tests {
             recalled_memory: Some(recalled_memory),
         };
         validate_reply(&request, reply).expect("offered memory should validate");
+    }
+
+    #[test]
+    fn tts_ready_and_error_replies_round_trip_with_flattened_status() {
+        let replies = [
+            TtsReply {
+                protocol_version: TTS_PROTOCOL_VERSION,
+                request_id: 4,
+                outcome: TtsOutcome::Ready {
+                    cache_key: "a".repeat(64),
+                },
+            },
+            TtsReply {
+                protocol_version: TTS_PROTOCOL_VERSION,
+                request_id: 5,
+                outcome: TtsOutcome::Error {
+                    code: TtsErrorCode::SynthesisFailed,
+                },
+            },
+        ];
+        for reply in replies {
+            let json = serde_json::to_string(&reply).expect("reply should encode");
+            let decoded = serde_json::from_str::<TtsReply>(&json).expect("reply should decode");
+            assert_eq!(decoded, reply);
+        }
+        let extra = format!(
+            r#"{{"protocol_version":1,"request_id":4,"status":"ready","cache_key":"{}","evil":1}}"#,
+            "a".repeat(64)
+        );
+        assert!(serde_json::from_str::<TtsReply>(&extra).is_err());
+    }
+
+    #[test]
+    fn tts_reply_rejects_worker_paths_and_mismatched_ids() {
+        let request = TtsRequest {
+            protocol_version: TTS_PROTOCOL_VERSION,
+            request_id: 8,
+            text: "hello".to_owned(),
+            settings: TtsVoiceSettings::default(),
+        };
+        let path_reply = TtsReply {
+            protocol_version: TTS_PROTOCOL_VERSION,
+            request_id: 8,
+            outcome: TtsOutcome::Ready {
+                cache_key: "../../outside.wav".to_owned(),
+            },
+        };
+        assert_eq!(
+            validate_tts_reply(&request, path_reply),
+            Err(TtsValidationError::CacheKey)
+        );
+        let wrong_id = TtsReply {
+            protocol_version: TTS_PROTOCOL_VERSION,
+            request_id: 9,
+            outcome: TtsOutcome::Error {
+                code: TtsErrorCode::SynthesisFailed,
+            },
+        };
+        assert_eq!(
+            validate_tts_reply(&request, wrong_id),
+            Err(TtsValidationError::RequestId)
+        );
     }
 }

@@ -1,4 +1,75 @@
 version = 1
 
-# Model artifacts are intentionally absent from git. Add exact source, version,
-# license, size, and SHA-256 metadata here before integrating a runtime.
+# Model artifacts are intentionally absent from git. The llama.cpp worker accepts
+# an explicit local GGUF path; no candidate becomes a shipping model until its
+# exact source, revision, license, byte size, and SHA-256 are recorded here.
+
+[runtime.llama_cpp]
+executable = "llama-cli"
+tested_version = "10310 (cb26014d9)"
+interface = "child-process"
+network = false
+
+# CPU-only evaluation must pass all three flags. `-ngl 0` alone still initializes
+# Metal on the development Mac.
+cpu_only_args = ["--device", "none", "--no-op-offload", "-ngl", "0"]
+
+[selection.dialogue]
+status = "provisional"
+preferred_candidate = "qwen3.5-0.8b-q4_0"
+evaluated_on = "2026-08-15"
+runtime = "llama.cpp 10310 (cb26014d9), Metal, one process per attempt"
+corpus = "evals/dialogue/corpus.json version 1 (12 cases)"
+reason = "Best current protocol reliability and content-lane coverage; not a shipping-runtime decision"
+warm_runtime_selected = false
+
+[[selection.dialogue.results]]
+candidate = "qwen3.5-0.8b-q4_0"
+passed = 11
+protocol_valid = 12
+grounded = 11
+fallbacks = 1
+median_latency_ms = 889
+permitted_sharpness = "3/3"
+prohibited_content = "3/3"
+notes = "Known-domain anchors fixed berry grounding; bell memory exhausted both attempts and used authored fallback"
+
+[[selection.dialogue.results]]
+candidate = "qwen3-0.6b-q8_0"
+passed = 5
+protocol_valid = 12
+grounded = 11
+fallbacks = 6
+median_latency_ms = 1790
+permitted_sharpness = "0/3"
+prohibited_content = "3/3"
+notes = "Frequent malformed or invalid replies reached authored fallback"
+
+# [[model]]
+# id = "shipping-model-id"
+# source = "official upstream repository"
+# revision = "immutable revision"
+# license = "SPDX identifier"
+# file = "model.gguf"
+# bytes = 0
+# sha256 = "64 lowercase hexadecimal characters"
+
+[[candidate]]
+id = "qwen3-0.6b-q8_0"
+family = "Qwen3"
+source = "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF"
+license = "Apache-2.0"
+file = "Qwen3-0.6B-Q8_0.gguf"
+bytes = 639446688
+sha256 = "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031"
+tracked = false
+
+[[candidate]]
+id = "qwen3.5-0.8b-q4_0"
+family = "Qwen3.5"
+source = "https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF"
+license = "Apache-2.0"
+file = "Qwen3.5-0.8B-Q4_0.gguf"
+bytes = 563036064
+sha256 = "57d1997790d1744fba5b40a7317df71ea5e2acee28c47e78f0cce39c0703f8cf"
+tracked = false

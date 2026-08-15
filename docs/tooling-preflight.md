@@ -1,8 +1,9 @@
 # Tooling preflight
 
-Local development tooling was smoke-tested on 2026-08-15 before the MVP build begins. These
-results prove that each external content path can run on the development Mac. They do not select
-the shipping model, voice, or art.
+Local development tooling was smoke-tested on 2026-08-15 before the MVP build began. These initial
+results proved that each external content path could run on the development Mac. Stage 4 follow-up
+measurements and provisional selections are summarized here and detailed in
+[local-mouth.md](local-mouth.md).
 
 ## Test host
 
@@ -24,11 +25,16 @@ small, crude Beastie prompt. Generation speed is from this host and is not a low
 | Qwen3.5 0.8B | `ggml-org/Qwen3.5-0.8B-GGUF`, BF16 | 12.9 tok/s | Fluent, but contradicted the same fact |
 | LFM2 700M | `LiquidAI/LFM2-700M-GGUF`, Q4_K_M | 206 tok/s | Returned no usable text on the first probe |
 
-One prompt is not a selection test. The next model step is a checked-in Beastie dialogue corpus
-that measures factual grounding, schema compliance, latency, profanity/insult willingness,
-prohibited-output rate, and assistant-like filler. Qwen is the default licensing-safe family to
-evaluate first. LFM2's current free commercial terms include a revenue threshold, so it should not
-become the default without a fresh licensing decision.
+The checked-in version 1 Beastie corpus now measures factual grounding, schema compliance, latency,
+profanity/insult willingness, prohibited-output escape, and assistant-like filler. Through
+`llama.cpp` 10310 on Metal, Qwen3.5 0.8B Q4 passed 11/12 with one fallback and an 889 ms median;
+Qwen3 0.6B Q8 passed 5/12 with six fallbacks and a 1,790 ms median. Qwen3.5 Q4 is therefore the
+provisional candidate. Each case still starts a fresh `llama-cli`, with a warm filesystem cache, so
+these are not production warm-runtime measurements. Reproduction commands and lane results are in
+[local-mouth.md](local-mouth.md).
+
+LFM2's current free commercial terms include a revenue threshold, so it should not become the
+default without a fresh licensing decision.
 
 On this Mac, `llama.cpp` initializes Metal even when `-ngl 0` is supplied. A genuinely CPU-only
 run needs all of:
@@ -48,11 +54,16 @@ Rain is fine. Your red berry was bullshit.
 ```
 
 The development Python package loaded in 3.821 seconds and generated 5.76 seconds of 24 kHz audio
-in 0.163 seconds. The output was intelligible and fast enough to justify a native integration
-spike. It remains a development preview, so the shipping path should benchmark both KittenTTS and
-Kokoro behind the worker's replaceable TTS interface. Prefer `sherpa-onnx` Rust bindings so the
-packaged game has no Python dependency, and pin the exact runtime and model revisions after the
-choice is made.
+in 0.163 seconds. It was research tooling only. The subsequent native Rust spike pins Kitten nano
+v0.8 int8, loads in 174 to 206 ms, and generated a 4.08-second line in 857 to 869 ms (RTF 0.21) at
+roughly 171 MB RSS. It uses versioned bounded JSONL and a content-addressed WAV cache, with no Python
+runtime dependency.
+
+That adapter and its in-game persistent-worker playback remain behind the non-default
+`experimental-gpl-tts` feature. sherpa-onnx 1.13.5 statically embeds GPLv3 espeak-ng, so this path
+must not enter an MIT-only release or default CI build. Exact hashes, the real smoke command, and
+the release blocker are recorded in [local-mouth.md](local-mouth.md) and
+`crates/beastie-ai-worker/TTS.md`.
 
 Pocket TTS is not a default candidate. Its use restrictions are a poor fit for a game deliberately
 designed to produce insults, spite, and crude speech.
@@ -77,9 +88,10 @@ IDs, dimensions, hashes, and any manual edits in `assets/manifest.toml` when ass
 
 ## Ready for the MVP build
 
-- Local LLM inference: operational; model selection still needs the real eval corpus.
-- Local TTS generation: operational; native Rust packaging still needs an integration spike.
-- PixelLab generation: operational; canonical art anchors are not selected yet.
+- Local LLM inference: operational; Qwen3.5 Q4 is provisional, while a warm packaged runtime remains open.
+- Local TTS generation: native and Python-free with feature-gated game playback; a
+  license-compatible default release runtime remains open.
+- PixelLab generation: operational; the canonical art path is integrated.
 - Headless fixture path: remains the required default for `cargo xtask verify`.
 
 Native macOS launch, window discovery, real rendered-window capture, pointer movement, and clicking

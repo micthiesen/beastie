@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+# Integration only. The paired worker feature statically embeds GPLv3 espeak-ng.
+experimental-gpl-tts = []
+
 [dependencies]
 beastie-core = { path = "../beastie-core" }
 beastie-protocol = { path = "../beastie-protocol" }
@@ -17,3 +22,6 @@ rodio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

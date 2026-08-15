@@ -1,0 +1,46 @@
+# Exact prototype provenance. This model is not tracked in git.
+id = "kitten-nano-en-v0_8-int8"
+family = "KittenTTS v0.8"
+license = "Apache-2.0"
+tracked = false
+sample_rate_hz = 24000
+speaker_count = 8
+
+[upstream]
+repository = "https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8"
+revision = "84781d74e29ee25217551556398b42f80593a813"
+
+[sherpa_export]
+url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-nano-en-v0_8-int8.tar.bz2"
+bytes = 31220690
+sha256 = "6fa5be852612ce761094ba74ee6123b4fc4acfefa79bf64dc63acae4a83af2fd"
+runtime_version = "1.13.5"
+runtime_commit = "3dc7c569f31ca2cd4a20ed6f7db780327e6714c5"
+
+[files.model]
+path = "model.int8.onnx"
+sha256 = "0ba1e21eda9c8bcc4a70ada7e0d27fefc9ba775aaa037547248ec71f9a3d9b7d"
+
+[files.voices]
+path = "voices.bin"
+sha256 = "d520519c4a3519d44fcfcd943ed0b1e3c5da5cee0eea501d922fac1a93cd24dc"
+
+[files.license]
+path = "LICENSE"
+sha256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+
+[voices]
+"0" = "Jasper"
+"1" = "Bella"
+"2" = "Bruno"
+"3" = "Luna"
+"4" = "Hugo"
+"5" = "Rosie"
+"6" = "Leo"
+"7" = "Kiki"
+
+[license_blocker]
+status = "DO NOT DISTRIBUTE"
+reason = "sherpa-onnx 1.13.5 static artifacts embed GPLv3 espeak-ng"
+tracking_issue = "https://github.com/k2-fsa/sherpa-onnx/issues/3731"
+release_policy = "The experimental-gpl-tts Cargo feature must stay disabled in Beastie releases."

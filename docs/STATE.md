@@ -3,7 +3,7 @@
 Fast-moving work state and chosen next step. This records the work, not machine state or
 uncommitted changes. Durable findings live in the linked docs.
 
-Last updated: **2026-08-15** (canonical art and authored sound integrated.)
+Last updated: **2026-08-15** (replaceable local mouth integrated provisionally.)
 
 ## Now
 
@@ -15,8 +15,15 @@ Last updated: **2026-08-15** (canonical art and authored sound integrated.)
 - Local LLM inference, local TTS generation, and authenticated PixelLab generation all work on the
   development Mac. Results, caveats, and exact smoke measurements are in
   [tooling-preflight.md](tooling-preflight.md).
-- The current AI worker is still fixture-backed. No real model weight, native TTS runtime, or
-  promoted generated art is integrated yet.
+- The fixture dialogue backend remains the deterministic default. The opt-in local backend uses
+  strict bounded JSONL, one retry, authored fallback, deterministic content lanes, and a
+  provisionally selected Qwen3.5 0.8B Q4 model. Exact evaluation and runtime caveats are in
+  [local-mouth.md](local-mouth.md).
+- The game reuses one long-lived worker process, but the provisional inner llama.cpp adapter still
+  reloads its GGUF in a fresh `llama-cli` for every attempt. A warm release runtime remains open.
+- Native Kitten nano TTS is wired through a persistent worker, deterministic cache, and asynchronous
+  game playback behind a non-default feature. It uses no Python, stays off by default, and cannot
+  ship through the current sherpa-onnx path because static espeak-ng is GPLv3.
 - The autonomous implementation target is the complete MVP. Its ordered slices and working rules
   are recorded in [build-plan.md](build-plan.md).
 - Headless interaction and visible-game scripting share one semantic `GameSession` command
@@ -51,18 +58,17 @@ Last updated: **2026-08-15** (canonical art and authored sound integrated.)
 
 ## Next
 
-Integrate the replaceable local mouth: build the checked-in dialogue evaluation corpus, benchmark
-small local model candidates for grounding, protocol compliance, latency, permitted sharpness, and
-prohibited-output escape, then integrate the winner behind the worker boundary. Compare the proven
-KittenTTS path with a practical pinned sherpa-onnx/Kokoro alternative using actual Beastie lines and
-ship the selected local voice without Python.
+Harden the complete Stage 5 vertical slice: exercise the three-day arc through headless,
+visible-fixture, and full-local paths; replace the cold-per-attempt llama.cpp spike with a warm
+packaging candidate; choose and wire a license-compatible native TTS runtime; verify failure paths,
+CPU-only inference, model and asset packaging, save migration, and native platform acceptance.
 
 ## Candidates Not Chosen
 
-- **Real local LLM benchmark**: the runtime smoke is complete; wait until the protocol fixture
-  corpus can score candidates instead of selecting from one-off prompts.
-- **Final hardening**: defer native Windows/Linux acceptance, save migrations, packaging inputs, and
-  the unresolved macOS pointer/controller checks until the real local worker exists end to end.
+- **Qwen3 0.6B Q8**: 5/12 with six fallbacks and 0/3 permitted-sharpness cases, versus Qwen3.5 Q4 at
+  11/12 with one fallback and 3/3 permitted-sharpness cases → [local-mouth.md](local-mouth.md).
+- **Shipping sherpa-onnx 1.13.5**: the native spike works, but its static espeak-ng dependency is
+  GPLv3 and is blocked from the MIT-only release path → [local-mouth.md](local-mouth.md).
 
 ## Learned Recently
 
@@ -76,12 +82,11 @@ ship the selected local voice without Python.
 - The simulation/model authority boundary, target acceptance scenario, performance budgets, and
   explicit exclusions are documented in [mvp-spec.md](mvp-spec.md).
 - The project uses the solo `/next` and `/wrap` continuity pattern adapted from `../stillair`.
-- `llama.cpp` needs `--device none --no-op-offload -ngl 0` for a truly CPU-only run on the
-  development Mac. Qwen3 0.6B and Qwen3.5 0.8B both ran but contradicted the first crude grounding
-  prompt, so model choice remains open → [tooling-preflight.md](tooling-preflight.md).
-- KittenTTS generated intelligible speech substantially faster than real time, and PixelLab's MCP
-  completed a seeded transparent-sprite job. Native TTS packaging and canonical art selection are
-  still explicit build tasks → [tooling-preflight.md](tooling-preflight.md).
+- Qwen3.5 0.8B Q4 is the provisional model after a 12-case corpus run: 11/12 passed, one authored
+  fallback, 889 ms median on Metal. These are cold-process, warm-filesystem-cache measurements;
+  production warm-runtime latency is unmeasured → [local-mouth.md](local-mouth.md).
+- Native Kitten nano TTS loads in 174 to 206 ms and synthesizes at RTF 0.21 on the development Mac.
+  Feature-gated game wiring works, but release licensing remains open → [local-mouth.md](local-mouth.md).
 - Ordinary gameplay validation will use semantic commands, not coordinate clicks. Coordinate input
   is reserved for targeted mouse-mapping and real-device tests; rendered scenarios save the logical
   framebuffer directly → [development-harness.md](development-harness.md).
@@ -103,3 +108,10 @@ ship the selected local voice without Python.
 - Flattened internally tagged Serde enums cannot also use `deny_unknown_fields` on the outer
   envelope. Keep strictness on `SessionCommand`; the outer `CommandEnvelope` must allow the
   flattened `command` tag.
+- AI worker watchdogs contain and kill the complete child process group on macOS/Linux. Windows
+  currently reaps the direct worker only; Job Object containment remains a Stage 5 release blocker
+  so a worker crash or forced shutdown cannot orphan a runtime subprocess.
+- The reviewed local-mouth boundary bounds input, output, channels, cache files, and WAV duration;
+  rejects unsolicited replies and protected-class violence; invalidates stale speech; and reaps
+  worker process groups on macOS/Linux. A fresh native Kitten smoke and the three-capture visible
+  fixture path both passed after hardening → [local-mouth.md](local-mouth.md).

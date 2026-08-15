@@ -7,4 +7,20 @@ rust-version.workspace = true
 
 [dependencies]
 beastie-protocol = { path = "../beastie-protocol" }
+clap = { workspace = true, features = ["env"] }
+serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
+sherpa-onnx = { version = "=1.13.5", optional = true, default-features = false, features = ["static"] }
+
+[features]
+default = []
+# LICENSE BLOCKER: sherpa-onnx 1.13.5 statically embeds GPLv3 espeak-ng.
+# Never enable this in a distributed Beastie build until that dependency is removed
+# or the product's licensing plan explicitly changes.
+experimental-gpl-tts = ["dep:sherpa-onnx"]
+
+[[bin]]
+name = "beastie-tts"
+path = "src/bin/beastie-tts.rs"
+required-features = ["experimental-gpl-tts"]

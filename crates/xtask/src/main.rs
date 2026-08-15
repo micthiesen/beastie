@@ -15,6 +15,7 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 
 mod asset;
+mod dialogue_eval;
 
 const BERRY_GRUDGE_SCENARIO: &str = "fixtures/scenarios/berry-grudge.jsonl";
 
@@ -34,10 +35,24 @@ enum Task {
         #[command(subcommand)]
         command: AssetTask,
     },
-    /// Run the game shell with fixture-backed AI.
+    /// Score the checked-in dialogue corpus with fixtures or a local worker.
+    Dialogue {
+        #[command(subcommand)]
+        command: DialogueTask,
+    },
+    /// Run the game shell with fixture or environment-configured local AI.
     Dev {
         #[arg(long)]
         fake_ai: bool,
+        /// Outer worker watchdog in milliseconds.
+        #[arg(long)]
+        ai_timeout_ms: Option<u64>,
+        /// Opt into GPL-blocked Kitten TTS with this extracted model directory.
+        #[arg(long, requires = "tts_cache_dir")]
+        tts_model_dir: Option<PathBuf>,
+        /// Cache directory shared by the game and experimental TTS worker.
+        #[arg(long, requires = "tts_model_dir")]
+        tts_cache_dir: Option<PathBuf>,
         #[arg(long)]
         smoke: bool,
         #[arg(long)]
@@ -68,6 +83,37 @@ enum Task {
 }
 
 #[derive(Debug, Subcommand)]
+enum DialogueTask {
+    /// Evaluate deterministic fixtures, or opt into a real llama.cpp worker run.
+    Eval {
+        /// Path to the Beastie AI worker. Enables a real-model run.
+        #[arg(long)]
+        worker: Option<PathBuf>,
+        /// GGUF model passed to the real worker. Required with --worker.
+        #[arg(long, requires = "worker")]
+        model: Option<PathBuf>,
+        /// llama-cli executable passed through to the real worker.
+        #[arg(long, requires = "worker")]
+        llama_cli: Option<PathBuf>,
+        /// Per-request worker timeout in milliseconds.
+        #[arg(long, requires = "worker")]
+        timeout_ms: Option<u64>,
+        /// Maximum bytes accepted from one model generation.
+        #[arg(long, requires = "worker")]
+        max_output_bytes: Option<usize>,
+        /// Force llama.cpp onto the portable CPU-only path.
+        #[arg(long, requires = "worker")]
+        cpu_only: bool,
+        /// Extra argument passed through to llama-cli. Repeatable.
+        #[arg(long, requires = "worker", allow_hyphen_values = true)]
+        llama_arg: Vec<String>,
+        /// Safe report filename stem under evals/reports.
+        #[arg(long, default_value = "local-model", requires = "worker")]
+        label: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum AssetTask {
     /// Validate asset files, metadata, palette references, and runtime readiness.
     Check,
@@ -79,21 +125,49 @@ fn main() -> Result<()> {
         Task::Asset {
             command: AssetTask::Check,
         } => asset::check(Path::new("assets/manifest.toml"), true),
+        Task::Dialogue {
+            command:
+                DialogueTask::Eval {
+                    worker,
+                    model,
+                    llama_cli,
+                    timeout_ms,
+                    max_output_bytes,
+                    cpu_only,
+                    llama_arg,
+                    label,
+                },
+        } => dialogue_eval::run(dialogue_eval::EvalOptions {
+            worker,
+            model,
+            llama_cli,
+            timeout_ms,
+            max_output_bytes,
+            cpu_only,
+            llama_args: llama_arg,
+            label,
+        }),
         Task::Dev {
             fake_ai,
+            ai_timeout_ms,
+            tts_model_dir,
+            tts_cache_dir,
             smoke,
             script,
             capture_dir,
             stay_open,
             new_game,
-        } => dev(
+        } => dev(DevOptions {
             fake_ai,
+            ai_timeout_ms,
+            tts_model_dir: tts_model_dir.as_deref(),
+            tts_cache_dir: tts_cache_dir.as_deref(),
             smoke,
-            script.as_deref(),
-            capture_dir.as_deref(),
+            script: script.as_deref(),
+            capture_dir: capture_dir.as_deref(),
             stay_open,
             new_game,
-        ),
+        }),
         Task::Sim { seed, days } => sim(seed, days),
         Task::Play {
             seed,
@@ -106,6 +180,7 @@ fn main() -> Result<()> {
 fn verify() -> Result<()> {
     asset::check(Path::new("assets/manifest.toml"), true)?;
     verify_manifest("models/manifest.toml")?;
+    dialogue_eval::verify_fixtures()?;
     run("cargo", &["fmt", "--all", "--", "--check"])?;
     run(
         "cargo",
@@ -124,35 +199,93 @@ fn verify() -> Result<()> {
     replay_scenario(BERRY_GRUDGE_SCENARIO)
 }
 
-fn dev(
+struct DevOptions<'a> {
     fake_ai: bool,
+    ai_timeout_ms: Option<u64>,
+    tts_model_dir: Option<&'a Path>,
+    tts_cache_dir: Option<&'a Path>,
     smoke: bool,
-    script: Option<&Path>,
-    capture_dir: Option<&Path>,
+    script: Option<&'a Path>,
+    capture_dir: Option<&'a Path>,
     stay_open: bool,
     new_game: bool,
-) -> Result<()> {
-    if !fake_ai {
-        bail!("only --fake-ai is available until a local model backend is integrated");
-    }
+}
+
+fn dev(options: DevOptions<'_>) -> Result<()> {
+    let DevOptions {
+        fake_ai,
+        ai_timeout_ms,
+        tts_model_dir,
+        tts_cache_dir,
+        smoke,
+        script,
+        capture_dir,
+        stay_open,
+        new_game,
+    } = options;
     run(
         "cargo",
-        &["build", "--package", "beastie-ai-worker", "--locked"],
+        &[
+            "build",
+            "--package",
+            "beastie-ai-worker",
+            "--bin",
+            "beastie-ai-worker",
+            "--locked",
+        ],
     )?;
     let worker = std::env::current_dir()
         .context("failed to locate repository root")?
         .join("target")
         .join("debug")
         .join(format!("beastie-ai-worker{}", std::env::consts::EXE_SUFFIX));
+    let tts_worker = if tts_model_dir.is_some() {
+        eprintln!(
+            "LICENSE BLOCKER: experimental TTS statically embeds GPLv3 espeak-ng; do not distribute this build"
+        );
+        run(
+            "cargo",
+            &[
+                "build",
+                "--package",
+                "beastie-ai-worker",
+                "--features",
+                "experimental-gpl-tts",
+                "--bin",
+                "beastie-tts",
+                "--locked",
+            ],
+        )?;
+        Some(
+            std::env::current_dir()?
+                .join("target")
+                .join("debug")
+                .join(format!("beastie-tts{}", std::env::consts::EXE_SUFFIX)),
+        )
+    } else {
+        None
+    };
     let mut command = Command::new("cargo");
-    command.args([
-        "run",
-        "--package",
-        "beastie-game",
-        "--locked",
-        "--",
-        "--fake-ai",
-    ]);
+    command.args(["run", "--package", "beastie-game", "--locked"]);
+    if tts_worker.is_some() {
+        command.args(["--features", "experimental-gpl-tts"]);
+    }
+    command.arg("--");
+    if fake_ai {
+        command.arg("--fake-ai");
+    }
+    if let Some(timeout) = ai_timeout_ms {
+        command.arg("--ai-timeout-ms").arg(timeout.to_string());
+    }
+    if let (Some(tts_worker), Some(model_dir), Some(cache_dir)) =
+        (tts_worker, tts_model_dir, tts_cache_dir)
+    {
+        command
+            .arg("--tts")
+            .env("BEASTIE_TTS_WORKER", tts_worker)
+            .env("BEASTIE_TTS_MODEL_DIR", model_dir)
+            .env("BEASTIE_TTS_CACHE_DIR", cache_dir);
+    }
     if smoke {
         command.arg("--smoke");
     }

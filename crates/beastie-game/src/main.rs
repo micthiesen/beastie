@@ -6,6 +6,8 @@ mod input;
 mod renderer;
 mod save_store;
 mod scenario;
+#[cfg(feature = "experimental-gpl-tts")]
+mod tts;
 
 use app::Game;
 use args::Args;

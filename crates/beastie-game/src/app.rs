@@ -1,9 +1,8 @@
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, TryRecvError};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::mpsc::TryRecvError;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use beastie_core::ToyId;
-use beastie_protocol::DialogueReply;
 use beastie_session::{
     CommandEnvelope, GameSession, SESSION_PROTOCOL_VERSION, SessionCommand, SessionError,
 };
@@ -17,11 +16,13 @@ use ggez::{Context, GameError, GameResult};
 
 use crate::args::Args;
 use crate::audio::{AudioBank, UI_CONFIRM, UI_SELECT, sound_for_event};
-use crate::dialogue;
+use crate::dialogue::{DialogueManager, WorkerConfig};
 use crate::input::{action_at, append_text, focused_action, move_focus};
 use crate::renderer::{AssetCatalog, Viewport, execute_plan, save_logical_png};
 use crate::save_store::SaveStore;
 use crate::scenario::{ScenarioRunner, ScenarioStep};
+#[cfg(feature = "experimental-gpl-tts")]
+use crate::tts::{TtsManager, TtsWorkerConfig};
 
 struct CaptureRequest {
     name: String,
@@ -36,8 +37,9 @@ pub struct Game {
     audio: AudioBank,
     queued_audio: Vec<&'static str>,
     viewport: Viewport,
-    worker: Option<PathBuf>,
-    dialogue_receiver: Option<Receiver<DialogueReply>>,
+    dialogue: DialogueManager,
+    #[cfg(feature = "experimental-gpl-tts")]
+    tts: TtsManager,
     save_store: SaveStore,
     save_enabled: bool,
     scenario: Option<ScenarioRunner>,
@@ -87,11 +89,15 @@ impl Game {
             audio: AudioBank::load(&assets_root),
             queued_audio: Vec::new(),
             viewport: Viewport::for_drawable(width, height),
-            worker: args
-                .fake_ai
-                .then(|| std::env::var_os("BEASTIE_AI_WORKER").map(PathBuf::from))
-                .flatten(),
-            dialogue_receiver: None,
+            dialogue: DialogueManager::new(WorkerConfig::from_environment(
+                args.fake_ai,
+                args.ai_timeout_ms.map_or_else(
+                    WorkerConfig::environment_reply_timeout,
+                    Duration::from_millis,
+                ),
+            )),
+            #[cfg(feature = "experimental-gpl-tts")]
+            tts: TtsManager::new(args.tts.then(TtsWorkerConfig::from_environment).flatten()),
             save_store,
             save_enabled,
             scenario,
@@ -120,11 +126,12 @@ impl Game {
             .map_err(session_error)?;
         self.queued_audio
             .extend(observation.events.iter().filter_map(sound_for_event));
-        if let Some(request) = observation.dialogue_request {
+        if let Some(request) = observation.dialogue_request
+            && self.dialogue.request(request)
+        {
             self.view.pending = true;
             self.view.speech = None;
             self.view.mode = UiMode::Idle;
-            self.dialogue_receiver = Some(dialogue::request(self.worker.clone(), request));
         }
         if persist {
             self.persist()?;
@@ -147,23 +154,39 @@ impl Game {
     }
 
     fn poll_dialogue(&mut self) {
-        let Some(receiver) = &self.dialogue_receiver else {
+        if !self.dialogue.is_pending() {
             return;
-        };
-        match receiver.try_recv() {
+        }
+        match self.dialogue.try_recv() {
             Ok(reply) => {
                 self.view.pending = false;
+                #[cfg(feature = "experimental-gpl-tts")]
+                {
+                    self.audio.stop_speech();
+                    let _ = self.tts.request(reply.say.clone());
+                }
                 self.view.speech = Some(reply.say);
                 self.view.mode = UiMode::Idle;
                 self.view.focused_region = Some("reaction/laugh".to_owned());
-                self.dialogue_receiver = None;
             }
             Err(TryRecvError::Disconnected) => {
                 self.view.pending = false;
                 self.view.speech = Some("too many thought.".to_owned());
-                self.dialogue_receiver = None;
             }
             Err(TryRecvError::Empty) => {}
+        }
+    }
+
+    #[cfg(feature = "experimental-gpl-tts")]
+    fn poll_tts(&mut self) {
+        match self.tts.try_recv() {
+            Ok(completion) => {
+                let _ = completion.request_id;
+                if let Some(wav) = completion.wav {
+                    self.audio.play_speech(wav);
+                }
+            }
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
         }
     }
 
@@ -270,7 +293,7 @@ impl Game {
     }
 
     fn drive_scenario(&mut self, ctx: &mut Context) -> GameResult {
-        if self.dialogue_receiver.is_some() || self.capture.is_some() {
+        if self.dialogue.is_pending() || self.capture.is_some() {
             return Ok(());
         }
         let Some(scenario) = &mut self.scenario else {
@@ -300,10 +323,11 @@ impl Game {
                 let observation = self.session.apply(envelope).map_err(session_error)?;
                 self.queued_audio
                     .extend(observation.events.iter().filter_map(sound_for_event));
-                if let Some(request) = observation.dialogue_request {
+                if let Some(request) = observation.dialogue_request
+                    && self.dialogue.request(request)
+                {
                     self.view.pending = true;
                     self.view.speech = None;
-                    self.dialogue_receiver = Some(dialogue::request(self.worker.clone(), request));
                 }
                 if persist {
                     self.persist()?;
@@ -323,6 +347,8 @@ impl Game {
 impl EventHandler for Game {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
         self.poll_dialogue();
+        #[cfg(feature = "experimental-gpl-tts")]
+        self.poll_tts();
         if self.scenario.is_some() {
             self.drive_scenario(ctx)?;
         } else {

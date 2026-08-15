@@ -8,6 +8,13 @@ pub struct Args {
     /// Use the deterministic fixture-backed dialogue worker.
     #[arg(long)]
     pub fake_ai: bool,
+    /// Watchdog for one reply from the long-lived outer AI worker.
+    #[arg(long)]
+    pub ai_timeout_ms: Option<u64>,
+    /// Enable the separately configured experimental native TTS worker.
+    #[cfg(feature = "experimental-gpl-tts")]
+    #[arg(long)]
+    pub tts: bool,
     /// Exit after a few rendered frames.
     #[arg(long)]
     pub smoke: bool,
