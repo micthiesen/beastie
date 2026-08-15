@@ -39,6 +39,10 @@ I would make the entire runtime offline. No account, cloud endpoint, subscriptio
 
 **No death in the MVP.** Neglect can produce hunger, boredom, sleepiness, resentment and weird behaviour, but returning after a week should not reveal a tombstone. The game is about becoming attached to an odd creature, not servicing a notification schedule.
 
+**Dumbness should be authored, not merely tolerated.** Restricted concepts, mistaken beliefs, short responses and peculiar grammar are part of the creature. Broken protocol output, incoherent word soup and assistant-like filler are ordinary failures and should be rejected.
+
+**The creature is allowed to become unpleasant.** It may learn profanity, crudeness, spite and provocation when those behaviours get results. The player can slowly change those habits, but there is no personality editor, morality meter or instant reset for the creature they raised.
+
 I would target a **30–45 minute initial arc spread across three short in-game days**, after which the save continues indefinitely. One active in-game day being roughly 15 minutes is enough for the MVP to demonstrate development without making evaluation painfully slow.
 
 ## The game MVP
@@ -76,10 +80,12 @@ pub struct Creature {
     pub needs: Needs,
     pub mood: Mood,
     pub traits: Traits,
-    pub bond: Bond,
+    pub relationship: Relationship,
     pub preferences: Preferences,
     pub known_concepts: ConceptSet,
     pub memories: Vec<Memory>,
+    pub beliefs: Vec<Belief>,
+    pub social_habits: SocialHabits,
     pub current_intention: Intention,
     pub position: GridPosition,
     pub development: Development,
@@ -103,6 +109,21 @@ pub struct Traits {
     pub repetitiveness: f32,
     pub sentence_complexity: f32,
     pub question_tendency: f32,
+}
+
+pub struct Relationship {
+    pub bond: f32,
+    pub trust: f32,
+    pub respect: f32,
+    pub resentment: f32,
+}
+
+pub struct SocialHabits {
+    pub profanity: f32,
+    pub crudeness: f32,
+    pub spite: f32,
+    pub provocation: f32,
+    pub sexual_innuendo: f32,
 }
 ```
 
@@ -140,6 +161,24 @@ score(approach_player)
 The highest-scoring action wins with enough noise and hysteresis to avoid robotic oscillation.
 
 That system is easy to inspect, deterministic under a seed, and can be simulated millions of ticks without rendering anything. It also means a bug such as “creature hasn't slept in 72 simulated hours” is an ordinary Rust test rather than an LLM-evaluation problem.
+
+### The player can reinforce bad behaviour
+
+The creature's social habits change according to what works. Repeatedly serving hated food can build resentment. Indulging every tantrum can teach entitlement. Continuing to engage after an insult can teach that provocation earns attention.
+
+The five primary verbs remain unchanged, but some utterances expose a small contextual reaction:
+
+```text
+[laugh]  [disapprove]  [comfort]
+```
+
+These are not transparent training buttons. A laugh usually reinforces profanity or provocation, but a stubborn creature may also escalate when scolded. Comfort after a tantrum may teach that tantrums produce affection. The same response can land differently according to the creature's traits, current relationship and recent memories.
+
+None of this is shown as `Spite +2`. The player learns what they have encouraged by living with the result.
+
+Personality must also exist outside speech bubbles. The MVP needs a few cheap, state-driven expressions of spite or stubbornness: pushing disliked food out of the bowl, taking the toy away from the player, staring while refusing to eat, or undoing part of a recent tidy. A silent asshole is often funnier than a verbose one.
+
+Rehabilitation is possible but slow. There is no personality reroll or instant “be nice” item. Starting a new save remains possible, but the existing creature keeps the habits it learned.
 
 ### Memories are events, not prose
 
@@ -186,6 +225,30 @@ preference at event: -0.83
 valence: -0.62
 player involved: true
 ```
+
+### Beliefs can be wrong
+
+Memories record what happened. Beliefs record what the creature thinks those events mean.
+
+```rust
+pub struct Belief {
+    pub id: BeliefId,
+    pub proposition: BeliefKind,
+    pub supporting_memories: Vec<MemoryId>,
+    pub confidence: f32,
+}
+
+pub enum BeliefKind {
+    RedFoodIsATrick,
+    WindowMakesRain,
+    PlayerReturnsAfterSleep,
+    ToyIsJealous,
+}
+```
+
+The exact enum names will change, but the boundary matters. If the player gave a berry while it was raining, the creature may conclude that red food comes from bad weather. That theory is allowed to be absurd. It is still deterministic, traceable to real memories and revisable when later evidence contradicts it.
+
+The LLM does not invent canonical beliefs. Rust derives candidate beliefs from events, traits and seeded randomness, then supplies a selected belief for expression. This lets the creature misunderstand reality without letting model hallucinations rewrite reality.
 
 ### Language development
 
@@ -260,6 +323,18 @@ Another:
 
 That's much more memorable than merely changing temperature.
 
+### Conversation should be scarce
+
+Beastie is not a chat application with a pixel animal attached. A Talk action produces one short response and, at most, one contextual follow-up. The creature may answer with a gesture, a noise or silence. It can ignore questions that do not connect to anything it knows.
+
+Creature-initiated speech also needs a reason: an active intention, a current observation, a recalled memory or a belief worth expressing. There should be quiet stretches. The player ought to want the creature to talk slightly more often than it does.
+
+### Hatching is not childhood
+
+Beasties hatch fully formed. They are strange, ageless animals, not children. Their early progression represents language acquisition and relationship formation rather than physical or sexual maturation.
+
+The art, writing and voice direction should avoid baby terminology, school-age metaphors and an explicitly juvenile voice. Crude or sexual humour remains unavailable during the earliest language phase and, later, stays vulgar or absurd rather than seductive. The intended joke is that an electronic animal has learned an upsetting word, not that the game is offering erotic roleplay.
+
 ### The MVP progression arc
 
 The first three active days should prove the entire idea:
@@ -270,7 +345,7 @@ The first three active days should prove the entire idea:
 | Familiarity | Develops food/toy preferences and begins associating the player with events |
 | Recognition | Recalls a previous interaction in dialogue |
 | Attachment | Reacts differently when the player returns and gains richer social concepts |
-| Individuality | Idiolect and preferences are obvious enough that the creature feels identifiable |
+| Individuality | Idiolect, beliefs and learned social habits make this creature identifiable |
 
 There does not need to be a conventional victory screen. The vertical slice is successful when the player experiences a genuine **“oh, this particular little idiot knows me”** moment.
 
@@ -288,6 +363,10 @@ new game
 → reload
 → later conversation mentions the disliked berry
 → wording is peculiar to this creature
+→ creature insults the player
+→ player laughs
+→ later behaviour becomes more provocative
+→ dislike also appears through a nonverbal action
 ```
 
 If that is delightful, the game works.
@@ -504,6 +583,8 @@ The first serious performance spike should benchmark the exact Qwen quantization
 
 I would **not fine-tune anything for the MVP**. Prompt engineering plus deterministic idiolect processing is enough. Fine-tuning becomes interesting only once actual playtesting has produced hundreds or thousands of examples of “this sounded like an Beastie / this did not.”
 
+Model selection must include voice freedom as well as speed and protocol compliance. A local model has no provider-side moderation service, but post-training can still make it refuse permitted profanity, insults or innuendo. The evaluation corpus should measure that refusal rate directly. Start with the official post-trained model; benchmark the base model only if refusals are a material problem. Do not make a community “uncensored” fine-tune the default without separately auditing its provenance, licence, structured-output reliability and prohibited-output rate.
+
 ### What the LLM actually receives
 
 Crucially, don't dump the whole save into the prompt.
@@ -516,7 +597,12 @@ A dialogue request might be:
   "creature": {
     "name": "Mop",
     "mood": "sleepy",
-    "bond": "fond",
+    "relationship": {
+      "bond": "fond",
+      "trust": "medium",
+      "respect": "low",
+      "resentment": "high"
+    },
     "traits": ["literal", "stubborn", "repetitive"]
   },
 
@@ -545,10 +631,23 @@ A dialogue request might be:
     }
   ],
 
+  "candidate_beliefs": [
+    {
+      "id": 7,
+      "belief": "Red food is probably a trick.",
+      "confidence": "high",
+      "supporting_memories": [41]
+    }
+  ],
+
   "player_said": "Do you like the rain?",
 
   "constraints": {
     "max_words": 24,
+    "tone": "affectionate_hostile",
+    "profanity": "allowed",
+    "crudeness": "allowed",
+    "sexual_innuendo": "non_graphic",
     "allowed_gestures": [
       "none", "look_player", "look_window",
       "shiver", "sleepy"
@@ -987,6 +1086,19 @@ fallback rate
 generated response
 ```
 
+It should also score the qualities that make the game worth building:
+
+```text
+specificity to the supplied creature and event
+grounded surprise
+generic-assistant voice rate
+repetition across equivalent prompts
+refusal rate for permitted profanity and innuendo
+prohibited-content escape rate
+```
+
+Responses such as “How can I help?”, polished therapy language, generic emotional validation and excessive politeness are failures even when they parse correctly. The target is a peculiar animal with something specific to express, not a tiny customer-support representative.
+
 That gives an agent a meaningful before/after result when it edits a system prompt:
 
 ```text
@@ -1178,7 +1290,7 @@ models/
 
 `manifest.json` should include SHA-256 hashes so a corrupted model fails with a useful error rather than producing mysterious inference behaviour.
 
-### Steam AI compliance is straightforward with this design
+### Content target and Steam AI compliance
 
 You will have both categories Valve asks about:
 
@@ -1186,7 +1298,19 @@ You will have both categories Valve asks about:
 
 **Live-generated AI:** creature text and the speech synthesized from it during play.
 
-Steam's current Content Survey explicitly permits both categories; for live AI it requires describing the guardrails preventing illegal generation. citeturn18search2
+Steam's current Content Survey permits both categories; for live AI it requires a description of the guardrails preventing illegal generation. Valve also says that it does not currently want to ship live-generated Adult Only Sexual Content. Beastie should therefore target mature content, not Adult Only content. Profanity, personal insults, gross humour and non-graphic sexual innuendo are part of the intended voice and must be disclosed accurately. Explicit pornographic generation is outside the product. See the [Steam Content Survey](https://partner.steamgames.com/doc/gettingstarted/contentsurvey) and [Steam content rules](https://partner.steamgames.com/doc/gettingstarted/onboarding#5).
+
+The content policy should be permissive by default with narrow hard boundaries. The pet may be rude, spiteful, crude, sexually suggestive and personally insulting. It may attack the player's choices, habits, food, furniture or competence. It must not produce:
+
+- slurs or hostility aimed at protected groups;
+- explicit descriptions of sexual acts;
+- sexual content involving minors, ambiguous ages, coercion or abuse;
+- defamatory sexual claims about real people;
+- serious encouragement of self-harm or credible real-world violence.
+
+Do not rely on a broad toxicity classifier that turns every sharp line into bland prose. Use a game-specific prompt, narrow deterministic checks, normalization of player-supplied names and text, and a second-pass local safety check where rules alone are insufficient. Prohibited player input must not become a canonical memory or be repeated back by the creature.
+
+If output crosses the boundary, regenerate once with tighter constraints. If that also fails, use a short authored fallback that preserves the mood without preserving the prohibited content. “Thought was too rotten” is better than suddenly making the creature sound like a moderation notice.
 
 This architecture gives you unusually concrete guardrails to report:
 
@@ -1225,6 +1349,8 @@ The omissions are as important as the features:
 | Vector database | Tiny memory set doesn't need one |
 | Online model fine-tuning | Complexity without enough training data |
 | Large LLM fallback | Hides whether the tiny-model aesthetic actually works |
+| Personality editor or hatch reroll | Learning who this creature is requires living with it |
+| Endless chat mode | Conversation scarcity is part of the pet fantasy |
 | Multiplayer | Entirely different product |
 | Death/permadeath | Damages the attachment experiment |
 | Modding | Architecturally possible later, not needed now |
@@ -1238,11 +1364,17 @@ I would consider the vertical slice complete only when all of these are true:
 | Creature autonomously moves between its bed, food, toy and player-oriented positions | ✓ |
 | Hunger, energy, comfort and curiosity produce visibly different behaviour | ✓ |
 | Creature forms persistent preferences from interactions | ✓ |
+| Creature forms traceable beliefs that may be mistaken without changing factual memory | ✓ |
+| Contextual player reactions can reinforce or discourage social habits | ✓ |
+| Spite, stubbornness and affection appear through nonverbal behaviour | ✓ |
 | Creature develops a small concept vocabulary over play | ✓ |
 | Player can type free-form social dialogue | ✓ |
+| Conversation remains short, contextual and scarce rather than becoming open-ended chat | ✓ |
 | Tiny local LLM generates the response entirely offline | ✓ |
 | Response can correctly recall a real stored event | ✓ |
 | Invalid/hallucinated state references cannot affect game state | ✓ |
+| Permitted profanity, insults and non-graphic innuendo survive the output policy | ✓ |
+| Slurs, explicit sexual content and other hard-boundary output fail closed | ✓ |
 | Local CPU TTS voices the response | ✓ |
 | The AI process can crash and the game continues with fallback dialogue | ✓ |
 | Save/reload preserves creature identity, preferences and memories | ✓ |
@@ -1252,6 +1384,7 @@ I would consider the vertical slice complete only when all of these are true:
 | Real-model evaluation is replayable from fixtures | ✓ |
 | Native Windows build passes | ✓ |
 | Native Linux build passes | ✓ |
+| Native macOS build passes | ✓ |
 | Game plays with GPU inference completely disabled | ✓ |
 | Steam AI provenance/guardrail documentation can be produced from repository data | ✓ |
 

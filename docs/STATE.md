@@ -3,8 +3,7 @@
 Fast-moving work state and chosen next step. This records the work, not machine state or
 uncommitted changes. Durable findings live in the linked docs.
 
-Last updated: **2026-08-15** (cross-platform Rust workspace and deterministic foundation
-established.)
+Last updated: **2026-08-15** (personality, belief, conversation and content design recorded.)
 
 ## Now
 
@@ -30,6 +29,10 @@ the authoritative game loop before renderer or model work widens the surface.
 
 ## Learned Recently
 
+- The MVP now treats learned profanity, crudeness, spite and provocation as simulation-backed
+  social habits; adds traceable mistaken beliefs, contextual player reactions, nonverbal spite,
+  scarce conversation, ageless-creature framing, and a mature-but-not-Adult-Only content boundary
+  → [mvp-spec.md](mvp-spec.md).
 - The simulation/model authority boundary, target acceptance scenario, performance budgets, and
   explicit exclusions are documented in [mvp-spec.md](mvp-spec.md).
 - The project uses the solo `/next` and `/wrap` continuity pattern adapted from `../stillair`.
