@@ -3,7 +3,7 @@
 Fast-moving work state and chosen next step. This records the work, not machine state or
 uncommitted changes. Durable findings live in the linked docs.
 
-Last updated: **2026-08-15** (native game control derisk passed; full MVP ready to build.)
+Last updated: **2026-08-15** (authoritative berry-memory spine complete.)
 
 ## Now
 
@@ -25,18 +25,22 @@ Last updated: **2026-08-15** (native game control derisk passed; full MVP ready 
 - Codex can launch, locate, focus, screenshot, and click the native macOS ggez window. Screen control
   is approved and works alongside yabai; exact smoke evidence is in
   [development-harness.md](development-harness.md).
+- The deterministic berry-memory acceptance slice is implemented: seeded preferences, concrete
+  memories, traceable beliefs, save/reload with RNG continuity, grounded recall, reaction-shaped
+  social habits, persistent nonverbal rejection, and accelerated active days.
+- `beastie-session` now provides the reusable semantic command boundary. `cargo xtask play` accepts
+  bounded versioned JSONL, survives malformed commands, and replays the checked-in berry-grudge
+  fixture with deterministic fake AI. The replay is part of `cargo xtask verify`.
 
 ## Next
 
-Build the deterministic berry-memory acceptance slice: preference formation, concrete memory,
-sleep/save/reload, candidate-memory selection, later recall, reaction-driven provocation, nonverbal
-dislike, and multi-day invariants. Add only the smallest semantic controls needed to replay the
-slice; do not build the full harness first.
+Make the enclosure playable with fixture AI: complete the fixed 320x180 dollhouse room, project
+autonomous movement and intentions, add the five contextual verbs plus speech reactions, support
+mouse/keyboard/controller focus and Talk entry, implement durable save/continue, and grow the
+shared semantic scenario path only as those interactions require it.
 
 ## Candidates Not Chosen
 
-- **Interactive room shell**: build after the authoritative berry-memory spine, extending the
-  harness only as new interactions need it.
 - **Real local LLM benchmark**: the runtime smoke is complete; wait until the protocol fixture
   corpus can score candidates instead of selecting from one-off prompts.
 - **Pixel-art generation**: first create the approved art direction's anchor assets and
@@ -71,3 +75,6 @@ slice; do not build the full harness first.
   first autonomous implementation pass → [build-plan.md](build-plan.md).
 - Codex is the only coding-agent environment required for the MVP. Claude Code/rulesync compatibility
   work is explicitly out of scope → [build-plan.md](build-plan.md).
+- Flattened internally tagged Serde enums cannot also use `deny_unknown_fields` on the outer
+  envelope. Keep strictness on `SessionCommand`; the outer `CommandEnvelope` must allow the
+  flattened `command` tag.

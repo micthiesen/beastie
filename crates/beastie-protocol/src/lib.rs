@@ -2,7 +2,10 @@
 
 use std::collections::BTreeSet;
 
-use beastie_core::{Concept, MemoryId};
+use beastie_core::{
+    ACTIVE_DAY_MS, Concept, Memory, MemoryId, MemoryKind, MemoryQuery, SocialAct, WorldState,
+    select_candidate_memories,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -42,6 +45,8 @@ pub struct DialogueRequest {
     pub mood: String,
     pub known_concepts: BTreeSet<Concept>,
     pub candidate_memories: Vec<CandidateMemory>,
+    #[serde(default)]
+    pub desired_social_act: Option<SocialAct>,
     pub player_said: String,
     pub constraints: DialogueConstraints,
 }
@@ -74,6 +79,14 @@ pub enum ValidationError {
     NoGestures,
     #[error("player input exceeds 512 characters")]
     PlayerInput,
+    #[error("creature name exceeds 64 characters")]
+    CreatureName,
+    #[error("request offers more than 8 candidate memories")]
+    CandidateCount,
+    #[error("candidate memory text exceeds its limit")]
+    CandidateText,
+    #[error("candidate memory IDs must be unique")]
+    DuplicateMemory,
 }
 
 pub fn validate_request(request: &DialogueRequest) -> Result<(), ValidationError> {
@@ -89,7 +102,115 @@ pub fn validate_request(request: &DialogueRequest) -> Result<(), ValidationError
     if request.player_said.chars().count() > 512 {
         return Err(ValidationError::PlayerInput);
     }
+    if request.creature_name.chars().count() > 64 {
+        return Err(ValidationError::CreatureName);
+    }
+    if request.candidate_memories.len() > 8 {
+        return Err(ValidationError::CandidateCount);
+    }
+    if request
+        .candidate_memories
+        .iter()
+        .any(|memory| memory.fact.chars().count() > 256 || memory.feeling.chars().count() > 64)
+    {
+        return Err(ValidationError::CandidateText);
+    }
+    let unique_memory_count = request
+        .candidate_memories
+        .iter()
+        .map(|memory| memory.id)
+        .collect::<BTreeSet<_>>()
+        .len();
+    if unique_memory_count != request.candidate_memories.len() {
+        return Err(ValidationError::DuplicateMemory);
+    }
     Ok(())
+}
+
+pub struct DialogueRequestContext<'a> {
+    pub request_id: u64,
+    pub mood: &'a str,
+    pub player_said: &'a str,
+    pub desired_social_act: Option<SocialAct>,
+    pub max_words: usize,
+    pub allowed_gestures: BTreeSet<Gesture>,
+}
+
+#[must_use]
+pub fn build_dialogue_request(
+    world: &WorldState,
+    memory_query: &MemoryQuery,
+    context: DialogueRequestContext<'_>,
+) -> DialogueRequest {
+    DialogueRequest {
+        protocol_version: PROTOCOL_VERSION,
+        request_id: context.request_id,
+        creature_name: world.creature.name.clone(),
+        mood: context.mood.to_owned(),
+        known_concepts: world.creature.known_concepts.clone(),
+        candidate_memories: select_candidate_memories(world, memory_query)
+            .iter()
+            .map(|memory| project_candidate_memory(memory, world.active_day()))
+            .collect(),
+        desired_social_act: context.desired_social_act,
+        player_said: context.player_said.to_owned(),
+        constraints: DialogueConstraints {
+            max_words: context.max_words,
+            allowed_gestures: context.allowed_gestures,
+        },
+    }
+}
+
+#[must_use]
+pub fn project_candidate_memory(memory: &Memory, current_day: u64) -> CandidateMemory {
+    let happened_day = memory.happened_at_ms / ACTIVE_DAY_MS + 1;
+    let when = match current_day.saturating_sub(happened_day) {
+        0 => "Today",
+        1 => "Yesterday",
+        _ => "Earlier",
+    };
+    let fact = match memory.kind {
+        MemoryKind::WasFed { food } => {
+            format!("{when} the player gave you a {}.", food_name(food))
+        }
+        MemoryKind::DislikedFood { food } => {
+            format!(
+                "{when} you discovered that you dislike {}.",
+                food_name(food)
+            )
+        }
+        MemoryKind::RejectedFood { food } => {
+            format!("{when} you pushed away the {}.", food_name(food))
+        }
+        MemoryKind::Played => format!("{when} the player played with you."),
+        MemoryKind::WasComforted => format!("{when} the player comforted you."),
+        MemoryKind::PlayerReturnedAfterAbsence => {
+            format!("{when} the player returned after being away.")
+        }
+        MemoryKind::PlayerReacted { reaction, to } => {
+            format!("{when} the player reacted with {reaction:?} to your {to:?}.")
+        }
+    };
+    let feeling = match memory.valence {
+        value if value <= -0.65 => "strong dislike",
+        value if value <= -0.2 => "dislike",
+        value if value < 0.2 => "uncertain",
+        value if value < 0.65 => "liked",
+        _ => "strongly liked",
+    };
+    CandidateMemory {
+        id: memory.id,
+        fact,
+        feeling: feeling.to_owned(),
+    }
+}
+
+fn food_name(food: beastie_core::FoodId) -> &'static str {
+    match food {
+        beastie_core::FoodId::Berry => "berry",
+        beastie_core::FoodId::Mushroom => "mushroom",
+        beastie_core::FoodId::Pellet => "pellet",
+    }
 }
 
 pub fn validate_reply(
@@ -177,6 +298,7 @@ mod tests {
                 fact: "The player gave you a berry.".to_owned(),
                 feeling: "strong dislike".to_owned(),
             }],
+            desired_social_act: Some(SocialAct::Insult),
             player_said: "Remember the berry?".to_owned(),
             constraints: DialogueConstraints {
                 max_words: 6,
@@ -229,5 +351,57 @@ mod tests {
         request.constraints.allowed_gestures = BTreeSet::from([Gesture::Shiver]);
         let reply = constrained_fallback_reply(&request);
         assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
+    }
+
+    #[test]
+    fn builds_a_grounded_request_from_real_world_memory() {
+        use beastie_core::{FoodId, MemoryCue, PlayerEvent, SeededRandom, step};
+
+        let mut world = WorldState::new(99, "Mrrp");
+        let mut random = SeededRandom::new(world.seed);
+        world.creature.needs.hunger = 1.0;
+        step(
+            &mut world,
+            &[PlayerEvent::Feed(FoodId::Berry)],
+            1_000,
+            &mut random,
+        );
+        step(&mut world, &[], 1_000, &mut random);
+        world.elapsed_ms = ACTIVE_DAY_MS;
+
+        let request = build_dialogue_request(
+            &world,
+            &MemoryQuery {
+                cues: BTreeSet::from([MemoryCue::Food(FoodId::Berry)]),
+                limit: 8,
+            },
+            DialogueRequestContext {
+                request_id: 12,
+                mood: "wary",
+                player_said: "Remember the berry?",
+                desired_social_act: Some(SocialAct::Insult),
+                max_words: 12,
+                allowed_gestures: BTreeSet::from([Gesture::None, Gesture::LookPlayer]),
+            },
+        );
+
+        validate_request(&request).expect("projected request should be valid");
+        assert!(request.candidate_memories.iter().any(|memory| {
+            memory.fact == "Yesterday you discovered that you dislike berry."
+                && memory.feeling == "strong dislike"
+        }));
+        let recalled_memory = request
+            .candidate_memories
+            .first()
+            .expect("berry memory should be offered")
+            .id;
+        let reply = DialogueReply {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: 12,
+            say: "red betrayal remains.".to_owned(),
+            gesture: Gesture::LookPlayer,
+            recalled_memory: Some(recalled_memory),
+        };
+        validate_reply(&request, reply).expect("offered memory should validate");
     }
 }

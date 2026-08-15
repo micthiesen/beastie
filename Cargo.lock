@@ -217,6 +217,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -235,6 +236,17 @@ name = "beastie-protocol"
 version = "0.1.0"
 dependencies = [
  "beastie-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "beastie-session"
+version = "0.1.0"
+dependencies = [
+ "beastie-core",
+ "beastie-protocol",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -3745,7 +3757,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "beastie-core",
+ "beastie-protocol",
+ "beastie-session",
  "clap",
+ "serde",
  "serde_json",
  "toml",
 ]

@@ -42,5 +42,10 @@ window capture and pointer control are already proven for cheap host checks; sce
 direct logical-framebuffer capture should arrive with the gameplay slices that need them rather
 than as a large prerequisite.
 
+The current headless adapter is `cargo xtask play --fake-ai`. It reads bounded JSONL commands from
+standard input or a scenario file and emits one structured observation or error per line. The
+checked-in berry-grudge scenario is replayed by the display-free verification gate. The visible
+adapter will consume this same `beastie-session` boundary as the room shell gains real interactions.
+
 Platform-specific packaging may vary, but the core, protocol, save format, assets, and worker
 contract remain identical across macOS, Windows, and Linux.

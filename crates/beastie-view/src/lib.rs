@@ -34,6 +34,7 @@ pub fn plan(state: &WorldState, speech: Option<&str>) -> (RenderPlan, AudioPlan)
     let creature_id = match state.creature.current_intention {
         Intention::Sleep => "creature/sleep",
         Intention::Eat => "creature/eat",
+        Intention::RejectFood => "creature/annoyed",
         Intention::Play => "creature/play",
         Intention::ApproachPlayer | Intention::Idle => "creature/idle",
     };
@@ -78,5 +79,13 @@ mod tests {
         let (render, _) = plan(&state, None);
         assert_eq!(render.sprites[1].id, "creature/sleep");
         assert_eq!(render.sprites[1].layer, 3);
+    }
+
+    #[test]
+    fn rejected_food_has_an_annoyed_render_command() {
+        let mut state = WorldState::new(42, "Mop");
+        state.creature.current_intention = Intention::RejectFood;
+        let (render, _) = plan(&state, None);
+        assert_eq!(render.sprites[1].id, "creature/annoyed");
     }
 }

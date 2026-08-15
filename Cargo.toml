@@ -5,6 +5,7 @@ members = [
   "crates/beastie-core",
   "crates/beastie-game",
   "crates/beastie-protocol",
+  "crates/beastie-session",
   "crates/beastie-view",
   "crates/xtask",
 ]

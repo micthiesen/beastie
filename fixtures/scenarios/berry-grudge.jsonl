@@ -1,0 +1,10 @@
+{"version":1,"command":"feed","food":"berry"}
+{"version":1,"command":"advance","minutes":15}
+{"version":1,"command":"advance","minutes":1}
+{"version":1,"command":"save"}
+{"version":1,"command":"talk","text":"Do you remember the berry?"}
+{"version":1,"command":"react","reaction":"laugh"}
+{"version":1,"command":"load"}
+{"version":1,"command":"inspect"}
+{"version":1,"command":"feed","food":"berry"}
+{"version":1,"command":"advance","minutes":1}
