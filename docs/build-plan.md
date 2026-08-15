@@ -13,7 +13,7 @@ playable with fixture AI throughout.
 - The workspace, pure-core boundary, JSONL AI protocol, fixture worker, `RenderPlan`, save format,
   verification gate, and `/next`/`/wrap` continuity system exist.
 
-Exact measurements and provisional local-mouth decisions are in
+Exact measurements and local-mouth decisions are in
 [local-mouth.md](local-mouth.md). The preflight deliberately did not perform native
 Windows or Linux verification. Portable architecture and headless tests remain mandatory, but the
 initial full build is allowed to progress on macOS before the later native-platform acceptance runs.
@@ -50,22 +50,23 @@ Use PixelLab references for later assets, validate dimensions/alpha/provenance, 
 deliberately selected results. Add restrained animation, room lighting/window variation, UI sounds,
 and authored nonverbal creature noises.
 
-### 4. Integrate the replaceable local mouth (provisional boundary complete)
+### 4. Integrate the replaceable local mouth (complete)
 
-The checked-in corpus provisionally selects Qwen3.5 0.8B Q4 behind the bounded worker interface.
-The game keeps the outer worker alive, while the current evaluation adapter still reloads
-`llama-cli` for every attempt. Native Kitten nano speech and its cache are proven without Python,
-but the optional sherpa-onnx path is blocked from release by its GPLv3 espeak-ng dependency and is
-wired into gameplay only behind a non-default experimental feature. See
+The checked-in corpus selects Qwen3.5 0.8B Q4 behind the bounded worker interface. The release path
+keeps both the worker and an authenticated loopback `llama-server` sidecar alive. Native eSpeak NG
+speech runs as a separate offline process through the persistent cache and game playback path.
+Kitten nano remains a non-default experiment because its current sherpa-onnx adapter statically
+combines GPLv3 code into the Rust worker. See
 [local-mouth.md](local-mouth.md).
 
-### 5. Harden and finish the full vertical slice (next)
+### 5. Harden and finish the full vertical slice (Mac-led complete)
 
-Exercise the complete three-day acceptance arc in headless, visible-fixture, and full-local loops.
-Replace the cold-per-attempt evaluation runtime with a warm packaging candidate and wire a
-license-compatible native voice. Verify graceful AI/TTS failure, content boundaries, save
-migrations, offline non-lethal progression, asset/model provenance, CPU-only inference, native
-Windows/Linux acceptance, packaging inputs, and the MVP definition of done.
+The complete three-day acceptance arc runs through headless, visible-fixture, and packaged
+full-local loops. The slice now includes warm model reuse, a portable process voice, graceful
+failure, content boundaries, v1 save migration, offline non-lethal progression, asset/model
+provenance, CPU-only inference, and an integrity-checked release layout. Per the initial build
+instruction, native Windows/Linux and physical-controller verification remain a later acceptance
+pass rather than a blocker for this Mac-led implementation.
 
 ## Working rules
 

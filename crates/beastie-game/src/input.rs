@@ -53,7 +53,7 @@ pub fn append_text(buffer: &mut String, text: &str) {
 
 #[cfg(test)]
 mod tests {
-    use beastie_core::WorldState;
+    use beastie_core::{ToyId, WorldState};
     use beastie_view::{UiMode, ViewState, plan};
 
     use super::*;
@@ -79,5 +79,45 @@ mod tests {
         assert!(buffer.ends_with('é'));
         buffer.pop();
         assert_eq!(buffer.chars().count(), MAX_TALK_CHARACTERS - 1);
+    }
+
+    #[test]
+    fn toy_choice_mouse_and_focus_select_the_same_typed_actions() {
+        let world = WorldState::new(42, "Mop");
+        let view = ViewState {
+            mode: UiMode::ToyChoice,
+            ..ViewState::default()
+        };
+        let (render, _) = plan(&world, &view);
+        let ball = render
+            .hit_regions
+            .iter()
+            .find(|hit| hit.id == "action/play-ball")
+            .expect("ball choice");
+        let sock = render
+            .hit_regions
+            .iter()
+            .find(|hit| hit.id == "action/play-sock")
+            .expect("sock choice");
+        assert_eq!(
+            action_at(&render, ball.rect.x as f32 + 1.0, ball.rect.y as f32 + 1.0),
+            Some(UiAction::Play(ToyId::Ball))
+        );
+        assert_eq!(
+            action_at(&render, sock.rect.x as f32 + 1.0, sock.rect.y as f32 + 1.0),
+            Some(UiAction::Play(ToyId::Sock))
+        );
+        assert_eq!(
+            focused_action(&render, Some("action/play-ball")),
+            Some(UiAction::Play(ToyId::Ball))
+        );
+        assert_eq!(
+            focused_action(&render, Some("action/play-sock")),
+            Some(UiAction::Play(ToyId::Sock))
+        );
+        assert_eq!(
+            move_focus(&render, Some("action/play-ball"), 1).as_deref(),
+            Some("action/play-bell")
+        );
     }
 }

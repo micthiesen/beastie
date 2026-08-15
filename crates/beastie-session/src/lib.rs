@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use beastie_core::{
     Concept, FoodId, GameEvent, MemoryCue, MemoryQuery, Mood, OfflineProgress, PlayerEvent,
-    Reaction, SeededRandom, ToyId, WorldState, advance_offline, step,
+    Reaction, SaveGame, SeededRandom, ToyId, WorldState, advance_offline, step,
 };
 use beastie_protocol::{
     DialogueRequest, DialogueRequestContext, Gesture, build_dialogue_request, validate_request,
@@ -14,6 +14,7 @@ use thiserror::Error;
 
 pub const SESSION_PROTOCOL_VERSION: u32 = 1;
 pub const SESSION_SAVE_VERSION: u32 = 2;
+const LEGACY_CORE_SAVE_VERSION: u32 = 1;
 pub const MAX_COMMAND_BYTES: usize = 4_096;
 pub const MAX_ADVANCE_MINUTES: u32 = 45;
 
@@ -168,6 +169,34 @@ impl GameSession {
         source: &str,
         resumed_at_ms: u64,
     ) -> Result<(Self, OfflineProgress), SessionError> {
+        let header = serde_json::from_str::<SaveHeader>(source).map_err(SessionError::Json)?;
+        match header.save_version {
+            Some(LEGACY_CORE_SAVE_VERSION) => {
+                let (world, random) = SaveGame::from_json(source)
+                    .map_err(SessionError::LegacySave)?
+                    .resume();
+                return Ok((
+                    Self {
+                        world,
+                        random,
+                        sequence: 0,
+                        next_request_id: 1,
+                        checkpoint: None,
+                    },
+                    OfflineProgress {
+                        requested_ms: 0,
+                        applied_ms: 0,
+                        events: Vec::new(),
+                    },
+                ));
+            }
+            Some(version) => {
+                return Err(SessionError::LegacySave(beastie_core::SaveError::Version(
+                    version,
+                )));
+            }
+            None => {}
+        }
         Self::resume(SessionSave::from_json(source)?, resumed_at_ms)
     }
 
@@ -274,6 +303,11 @@ impl GameSession {
     }
 }
 
+#[derive(Deserialize)]
+struct SaveHeader {
+    save_version: Option<u32>,
+}
+
 fn validate_envelope(envelope: &CommandEnvelope) -> Result<(), SessionError> {
     if envelope.version != SESSION_PROTOCOL_VERSION {
         return Err(SessionError::Version(envelope.version));
@@ -349,6 +383,8 @@ pub enum SessionError {
     SaveVersion(u32),
     #[error("next dialogue request ID must be nonzero")]
     RequestId,
+    #[error("legacy save migration failed: {0}")]
+    LegacySave(beastie_core::SaveError),
     #[error("session state became invalid: {0}")]
     State(beastie_core::StateValidationError),
     #[error("dialogue request is invalid: {0}")]
@@ -598,6 +634,102 @@ mod tests {
         let actual_tick = resumed.apply(tick).expect("resumed tick");
         assert_eq!(actual_tick.events, expected_tick.events);
         assert_eq!(resumed.world(), uninterrupted.world());
+    }
+
+    #[test]
+    fn version_one_fixture_migrates_without_inventing_offline_time() {
+        let legacy = include_str!("../../../fixtures/saves/v1-berry-ball.json");
+        let (resumed, progress) =
+            GameSession::resume_json(legacy, u64::MAX).expect("v1 fixture should migrate");
+
+        assert_eq!(progress.requested_ms, 0);
+        assert_eq!(progress.applied_ms, 0);
+        assert!(progress.events.is_empty());
+        assert_eq!(resumed.world().creature.name, "Keepsake");
+        assert_eq!(resumed.world().creature.traits.boldness, 0.22);
+        assert_eq!(resumed.world().creature.relationship.trust, 0.42);
+        assert_eq!(resumed.world().creature.preferences[&FoodId::Berry], -0.75);
+        assert_eq!(resumed.random, SeededRandom::new(123_456_789));
+        assert_eq!(
+            resumed.world().creature.position,
+            beastie_core::RoomSpot::Center
+        );
+        assert_eq!(resumed.world().creature.movement, None);
+        assert_eq!(
+            resumed.world().creature.development,
+            beastie_core::Development::default()
+        );
+        assert_eq!(resumed.world().room.toy, ToyId::Ball);
+        assert_eq!(
+            resumed.world().room.last_nonverbal_act,
+            Some(beastie_core::NonverbalAct::TakeToyAway(ToyId::Ball))
+        );
+        assert!(resumed.world().creature.memories.iter().any(|memory| {
+            memory.kind == beastie_core::MemoryKind::PlayedWith { toy: ToyId::Ball }
+        }));
+        assert_eq!(resumed.world().creature.beliefs.len(), 1);
+        assert!(
+            !resumed.world().creature.memories.iter().any(|memory| {
+                memory.kind == beastie_core::MemoryKind::PlayerReturnedAfterAbsence
+            })
+        );
+    }
+
+    #[test]
+    fn migrated_v1_save_has_deterministic_future_continuation() {
+        let legacy = include_str!("../../../fixtures/saves/v1-berry-ball.json");
+        let timestamp = 8_000_000;
+        let (mut migrated, _) =
+            GameSession::resume_json(legacy, timestamp).expect("v1 fixture should migrate");
+        let current = migrated
+            .capture(timestamp)
+            .to_json()
+            .expect("migrated save should encode as v2");
+        let (mut reloaded, progress) =
+            GameSession::resume_json(&current, timestamp).expect("v2 save should reload");
+        assert_eq!(progress.applied_ms, 0);
+
+        for future in [
+            command(SessionCommand::Tick {
+                milliseconds: 8_000,
+            }),
+            command(SessionCommand::Play { toy: ToyId::Bell }),
+            command(SessionCommand::Tick {
+                milliseconds: 4_000,
+            }),
+        ] {
+            let expected = migrated.apply(future.clone()).expect("migrated future");
+            let actual = reloaded.apply(future).expect("reloaded future");
+            assert_eq!(actual, expected);
+        }
+        assert_eq!(reloaded.world, migrated.world);
+        assert_eq!(reloaded.random, migrated.random);
+    }
+
+    #[test]
+    fn future_and_invalid_v1_saves_fail_without_mutating_a_live_session() {
+        let legacy = include_str!("../../../fixtures/saves/v1-berry-ball.json");
+        let future = legacy.replacen("\"save_version\": 1", "\"save_version\": 99", 1);
+        assert!(matches!(
+            GameSession::resume_json(&future, 0),
+            Err(SessionError::LegacySave(beastie_core::SaveError::Version(
+                99
+            )))
+        ));
+
+        let invalid = legacy.replace("\"berry\": -0.75", "\"berry\": 2.0");
+        assert!(matches!(
+            GameSession::resume_json(&invalid, 0),
+            Err(SessionError::LegacySave(beastie_core::SaveError::State(
+                beastie_core::StateValidationError::Preference
+            )))
+        ));
+
+        let live = GameSession::new(7, "Untouched");
+        let before = live.world().clone();
+        let _ = GameSession::resume_json(&future, 0);
+        let _ = GameSession::resume_json(&invalid, 0);
+        assert_eq!(live.world(), &before);
     }
 
     #[test]

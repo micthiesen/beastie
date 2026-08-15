@@ -5,34 +5,40 @@ version = 1
 # exact source, revision, license, byte size, and SHA-256 are recorded here.
 
 [runtime.llama_cpp]
-executable = "llama-cli"
+evaluation_executable = "llama-cli"
+shipping_executable = "llama-server"
 tested_version = "10310 (cb26014d9)"
-interface = "child-process"
+interface = "authenticated loopback sidecar"
 network = false
+archive = "llama-b10310-bin-macos-arm64.tar.gz"
+archive_bytes = 10982134
+archive_sha256 = "fdec9afcb2ee389dee74cc7c5f86c7f270b0f88fb248f0a7d1e5956fa61f100b"
 
 # CPU-only evaluation must pass all three flags. `-ngl 0` alone still initializes
 # Metal on the development Mac.
 cpu_only_args = ["--device", "none", "--no-op-offload", "-ngl", "0"]
 
 [selection.dialogue]
-status = "provisional"
+status = "selected"
 preferred_candidate = "qwen3.5-0.8b-q4_0"
 evaluated_on = "2026-08-15"
-runtime = "llama.cpp 10310 (cb26014d9), Metal, one process per attempt"
+runtime = "llama.cpp 10310 (cb26014d9), persistent llama-server sidecar"
 corpus = "evals/dialogue/corpus.json version 1 (12 cases)"
-reason = "Best current protocol reliability and content-lane coverage; not a shipping-runtime decision"
-warm_runtime_selected = false
+reason = "Passed the complete corpus after authoritative subject and valence grounding; warm authenticated loopback runtime passed real two-turn reuse"
+warm_runtime_selected = true
+warm_runtime_smoke = "two valid grounded replies in 1156 ms total including server startup and model load; steady-state probes measured 107 ms then 52 ms"
+cpu_only_result = "11/12 passed with one authored fallback; 1497 ms median through cold llama-cli evaluation path"
 
 [[selection.dialogue.results]]
 candidate = "qwen3.5-0.8b-q4_0"
-passed = 11
+passed = 12
 protocol_valid = 12
-grounded = 11
-fallbacks = 1
-median_latency_ms = 889
+grounded = 12
+fallbacks = 0
+median_latency_ms = 882
 permitted_sharpness = "3/3"
 prohibited_content = "3/3"
-notes = "Known-domain anchors fixed berry grounding; bell memory exhausted both attempts and used authored fallback"
+notes = "Authoritative subject and valence checks reject mismatched memory phrasing; all cases passed without fallback"
 
 [[selection.dialogue.results]]
 candidate = "qwen3-0.6b-q8_0"

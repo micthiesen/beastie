@@ -11,8 +11,7 @@ pub struct Args {
     /// Watchdog for one reply from the long-lived outer AI worker.
     #[arg(long)]
     pub ai_timeout_ms: Option<u64>,
-    /// Enable the separately configured experimental native TTS worker.
-    #[cfg(feature = "experimental-gpl-tts")]
+    /// Enable environment-configured TTS; complete packaged bundles enable automatically.
     #[arg(long)]
     pub tts: bool,
     /// Exit after a few rendered frames.

@@ -1,6 +1,6 @@
 //! Display-free projection of authoritative state into a small, fixed room.
 
-use beastie_core::{FoodId, Intention, Reaction, RoomSpot, WorldState};
+use beastie_core::{FoodId, Intention, Reaction, RoomSpot, ToyId, WorldState};
 use serde::{Deserialize, Serialize};
 
 pub const LOGICAL_WIDTH: i32 = 320;
@@ -34,6 +34,7 @@ pub enum UiTarget {
     Clutter,
     Creature,
     Food(FoodId),
+    ToyChoice(ToyId),
     Reaction(Reaction),
 }
 
@@ -43,8 +44,9 @@ pub enum UiAction {
     OpenContext(UiTarget),
     CloseContext,
     OpenFoodChoice,
+    OpenToyChoice,
     Feed(FoodId),
-    Play,
+    Play(ToyId),
     Tidy,
     Comfort,
     Talk,
@@ -62,6 +64,7 @@ pub enum UiMode {
     Idle,
     Context(UiTarget),
     FoodChoice,
+    ToyChoice,
     TextEntry,
     OnScreenKeyboard,
 }
@@ -132,10 +135,14 @@ pub struct AudioPlan {
 pub fn contextual_actions(target: UiTarget) -> Vec<UiAction> {
     match target {
         UiTarget::Bowl => vec![UiAction::OpenFoodChoice],
-        UiTarget::Toy => vec![UiAction::Play],
+        UiTarget::Toy => vec![UiAction::OpenToyChoice],
         UiTarget::Clutter => vec![UiAction::Tidy],
         UiTarget::Creature => vec![UiAction::Comfort, UiAction::Talk],
-        UiTarget::Window | UiTarget::Bed | UiTarget::Food(_) | UiTarget::Reaction(_) => Vec::new(),
+        UiTarget::Window
+        | UiTarget::Bed
+        | UiTarget::Food(_)
+        | UiTarget::ToyChoice(_)
+        | UiTarget::Reaction(_) => Vec::new(),
     }
 }
 
@@ -164,6 +171,7 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (RenderPlan, AudioPlan) {
             add_context_menu(target, &mut rects, &mut text, &mut hit_regions)
         }
         UiMode::FoodChoice => add_food_choice(&mut rects, &mut text, &mut hit_regions),
+        UiMode::ToyChoice => add_toy_choice(&mut rects, &mut text, &mut hit_regions),
         UiMode::TextEntry => add_text_entry(view, false, &mut rects, &mut text, &mut hit_regions),
         UiMode::OnScreenKeyboard => {
             add_text_entry(view, true, &mut rects, &mut text, &mut hit_regions)
@@ -456,6 +464,34 @@ fn add_food_choice(
         add_button(
             action,
             64 + i32::try_from(index).unwrap_or_default() * 64,
+            155,
+            text,
+            hits,
+        );
+    }
+}
+
+fn add_toy_choice(
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    rects.push(panel(
+        "ui/toy-panel",
+        Rect {
+            x: 61,
+            y: 152,
+            w: 198,
+            h: 24,
+        },
+    ));
+    for (index, toy) in [ToyId::Ball, ToyId::Bell, ToyId::Sock]
+        .into_iter()
+        .enumerate()
+    {
+        add_button(
+            UiAction::Play(toy),
+            96 + i32::try_from(index).unwrap_or_default() * 64,
             155,
             text,
             hits,
@@ -782,6 +818,7 @@ fn creature_position(state: &WorldState) -> (i32, i32) {
 fn action_target(action: UiAction) -> Option<UiTarget> {
     match action {
         UiAction::Feed(food) => Some(UiTarget::Food(food)),
+        UiAction::Play(toy) => Some(UiTarget::ToyChoice(toy)),
         UiAction::React(reaction) => Some(UiTarget::Reaction(reaction)),
         UiAction::OpenContext(target) => Some(target),
         _ => None,
@@ -799,6 +836,9 @@ fn target_name(target: UiTarget) -> &'static str {
         UiTarget::Food(FoodId::Berry) => "berry",
         UiTarget::Food(FoodId::Mushroom) => "mushroom",
         UiTarget::Food(FoodId::Pellet) => "pellet",
+        UiTarget::ToyChoice(ToyId::Ball) => "ball",
+        UiTarget::ToyChoice(ToyId::Bell) => "bell",
+        UiTarget::ToyChoice(ToyId::Sock) => "sock",
         UiTarget::Reaction(reaction) => reaction_name(reaction),
     }
 }
@@ -808,10 +848,13 @@ fn action_name(action: UiAction) -> &'static str {
         UiAction::OpenContext(_) => "open-context",
         UiAction::CloseContext => "close-context",
         UiAction::OpenFoodChoice => "choose-food",
+        UiAction::OpenToyChoice => "choose-toy",
         UiAction::Feed(FoodId::Berry) => "feed-berry",
         UiAction::Feed(FoodId::Mushroom) => "feed-mushroom",
         UiAction::Feed(FoodId::Pellet) => "feed-pellet",
-        UiAction::Play => "play",
+        UiAction::Play(ToyId::Ball) => "play-ball",
+        UiAction::Play(ToyId::Bell) => "play-bell",
+        UiAction::Play(ToyId::Sock) => "play-sock",
         UiAction::Tidy => "tidy",
         UiAction::Comfort => "comfort",
         UiAction::Talk => "talk",
@@ -828,10 +871,13 @@ fn action_name(action: UiAction) -> &'static str {
 fn action_label(action: UiAction) -> &'static str {
     match action {
         UiAction::OpenFoodChoice => "Feed",
+        UiAction::OpenToyChoice => "Play",
         UiAction::Feed(FoodId::Berry) => "Berry",
         UiAction::Feed(FoodId::Mushroom) => "Mushroom",
         UiAction::Feed(FoodId::Pellet) => "Pellet",
-        UiAction::Play => "Play",
+        UiAction::Play(ToyId::Ball) => "Ball",
+        UiAction::Play(ToyId::Bell) => "Bell",
+        UiAction::Play(ToyId::Sock) => "Sock",
         UiAction::Tidy => "Tidy",
         UiAction::Comfort => "Comfort",
         UiAction::Talk => "Talk",
@@ -897,7 +943,10 @@ mod tests {
             contextual_actions(UiTarget::Bowl),
             vec![UiAction::OpenFoodChoice]
         );
-        assert_eq!(contextual_actions(UiTarget::Toy), vec![UiAction::Play]);
+        assert_eq!(
+            contextual_actions(UiTarget::Toy),
+            vec![UiAction::OpenToyChoice]
+        );
         assert_eq!(contextual_actions(UiTarget::Clutter), vec![UiAction::Tidy]);
         assert_eq!(
             contextual_actions(UiTarget::Creature),
@@ -917,6 +966,63 @@ mod tests {
         assert!(actions.contains(&UiAction::Feed(FoodId::Berry)));
         assert!(actions.contains(&UiAction::Feed(FoodId::Mushroom)));
         assert!(actions.contains(&UiAction::Feed(FoodId::Pellet)));
+    }
+
+    #[test]
+    fn toy_choice_exposes_all_authoritative_toys_in_compact_regions() {
+        let state = WorldState::new(42, "Mop");
+        let view = ViewState {
+            mode: UiMode::ToyChoice,
+            ..ViewState::default()
+        };
+        let (render, _) = plan(&state, &view);
+        let choices = render
+            .hit_regions
+            .iter()
+            .filter(|hit| matches!(hit.action, UiAction::Play(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(choices.len(), 3);
+        assert_eq!(choices[0].action, UiAction::Play(ToyId::Ball));
+        assert_eq!(choices[1].action, UiAction::Play(ToyId::Bell));
+        assert_eq!(choices[2].action, UiAction::Play(ToyId::Sock));
+        assert_eq!(choices[0].id, "action/play-ball");
+        assert_eq!(choices[1].id, "action/play-bell");
+        assert_eq!(choices[2].id, "action/play-sock");
+        assert!(choices.iter().all(|hit| hit.rect.y >= 152));
+        assert!(choices.iter().all(|hit| hit.rect.x >= 0));
+        assert!(
+            choices
+                .iter()
+                .all(|hit| hit.rect.x + hit.rect.w <= LOGICAL_WIDTH)
+        );
+    }
+
+    #[test]
+    fn toy_choice_focus_highlights_and_resolves_each_typed_action() {
+        let state = WorldState::new(42, "Mop");
+        let view = ViewState {
+            mode: UiMode::ToyChoice,
+            focused_region: Some("action/play-sock".to_owned()),
+            ..ViewState::default()
+        };
+        let (render, _) = plan(&state, &view);
+        assert!(render.rects.iter().any(|rect| rect.id == "ui/focus"));
+        assert_eq!(
+            render
+                .hit_regions
+                .iter()
+                .find(|hit| hit.id == "action/play-ball")
+                .map(|hit| hit.action),
+            Some(UiAction::Play(ToyId::Ball))
+        );
+        assert_eq!(
+            render
+                .hit_regions
+                .iter()
+                .find(|hit| hit.id == "action/play-sock")
+                .map(|hit| hit.action),
+            Some(UiAction::Play(ToyId::Sock))
+        );
     }
 
     #[test]

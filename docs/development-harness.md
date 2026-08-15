@@ -18,7 +18,10 @@ Completed on the development Mac on 2026-08-15:
 
 Alacritty required Screen Recording/Accessibility approval before capture and focus worked. Launching
 the Metal window directly from the automation backend can produce a blank or occluded window, while
-launching through Alacritty renders correctly. The current interactive room accepts pointer input in
+launching through Alacritty renders correctly. During repeated release-package automation, yabai
+occasionally trapped the ggez window on a blank first frame at 100% CPU. `yabai --stop-service`
+before launch made the same package complete immediately; restart it with `yabai --start-service`
+afterward. The current interactive room accepts pointer input in
 code and its logical coordinate mapping is unit-tested, but macOS host-driven clicks appeared to fall
 through to the Alacritty/loginwindow stack even after raising the Beastie window and temporarily
 stopping yabai. Treat real pointer delivery as unverified, not as a gameplay failure. Physical
@@ -49,9 +52,9 @@ implemented scenarios:
 - deterministic control: tick or advance game time and create/load an in-memory checkpoint;
 - observation: inspect authoritative state and emitted events.
 
-Visible scenario files add named framebuffer capture as a shell-level step. Waiting for pending
-AI/TTS, quitting, and unified trace artifacts should be added only when their corresponding runtime
-features need them.
+Visible scenario files add named framebuffer capture as a shell-level step. The runner waits for
+pending dialogue before capturing, while TTS remains asynchronous so speech never delays text or
+scenario progress.
 
 Do not expose arbitrary state mutation as a normal command. Purpose-built fixture setup may load a
 versioned save, but gameplay scenarios should reach states through ordinary actions whenever

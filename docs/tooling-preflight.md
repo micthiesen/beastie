@@ -1,8 +1,8 @@
 # Tooling preflight
 
 Local development tooling was smoke-tested on 2026-08-15 before the MVP build began. These initial
-results proved that each external content path could run on the development Mac. Stage 4 follow-up
-measurements and provisional selections are summarized here and detailed in
+results proved that each external content path could run on the development Mac. Later follow-up
+measurements and selected release paths are summarized here and detailed in
 [local-mouth.md](local-mouth.md).
 
 ## Test host
@@ -25,13 +25,14 @@ small, crude Beastie prompt. Generation speed is from this host and is not a low
 | Qwen3.5 0.8B | `ggml-org/Qwen3.5-0.8B-GGUF`, BF16 | 12.9 tok/s | Fluent, but contradicted the same fact |
 | LFM2 700M | `LiquidAI/LFM2-700M-GGUF`, Q4_K_M | 206 tok/s | Returned no usable text on the first probe |
 
-The checked-in version 1 Beastie corpus now measures factual grounding, schema compliance, latency,
+The checked-in version 1 Beastie corpus measures factual grounding, schema compliance, latency,
 profanity/insult willingness, prohibited-output escape, and assistant-like filler. Through
-`llama.cpp` 10310 on Metal, Qwen3.5 0.8B Q4 passed 11/12 with one fallback and an 889 ms median;
+`llama.cpp` 10310 on Metal, Qwen3.5 0.8B Q4 passed 12/12 with no fallback and an 882 ms median;
 Qwen3 0.6B Q8 passed 5/12 with six fallbacks and a 1,790 ms median. Qwen3.5 Q4 is therefore the
-provisional candidate. Each case still starts a fresh `llama-cli`, with a warm filesystem cache, so
-these are not production warm-runtime measurements. Reproduction commands and lane results are in
-[local-mouth.md](local-mouth.md).
+selected candidate. The release adapter now keeps one authenticated loopback `llama-server`
+sidecar warm. A real two-turn smoke took 1,156 ms total including server load; already-loaded probes
+took 107 ms and 52 ms. The CPU-only cold evaluation path retained 11/12 at a 1,497 ms median.
+Reproduction commands and caveats are in [local-mouth.md](local-mouth.md).
 
 LFM2's current free commercial terms include a revenue threshold, so it should not become the
 default without a fresh licensing decision.
@@ -65,6 +66,13 @@ must not enter an MIT-only release or default CI build. Exact hashes, the real s
 the release blocker are recorded in [local-mouth.md](local-mouth.md) and
 `crates/beastie-ai-worker/TTS.md`.
 
+The release voice instead runs eSpeak NG as a separate offline process through the same bounded
+worker and cache. This preserves the deliberately odd synthetic voice while avoiding a combined
+GPL/MIT binary. Distribution is an aggregate and must include eSpeak NG's GPLv3 license, data, and
+corresponding source or source offer. Piper Plus and Flite were also smoked and rejected as the
+portable default; their exact results are in [tts-release-candidate.md](tts-release-candidate.md)
+and [flite-release-candidate.md](flite-release-candidate.md).
+
 Pocket TTS is not a default candidate. Its use restrictions are a poor fit for a game deliberately
 designed to produce insults, spite, and crude speech.
 
@@ -88,9 +96,9 @@ IDs, dimensions, hashes, and any manual edits in `assets/manifest.toml` when ass
 
 ## Ready for the MVP build
 
-- Local LLM inference: operational; Qwen3.5 Q4 is provisional, while a warm packaged runtime remains open.
-- Local TTS generation: native and Python-free with feature-gated game playback; a
-  license-compatible default release runtime remains open.
+- Local LLM inference: selected Qwen3.5 Q4 with a warm packaged `llama-server` runtime.
+- Local TTS generation: native, Python-free eSpeak NG process with bounded game playback and
+  explicit GPL aggregate-distribution obligations.
 - PixelLab generation: operational; the canonical art path is integrated.
 - Headless fixture path: remains the required default for `cargo xtask verify`.
 

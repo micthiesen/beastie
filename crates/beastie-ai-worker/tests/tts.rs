@@ -1,13 +1,14 @@
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use beastie_ai_worker::tts::{
-    KITTEN_MODEL_ID, KITTEN_MODEL_SHA256, KITTEN_VOICES_SHA256, MAX_TTS_LINE_BYTES,
-    SynthesizedAudio, TtsError, TtsSynthesizer, VoiceSettings, cache_key, run_tts_jsonl,
-    synthesize_to_cache,
+    EspeakNgSynthesizer, KITTEN_MODEL_ID, KITTEN_MODEL_SHA256, KITTEN_VOICES_SHA256,
+    MAX_TTS_LINE_BYTES, MAX_TTS_TEXT_BYTES, SynthesizedAudio, TtsError, TtsSynthesizer,
+    VoiceSettings, cache_key, run_tts_jsonl, synthesize_to_cache,
 };
 use beastie_protocol::{TTS_PROTOCOL_VERSION, TtsOutcome, TtsReply, TtsRequest, TtsVoiceSettings};
 use sha2::{Digest, Sha256};
@@ -19,6 +20,10 @@ struct FakeSynthesizer {
 }
 
 impl TtsSynthesizer for FakeSynthesizer {
+    fn cache_identity(&self) -> &str {
+        KITTEN_MODEL_ID
+    }
+
     fn synthesize(
         &mut self,
         _text: &str,
@@ -240,4 +245,150 @@ fn oversized_jsonl_request_is_rejected_and_next_request_runs() {
     assert_eq!(replies[1].request_id, 7);
     assert_eq!(synthesizer.calls, 1);
     fs::remove_dir_all(cache_dir).expect("temporary cache should be removable");
+}
+
+#[test]
+fn espeak_process_receives_bounded_stdin_and_produces_validated_pcm() {
+    let (source, executable) = compile_fake_espeak("valid");
+    let record = executable.with_extension("input");
+    let arguments_record = executable.with_extension("args");
+    let cache_dir = temporary_dir();
+    let data_parent = temporary_dir();
+    let data_dir = data_parent.join("espeak-ng-data");
+    fs::create_dir_all(&data_dir).unwrap();
+    let text = "x".repeat(MAX_TTS_TEXT_BYTES);
+    let mut synthesizer =
+        EspeakNgSynthesizer::new(executable.clone(), "en-us".to_owned(), Some(data_dir)).unwrap();
+
+    let cached = synthesize_to_cache(
+        &cache_dir,
+        &text,
+        VoiceSettings::default(),
+        &mut synthesizer,
+    )
+    .expect("valid fake eSpeak output should be cached");
+
+    assert_eq!(fs::read_to_string(&record).unwrap(), text);
+    assert!(
+        fs::read_to_string(&arguments_record)
+            .unwrap()
+            .lines()
+            .any(|argument| argument == format!("--path={}", data_parent.display()))
+    );
+    assert_eq!(&fs::read(cached.path).unwrap()[0..12], b"RIFF&\0\0\0WAVE");
+    fs::remove_dir_all(cache_dir).unwrap();
+    fs::remove_file(record).unwrap();
+    fs::remove_file(arguments_record).unwrap();
+    fs::remove_dir_all(data_parent).unwrap();
+    fs::remove_file(source).unwrap();
+    fs::remove_file(executable).unwrap();
+}
+
+#[test]
+fn oversized_text_never_reaches_espeak_process() {
+    let (source, executable) = compile_fake_espeak("valid");
+    let record = executable.with_extension("input");
+    let cache_dir = temporary_dir();
+    let mut synthesizer =
+        EspeakNgSynthesizer::new(executable.clone(), "en-us".to_owned(), None).unwrap();
+
+    let error = synthesize_to_cache(
+        &cache_dir,
+        &"x".repeat(MAX_TTS_TEXT_BYTES + 1),
+        VoiceSettings::default(),
+        &mut synthesizer,
+    )
+    .expect_err("oversized text should be rejected before process launch");
+
+    assert!(matches!(error, TtsError::TextTooLong));
+    assert!(!record.exists());
+    assert!(!executable.with_extension("args").exists());
+    fs::remove_file(source).unwrap();
+    fs::remove_file(executable).unwrap();
+}
+
+#[test]
+fn espeak_process_failure_and_invalid_output_fail_closed() {
+    for mode in ["failure", "invalid", "oversized"] {
+        let (source, executable) = compile_fake_espeak(mode);
+        let cache_dir = temporary_dir();
+        let mut synthesizer =
+            EspeakNgSynthesizer::new(executable.clone(), "en-us".to_owned(), None).unwrap();
+
+        assert!(
+            synthesize_to_cache(
+                &cache_dir,
+                "hello",
+                VoiceSettings::default(),
+                &mut synthesizer
+            )
+            .is_err(),
+            "{mode} output must not enter the cache"
+        );
+        assert_eq!(fs::read_dir(&cache_dir).unwrap().count(), 0);
+        fs::remove_dir_all(cache_dir).unwrap();
+        let record = executable.with_extension("input");
+        if record.exists() {
+            fs::remove_file(record).unwrap();
+        }
+        fs::remove_file(executable.with_extension("args")).unwrap();
+        fs::remove_file(source).unwrap();
+        fs::remove_file(executable).unwrap();
+    }
+}
+
+fn compile_fake_espeak(mode: &str) -> (PathBuf, PathBuf) {
+    let source = temporary_dir().with_extension("rs");
+    let executable = temporary_dir().with_file_name(format!(
+        "beastie-fake-espeak-{mode}-{}{}",
+        TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        std::env::consts::EXE_SUFFIX
+    ));
+    fs::write(
+        &source,
+        r#"
+use std::io::{self, Read};
+use std::path::PathBuf;
+
+fn main() {
+    let executable = std::env::current_exe().unwrap();
+    let mode = executable.file_stem().unwrap().to_string_lossy();
+    let arguments = std::env::args_os().collect::<Vec<_>>();
+    std::fs::write(executable.with_extension("args"), arguments.iter().skip(1).map(|value| value.to_string_lossy()).collect::<Vec<_>>().join("\n")).unwrap();
+    let output = arguments.windows(2).find(|pair| pair[0] == "-w").map(|pair| PathBuf::from(&pair[1])).unwrap();
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input).unwrap();
+    std::fs::write(executable.with_extension("input"), input).unwrap();
+    if mode.contains("failure") { std::process::exit(7); }
+    if mode.contains("invalid") { std::fs::write(output, b"not a wav").unwrap(); return; }
+    let sample_rate = 22_050_u32;
+    let samples = if mode.contains("oversized") { sample_rate as usize * 31 } else { 1 };
+    let data_bytes = u32::try_from(samples * 2).unwrap();
+    let mut wav = Vec::with_capacity(44 + data_bytes as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16_u32.to_le_bytes());
+    wav.extend_from_slice(&1_u16.to_le_bytes());
+    wav.extend_from_slice(&1_u16.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    wav.extend_from_slice(&2_u16.to_le_bytes());
+    wav.extend_from_slice(&16_u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_bytes.to_le_bytes());
+    wav.resize(44 + data_bytes as usize, 0);
+    std::fs::write(output, wav).unwrap();
+}
+"#,
+    )
+    .unwrap();
+    let status = Command::new("rustc")
+        .args(["--edition=2024", "-o"])
+        .arg(&executable)
+        .arg(&source)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    (source, executable)
 }

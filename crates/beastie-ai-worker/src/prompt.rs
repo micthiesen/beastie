@@ -37,11 +37,53 @@ struct TurnPlan {
     recalled_memory: Option<u64>,
 }
 
+pub(crate) fn planned_memory(
+    request: &DialogueRequest,
+) -> Option<&beastie_protocol::CandidateMemory> {
+    if prohibited_rejection(&request.player_said).is_some() {
+        return None;
+    }
+    let memory = request.candidate_memories.first()?;
+    if request.desired_social_act.is_none() || explicit_memory_request(request, memory) {
+        Some(memory)
+    } else {
+        None
+    }
+}
+
+fn explicit_memory_request(
+    request: &DialogueRequest,
+    memory: &beastie_protocol::CandidateMemory,
+) -> bool {
+    let player = normalized_text(&request.player_said);
+    player.split_whitespace().any(|word| {
+        matches!(
+            word,
+            "remember" | "remembered" | "memory" | "yesterday" | "earlier"
+        )
+    }) || memory_anchor(&memory.fact)
+        .is_some_and(|anchor| player.split_whitespace().any(|word| word == anchor))
+}
+
 fn turn_plan(request: &DialogueRequest) -> Result<TurnPlan, serde_json::Error> {
     if let Some(rejection) = prohibited_rejection(&request.player_said) {
         return Ok(TurnPlan {
             directive: format!("Set say exactly to {rejection:?}."),
             recalled_memory: None,
+        });
+    }
+
+    if let Some(memory) = planned_memory(request) {
+        let anchor = memory_anchor(&memory.fact).map_or_else(
+            || "Reuse the concrete subject noun from the fact.".to_owned(),
+            |anchor| format!("Say MUST contain the exact anchor {anchor:?}."),
+        );
+        return Ok(TurnPlan {
+            directive: format!(
+                "Memory fact: {:?}. Memory feeling: {:?}. {anchor} Express that feeling; do not address the player instead. Translate dislike as bad or hate; translate liked as good or liked. Any requested social style is secondary to recalling this fact.",
+                memory.fact, memory.feeling,
+            ),
+            recalled_memory: Some(memory.id.0),
         });
     }
 
@@ -64,20 +106,6 @@ fn turn_plan(request: &DialogueRequest) -> Result<TurnPlan, serde_json::Error> {
         return Ok(TurnPlan {
             directive: directive.to_owned(),
             recalled_memory: None,
-        });
-    }
-
-    if let Some(memory) = request.candidate_memories.first() {
-        let anchor = memory_anchor(&memory.fact).map_or_else(
-            || "Reuse the concrete subject noun from the fact.".to_owned(),
-            |anchor| format!("Say MUST contain the exact anchor {anchor:?}."),
-        );
-        return Ok(TurnPlan {
-            directive: format!(
-                "Memory fact: {:?}. Memory feeling: {:?}. {anchor} Express that feeling; do not address the player instead. Translate dislike as bad or hate; translate liked as good or liked.",
-                memory.fact, memory.feeling,
-            ),
-            recalled_memory: Some(memory.id.0),
         });
     }
 
@@ -105,7 +133,7 @@ fn turn_plan(request: &DialogueRequest) -> Result<TurnPlan, serde_json::Error> {
     })
 }
 
-fn memory_anchor(fact: &str) -> Option<&'static str> {
+pub(crate) fn memory_anchor(fact: &str) -> Option<&'static str> {
     const ANCHORS: &[&str] = &[
         "berry",
         "mushroom",
@@ -115,6 +143,14 @@ fn memory_anchor(fact: &str) -> Option<&'static str> {
         "sock",
         "comforted",
         "returned",
+        "laugh",
+        "disapprove",
+        "comfort",
+        "insult",
+        "profanity",
+        "crudeness",
+        "provocation",
+        "innuendo",
     ];
     let words = normalized_text(fact);
     ANCHORS
@@ -220,5 +256,16 @@ mod tests {
                 .directive
                 .contains("damn, shit, or hell")
         );
+    }
+
+    #[test]
+    fn explicit_recall_stays_about_the_memory_when_a_social_habit_fires() {
+        let mut value: serde_json::Value = serde_json::from_str(BERRY_MEMORY).expect("valid JSON");
+        value["desired_social_act"] = serde_json::json!("provocation");
+        let request: DialogueRequest = serde_json::from_value(value).expect("request should parse");
+        let plan = turn_plan(&request).expect("directive should build");
+        assert_eq!(plan.recalled_memory, Some(41));
+        assert!(plan.directive.contains("exact anchor \"berry\""));
+        assert!(plan.directive.contains("social style is secondary"));
     }
 }

@@ -3,7 +3,7 @@
 Fast-moving work state and chosen next step. This records the work, not machine state or
 uncommitted changes. Durable findings live in the linked docs.
 
-Last updated: **2026-08-15** (replaceable local mouth integrated provisionally.)
+Last updated: **2026-08-15** (Mac-led MVP vertical slice complete.)
 
 ## Now
 
@@ -15,15 +15,15 @@ Last updated: **2026-08-15** (replaceable local mouth integrated provisionally.)
 - Local LLM inference, local TTS generation, and authenticated PixelLab generation all work on the
   development Mac. Results, caveats, and exact smoke measurements are in
   [tooling-preflight.md](tooling-preflight.md).
-- The fixture dialogue backend remains the deterministic default. The opt-in local backend uses
-  strict bounded JSONL, one retry, authored fallback, deterministic content lanes, and a
-  provisionally selected Qwen3.5 0.8B Q4 model. Exact evaluation and runtime caveats are in
+- The fixture dialogue backend remains the deterministic default. The local backend uses strict
+  bounded JSONL, one retry, factual authored fallback, deterministic content lanes, and the selected
+  Qwen3.5 0.8B Q4 model. Exact evaluation and runtime caveats are in
   [local-mouth.md](local-mouth.md).
-- The game reuses one long-lived worker process, but the provisional inner llama.cpp adapter still
-  reloads its GGUF in a fresh `llama-cli` for every attempt. A warm release runtime remains open.
-- Native Kitten nano TTS is wired through a persistent worker, deterministic cache, and asynchronous
-  game playback behind a non-default feature. It uses no Python, stays off by default, and cannot
-  ship through the current sherpa-onnx path because static espeak-ng is GPLv3.
+- The game reuses one long-lived worker and one authenticated loopback `llama-server` sidecar. The
+  packaged runtime discovers its sibling worker, model, and server without environment variables.
+- Release speech uses a separate eSpeak NG process through a persistent worker, deterministic cache,
+  and asynchronous playback. The aggregate package preserves GPLv3 licensing and corresponding
+  source while Beastie's Rust binaries remain MIT. Kitten remains a non-default experiment.
 - The autonomous implementation target is the complete MVP. Its ordered slices and working rules
   are recorded in [build-plan.md](build-plan.md).
 - Headless interaction and visible-game scripting share one semantic `GameSession` command
@@ -55,13 +55,20 @@ Last updated: **2026-08-15** (replaceable local mouth integrated provisionally.)
 - Five original sounds cover selection, confirmation, comfort/noise, annoyance, and sleep. Runtime
   playback is event-driven and degrades silently if assets, decoding, playback, or an output device
   are unavailable.
+- The Stage 5 acceptance fixture drives the entire three-day berry grudge through play, talk,
+  reactions, sleep, checkpoint restoration, concept growth, individual idiolect, and silent food
+  rejection. Headless, visible fixture, and full packaged local paths all pass.
+- The compact toy chooser exposes Ball, Bell, and Sock identically to pointer and focus input. Exact
+  v1 saves migrate into schema v2 without invented absence time and preserve deterministic futures.
+- `cargo xtask package` builds and audits a complete offline platform layout. The final macOS proof
+  is 405 files and 632,822,390 bytes with release binaries, Qwen, llama.cpp, eSpeak NG, voice data,
+  licenses, corresponding source, assets, and per-file hashes.
 
 ## Next
 
-Harden the complete Stage 5 vertical slice: exercise the three-day arc through headless,
-visible-fixture, and full-local paths; replace the cold-per-attempt llama.cpp spike with a warm
-packaging candidate; choose and wire a license-compatible native TTS runtime; verify failure paths,
-CPU-only inference, model and asset packaging, save migration, and native platform acceptance.
+Run the deferred native acceptance pass on Windows and Linux, then verify a physical controller and
+macOS pointer delivery on a host not affected by the Alacritty/yabai focus stack. After that, make
+the distribution wrapper and Steam-facing compliance material from the proven package manifest.
 
 ## Candidates Not Chosen
 
@@ -69,6 +76,10 @@ CPU-only inference, model and asset packaging, save migration, and native platfo
   11/12 with one fallback and 3/3 permitted-sharpness cases → [local-mouth.md](local-mouth.md).
 - **Shipping sherpa-onnx 1.13.5**: the native spike works, but its static espeak-ng dependency is
   GPLv3 and is blocked from the MIT-only release path → [local-mouth.md](local-mouth.md).
+- **Piper Plus v1.13**: the current 38 MB model aborts before load on a multi-codepoint phoneme key,
+  and its model redistribution terms remain ambiguous → [tts-release-candidate.md](tts-release-candidate.md).
+- **Flite 2.2**: tiny and extremely fast on macOS, but its stale Win32 build path is not a credible
+  first-class Windows route → [flite-release-candidate.md](flite-release-candidate.md).
 
 ## Learned Recently
 
@@ -82,11 +93,13 @@ CPU-only inference, model and asset packaging, save migration, and native platfo
 - The simulation/model authority boundary, target acceptance scenario, performance budgets, and
   explicit exclusions are documented in [mvp-spec.md](mvp-spec.md).
 - The project uses the solo `/next` and `/wrap` continuity pattern adapted from `../stillair`.
-- Qwen3.5 0.8B Q4 is the provisional model after a 12-case corpus run: 11/12 passed, one authored
-  fallback, 889 ms median on Metal. These are cold-process, warm-filesystem-cache measurements;
-  production warm-runtime latency is unmeasured → [local-mouth.md](local-mouth.md).
+- Qwen3.5 0.8B Q4 passes 12/12 corpus cases with no fallback and an 882 ms cold-process median on
+  Metal. The packaged warm sidecar returned two valid turns in 1,156 ms total including load;
+  already-loaded probes took 107 ms and 52 ms → [local-mouth.md](local-mouth.md).
 - Native Kitten nano TTS loads in 174 to 206 ms and synthesizes at RTF 0.21 on the development Mac.
   Feature-gated game wiring works, but release licensing remains open → [local-mouth.md](local-mouth.md).
+- eSpeak NG 1.52 produces a 3.36-second crude-voice line in under 10 ms at 3.1 MB RSS. The real
+  Beastie TTS worker and final package both generated and played validated cached speech.
 - Ordinary gameplay validation will use semantic commands, not coordinate clicks. Coordinate input
   is reserved for targeted mouse-mapping and real-device tests; rendered scenarios save the logical
   framebuffer directly → [development-harness.md](development-harness.md).
@@ -115,3 +128,6 @@ CPU-only inference, model and asset packaging, save migration, and native platfo
   rejects unsolicited replies and protected-class violence; invalidates stale speech; and reaps
   worker process groups on macOS/Linux. A fresh native Kitten smoke and the three-capture visible
   fixture path both passed after hardening → [local-mouth.md](local-mouth.md).
+- On this Mac, yabai can intermittently leave a ggez release window blank before its first frame.
+  Stopping the service for the automated run and restarting it afterward makes the identical package
+  complete immediately → [development-harness.md](development-harness.md).

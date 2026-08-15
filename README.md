@@ -14,8 +14,9 @@ cargo xtask dev --fake-ai
 ```
 
 `cargo xtask verify` requires no model, display, GPU, network connection, or asset-generation
-credential. The interactive game shell is intentionally minimal while the deterministic MVP
-foundation is built. See [the MVP specification](docs/mvp-spec.md) and
+credential. The Mac-led MVP includes the playable three-day creature arc, deterministic saves and
+migration, generated room art, authored sound, a warm local Qwen dialogue runtime, and optional
+offline speech. See [the MVP specification](docs/mvp-spec.md) and
 [current project state](docs/STATE.md).
 
 ## Workspace
@@ -23,7 +24,7 @@ foundation is built. See [the MVP specification](docs/mvp-spec.md) and
 - `crates/beastie-core`: authoritative deterministic simulation and save state
 - `crates/beastie-protocol`: versioned, validated dialogue protocol
 - `crates/beastie-view`: simulation state to declarative render/audio plans
-- `crates/beastie-ai-worker`: local JSONL worker process, currently fixture-backed
+- `crates/beastie-ai-worker`: fixture, warm llama.cpp, and offline TTS worker boundaries
 - `crates/beastie-game`: thin cross-platform ggez executable
 - `crates/xtask`: developer commands and verification entry point
 

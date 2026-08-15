@@ -1,0 +1,23 @@
+{"version":1,"command":"inspect"}
+{"version":1,"command":"capture","name":"01-hatch"}
+{"version":1,"command":"feed","food":"berry"}
+{"version":1,"command":"advance","minutes":1}
+{"version":1,"command":"play","toy":"ball"}
+{"version":1,"command":"advance","minutes":1}
+{"version":1,"command":"talk","text":"Do you remember the berry?"}
+{"version":1,"command":"capture","name":"02-first-memory"}
+{"version":1,"command":"react","reaction":"laugh"}
+{"version":1,"command":"talk","text":"What do you call me now?"}
+{"version":1,"command":"save"}
+{"version":1,"command":"feed","food":"pellet"}
+{"version":1,"command":"load"}
+{"version":1,"command":"advance","minutes":15}
+{"version":1,"command":"talk","text":"Do you remember the berry?"}
+{"version":1,"command":"capture","name":"03-restored-memory"}
+{"version":1,"command":"advance","minutes":15}
+{"version":1,"command":"talk","text":"Do you remember the berry now?"}
+{"version":1,"command":"capture","name":"04-day-three"}
+{"version":1,"command":"feed","food":"berry"}
+{"version":1,"command":"advance","minutes":1}
+{"version":1,"command":"inspect"}
+{"version":1,"command":"capture","name":"05-nonverbal-rejection"}

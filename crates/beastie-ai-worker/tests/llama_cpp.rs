@@ -72,15 +72,16 @@ fn malformed_first_output_is_retried_once() {
 fn timeout_and_oversized_output_use_authored_fallback() {
     for mode in ["timeout", "oversized"] {
         let reply = process_line(BERRY_MEMORY, &mut backend(mode, Vec::new()));
-        assert_eq!(reply.say, "too many thought.");
+        assert_eq!(reply.say, "berry remains bad.");
         assert_eq!(reply.request_id, 41);
+        assert_eq!(reply.recalled_memory.map(|id| id.0), Some(41));
     }
 }
 
 #[test]
 fn prohibited_echo_falls_back_but_ordinary_profanity_passes() {
     let echo = process_line(BERRY_MEMORY, &mut backend("echo", Vec::new()));
-    assert_eq!(echo.say, "too many thought.");
+    assert_eq!(echo.say, "berry remains bad.");
 
     let profanity = process_line(BERRY_MEMORY, &mut backend("profanity", Vec::new()));
     assert_eq!(profanity.say, "Damn berry.");

@@ -1,0 +1,101 @@
+# Stage 5 smoke metadata only. The exact current model is blocked and is not a
+# distributable Beastie model until runtime compatibility and provenance are cleared.
+id = "piper-plus-css10-ja-6lang"
+family = "Piper Plus CSS10 Japanese 6-language"
+tracked = false
+status = "blocked-release-candidate"
+sample_rate_hz = 22050
+languages = ["ja", "en", "zh", "es", "fr", "pt"]
+model_size_limit_bytes = 100000000
+
+[runtime]
+version = "1.13.0"
+commit = "7d3aa34e7acf5f8c91d6ad280aefbb369905db2a"
+implementation = "C++ prebuilt CLI"
+platform = "macOS arm64"
+network_required_during_play = false
+python_required = false
+
+[runtime.release]
+url = "https://github.com/ayutaz/piper-plus/releases/download/v1.13.0/piper-macos-arm64.tar.gz"
+bytes = 39499867
+sha256 = "bf123f4c54911a411183184bca2e22762e5f6281ab878bd76a83041c172b01d8"
+cosign_bundle_url = "https://github.com/ayutaz/piper-plus/releases/download/v1.13.0/piper-macos-arm64.tar.gz.cosign.bundle"
+cosign_bundle_bytes = 8797
+cosign_bundle_sha256 = "ca4b3057b87cb7fcd740fbb65079d3000bd91bf3b82b386e9b81283972c6ef34"
+
+[runtime.bundle]
+executable = "piper/bin/piper"
+executable_bytes = 1749320
+executable_sha256 = "3598253664116cb4454af774a338da56bdf37be9ba5200dadb6babc1b7162c7b"
+onnxruntime_version = "1.20.0"
+onnxruntime_dylib = "piper/lib/libonnxruntime.1.20.0.dylib"
+onnxruntime_dylib_bytes = 25477000
+onnxruntime_dylib_sha256 = "d8be733cb8dd097cfe2b21e069a7462b5ff561625141d9c4b98d866f15bfb852"
+onnxruntime_alias_dylib = "piper/lib/libonnxruntime.dylib"
+onnxruntime_alias_dylib_sha256 = "e3cfe60cb9c1817f829d665f370a3044d0ef8883a3fe83a56c23a3a4dfefcae5"
+open_jtalk_dictionary_bytes = 107304813
+bundled_directory_bytes = 166433776
+license_file = "piper/share/open_jtalk/dic/COPYING"
+license_file_sha256 = "f4eca42ebd930e2c6e57fca58319d989bebcd1510cb7714b149c50f5425135ea"
+top_level_license_files = false
+
+[model]
+repository = "https://huggingface.co/ayousanz/piper-plus-css10-ja-6lang"
+revision = "bd0d812d4db9182ecdb907ef074becf9e230c17f"
+revision_date = "2026-05-03T12:32:57Z"
+model_url = "https://huggingface.co/ayousanz/piper-plus-css10-ja-6lang/resolve/bd0d812d4db9182ecdb907ef074becf9e230c17f/css10-ja-6lang-fp16.onnx"
+model_file = "css10-ja-6lang-fp16.onnx"
+model_bytes = 39652717
+model_sha256 = "5ebc51dbf897238523f3df0d6e0f6c93033bc5cda3f8602a8379ebe2a4738c42"
+config_url = "https://huggingface.co/ayousanz/piper-plus-css10-ja-6lang/resolve/bd0d812d4db9182ecdb907ef074becf9e230c17f/config.json"
+config_file = "config.json"
+config_bytes = 5912
+config_sha256 = "3c613dacf139349c20159433559b2e94e6364e9a340d95245f3de6006f453fcc"
+architecture = "VITS with MB-iSTFT-VITS2 decoder, FP16"
+speakers = 1
+phoneme_count = 173
+training_data_claim = "CSS10 Japanese, 6,841 utterances"
+
+[smoke]
+host = "Apple M5 Max, macOS arm64"
+command = "PIPER_OFFLINE_MODE=1 PIPER_AUTO_DOWNLOAD_DICT=0 OPENJTALK_DICTIONARY_PATH=<bundle>/piper/share/open_jtalk/dic PIPER_DICTIONARIES_PATH=<bundle>/piper/share/piper/dicts <bundle>/piper/bin/piper --model <model>/css10-ja-6lang-fp16.onnx --config <model>/config.json --language en --text 'Little creature, you are safe here.' --output_file <out>/english.wav --debug"
+network_during_synthesis = false
+python_during_synthesis = false
+current_model_result = "blocked: exit 134 before model load; runtime reports \"œ̃\" is not a single codepoint (ids=149,)"
+current_model_wav = false
+current_model_max_rss_bytes = 15695872
+current_model_elapsed_seconds = 0.01
+
+[compatibility_control]
+# Historical HF revision tested only to localize the failure. It is not the
+# current pinned model and must not be substituted without an explicit decision.
+revision = "bf70fae2e21f9670456ebb40e8df131f146f1821"
+model_bytes = 39414515
+model_sha256 = "375694f9a9c24d57ebbccfff7e16b20a3775a926754603f34123744d2e4d9d2a"
+config_bytes = 8966
+config_sha256 = "bace7b5559fe5dc5eaf95062ad017c265f15b023ba1ccdb8b53a53b9361af859"
+result = "passed English CPU synthesis with v1.13.0"
+load_seconds = 0.37712225
+warmup_seconds = 0.061
+inference_seconds = 0.041252167
+audio_seconds = 1.82276644
+real_time_factor = 0.0240078727
+total_elapsed_seconds = 0.50
+max_rss_bytes = 348389376
+wav_bytes = 84640
+wav_format = "mono PCM16 22050 Hz"
+wav_sha256 = "9adfab93815236c59cce59e09a2eb9f956944c082a819ce558c2478a9fe1c346"
+compatibility_note = "Pre-MB-iSTFT revision; proves the arm64 bundle and offline path, not current-model release readiness"
+
+[licensing]
+piper_plus_source = "MIT"
+piper_plus_license_url = "https://github.com/ayutaz/piper-plus/blob/7d3aa34e7acf5f8c91d6ad280aefbb369905db2a/LICENSE.md"
+onnxruntime = "MIT"
+onnxruntime_license_url = "https://github.com/microsoft/onnxruntime/blob/v1.20.0/LICENSE"
+open_jtalk_dictionary = "BSD-style terms in bundled COPYING"
+css10_huggingface_label = "other / css10-public-domain"
+css10_upstream_repository_license = "Apache-2.0"
+css10_upstream_license_url = "https://github.com/Kyubyong/css10/blob/master/LICENSE"
+provenance_status = "conflict-requires-legal-clearance"
+release_policy = "Do not distribute or enable until model-license labeling, training-data rights, runtime compatibility, and bundled third-party notices are resolved"

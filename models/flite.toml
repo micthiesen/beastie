@@ -1,0 +1,89 @@
+# Stage 5 fallback smoke metadata. Flite is technically viable on macOS/Linux,
+# but remains blocked for Beastie's first-class Windows release target until a
+# maintained native Windows build path is established and tested.
+id = "flite-2.2-cmu-us-slt"
+family = "CMU Flite"
+tracked = false
+status = "blocked-native-windows"
+license = "BSD-like-with-third-party-notices"
+sample_rate_hz = 16000
+python_required = false
+network_required_during_play = false
+
+[source]
+repository = "https://github.com/festvox/flite"
+tag = "v2.2"
+commit = "e9e2e37c329dbe98bfeb27a1828ef9a71fa84f88"
+archive_url = "https://github.com/festvox/flite/archive/refs/tags/v2.2.tar.gz"
+archive_bytes = 20233792
+archive_sha256 = "ab1555fe5adc3f99f1d4a1a0eb1596d329fd6d74f1464a0097c81f53c0cf9e5c"
+license_file = "COPYING"
+license_file_bytes = 10022
+license_file_sha256 = "d31bceaf2823d56a8c9400f7bde3b17140e739e991eb4f203bdcf9827754ab59"
+
+[build]
+host = "Apple M5 Max, macOS arm64"
+compiler = "Apple clang 21.0.0 (clang-2100.1.1.101)"
+sdk = "macOS 26.5"
+configure = "./configure"
+make = "make (serial)"
+result = "passed"
+runtime_binary = "flite"
+runtime_binary_bytes_unstripped = 25343592
+runtime_binary_bytes_stripped = 20289608
+runtime_binary_sha256_stripped = "6d2eb37819b8b85078cafe4b39629dd2238ced02934ac53a9d9f300a74bd498a"
+voice_binary_kal_bytes_stripped = 3194632
+voice_binary_kal_sha256_stripped = "b41e1760ba28fda9cc94cc4fdd78336a5911c0a068def3b456f25dc3983df4a7"
+voice_binary_slt_bytes_stripped = 4700744
+voice_binary_slt_sha256_stripped = "43497db294d18c2f63bb44e20db4b2716c0d69afafcde99f1e66056989e110ee"
+external_voice_data = false
+
+[smoke]
+command = "<flite> -v -voice slt -f <text-file> <wav-file>"
+offline = true
+python = false
+line_slt = "No berries?! You gave me red betrayal; I remember your bullshit."
+line_slt_seconds = 4.09
+line_slt_synthesis_seconds = 0.019989
+line_slt_real_time_factor = 0.0048878
+line_slt_elapsed_seconds = 0.02
+line_slt_max_rss_bytes = 8929280
+line_slt_wav_bytes = 130924
+line_slt_wav_sha256 = "b2a595b1b936d9f605bac0404244079ad066b43d361ee4d4a850ed2c02d92845"
+line_slt_wav_format = "mono PCM16 16000 Hz"
+line_kal = "Little beastie says: shit, fuck, and bullshit... really?!"
+line_kal_seconds = 4.2785
+line_kal_synthesis_seconds = 0.002847
+line_kal_real_time_factor = 0.0006654
+line_kal_elapsed_seconds = 0.00
+line_kal_max_rss_bytes = 3555328
+line_kal_wav_bytes = 68500
+line_kal_wav_sha256 = "9047fc2215f50cdeb48d12a1f4378021a587c924d066a53259b3739523f828f1"
+line_kal_wav_format = "mono PCM16 8000 Hz"
+
+[integration_contract]
+status = "design-only-until-native-windows-build-is-cleared"
+voice = "slt"
+output_sample_rate_hz = 24000
+output_channels = 1
+output_format = "PCM16 WAV"
+init = "Call flite_init() once, then flite_voice_select(\"slt\") in one persistent worker process."
+request = "Bound UTF-8 text, one request at a time; call flite_text_to_wave(text, voice)."
+conversion = "Call cst_wave_resample(wave, 24000), validate duration and sample count, then write bounded RIFF PCM16 bytes to a content-addressed cache entry."
+cleanup = "Call delete_wave(wave) after copying/serializing the samples; stop the worker on quit."
+security = "No shell, network, model file, or Python dependency; preserve outer Beastie bounds and authored fallback."
+note = "Flite's public header says initialization is required before synthesis and the README says it is thread-safe after initialization; serialize requests for the first adapter."
+
+[windows]
+status = "blocked"
+cmake = false
+native_msvc_path = "not release-ready"
+evidence = "Root flite.sln is Visual Studio 14-era, exposes only Debug/Release Win32, references missing flite/flite.vcxproj, and mixes .vcxproj with obsolete .vcproj files. windows/Makefile is explicitly Windows Mobile and MinGW. SAPI projects target old Visual C++/SAPI SDK workflows, not a maintained Beastie CLI/library path."
+accepted_paths = ["Visual Studio/MSVC after a maintained project is repaired and tested", "mingw32 only if Beastie explicitly accepts a native Win32/PE artifact"]
+rejected_paths = ["Cygwin", "WSL"]
+
+[licensing]
+core = "BSD-like CMU license in COPYING"
+third_party = "COPYING enumerates NAIST/NITECH/CMU MLSA/MLPG/VC, Cepstral/Cobalt SAPI, University of Toronto regex, Sun G72x, Festival/University of Edinburgh-derived models, FSF build scripts, and UIUC Apache-2.0 grapheme tables"
+redistribution = "Technically compatible with MIT-style Beastie distribution when COPYING and required third-party notices are shipped"
+release_gate = "Assemble and retain the complete notice set; do not describe the aggregate as a single SPDX license without preserving the exceptions"

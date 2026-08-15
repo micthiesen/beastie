@@ -8,6 +8,7 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use beastie_protocol::{
@@ -69,6 +70,8 @@ pub struct SynthesizedAudio {
 }
 
 pub trait TtsSynthesizer {
+    fn cache_identity(&self) -> &str;
+
     fn synthesize(
         &mut self,
         text: &str,
@@ -80,6 +83,7 @@ pub trait TtsSynthesizer {
 pub struct CachedSpeech {
     pub path: PathBuf,
     pub cache_hit: bool,
+    pub cache_key: String,
 }
 
 #[derive(Debug)]
@@ -135,12 +139,13 @@ pub fn synthesize_to_cache(
     let settings = settings.validate()?;
     fs::create_dir_all(cache_dir)?;
 
-    let key = cache_key(text, settings);
+    let key = backend_cache_key(text, settings, synthesizer.cache_identity());
     let path = cache_dir.join(format!("{key}.wav"));
     if validate_cached_wav(&path).is_ok() {
         return Ok(CachedSpeech {
             path,
             cache_hit: true,
+            cache_key: key,
         });
     }
     if path.exists() {
@@ -153,6 +158,7 @@ pub fn synthesize_to_cache(
     Ok(CachedSpeech {
         path,
         cache_hit: false,
+        cache_key: key,
     })
 }
 
@@ -191,11 +197,11 @@ fn process_tts_line(
         silence_scale: request.settings.silence_scale,
     };
     match synthesize_to_cache(cache_dir, &request.text, settings, synthesizer) {
-        Ok(_) => TtsReply {
+        Ok(cached) => TtsReply {
             protocol_version: TTS_PROTOCOL_VERSION,
             request_id: request.request_id,
             outcome: TtsOutcome::Ready {
-                cache_key: cache_key(&request.text, settings),
+                cache_key: cached.cache_key,
             },
         },
         Err(_) => tts_error_reply(request.request_id, TtsErrorCode::SynthesisFailed),
@@ -218,6 +224,25 @@ pub fn cache_key(text: &str, settings: VoiceSettings) -> String {
         KITTEN_MODEL_ID.as_bytes(),
         KITTEN_MODEL_SHA256.as_bytes(),
         KITTEN_VOICES_SHA256.as_bytes(),
+        &[settings.speaker_id],
+        &settings.speed.to_bits().to_le_bytes(),
+        &settings.silence_scale.to_bits().to_le_bytes(),
+        text.as_bytes(),
+    ] {
+        hash.update((field.len() as u64).to_le_bytes());
+        hash.update(field);
+    }
+    format!("{:x}", hash.finalize())
+}
+
+fn backend_cache_key(text: &str, settings: VoiceSettings, backend_identity: &str) -> String {
+    if backend_identity == KITTEN_MODEL_ID {
+        return cache_key(text, settings);
+    }
+    let mut hash = Sha256::new();
+    for field in [
+        CACHE_FORMAT_VERSION.as_bytes(),
+        backend_identity.as_bytes(),
         &[settings.speaker_id],
         &settings.speed.to_bits().to_le_bytes(),
         &settings.silence_scale.to_bits().to_le_bytes(),
@@ -323,6 +348,160 @@ fn validate_cached_wav(path: &Path) -> Result<(), TtsError> {
         return Err(TtsError::InvalidAudio);
     }
     Ok(())
+}
+
+/// Offline TTS through a separately installed eSpeak NG executable.
+///
+/// Beastie exchanges only bounded text and a temporary WAV with this process.
+/// The executable and its data remain separately distributed GPLv3 components;
+/// no eSpeak code is linked into the MIT-licensed Rust binaries.
+#[derive(Debug, Clone)]
+pub struct EspeakNgSynthesizer {
+    executable: PathBuf,
+    voice: String,
+    cache_identity: String,
+    data_parent: Option<PathBuf>,
+}
+
+impl EspeakNgSynthesizer {
+    pub fn new(
+        executable: PathBuf,
+        voice: String,
+        data_dir: Option<PathBuf>,
+    ) -> Result<Self, TtsError> {
+        if voice.trim().is_empty() || voice.len() > 64 || voice.contains('\0') {
+            return Err(TtsError::Backend(
+                "eSpeak NG voice must contain 1..=64 UTF-8 bytes and no NUL".to_owned(),
+            ));
+        }
+        let cache_identity = format!("espeak-ng-process-v1:{voice}");
+        let data_parent = data_dir
+            .map(|path| {
+                if !path.is_dir() || path.file_name().is_none_or(|name| name != "espeak-ng-data") {
+                    return Err(TtsError::Backend(format!(
+                        "eSpeak NG data directory must exist and be named espeak-ng-data: {}",
+                        path.display()
+                    )));
+                }
+                path.parent().map(Path::to_path_buf).ok_or_else(|| {
+                    TtsError::Backend("eSpeak NG data directory has no parent".to_owned())
+                })
+            })
+            .transpose()?;
+        Ok(Self {
+            executable,
+            voice,
+            cache_identity,
+            data_parent,
+        })
+    }
+
+    fn output_path(&self) -> Result<(PathBuf, PathBuf), TtsError> {
+        for _ in 0..16 {
+            let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let directory = std::env::temp_dir()
+                .join(format!("beastie-espeak-{}-{sequence}", std::process::id()));
+            match fs::create_dir(&directory) {
+                Ok(()) => return Ok((directory.join("speech.wav"), directory)),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(TtsError::Io(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not reserve an eSpeak NG temporary directory",
+        )))
+    }
+}
+
+impl TtsSynthesizer for EspeakNgSynthesizer {
+    fn cache_identity(&self) -> &str {
+        &self.cache_identity
+    }
+
+    fn synthesize(
+        &mut self,
+        text: &str,
+        settings: VoiceSettings,
+    ) -> Result<SynthesizedAudio, TtsError> {
+        validate_text(text)?;
+        let settings = settings.validate()?;
+        let speaker_voice = if settings.speaker_id == 0 {
+            self.voice.clone()
+        } else {
+            format!("{}+m{}", self.voice, settings.speaker_id)
+        };
+        let words_per_minute = (175.0 * settings.speed).round() as u16;
+        let (output_path, temporary_dir) = self.output_path()?;
+        let result = (|| {
+            let mut command = Command::new(&self.executable);
+            if let Some(parent) = &self.data_parent {
+                let mut argument = std::ffi::OsString::from("--path=");
+                argument.push(parent);
+                command.arg(argument);
+            }
+            let mut child = command
+                .arg("--stdin")
+                .arg("-w")
+                .arg(&output_path)
+                .arg("-v")
+                .arg(&speaker_voice)
+                .arg("-s")
+                .arg(words_per_minute.to_string())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|error| {
+                    TtsError::Backend(format!(
+                        "could not start {}: {error}",
+                        self.executable.display()
+                    ))
+                })?;
+            let write_result = child
+                .stdin
+                .take()
+                .ok_or_else(|| TtsError::Backend("eSpeak NG stdin was unavailable".to_owned()))
+                .and_then(|mut stdin| {
+                    stdin.write_all(text.as_bytes()).map_err(|error| {
+                        TtsError::Backend(format!("could not send text to eSpeak NG: {error}"))
+                    })
+                });
+            if let Err(error) = write_result {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+            let status = child.wait().map_err(|error| {
+                TtsError::Backend(format!("could not wait for eSpeak NG: {error}"))
+            })?;
+            if !status.success() {
+                return Err(TtsError::Backend(format!("eSpeak NG exited with {status}")));
+            }
+            read_pcm_wav(&output_path)
+        })();
+        let _ = fs::remove_dir_all(temporary_dir);
+        result
+    }
+}
+
+fn read_pcm_wav(path: &Path) -> Result<SynthesizedAudio, TtsError> {
+    validate_cached_wav(path)?;
+    let mut file = File::open(path)?;
+    let mut header = [0_u8; 44];
+    file.read_exact(&mut header)?;
+    let sample_rate = u32::from_le_bytes(header[24..28].try_into().unwrap());
+    let data_bytes = u32::from_le_bytes(header[40..44].try_into().unwrap()) as usize;
+    let mut bytes = vec![0_u8; data_bytes];
+    file.read_exact(&mut bytes)?;
+    let samples = bytes
+        .chunks_exact(2)
+        .map(|sample| f32::from(i16::from_le_bytes([sample[0], sample[1]])) / 32_768.0)
+        .collect();
+    Ok(SynthesizedAudio {
+        samples,
+        sample_rate,
+    })
 }
 
 #[cfg(feature = "experimental-gpl-tts")]
@@ -442,6 +621,10 @@ mod sherpa {
     }
 
     impl TtsSynthesizer for SherpaKittenSynthesizer {
+        fn cache_identity(&self) -> &str {
+            super::KITTEN_MODEL_ID
+        }
+
         fn synthesize(
             &mut self,
             text: &str,

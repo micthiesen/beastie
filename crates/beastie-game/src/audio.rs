@@ -5,7 +5,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use beastie_core::GameEvent;
-#[cfg(feature = "experimental-gpl-tts")]
 use rodio::Player;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink};
 
@@ -26,7 +25,6 @@ const SOUND_IDS: &[&str] = &[
 pub struct AudioBank {
     output: Option<MixerDeviceSink>,
     sounds: BTreeMap<&'static str, Arc<[u8]>>,
-    #[cfg(feature = "experimental-gpl-tts")]
     speech: Option<Player>,
 }
 
@@ -40,7 +38,6 @@ impl AudioBank {
         Self {
             output,
             sounds: load_sounds(assets_root),
-            #[cfg(feature = "experimental-gpl-tts")]
             speech: None,
         }
     }
@@ -61,7 +58,6 @@ impl AudioBank {
         }
     }
 
-    #[cfg(feature = "experimental-gpl-tts")]
     pub fn play_speech(&mut self, wav: Arc<[u8]>) {
         self.stop_speech();
         let Some(output) = &self.output else {
@@ -73,7 +69,6 @@ impl AudioBank {
         }
     }
 
-    #[cfg(feature = "experimental-gpl-tts")]
     pub fn stop_speech(&mut self) {
         if let Some(player) = self.speech.take() {
             player.stop();

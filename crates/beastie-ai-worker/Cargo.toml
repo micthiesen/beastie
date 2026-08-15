@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 beastie-protocol = { path = "../beastie-protocol" }
 clap = { workspace = true, features = ["env"] }
+getrandom = "0.3"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
@@ -23,4 +24,3 @@ experimental-gpl-tts = ["dep:sherpa-onnx"]
 [[bin]]
 name = "beastie-tts"
 path = "src/bin/beastie-tts.rs"
-required-features = ["experimental-gpl-tts"]

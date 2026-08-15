@@ -5,6 +5,14 @@ use thiserror::Error;
 
 use crate::{ACTIVE_DAY_MS, RandomSource, SAVE_VERSION, SeededRandom};
 
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut mixed = value;
+    mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    mixed ^ (mixed >> 31)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct MemoryId(pub u64);
@@ -67,6 +75,34 @@ pub enum LanguageStage {
     Hatch,
     Words,
     Phrases,
+}
+
+/// A small, save-derived speech fingerprint.
+///
+/// This is intentionally a projection rather than another mutable simulation field.  The
+/// persisted seed and traits are enough to recover it after a save/reload, and the early
+/// language stages remain plain until the creature has reached the Individuality slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdiolectQuirk {
+    Plain,
+    ArticleDrop,
+    Echo,
+    HmPrefix,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Idiolect {
+    pub quirk: IdiolectQuirk,
+}
+
+impl Default for Idiolect {
+    fn default() -> Self {
+        Self {
+            quirk: IdiolectQuirk::Plain,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -455,6 +491,33 @@ impl WorldState {
     #[must_use]
     pub fn active_day(&self) -> u64 {
         self.elapsed_ms / ACTIVE_DAY_MS + 1
+    }
+
+    /// Projects a stable speech quirk from persisted identity and progression.
+    ///
+    /// Individuality is deliberately gated behind the phrase stage and three meaningful
+    /// interactions.  `to_bits` makes the projection independent of float formatting and
+    /// preserves the exact persisted trait values across a JSON round trip.
+    #[must_use]
+    pub fn idiolect(&self) -> Idiolect {
+        let development = self.creature.development;
+        if development.language_stage < LanguageStage::Phrases
+            || development.active_days_reached < 3
+            || development.interactions.total() < 3
+        {
+            return Idiolect::default();
+        }
+
+        let mut hash = self.seed ^ 0x9e37_79b9_7f4a_7c15;
+        for value in self.creature.traits.values() {
+            hash = splitmix64(hash ^ u64::from(value.to_bits()));
+        }
+        let quirk = match hash % 3 {
+            0 => IdiolectQuirk::ArticleDrop,
+            1 => IdiolectQuirk::Echo,
+            _ => IdiolectQuirk::HmPrefix,
+        };
+        Idiolect { quirk }
     }
 
     #[must_use]

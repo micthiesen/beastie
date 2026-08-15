@@ -40,15 +40,44 @@ impl WorkerConfig {
 
     #[must_use]
     pub fn from_environment(fake_ai: bool, reply_timeout: Duration) -> Option<Self> {
-        let executable = std::env::var_os("BEASTIE_AI_WORKER").map(PathBuf::from)?;
-        let arguments = fake_ai
-            .then(|| [OsString::from("--backend"), OsString::from("fixture")])
-            .into_iter()
-            .flatten()
-            .collect();
+        if let Some(executable) = std::env::var_os("BEASTIE_AI_WORKER").map(PathBuf::from) {
+            let arguments = fake_ai
+                .then(|| [OsString::from("--backend"), OsString::from("fixture")])
+                .into_iter()
+                .flatten()
+                .collect();
+            return Some(Self {
+                executable,
+                arguments,
+                reply_timeout,
+            });
+        }
+        if fake_ai {
+            return None;
+        }
+        let executable = std::env::current_exe().ok()?;
+        Self::from_package_root(executable.parent()?, reply_timeout)
+    }
+
+    fn from_package_root(root: &std::path::Path, reply_timeout: Duration) -> Option<Self> {
+        let executable = root.join(format!("beastie-ai-worker{}", std::env::consts::EXE_SUFFIX));
+        let server = root
+            .join("runtime")
+            .join(format!("llama-server{}", std::env::consts::EXE_SUFFIX));
+        let model = root.join("models").join("Qwen3.5-0.8B-Q4_0.gguf");
+        if !executable.is_file() || !server.is_file() || !model.is_file() {
+            return None;
+        }
         Some(Self {
             executable,
-            arguments,
+            arguments: vec![
+                OsString::from("--backend"),
+                OsString::from("llama-server"),
+                OsString::from("--model"),
+                model.into_os_string(),
+                OsString::from("--llama-server"),
+                server.into_os_string(),
+            ],
             reply_timeout,
         })
     }
@@ -397,7 +426,9 @@ mod tests {
     use std::io::Cursor;
     use std::process::Command;
 
-    use beastie_protocol::{DialogueConstraints, Gesture, PROTOCOL_VERSION, validate_reply};
+    use beastie_protocol::{
+        DialogueConstraints, Gesture, Idiolect, PROTOCOL_VERSION, validate_reply,
+    };
 
     use super::*;
 
@@ -409,6 +440,7 @@ mod tests {
             mood: "wary".to_owned(),
             known_concepts: BTreeSet::new(),
             candidate_memories: Vec::new(),
+            idiolect: Idiolect::default(),
             desired_social_act: None,
             player_said: "hello".to_owned(),
             constraints: DialogueConstraints {
@@ -485,6 +517,40 @@ mod tests {
                 Duration::from_secs(65)
             );
         }
+    }
+
+    #[test]
+    fn packaged_runtime_is_discovered_without_environment_configuration() {
+        let root =
+            std::env::temp_dir().join(format!("beastie-package-discovery-{}", std::process::id()));
+        let worker = root.join(format!("beastie-ai-worker{}", std::env::consts::EXE_SUFFIX));
+        let server = root
+            .join("runtime")
+            .join(format!("llama-server{}", std::env::consts::EXE_SUFFIX));
+        let model = root.join("models").join("Qwen3.5-0.8B-Q4_0.gguf");
+        std::fs::create_dir_all(server.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(model.parent().unwrap()).unwrap();
+        for path in [&worker, &server, &model] {
+            std::fs::write(path, b"fixture").unwrap();
+        }
+
+        let config = WorkerConfig::from_package_root(&root, Duration::from_secs(5))
+            .expect("complete package should be discovered");
+        assert_eq!(config.executable, worker);
+        assert!(
+            config
+                .arguments
+                .iter()
+                .any(|argument| argument == server.as_os_str())
+        );
+        assert!(
+            config
+                .arguments
+                .iter()
+                .any(|argument| argument == model.as_os_str())
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

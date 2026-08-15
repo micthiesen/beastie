@@ -8,9 +8,9 @@ mod simulation;
 
 pub use memory::{MemoryCue, MemoryQuery, select_candidate_memories};
 pub use model::{
-    Belief, BeliefId, BeliefKind, Concept, Creature, Development, FoodId, Intention,
-    InteractionCounters, LanguageStage, Memory, MemoryId, MemoryKind, Mood, Movement, Needs,
-    NonverbalAct, Reaction, Relationship, RoomSpot, RoomState, SocialAct, SocialHabits,
+    Belief, BeliefId, BeliefKind, Concept, Creature, Development, FoodId, Idiolect, IdiolectQuirk,
+    Intention, InteractionCounters, LanguageStage, Memory, MemoryId, MemoryKind, Mood, Movement,
+    Needs, NonverbalAct, Reaction, Relationship, RoomSpot, RoomState, SocialAct, SocialHabits,
     StateValidationError, ToyId, Traits, WorldState,
 };
 pub use random::{RandomSource, SeededRandom};
@@ -46,6 +46,51 @@ mod tests {
         );
         assert_eq!(first, second);
         assert_eq!(first_rng, second_rng);
+    }
+
+    #[test]
+    fn idiolect_is_plain_until_individuality_and_varies_by_identity() {
+        let mut hatch = WorldState::new(1, "Mop");
+        assert_eq!(hatch.idiolect().quirk, IdiolectQuirk::Plain);
+
+        hatch.creature.development.active_days_reached = 3;
+        hatch.creature.development.language_stage = LanguageStage::Phrases;
+        hatch.creature.development.interactions.talks = 3;
+        let first = hatch.idiolect();
+
+        let mut variants = BTreeSet::new();
+        for seed in 1..=16 {
+            let mut world = WorldState::new(seed, "Mop");
+            world.creature.development.active_days_reached = 3;
+            world.creature.development.language_stage = LanguageStage::Phrases;
+            world.creature.development.interactions.talks = 3;
+            variants.insert(world.idiolect().quirk);
+        }
+        assert!(first.quirk != IdiolectQuirk::Plain);
+        assert!(
+            variants.len() >= 2,
+            "seed projection should produce variants"
+        );
+    }
+
+    #[test]
+    fn idiolect_round_trips_with_the_persisted_identity() {
+        let mut world = WorldState::new(99, "Mop");
+        world.elapsed_ms = ACTIVE_DAY_MS * 2;
+        world.creature.development.active_days_reached = 3;
+        world.creature.development.language_stage = LanguageStage::Phrases;
+        world.creature.development.interactions.talks = 3;
+        world
+            .creature
+            .known_concepts
+            .extend([Concept::Again, Concept::Yesterday]);
+        let encoded = SaveGame::capture(&world, &SeededRandom::new(world.seed))
+            .to_json()
+            .expect("save should encode");
+        let (reloaded, _) = SaveGame::from_json(&encoded)
+            .expect("save should decode")
+            .resume();
+        assert_eq!(reloaded.idiolect(), world.idiolect());
     }
 
     #[test]

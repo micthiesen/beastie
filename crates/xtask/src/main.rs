@@ -16,6 +16,7 @@ use serde::Serialize;
 
 mod asset;
 mod dialogue_eval;
+mod packaging;
 
 const BERRY_GRUDGE_SCENARIO: &str = "fixtures/scenarios/berry-grudge.jsonl";
 
@@ -47,12 +48,15 @@ enum Task {
         /// Outer worker watchdog in milliseconds.
         #[arg(long)]
         ai_timeout_ms: Option<u64>,
-        /// Opt into GPL-blocked Kitten TTS with this extracted model directory.
+        /// Opt into GPL-blocked Kitten TTS instead of the release eSpeak backend.
         #[arg(long, requires = "tts_cache_dir")]
         tts_model_dir: Option<PathBuf>,
-        /// Cache directory shared by the game and experimental TTS worker.
-        #[arg(long, requires = "tts_model_dir")]
+        /// Enable offline TTS with this cache directory.
+        #[arg(long)]
         tts_cache_dir: Option<PathBuf>,
+        /// eSpeak NG executable for the release-capable external-process backend.
+        #[arg(long, requires = "tts_cache_dir")]
+        tts_espeak: Option<PathBuf>,
         #[arg(long)]
         smoke: bool,
         #[arg(long)]
@@ -63,6 +67,45 @@ enum Task {
         stay_open: bool,
         #[arg(long)]
         new_game: bool,
+    },
+    /// Stage or check an offline release package.
+    Package {
+        /// Package root containing one platform subdirectory.
+        #[arg(long, default_value = "dist")]
+        destination: PathBuf,
+        /// Target package layout. Defaults to the current host.
+        #[arg(long, value_enum)]
+        platform: Option<PackagePlatform>,
+        /// Check an existing package instead of staging one.
+        #[arg(long)]
+        check: bool,
+        /// Already-built game executable.
+        #[arg(long, required_unless_present = "check")]
+        game: Option<PathBuf>,
+        /// Already-built Beastie AI worker executable.
+        #[arg(long, required_unless_present = "check")]
+        worker: Option<PathBuf>,
+        /// Already-built Beastie TTS worker. Provide all five TTS inputs or none.
+        #[arg(long)]
+        tts_worker: Option<PathBuf>,
+        /// Separately distributed eSpeak NG executable.
+        #[arg(long)]
+        espeak: Option<PathBuf>,
+        /// eSpeak NG data directory copied as runtime/espeak-ng-data.
+        #[arg(long)]
+        espeak_data: Option<PathBuf>,
+        /// GPLv3 license file copied as runtime/espeak-ng-COPYING.
+        #[arg(long)]
+        espeak_license: Option<PathBuf>,
+        /// Exact eSpeak NG 1.52.0 corresponding-source archive.
+        #[arg(long)]
+        espeak_source: Option<PathBuf>,
+        /// Selected local GGUF file.
+        #[arg(long, required_unless_present = "check")]
+        model: Option<PathBuf>,
+        /// llama-server executable and each dynamic runtime library. Repeatable.
+        #[arg(long, required_unless_present = "check")]
+        runtime: Vec<PathBuf>,
     },
     /// Run the deterministic simulation without rendering.
     Sim {
@@ -119,6 +162,34 @@ enum AssetTask {
     Check,
 }
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum PackagePlatform {
+    Macos,
+    Windows,
+    Linux,
+}
+
+impl PackagePlatform {
+    fn host() -> Result<Self> {
+        match std::env::consts::OS {
+            "macos" => Ok(Self::Macos),
+            "windows" => Ok(Self::Windows),
+            "linux" => Ok(Self::Linux),
+            other => bail!("unsupported package host platform: {other}"),
+        }
+    }
+}
+
+impl From<PackagePlatform> for packaging::Platform {
+    fn from(value: PackagePlatform) -> Self {
+        match value {
+            PackagePlatform::Macos => Self::Macos,
+            PackagePlatform::Windows => Self::Windows,
+            PackagePlatform::Linux => Self::Linux,
+        }
+    }
+}
+
 fn main() -> Result<()> {
     match Cli::parse().command {
         Task::Verify => verify(),
@@ -152,6 +223,7 @@ fn main() -> Result<()> {
             ai_timeout_ms,
             tts_model_dir,
             tts_cache_dir,
+            tts_espeak,
             smoke,
             script,
             capture_dir,
@@ -162,11 +234,39 @@ fn main() -> Result<()> {
             ai_timeout_ms,
             tts_model_dir: tts_model_dir.as_deref(),
             tts_cache_dir: tts_cache_dir.as_deref(),
+            tts_espeak: tts_espeak.as_deref(),
             smoke,
             script: script.as_deref(),
             capture_dir: capture_dir.as_deref(),
             stay_open,
             new_game,
+        }),
+        Task::Package {
+            destination,
+            platform,
+            check,
+            game,
+            worker,
+            tts_worker,
+            espeak,
+            espeak_data,
+            espeak_license,
+            espeak_source,
+            model,
+            runtime,
+        } => package(PackageCommandOptions {
+            destination: &destination,
+            platform: platform.unwrap_or(PackagePlatform::host()?).into(),
+            check_only: check,
+            game: game.as_deref(),
+            worker: worker.as_deref(),
+            tts_worker: tts_worker.as_deref(),
+            espeak: espeak.as_deref(),
+            espeak_data: espeak_data.as_deref(),
+            espeak_license: espeak_license.as_deref(),
+            espeak_source: espeak_source.as_deref(),
+            model: model.as_deref(),
+            runtime: &runtime,
         }),
         Task::Sim { seed, days } => sim(seed, days),
         Task::Play {
@@ -175,6 +275,58 @@ fn main() -> Result<()> {
             fake_ai,
         } => play(seed, scenario.as_deref(), fake_ai),
     }
+}
+
+struct PackageCommandOptions<'a> {
+    destination: &'a Path,
+    platform: packaging::Platform,
+    check_only: bool,
+    game: Option<&'a Path>,
+    worker: Option<&'a Path>,
+    tts_worker: Option<&'a Path>,
+    espeak: Option<&'a Path>,
+    espeak_data: Option<&'a Path>,
+    espeak_license: Option<&'a Path>,
+    espeak_source: Option<&'a Path>,
+    model: Option<&'a Path>,
+    runtime: &'a [PathBuf],
+}
+
+fn package(options: PackageCommandOptions<'_>) -> Result<()> {
+    let PackageCommandOptions {
+        destination,
+        platform,
+        check_only,
+        game,
+        worker,
+        tts_worker,
+        espeak,
+        espeak_data,
+        espeak_license,
+        espeak_source,
+        model,
+        runtime,
+    } = options;
+    if check_only {
+        packaging::check(destination, platform)?;
+        return Ok(());
+    }
+    packaging::build(packaging::PackageOptions {
+        destination,
+        platform,
+        game: game.context("--game is required when staging a package")?,
+        worker: worker.context("--worker is required when staging a package")?,
+        tts_worker,
+        espeak,
+        espeak_data,
+        espeak_license,
+        espeak_source,
+        runtime,
+        model: model.context("--model is required when staging a package")?,
+        model_id: "qwen3.5-0.8b-q4_0",
+        repository_root: Path::new("."),
+    })?;
+    Ok(())
 }
 
 fn verify() -> Result<()> {
@@ -204,6 +356,7 @@ struct DevOptions<'a> {
     ai_timeout_ms: Option<u64>,
     tts_model_dir: Option<&'a Path>,
     tts_cache_dir: Option<&'a Path>,
+    tts_espeak: Option<&'a Path>,
     smoke: bool,
     script: Option<&'a Path>,
     capture_dir: Option<&'a Path>,
@@ -217,6 +370,7 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
         ai_timeout_ms,
         tts_model_dir,
         tts_cache_dir,
+        tts_espeak,
         smoke,
         script,
         capture_dir,
@@ -239,23 +393,16 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
         .join("target")
         .join("debug")
         .join(format!("beastie-ai-worker{}", std::env::consts::EXE_SUFFIX));
-    let tts_worker = if tts_model_dir.is_some() {
-        eprintln!(
-            "LICENSE BLOCKER: experimental TTS statically embeds GPLv3 espeak-ng; do not distribute this build"
-        );
-        run(
-            "cargo",
-            &[
-                "build",
-                "--package",
-                "beastie-ai-worker",
-                "--features",
-                "experimental-gpl-tts",
-                "--bin",
-                "beastie-tts",
-                "--locked",
-            ],
-        )?;
+    let tts_worker = if tts_cache_dir.is_some() {
+        let mut arguments = vec!["build", "--package", "beastie-ai-worker"];
+        if tts_model_dir.is_some() {
+            eprintln!(
+                "LICENSE BLOCKER: experimental TTS statically embeds GPLv3 espeak-ng; do not distribute this build"
+            );
+            arguments.extend(["--features", "experimental-gpl-tts"]);
+        }
+        arguments.extend(["--bin", "beastie-tts", "--locked"]);
+        run("cargo", &arguments)?;
         Some(
             std::env::current_dir()?
                 .join("target")
@@ -267,9 +414,6 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
     };
     let mut command = Command::new("cargo");
     command.args(["run", "--package", "beastie-game", "--locked"]);
-    if tts_worker.is_some() {
-        command.args(["--features", "experimental-gpl-tts"]);
-    }
     command.arg("--");
     if fake_ai {
         command.arg("--fake-ai");
@@ -277,14 +421,19 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
     if let Some(timeout) = ai_timeout_ms {
         command.arg("--ai-timeout-ms").arg(timeout.to_string());
     }
-    if let (Some(tts_worker), Some(model_dir), Some(cache_dir)) =
-        (tts_worker, tts_model_dir, tts_cache_dir)
-    {
+    if let (Some(tts_worker), Some(cache_dir)) = (tts_worker, tts_cache_dir) {
         command
             .arg("--tts")
             .env("BEASTIE_TTS_WORKER", tts_worker)
-            .env("BEASTIE_TTS_MODEL_DIR", model_dir)
             .env("BEASTIE_TTS_CACHE_DIR", cache_dir);
+        if let Some(espeak) = tts_espeak {
+            command.env("BEASTIE_ESPEAK_NG", espeak);
+        }
+        if let Some(model_dir) = tts_model_dir {
+            command
+                .env("BEASTIE_TTS_BACKEND", "sherpa-kitten")
+                .env("BEASTIE_TTS_MODEL_DIR", model_dir);
+        }
     }
     if smoke {
         command.arg("--smoke");
@@ -515,7 +664,9 @@ impl AdapterError {
             SessionError::Tick(_) => "invalid_tick",
             SessionError::TalkTooLong => "talk_too_long",
             SessionError::NoCheckpoint => "no_checkpoint",
-            SessionError::SaveVersion(_) | SessionError::RequestId => "save_failed",
+            SessionError::SaveVersion(_)
+            | SessionError::LegacySave(_)
+            | SessionError::RequestId => "save_failed",
             SessionError::State(_) => "invalid_state",
             SessionError::Dialogue(_) => "invalid_dialogue_request",
         };

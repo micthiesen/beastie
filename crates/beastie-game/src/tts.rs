@@ -15,7 +15,7 @@ use beastie_protocol::{
 };
 
 const MAX_REPLY_BYTES: usize = 1_024;
-const MAX_WAV_BYTES: u64 = 44 + 24_000 * 30 * 2;
+const MAX_WAV_BYTES: u64 = 44 + 192_000 * 30 * 2;
 
 #[derive(Debug, Clone)]
 pub struct TtsWorkerConfig {
@@ -27,24 +27,76 @@ pub struct TtsWorkerConfig {
 
 impl TtsWorkerConfig {
     #[must_use]
-    pub fn from_environment() -> Option<Self> {
+    pub fn discover(explicit: bool, default_cache_root: PathBuf) -> Option<Self> {
+        if explicit && let Some(config) = Self::from_environment(default_cache_root.clone()) {
+            return Some(config);
+        }
+        let executable = std::env::current_exe().ok()?;
+        Self::from_package_root(executable.parent()?, default_cache_root)
+    }
+
+    fn from_environment(default_cache_root: PathBuf) -> Option<Self> {
         let executable = PathBuf::from(std::env::var_os("BEASTIE_TTS_WORKER")?);
-        let model_dir = PathBuf::from(std::env::var_os("BEASTIE_TTS_MODEL_DIR")?);
-        let cache_root = PathBuf::from(std::env::var_os("BEASTIE_TTS_CACHE_DIR")?);
+        let cache_root = std::env::var_os("BEASTIE_TTS_CACHE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or(default_cache_root);
         let reply_timeout = std::env::var("BEASTIE_TTS_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .map_or(Duration::from_secs(60), Duration::from_millis);
+        let mut arguments = vec![
+            OsString::from("--cache-dir"),
+            cache_root.clone().into_os_string(),
+        ];
+        for (environment, argument) in [
+            ("BEASTIE_TTS_BACKEND", "--backend"),
+            ("BEASTIE_ESPEAK_NG", "--espeak"),
+            ("BEASTIE_ESPEAK_DATA", "--espeak-data"),
+            ("BEASTIE_ESPEAK_VOICE", "--voice"),
+            ("BEASTIE_TTS_MODEL_DIR", "--model-dir"),
+        ] {
+            if let Some(value) = std::env::var_os(environment) {
+                arguments.push(OsString::from(argument));
+                arguments.push(value);
+            }
+        }
+        Some(Self {
+            executable,
+            arguments,
+            cache_root,
+            reply_timeout,
+        })
+    }
+
+    fn from_package_root(root: &Path, cache_root: PathBuf) -> Option<Self> {
+        let executable = root.join(format!("beastie-tts{}", std::env::consts::EXE_SUFFIX));
+        let espeak = root
+            .join("runtime")
+            .join(format!("espeak-ng{}", std::env::consts::EXE_SUFFIX));
+        let data = root.join("runtime/espeak-ng-data");
+        let license = root.join("runtime/espeak-ng-COPYING");
+        if !executable.is_file()
+            || !espeak.is_file()
+            || !data.is_dir()
+            || !license.is_file()
+            || fs::read_dir(&data).ok()?.next().is_none()
+        {
+            return None;
+        }
         Some(Self {
             executable,
             arguments: vec![
-                OsString::from("--model-dir"),
-                model_dir.into_os_string(),
+                OsString::from("--backend"),
+                OsString::from("espeak"),
+                OsString::from("--espeak"),
+                espeak.into_os_string(),
+                OsString::from("--espeak-data"),
+                data.into_os_string(),
                 OsString::from("--cache-dir"),
                 cache_root.clone().into_os_string(),
             ],
             cache_root,
-            reply_timeout,
+            reply_timeout: Duration::from_secs(60),
         })
     }
 
@@ -251,20 +303,21 @@ fn read_scoped_cache_file(cache_root: &Path, cache_key: &str) -> io::Result<Arc<
     let mut header = [0_u8; 44];
     file.read_exact(&mut header)?;
     let data_size = u32::from_le_bytes(header[40..44].try_into().unwrap()) as u64;
+    let sample_rate = u32::from_le_bytes(header[24..28].try_into().unwrap());
     let valid_header = &header[0..4] == b"RIFF"
         && &header[8..12] == b"WAVE"
         && &header[12..16] == b"fmt "
         && u32::from_le_bytes(header[16..20].try_into().unwrap()) == 16
         && u16::from_le_bytes(header[20..22].try_into().unwrap()) == 1
         && u16::from_le_bytes(header[22..24].try_into().unwrap()) == 1
-        && u32::from_le_bytes(header[24..28].try_into().unwrap()) == 24_000
-        && u32::from_le_bytes(header[28..32].try_into().unwrap()) == 48_000
+        && (8_000..=192_000).contains(&sample_rate)
+        && u32::from_le_bytes(header[28..32].try_into().unwrap()) == sample_rate * 2
         && u16::from_le_bytes(header[32..34].try_into().unwrap()) == 2
         && u16::from_le_bytes(header[34..36].try_into().unwrap()) == 16
         && &header[36..40] == b"data"
         && data_size == metadata.len().saturating_sub(44)
         && data_size > 0
-        && data_size <= MAX_WAV_BYTES - 44;
+        && data_size <= u64::from(sample_rate) * 30 * 2;
     if !valid_header {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -590,6 +643,42 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn complete_packaged_espeak_bundle_is_discovered_but_partial_bundle_is_not() {
+        let root = temporary_path("package-root");
+        let runtime = root.join("runtime");
+        let data = runtime.join("espeak-ng-data");
+        fs::create_dir_all(&data).unwrap();
+        fs::write(
+            root.join(format!("beastie-tts{}", std::env::consts::EXE_SUFFIX)),
+            b"worker",
+        )
+        .unwrap();
+        fs::write(
+            runtime.join(format!("espeak-ng{}", std::env::consts::EXE_SUFFIX)),
+            b"runtime",
+        )
+        .unwrap();
+        fs::write(data.join("voices"), b"voice data").unwrap();
+        let license = runtime.join("espeak-ng-COPYING");
+        fs::write(&license, b"GPLv3").unwrap();
+        let cache = temporary_path("package-cache");
+
+        let config = TtsWorkerConfig::from_package_root(&root, cache.clone())
+            .expect("complete package should auto-enable TTS");
+        assert_eq!(config.cache_root, cache);
+        assert!(
+            config
+                .arguments
+                .iter()
+                .any(|argument| argument == "--espeak-data")
+        );
+
+        fs::remove_file(license).unwrap();
+        assert!(TtsWorkerConfig::from_package_root(&root, temporary_path("unused")).is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn cache_reader_rejects_final_symlink() {
@@ -651,8 +740,8 @@ fn main() {
         wav.extend_from_slice(&16_u32.to_le_bytes());
         wav.extend_from_slice(&1_u16.to_le_bytes());
         wav.extend_from_slice(&1_u16.to_le_bytes());
-        wav.extend_from_slice(&24_000_u32.to_le_bytes());
-        wav.extend_from_slice(&48_000_u32.to_le_bytes());
+        wav.extend_from_slice(&22_050_u32.to_le_bytes());
+        wav.extend_from_slice(&44_100_u32.to_le_bytes());
         wav.extend_from_slice(&2_u16.to_le_bytes());
         wav.extend_from_slice(&16_u16.to_le_bytes());
         wav.extend_from_slice(b"data");

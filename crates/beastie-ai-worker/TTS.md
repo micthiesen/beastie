@@ -1,60 +1,74 @@
-# Experimental native TTS
+# Offline TTS
 
-The TTS worker loads Kitten nano v0.8 int8 once, accepts versioned JSONL requests, and writes 24 kHz
-mono PCM WAV files beneath an explicit cache directory. Voice settings and cache keys are
-deterministic; repeated native synthesis is not guaranteed to produce byte-identical PCM, so the
-first valid cached result is reused. It has no Python dependency. Text, voice, speed, silence,
-output duration, protocol lines, and cache filenames are bounded or validated before they cross the
-worker boundary.
+`beastie-tts` is a persistent versioned-JSONL worker. Its default backend runs a separately
+installed eSpeak NG executable on the local CPU. It has no Python, network, GPU, or display
+dependency. Beastie sends at most 2,048 UTF-8 bytes through stdin, accepts only canonical mono
+16-bit PCM WAV output between 8 and 192 kHz and at most 30 seconds, then rewrites it atomically
+beneath the configured cache directory. A process failure or invalid output returns a protocol
+error and the game continues silently.
 
-## License blocker: do not distribute
+Cache keys bind the adapter version, voice, speaker variant, speed, silence setting, and text.
+The first validated WAV is reused, so repeated requests are deterministic even when synthesis
+bytes vary between eSpeak versions.
 
-**The pinned sherpa-onnx 1.13.5 static runtime embeds GPLv3 espeak-ng.** The native adapter and smoke
-binary therefore require the non-default `experimental-gpl-tts` feature. Do not enable that feature
-in an MIT-only Beastie build, release, package, or CI gate. The model itself is Apache-2.0; exact
-artifact provenance is in `models/kitten-nano-en-v0_8-int8.toml`. Upstream licensing is tracked at
-<https://github.com/k2-fsa/sherpa-onnx/issues/3731>.
+## eSpeak NG setup and smoke
 
-## Real smoke
-
-Download and verify the pinned 31,220,690-byte archive outside the repository:
-
-```sh
-mkdir -p /tmp/beastie-tts-smoke
-cd /tmp/beastie-tts-smoke
-curl -fL -o kitten-nano-en-v0_8-int8.tar.bz2 \
-  https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kitten-nano-en-v0_8-int8.tar.bz2
-printf '%s  %s\n' \
-  6fa5be852612ce761094ba74ee6123b4fc4acfefa79bf64dc63acae4a83af2fd \
-  kitten-nano-en-v0_8-int8.tar.bz2 | shasum -a 256 -c -
-tar xjf kitten-nano-en-v0_8-int8.tar.bz2
-```
-
-From the Beastie repository, send one request to the persistent-worker interface:
+Install eSpeak NG using the platform's normal package or from an upstream release, then confirm
+`espeak-ng --version` succeeds. Common package commands are `brew install espeak-ng` on macOS,
+`apt install espeak-ng` on Debian or Ubuntu, and the eSpeak NG installer or package manager on
+Windows.
 
 ```sh
 printf '%s\n' '{"protocol_version":1,"request_id":1,"text":"red shit again.","settings":{"speaker_id":0,"speed":1.0,"silence_scale":0.2}}' | \
-cargo run -p beastie-ai-worker \
-  --features experimental-gpl-tts \
-  --bin beastie-tts -- \
-  --model-dir /tmp/beastie-tts-smoke/kitten-nano-en-v0_8-int8 \
-  --cache-dir /tmp/beastie-tts-smoke/cache
+cargo run -p beastie-ai-worker --bin beastie-tts -- \
+  --backend espeak \
+  --espeak espeak-ng \
+  --cache-dir /tmp/beastie-tts-cache
 ```
 
-The reply contains a cache key, never a path. The game derives that key beneath its configured cache
-root, copies the bounded WAV bytes, and plays them asynchronously. Repeating an identical request
-reuses the same entry. On the M5 Max research smoke, model load took 174 to 206 ms; a 4.08 s line
-generated in 857 to 869 ms (RTF 0.21) at roughly 171 MB RSS.
-
-To run the feature-gated game integration:
+The reply contains a cache key, never a path. `BEASTIE_TTS_BACKEND`, `BEASTIE_ESPEAK_NG`,
+`BEASTIE_ESPEAK_DATA`, `BEASTIE_ESPEAK_VOICE`, and `BEASTIE_TTS_CACHE_DIR` provide the same
+configuration. `--espeak-data` must point to the directory named `espeak-ng-data`; the adapter
+passes its parent as eSpeak NG's `--path` so a packaged runtime does not consult a host install.
+To run the game integration:
 
 ```sh
 cargo xtask dev --fake-ai \
-  --tts-model-dir /tmp/beastie-tts-smoke/kitten-nano-en-v0_8-int8 \
-  --tts-cache-dir /tmp/beastie-tts-smoke/cache
+  --tts-cache-dir /tmp/beastie-tts-cache \
+  --tts-espeak espeak-ng
 ```
 
-Default offline tests exercise the cache and WAV boundary with a fake synthesizer:
+## Distribution and GPLv3 compliance
+
+Beastie's Rust code and binaries remain MIT licensed because they communicate with eSpeak NG only
+as a separate executable process. eSpeak NG and its voice data are GPLv3 software. Distributing
+them beside Beastie is an aggregate distribution, not a relicensing of Beastie, but the eSpeak NG
+files still carry their own GPLv3 obligations.
+
+Any Beastie package that includes eSpeak NG or its data must also include the corresponding GPLv3
+license and copyright notices, identify the included eSpeak NG version and modifications, and
+provide the complete corresponding source in the package or a valid written source offer as GPLv3
+section 6 permits. The source or offer must cover the exact executable and data shipped, including
+build scripts and local modifications. Do not imply that Beastie's MIT license covers those files.
+If a platform package relies on a user-installed eSpeak NG instead, document the dependency and do
+not copy its executable or data into the Beastie package.
+
+## Experimental Kitten backend
+
+The previous Kitten nano path remains available only for research. The pinned sherpa-onnx 1.13.5
+static runtime embeds GPLv3 eSpeak NG, so it requires the non-default `experimental-gpl-tts`
+feature and must not enter an MIT-only Beastie release:
+
+```sh
+cargo run -p beastie-ai-worker \
+  --features experimental-gpl-tts \
+  --bin beastie-tts -- \
+  --backend sherpa-kitten \
+  --model-dir /path/to/kitten-nano-en-v0_8-int8 \
+  --cache-dir /tmp/beastie-tts-cache
+```
+
+Focused fake-executable coverage is platform-independent and requires no installed TTS runtime:
 
 ```sh
 cargo test -p beastie-ai-worker --test tts

@@ -21,7 +21,6 @@ use crate::input::{action_at, append_text, focused_action, move_focus};
 use crate::renderer::{AssetCatalog, Viewport, execute_plan, save_logical_png};
 use crate::save_store::SaveStore;
 use crate::scenario::{ScenarioRunner, ScenarioStep};
-#[cfg(feature = "experimental-gpl-tts")]
 use crate::tts::{TtsManager, TtsWorkerConfig};
 
 struct CaptureRequest {
@@ -38,7 +37,6 @@ pub struct Game {
     queued_audio: Vec<&'static str>,
     viewport: Viewport,
     dialogue: DialogueManager,
-    #[cfg(feature = "experimental-gpl-tts")]
     tts: TtsManager,
     save_store: SaveStore,
     save_enabled: bool,
@@ -53,6 +51,10 @@ impl Game {
     pub fn new(ctx: &mut Context, args: &Args) -> GameResult<Self> {
         let assets_root = assets_root();
         let save_store = SaveStore::new(ctx.fs.user_config_dir().join("saves").join("main.json"));
+        let tts = TtsManager::new(TtsWorkerConfig::discover(
+            args.tts,
+            ctx.fs.user_config_dir().join("tts-cache"),
+        ));
         let (session, load_message, resumed, save_enabled) = if args.script.is_some() {
             (GameSession::new(42, "Mop"), None, false, false)
         } else if args.new_game {
@@ -96,8 +98,7 @@ impl Game {
                     Duration::from_millis,
                 ),
             )),
-            #[cfg(feature = "experimental-gpl-tts")]
-            tts: TtsManager::new(args.tts.then(TtsWorkerConfig::from_environment).flatten()),
+            tts,
             save_store,
             save_enabled,
             scenario,
@@ -160,11 +161,8 @@ impl Game {
         match self.dialogue.try_recv() {
             Ok(reply) => {
                 self.view.pending = false;
-                #[cfg(feature = "experimental-gpl-tts")]
-                {
-                    self.audio.stop_speech();
-                    let _ = self.tts.request(reply.say.clone());
-                }
+                self.audio.stop_speech();
+                let _ = self.tts.request(reply.say.clone());
                 self.view.speech = Some(reply.say);
                 self.view.mode = UiMode::Idle;
                 self.view.focused_region = Some("reaction/laugh".to_owned());
@@ -177,7 +175,6 @@ impl Game {
         }
     }
 
-    #[cfg(feature = "experimental-gpl-tts")]
     fn poll_tts(&mut self) {
         match self.tts.try_recv() {
             Ok(completion) => {
@@ -204,12 +201,16 @@ impl Game {
                 self.view.mode = UiMode::FoodChoice;
                 self.reset_focus();
             }
+            UiAction::OpenToyChoice => {
+                self.view.mode = UiMode::ToyChoice;
+                self.reset_focus();
+            }
             UiAction::Feed(food) => {
                 self.apply_command(SessionCommand::Feed { food }, true)?;
                 self.close_menu();
             }
-            UiAction::Play => {
-                self.apply_command(SessionCommand::Play { toy: ToyId::Ball }, true)?;
+            UiAction::Play(toy) => {
+                self.apply_command(play_command(toy), true)?;
                 self.close_menu();
             }
             UiAction::Tidy => {
@@ -347,7 +348,6 @@ impl Game {
 impl EventHandler for Game {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
         self.poll_dialogue();
-        #[cfg(feature = "experimental-gpl-tts")]
         self.poll_tts();
         if self.scenario.is_some() {
             self.drive_scenario(ctx)?;
@@ -482,7 +482,7 @@ impl EventHandler for Game {
                 self.apply_confirmed_ui_action(UiAction::OpenFoodChoice, false)?;
             }
             Key::Character(character) if character.eq_ignore_ascii_case("p") => {
-                self.apply_confirmed_ui_action(UiAction::Play, false)?;
+                self.apply_confirmed_ui_action(UiAction::OpenToyChoice, false)?;
             }
             Key::Character(character) if character.eq_ignore_ascii_case("c") => {
                 self.apply_confirmed_ui_action(UiAction::Comfort, false)?;
@@ -583,20 +583,45 @@ fn session_error(error: SessionError) -> GameError {
     GameError::CustomError(error.to_string())
 }
 
+fn play_command(toy: ToyId) -> SessionCommand {
+    SessionCommand::Play { toy }
+}
+
 #[cfg(test)]
 mod tests {
-    use beastie_core::Reaction;
+    use beastie_core::{Reaction, ToyId};
+    use beastie_session::SessionCommand;
     use beastie_view::UiAction;
 
+    use super::play_command;
+
     #[test]
-    fn primary_ui_actions_map_to_session_commands() {
+    fn toy_ui_actions_map_to_typed_play_commands() {
+        assert_eq!(
+            play_command(ToyId::Ball),
+            SessionCommand::Play { toy: ToyId::Ball }
+        );
+        assert_eq!(
+            play_command(ToyId::Bell),
+            SessionCommand::Play { toy: ToyId::Bell }
+        );
+        assert_eq!(
+            play_command(ToyId::Sock),
+            SessionCommand::Play { toy: ToyId::Sock }
+        );
+    }
+
+    #[test]
+    fn primary_ui_actions_remain_distinct() {
         let mappings = [
-            UiAction::Play,
+            UiAction::Play(ToyId::Ball),
+            UiAction::Play(ToyId::Bell),
+            UiAction::Play(ToyId::Sock),
             UiAction::Tidy,
             UiAction::Comfort,
             UiAction::Talk,
             UiAction::React(Reaction::Laugh),
         ];
-        assert_eq!(mappings.len(), 5);
+        assert_eq!(mappings.len(), 7);
     }
 }

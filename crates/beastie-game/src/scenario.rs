@@ -102,6 +102,9 @@ pub enum ScenarioError {
 
 #[cfg(test)]
 mod tests {
+    use beastie_core::ToyId;
+    use beastie_session::{CommandEnvelope, SessionCommand};
+
     use super::*;
 
     #[test]
@@ -121,6 +124,17 @@ mod tests {
         assert!(matches!(
             parse_step(r#"{"version":1,"command":"capture","name":"../save"}"#),
             Err(ScenarioError::CaptureName)
+        ));
+    }
+
+    #[test]
+    fn parses_each_toy_play_as_a_typed_session_command() {
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"play","toy":"sock"}"#),
+            Ok(ScenarioStep::Session(CommandEnvelope {
+                command: SessionCommand::Play { toy: ToyId::Sock },
+                ..
+            }))
         ));
     }
 }

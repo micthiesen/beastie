@@ -1,0 +1,97 @@
+{
+  "save_version": 1,
+  "world": {
+    "save_version": 1,
+    "seed": 4242,
+    "elapsed_ms": 90000,
+    "next_memory_id": 3,
+    "next_belief_id": 2,
+    "creature": {
+      "name": "Keepsake",
+      "needs": {
+        "hunger": 0.4,
+        "energy": 0.7,
+        "comfort": 0.8,
+        "curiosity": 0.6
+      },
+      "traits": {
+        "sociability": 0.11,
+        "boldness": 0.22,
+        "fussiness": 0.33,
+        "stubbornness": 0.44,
+        "literalness": 0.55,
+        "repetitiveness": 0.66,
+        "sentence_complexity": 0.77,
+        "question_tendency": 0.88
+      },
+      "relationship": {
+        "bond": 0.31,
+        "trust": 0.42,
+        "respect": 0.53,
+        "resentment": 0.14
+      },
+      "preferences": {
+        "berry": -0.75,
+        "pellet": 0.5
+      },
+      "known_concepts": [
+        "self_identity",
+        "you",
+        "food",
+        "good",
+        "bad",
+        "here",
+        "sleep",
+        "toy"
+      ],
+      "memories": [
+        {
+          "id": 1,
+          "happened_at_ms": 30000,
+          "kind": {
+            "kind": "was_fed",
+            "food": "berry"
+          },
+          "concepts": ["food", "you"],
+          "valence": -0.4,
+          "salience": 0.8
+        },
+        {
+          "id": 2,
+          "happened_at_ms": 60000,
+          "kind": {
+            "kind": "played"
+          },
+          "concepts": ["toy", "you"],
+          "valence": 0.7,
+          "salience": 0.9
+        }
+      ],
+      "beliefs": [
+        {
+          "id": 1,
+          "kind": "toy_is_jealous",
+          "supporting_memories": [2],
+          "confidence": 0.6
+        }
+      ],
+      "social_habits": {
+        "profanity": 0.1,
+        "crudeness": 0.2,
+        "spite": 0.3,
+        "provocation": 0.4,
+        "sexual_innuendo": 0.05
+      },
+      "current_intention": "play",
+      "last_social_act": "neutral"
+    },
+    "room": {
+      "food_in_bowl": null,
+      "toy_available": false,
+      "tidy": true,
+      "player_present": true,
+      "last_nonverbal_act": "take_toy_away"
+    }
+  },
+  "random": 123456789
+}

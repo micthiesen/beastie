@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use beastie_protocol::{DialogueReply, DialogueRequest, validate_reply};
 
-use crate::prompt::structured_prompt;
+use crate::prompt::{memory_anchor, structured_prompt};
 use crate::{BackendError, DialogueBackend, LlamaCppConfig};
 
 #[derive(Debug)]
@@ -60,11 +60,53 @@ impl LlamaCppBackend {
         let text = String::from_utf8(output).map_err(|_| BackendError::Utf8)?;
         let reply = parse_single_reply(request, &text)?;
         validate_model_safety(request, &reply)?;
+        validate_model_grounding(request, &reply)?;
         Ok(reply)
     }
 }
 
-fn validate_model_safety(
+pub(crate) fn validate_model_grounding(
+    request: &DialogueRequest,
+    reply: &DialogueReply,
+) -> Result<(), BackendError> {
+    let Some(recalled) = reply.recalled_memory else {
+        return Ok(());
+    };
+    let memory = request
+        .candidate_memories
+        .iter()
+        .find(|memory| memory.id == recalled)
+        .ok_or(BackendError::MalformedReply)?;
+    let Some(anchor) = memory_anchor(&memory.fact) else {
+        return Ok(());
+    };
+    if normalized_words(&reply.say)
+        .iter()
+        .any(|word| word == anchor)
+    {
+        let words = normalized_words(&reply.say);
+        let sentiment_matches = if memory.feeling.contains("dislike") {
+            words
+                .iter()
+                .any(|word| matches!(word.as_str(), "bad" | "hate" | "dislike" | "disliked"))
+        } else if memory.feeling.contains("liked") {
+            words
+                .iter()
+                .any(|word| matches!(word.as_str(), "good" | "like" | "liked"))
+        } else {
+            true
+        };
+        if sentiment_matches {
+            Ok(())
+        } else {
+            Err(BackendError::MalformedReply)
+        }
+    } else {
+        Err(BackendError::MalformedReply)
+    }
+}
+
+pub(crate) fn validate_model_safety(
     request: &DialogueRequest,
     reply: &DialogueReply,
 ) -> Result<(), BackendError> {
@@ -151,7 +193,7 @@ fn normalized_words(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_single_reply(
+pub(crate) fn parse_single_reply(
     request: &DialogueRequest,
     output: &str,
 ) -> Result<DialogueReply, BackendError> {
@@ -312,5 +354,32 @@ mod tests {
             };
             assert!(validate_model_safety(&request, &reply).is_ok(), "{say}");
         }
+    }
+
+    #[test]
+    fn recalled_memory_must_say_its_authoritative_anchor() {
+        let request: DialogueRequest =
+            serde_json::from_str(BERRY_MEMORY).expect("request should parse");
+        let memory_id = request.candidate_memories[0].id;
+        let reply = DialogueReply {
+            protocol_version: request.protocol_version,
+            request_id: request.request_id,
+            say: "I don't like the ball.".to_owned(),
+            gesture: beastie_protocol::Gesture::None,
+            recalled_memory: Some(memory_id),
+        };
+        assert!(validate_model_grounding(&request, &reply).is_err());
+
+        let grounded = DialogueReply {
+            say: "That berry was bad.".to_owned(),
+            ..reply
+        };
+        assert!(validate_model_grounding(&request, &grounded).is_ok());
+
+        let denial = DialogueReply {
+            say: "I don't know that berry.".to_owned(),
+            ..grounded
+        };
+        assert!(validate_model_grounding(&request, &denial).is_err());
     }
 }

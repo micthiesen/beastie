@@ -215,6 +215,7 @@ version = "0.1.0"
 dependencies = [
  "beastie-protocol",
  "clap",
+ "getrandom 0.3.4",
  "serde",
  "serde_json",
  "sha2",

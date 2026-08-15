@@ -9,6 +9,8 @@ use beastie_core::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub use beastie_core::{Idiolect, IdiolectQuirk};
+
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_DIALOGUE_REPLY_BYTES: usize = 512;
 pub const TTS_PROTOCOL_VERSION: u32 = 1;
@@ -97,6 +99,10 @@ pub struct DialogueRequest {
     pub mood: String,
     pub known_concepts: BTreeSet<Concept>,
     pub candidate_memories: Vec<CandidateMemory>,
+    /// Optional for backwards-compatible fixture and save inputs. Session projections carry
+    /// the non-plain style once the creature reaches Individuality.
+    #[serde(default)]
+    pub idiolect: Idiolect,
     #[serde(default)]
     pub desired_social_act: Option<SocialAct>,
     pub player_said: String,
@@ -275,6 +281,7 @@ pub fn build_dialogue_request(
             .iter()
             .map(|memory| project_candidate_memory(memory, world.active_day()))
             .collect(),
+        idiolect: world.idiolect(),
         desired_social_act: context.desired_social_act,
         player_said: context.player_said.to_owned(),
         constraints: DialogueConstraints {
@@ -452,6 +459,7 @@ mod tests {
                 fact: "The player gave you a berry.".to_owned(),
                 feeling: "strong dislike".to_owned(),
             }],
+            idiolect: Idiolect::default(),
             desired_social_act: Some(SocialAct::Insult),
             player_said: "Remember the berry?".to_owned(),
             constraints: DialogueConstraints {

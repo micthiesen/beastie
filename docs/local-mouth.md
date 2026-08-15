@@ -6,22 +6,22 @@ remain ignored, local, and described by hashes in `models/manifest.toml`.
 
 ## Provisional dialogue model
 
-Qwen3.5 0.8B Q4 is the provisional dialogue candidate. It was selected with the version 1 corpus
+Qwen3.5 0.8B Q4 is the selected dialogue model. It was selected with the version 1 corpus
 in `evals/dialogue/corpus.json`, not a single attractive response:
 
 | Candidate | Passed | Protocol valid | Grounded | Fallbacks | Permitted sharpness | Prohibited content | Median |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Qwen3.5 0.8B Q4 | 11/12 | 12/12 | 11/12 | 1 | 3/3 | 3/3 | 889 ms |
+| Qwen3.5 0.8B Q4 | 12/12 | 12/12 | 12/12 | 0 | 3/3 | 3/3 | 882 ms |
 | Qwen3 0.6B Q8 | 5/12 | 12/12 | 11/12 | 6 | 0/3 | 3/3 | 1,790 ms |
 
-The Qwen3.5 miss was a bell-memory request that exhausted both attempts and used the authored
-fallback. Known food and toy nouns are now anchored from authoritative projected memory facts.
+The final Qwen3.5 run passed every case without fallback after known food and toy nouns were
+anchored from authoritative projected memory facts.
 Rust selects the response lane, allowed gesture, and recalled-memory ID; the model only phrases the
 short `say` field. A final deterministic filter rejects near-verbatim player echoes, a narrow
 prohibited lexicon, invalid IDs and gestures, empty or control-bearing text, replies above 512 UTF-8
 bytes, and replies over the request's word limit.
 
-The measurements above used `llama.cpp` 10310 (`cb26014d9`) on the M5 Max through Metal. Every
+The evaluation measurements above used `llama.cpp` 10310 (`cb26014d9`) on the M5 Max through Metal. Every
 case launched a new `llama-cli`, so the median includes process startup and model loading. The OS
 filesystem cache was warm after the first case. This is neither a first-boot disk-cold measurement
 nor evidence of a production warm runtime.
@@ -52,13 +52,45 @@ shutdown interrupts generation before joining the manager thread. On macOS and L
 uses its own process group so a timeout or quit reaps descendant inference processes as well. The
 equivalent Windows Job Object containment remains a Stage 5 release requirement.
 
-Inside that persistent worker, the provisional llama.cpp adapter still launches a new `llama-cli`
-for each attempt. It bounds time and stdout, disables reasoning, retries once, and falls back safely,
-but reloads the GGUF for every utterance. llama.cpp 10310 interactive mode did not provide a safe
-framed machine protocol, and its JSON-schema sampler failed to initialize in the tested build. A
-persistent native runtime or separately framed long-lived service remains Stage 5 work.
+The selected release adapter starts one `llama-server` sidecar on authenticated loopback and reuses
+the loaded model. It binds an ephemeral local port, supplies a random per-process API key, disables
+network-dependent behavior, bounds HTTP requests and responses, disables reasoning, and uses
+deterministic sampling. A hidden supervisor kills the sidecar if the worker is forcibly terminated.
+Malformed, oversized, timed-out, unsafe, or factually mismatched replies restart the sidecar once,
+then use authored fallback.
 
-## Native speech spike
+The real packaged two-turn smoke produced two valid grounded replies in 1,156 ms total, including
+server startup and model load. Separate already-loaded probes took 107 ms and 52 ms. A CPU-only
+corpus run retained the selected model's 11/12 score with one authored fallback and a 1,497 ms
+median through the deliberately cold `llama-cli` evaluation path. The release package discovers
+its sibling worker, server, and model without developer environment variables.
+
+Grounding now checks both the authoritative memory ID and its concrete subject. A response that
+claims a berry memory but says `ball` is rejected. Disliked and liked memories must also express
+the supplied valence. If both model attempts fail, a memory turn falls back to a short factual line
+such as `berry remains bad.` rather than losing the remembered event.
+
+## Release speech
+
+The default release voice is a separately executed eSpeak NG process. It is deliberately crunchy,
+fast, entirely offline, CPU-only, and available for macOS, Windows, and Linux. The persistent
+`beastie-tts` JSONL worker sends bounded text on stdin, validates mono PCM WAV output and duration,
+and publishes it through the same deterministic content-addressed cache used by the game. Speech
+failure never delays dialogue text or stops play.
+
+The native macOS 1.52.0 smoke synthesized `Rain is fine. Your red berry was bullshit.` as a
+3.36-second mono PCM16 WAV at 22,050 Hz in under 10 ms, with 3.1 MB maximum RSS for the eSpeak
+process. The statically built executable is 490 KB and the complete compiled voice data directory
+is 19 MB. The real Beastie worker accepted the same line, returned a validated cache key, and
+published a 2.71-second WAV for voice variant 3.
+
+eSpeak NG is GPLv3. Beastie's Rust code remains MIT and communicates with the unmodified program at
+arms length through its ordinary command-line interface. A distributable bundle must include the
+eSpeak NG executable, data, GPLv3 license, and the exact corresponding source or written source
+offer described in `THIRD_PARTY_NOTICES`. This is an aggregate distribution decision, not a claim
+that eSpeak NG is MIT. Platform packaging still needs its native build verified before release.
+
+## Experimental speech spike
 
 The optional Kitten nano v0.8 int8 adapter is native Rust and has no Python runtime dependency. It
 loads the model once per TTS process, accepts bounded versioned JSONL, synthesizes 24 kHz mono PCM,
@@ -86,10 +118,10 @@ cargo xtask dev \
   --tts-cache-dir /tmp/beastie-tts-smoke/cache
 ```
 
-This path is not releasable: sherpa-onnx 1.13.5 statically embeds GPLv3 espeak-ng. Do not enable
-`experimental-gpl-tts` in an MIT-only release, package, or default CI build. Stage 5 must choose a
-license-compatible native runtime or make an explicit product licensing decision before this path
-can become a default or distributable full-local loop.
+This path is not releasable: sherpa-onnx 1.13.5 statically embeds GPLv3 espeak-ng in the same binary. Do not enable
+`experimental-gpl-tts` in a release package or default CI build. The separate eSpeak NG process is
+the release path; the Kitten adapter remains a quality experiment until its combined-work license
+problem is removed.
 
 The reviewed macOS fixture path was launched through Alacritty and produced all three direct
 320x180 logical-framebuffer captures in `target/captures/stage4-review`, including restored-memory

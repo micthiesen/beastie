@@ -1,0 +1,45 @@
+Beastie release packaging notices
+=================================
+
+This file covers the artifacts permitted in the offline release package. Exact model provenance
+and hashes are recorded in models/manifest.toml. Dependency licenses remain available from Cargo's
+locked source metadata and the corresponding crate distributions.
+
+Qwen3.5-0.8B-Q4_0 GGUF
+----------------------
+Copyright (c) Alibaba Cloud.
+Apache License 2.0. The selected upstream source, candidate ID, expected byte count, and SHA-256
+are recorded in models/manifest.toml. The weight file is intentionally external to this git
+repository and must be supplied locally to the packaging check.
+
+llama.cpp
+---------
+Copyright (c) 2023-2026 The ggml authors.
+MIT License. Beastie packages the pinned `llama-server` runtime and required libraries from an
+official llama.cpp release archive. The exact release archive, digest, and platform proof are
+recorded in docs/packaging.md; the upstream LICENSE file must accompany the final runtime bundle.
+
+eSpeak NG 1.52.0
+----------------
+Copyright (C) 2005-2024 the eSpeak NG authors and contributors.
+eSpeak NG is GPLv3-or-later software, distributed as a separate executable and data directory in
+aggregate beside Beastie. Beastie invokes its ordinary command-line interface and does not link it
+into the MIT-licensed Rust binaries. The package includes `runtime/espeak-ng-COPYING`. Release
+distribution must also provide the complete corresponding eSpeak NG 1.52.0 source archive or a
+GPLv3 section 6 compliant written source offer. The tested upstream source archive is
+`https://github.com/espeak-ng/espeak-ng/archive/refs/tags/1.52.0.tar.gz`, 17,739,803 bytes, SHA-256
+`bb4338102ff3b49a81423da8a1a158b420124b055b60fa76cfb4b18677130a23`. Its data includes material
+covered by the additional Apache-2.0, BSD-2-Clause, and Unicode terms preserved in that source.
+
+Beastie runtime and assets
+--------------------------
+Beastie source and generated runtime assets are distributed under the repository's MIT license,
+subject to the provenance and terms recorded in assets/manifest.toml. The asset manifest remains
+part of every package.
+
+Excluded from release
+---------------------
+The experimental Kitten TTS path uses sherpa-onnx static artifacts that embed GPLv3 espeak-ng.
+`experimental-gpl-tts`, sherpa-onnx, and the Kitten model are not release inputs.
+See models/kitten-nano-en-v0_8-int8.toml and docs/local-mouth.md for the development-only
+provenance and blocker.

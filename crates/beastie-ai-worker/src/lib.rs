@@ -1,7 +1,9 @@
 //! Replaceable dialogue backends for the isolated AI worker process.
 
 mod bounded;
+mod idiolect;
 mod llama_cpp;
+mod llama_server;
 mod prompt;
 pub mod tts;
 
@@ -19,6 +21,7 @@ use bounded::{BoundedLine, read_bounded_line};
 const MAX_DIALOGUE_LINE_BYTES: usize = 16 * 1024;
 
 pub use llama_cpp::LlamaCppBackend;
+pub use llama_server::{LlamaServerBackend, run_llama_server_supervisor};
 
 #[derive(Debug, Clone)]
 pub struct LlamaCppConfig {
@@ -28,6 +31,18 @@ pub struct LlamaCppConfig {
     pub max_output_bytes: usize,
     pub cpu_only: bool,
     pub extra_args: Vec<OsString>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LlamaServerConfig {
+    pub executable: PathBuf,
+    pub model: PathBuf,
+    pub timeout: Duration,
+    pub max_output_bytes: usize,
+    pub cpu_only: bool,
+    pub extra_args: Vec<OsString>,
+    /// Current worker executable when a parent-death supervisor is available.
+    pub supervisor: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -83,10 +98,48 @@ pub fn process_line(line: &str, backend: &mut dyn DialogueBackend) -> DialogueRe
         return fallback_reply(request.request_id);
     }
 
-    backend
+    let reply = backend
         .generate(&request)
-        .and_then(|reply| validate_reply(&request, reply).map_err(|_| BackendError::InvalidReply))
-        .unwrap_or_else(|_| constrained_fallback_reply(&request))
+        .unwrap_or_else(|_| grounded_fallback_reply(&request));
+    let reply = idiolect::apply(&request, reply);
+    if crate::llama_cpp::validate_model_safety(&request, &reply).is_err() {
+        return grounded_fallback_reply(&request);
+    }
+    validate_reply(&request, reply).unwrap_or_else(|_| grounded_fallback_reply(&request))
+}
+
+fn grounded_fallback_reply(request: &DialogueRequest) -> DialogueReply {
+    let Some(memory) = prompt::planned_memory(request) else {
+        return constrained_fallback_reply(request);
+    };
+    let Some(anchor) = prompt::memory_anchor(&memory.fact) else {
+        return constrained_fallback_reply(request);
+    };
+    let feeling = if memory.feeling.contains("dislike") {
+        "bad"
+    } else if memory.feeling.contains("liked") {
+        "good"
+    } else {
+        "strange"
+    };
+    let say = format!("{anchor} remains {feeling}.")
+        .split_whitespace()
+        .take(request.constraints.max_words)
+        .collect::<Vec<_>>()
+        .join(" ");
+    DialogueReply {
+        protocol_version: PROTOCOL_VERSION,
+        request_id: request.request_id,
+        say,
+        gesture: request
+            .constraints
+            .allowed_gestures
+            .iter()
+            .next()
+            .copied()
+            .unwrap_or(Gesture::None),
+        recalled_memory: Some(memory.id),
+    }
 }
 
 fn fixture_reply(request: &DialogueRequest) -> DialogueReply {
@@ -132,12 +185,47 @@ mod tests {
     }
 
     #[test]
+    fn model_failure_falls_back_to_the_authoritative_memory_anchor() {
+        struct BrokenBackend;
+        impl DialogueBackend for BrokenBackend {
+            fn generate(
+                &mut self,
+                _request: &DialogueRequest,
+            ) -> Result<DialogueReply, BackendError> {
+                Err(BackendError::MalformedReply)
+            }
+        }
+
+        let request: DialogueRequest =
+            serde_json::from_str(BERRY_MEMORY.trim()).expect("fixture request should parse");
+        let memory_id = request.candidate_memories[0].id;
+        let reply = process_line(BERRY_MEMORY.trim(), &mut BrokenBackend);
+        assert!(reply.say.contains("berry"));
+        assert!(reply.say.contains("bad"));
+        assert_eq!(reply.recalled_memory, Some(memory_id));
+        assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
+    }
+
+    #[test]
     fn generated_reply_falls_back_to_requested_word_limit() {
         let mut request: DialogueRequest =
             serde_json::from_str(BERRY_MEMORY.trim()).expect("fixture request should parse");
         request.constraints.max_words = 1;
         let line = serde_json::to_string(&request).expect("request should serialize");
         let reply = process_line(&line, &mut FixtureBackend);
+        assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
+    }
+
+    #[test]
+    fn fixture_backend_receives_the_same_deterministic_idiolect_pass() {
+        let mut request: DialogueRequest =
+            serde_json::from_str(BERRY_MEMORY.trim()).expect("request should parse");
+        request.idiolect = beastie_protocol::Idiolect {
+            quirk: beastie_protocol::IdiolectQuirk::Echo,
+        };
+        let line = serde_json::to_string(&request).expect("request should serialize");
+        let reply = process_line(&line, &mut FixtureBackend);
+        assert_eq!(reply.say, "yes. old thing remains. remains.");
         assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
     }
 
