@@ -101,13 +101,30 @@ Last updated: **2026-08-15** (spoken-input foundation complete).
 
 ## Next
 
-Implement the local STT batch described by [v2-plan.md](v2-plan.md), building on the typed boundary
-in [spoken-input-foundation.md](spoken-input-foundation.md). Recognition/runtime selection,
-microphone permissions and activation, partial timing, and player-facing recovery remain open.
-Release work must still collect native Windows/Linux install and launch evidence, a physical
-controller smoke, Developer ID and Windows signing, notarization, final native store captures and
-trailer, and Steam publication credentials. Do not turn those unperformed external checks into
-prose claims.
+Build the offline STT runtime bake-off and fixture worker described by [v2-plan.md](v2-plan.md),
+using the typed seam in [spoken-input-foundation.md](spoken-input-foundation.md). Pin a small set of
+redistributable runtime/model candidates, transcribe a checked-in utterance corpus through the
+bounded worker boundary, measure accuracy, finalization latency, warm memory, model bytes, and
+confidence behavior, then record one selected runtime with deterministic fake and real-model eval
+paths.
+
+This comes before microphone UI because recognition quality, latency, confidence calibration, and
+distribution terms are the load-bearing unknowns. It is headless and fixture-testable apart from
+the explicit real-model benchmark, so a poor candidate can be discarded without entangling device
+permissions, activation UX, or creature behavior.
+
+## Candidates Not Chosen
+
+- **Microphone capture and push-to-talk UX:** about one day once the worker contract is selected.
+  It needs a real audio device, macOS permission acceptance, and human judgment; doing it first
+  would couple UI work to an unproven recognizer and endpointing model.
+- **Richer attention, interruption, and delayed response:** one to two days, mostly deterministic
+  core/view work with visual tuning. It waits for measured recognition timing so the behavior is
+  designed around real latency rather than invented timing.
+- **Release-platform closure:** several days plus external credentials and Windows/Linux hardware.
+  It remains necessary, but it does not advance the chosen V2 spoken-interaction slice. Required
+  evidence still includes native Windows/Linux install and launch, a physical controller, signing,
+  notarization, final store captures, trailer, and Steam credentials.
 
 ## Durable pointers
 
