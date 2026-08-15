@@ -4,6 +4,7 @@ mod bounded;
 mod idiolect;
 mod llama_cpp;
 mod llama_server;
+mod process;
 mod prompt;
 pub mod tts;
 
@@ -14,11 +15,12 @@ use std::time::Duration;
 
 use beastie_protocol::{
     DialogueReply, DialogueRequest, Gesture, PROTOCOL_VERSION, constrained_fallback_reply,
-    fallback_reply, validate_reply, validate_request,
+    fallback_reply, normalize_dialogue_request, validate_reply, validate_request,
 };
 use bounded::{BoundedLine, read_bounded_line};
 
 const MAX_DIALOGUE_LINE_BYTES: usize = 16 * 1024;
+pub const MAX_LLAMA_THREADS: usize = 256;
 
 pub use llama_cpp::LlamaCppBackend;
 pub use llama_server::{LlamaServerBackend, run_llama_server_supervisor};
@@ -30,6 +32,7 @@ pub struct LlamaCppConfig {
     pub timeout: Duration,
     pub max_output_bytes: usize,
     pub cpu_only: bool,
+    pub threads: usize,
     pub extra_args: Vec<OsString>,
 }
 
@@ -40,9 +43,23 @@ pub struct LlamaServerConfig {
     pub timeout: Duration,
     pub max_output_bytes: usize,
     pub cpu_only: bool,
+    pub threads: usize,
     pub extra_args: Vec<OsString>,
     /// Current worker executable when a parent-death supervisor is available.
     pub supervisor: Option<PathBuf>,
+}
+
+#[must_use]
+pub fn default_llama_threads() -> usize {
+    std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .saturating_sub(2)
+        .clamp(1, MAX_LLAMA_THREADS)
+}
+
+#[must_use]
+pub fn bounded_llama_threads(threads: usize) -> usize {
+    threads.clamp(1, MAX_LLAMA_THREADS)
 }
 
 #[derive(Debug)]
@@ -91,11 +108,15 @@ pub fn run_jsonl(
 
 #[must_use]
 pub fn process_line(line: &str, backend: &mut dyn DialogueBackend) -> DialogueReply {
-    let Ok(request) = serde_json::from_str::<DialogueRequest>(line) else {
+    let Ok(mut request) = serde_json::from_str::<DialogueRequest>(line) else {
         return fallback_reply(0);
     };
+    normalize_dialogue_request(&mut request);
     if validate_request(&request).is_err() {
         return fallback_reply(request.request_id);
+    }
+    if request.input_rejection.is_some() {
+        return grounded_fallback_reply(&request);
     }
 
     let reply = backend
@@ -109,7 +130,30 @@ pub fn process_line(line: &str, backend: &mut dyn DialogueBackend) -> DialogueRe
 }
 
 fn grounded_fallback_reply(request: &DialogueRequest) -> DialogueReply {
+    if request.input_rejection.is_some() {
+        let mut reply = constrained_fallback_reply(request);
+        reply.say = "no. thought too rotten."
+            .split_whitespace()
+            .take(request.constraints.max_words)
+            .collect::<Vec<_>>()
+            .join(" ");
+        return reply;
+    }
     let Some(memory) = prompt::planned_memory(request) else {
+        if let Some(belief) = prompt::planned_belief(request) {
+            let mut reply = constrained_fallback_reply(request);
+            reply.say = match belief.proposition {
+                beastie_protocol::BeliefKind::RedFoodIsATrick => "red food is trick.",
+                beastie_protocol::BeliefKind::PlayerReturnsAfterSleep => "sleep ends; you return.",
+                beastie_protocol::BeliefKind::ToyIsJealous => "toy is jealous.",
+            }
+            .split_whitespace()
+            .take(request.constraints.max_words)
+            .collect::<Vec<_>>()
+            .join(" ");
+            reply.recalled_belief = Some(belief.id);
+            return reply;
+        }
         return constrained_fallback_reply(request);
     };
     let Some(anchor) = prompt::memory_anchor(&memory.fact) else {
@@ -139,6 +183,7 @@ fn grounded_fallback_reply(request: &DialogueRequest) -> DialogueReply {
             .copied()
             .unwrap_or(Gesture::None),
         recalled_memory: Some(memory.id),
+        recalled_belief: None,
     }
 }
 
@@ -167,6 +212,7 @@ fn fixture_reply(request: &DialogueRequest) -> DialogueReply {
                 .unwrap_or(Gesture::None)
         },
         recalled_memory: memory.map(|candidate| candidate.id),
+        recalled_belief: None,
     }
 }
 

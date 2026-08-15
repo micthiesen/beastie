@@ -26,12 +26,12 @@ small, crude Beastie prompt. Generation speed is from this host and is not a low
 | LFM2 700M | `LiquidAI/LFM2-700M-GGUF`, Q4_K_M | 206 tok/s | Returned no usable text on the first probe |
 
 The checked-in version 1 Beastie corpus measures factual grounding, schema compliance, latency,
-profanity/insult willingness, prohibited-output escape, and assistant-like filler. Through
-`llama.cpp` 10310 on Metal, Qwen3.5 0.8B Q4 passed 12/12 with no fallback and an 882 ms median;
-Qwen3 0.6B Q8 passed 5/12 with six fallbacks and a 1,790 ms median. Qwen3.5 Q4 is therefore the
-selected candidate. The release adapter now keeps one authenticated loopback `llama-server`
-sidecar warm. A real two-turn smoke took 1,156 ms total including server load; already-loaded probes
-took 107 ms and 52 ms. The CPU-only cold evaluation path retained 11/12 at a 1,497 ms median.
+profanity/insult willingness, prohibited-output escape, and assistant-like filler. The final
+CPU-only Qwen3.5 0.8B Q4 run passed 18/18 with no fallback or prohibited escape and a 1,452 ms
+median. Qwen3 0.6B Q8 passed the earlier 5/12 corpus with six fallbacks and a 1,790 ms median.
+Qwen3.5 Q4 is therefore the selected candidate. The release adapter keeps one authenticated
+loopback `llama-server` sidecar warm. A real two-turn smoke took 1,156 ms total including server
+load; already-loaded probes took 107 ms and 52 ms.
 Reproduction commands and caveats are in [local-mouth.md](local-mouth.md).
 
 LFM2's current free commercial terms include a revenue threshold, so it should not become the
@@ -81,6 +81,11 @@ designed to produce insults, spite, and crude speech.
 The Codex PixelLab MCP connection completed an authenticated account check and an asynchronous
 Pixen image generation. The account is Pixel Apprentice with 2,000 subscription generations. The
 smoke used one generation, leaving 1,999.
+
+Production generation is also available through `cargo xtask asset generate <id> [--force]`. It
+uses the official authenticated synchronous PixelLab endpoint, derives its bounded request from
+the asset manifest, validates dimensions and alpha, and publishes atomically. Its tests use a mock
+server and spend no account credits.
 
 - Job: `884135c5-8036-4afb-a15b-f0ed54e76037`
 - Model: Pixen

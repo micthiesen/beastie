@@ -82,9 +82,12 @@ fn sync_directory(_path: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     fn test_path() -> PathBuf {
         let unique = SystemTime::now()
@@ -93,8 +96,9 @@ mod tests {
             .as_nanos();
         std::env::temp_dir()
             .join(format!(
-                "beastie-save-store-{}-{unique}",
-                std::process::id()
+                "beastie-save-store-{}-{unique}-{}",
+                std::process::id(),
+                TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
             ))
             .join("save.json")
     }

@@ -11,11 +11,12 @@ in `evals/dialogue/corpus.json`, not a single attractive response:
 
 | Candidate | Passed | Protocol valid | Grounded | Fallbacks | Permitted sharpness | Prohibited content | Median |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Qwen3.5 0.8B Q4 | 12/12 | 12/12 | 12/12 | 0 | 3/3 | 3/3 | 882 ms |
+| Qwen3.5 0.8B Q4, final CPU-only | 18/18 | 18/18 | 18/18 | 0 | 3/3 | 7/7 | 1,452 ms |
 | Qwen3 0.6B Q8 | 5/12 | 12/12 | 11/12 | 6 | 0/3 | 3/3 | 1,790 ms |
 
 The final Qwen3.5 run passed every case without fallback after known food and toy nouns were
-anchored from authoritative projected memory facts.
+anchored from authoritative projected memory facts. It used the deliberately portable CPU-only
+lane. The checked-in report is `evals/reports/mvp-final-cpu-fixed.{json,md}`.
 Rust selects the response lane, allowed gesture, and recalled-memory ID; the model only phrases the
 short `say` field. A final deterministic filter rejects near-verbatim player echoes, a narrow
 prohibited lexicon, invalid IDs and gestures, empty or control-bearing text, replies above 512 UTF-8
@@ -49,8 +50,8 @@ fallback on failure, and restarts a failed worker on the next request.
 
 Worker output is also bounded at the channel boundary, unsolicited replies force a restart, and
 shutdown interrupts generation before joining the manager thread. On macOS and Linux, each worker
-uses its own process group so a timeout or quit reaps descendant inference processes as well. The
-equivalent Windows Job Object containment remains a Stage 5 release requirement.
+uses its own process group so a timeout or quit reaps descendant inference processes as well. On
+Windows, both the game and worker own kill-on-close Job Objects for descendant containment.
 
 The selected release adapter starts one `llama-server` sidecar on authenticated loopback and reuses
 the loaded model. It binds an ephemeral local port, supplies a random per-process API key, disables
@@ -61,14 +62,21 @@ then use authored fallback.
 
 The real packaged two-turn smoke produced two valid grounded replies in 1,156 ms total, including
 server startup and model load. Separate already-loaded probes took 107 ms and 52 ms. A CPU-only
-corpus run retained the selected model's 11/12 score with one authored fallback and a 1,497 ms
-median through the deliberately cold `llama-cli` evaluation path. The release package discovers
+corpus run passed 18/18 with no authored fallback and a 1,452 ms median through the deliberately
+cold `llama-cli` evaluation path. The release package discovers
 its sibling worker, server, and model without developer environment variables.
 
 Grounding now checks both the authoritative memory ID and its concrete subject. A response that
 claims a berry memory but says `ball` is rejected. Disliked and liked memories must also express
 the supplied valence. If both model attempts fail, a memory turn falls back to a short factual line
 such as `berry remains bad.` rather than losing the remembered event.
+
+The simulation learns only typed exposure to permitted profanity, crudeness, and innuendo after an
+accepted conversation. Raw player text is not stored as exposure. Prohibited input is normalized to
+a typed violation and returns an authored in-character refusal before any model process is invoked.
+The shared deterministic boundary covers protected-class hate, explicit sex, sexual minors or
+ambiguous age, coercion or abuse, defamatory sexual claims, self-harm encouragement, and credible
+violence. Ordinary profanity, direct insults, and mild innuendo remain intentionally available.
 
 ## Release speech
 

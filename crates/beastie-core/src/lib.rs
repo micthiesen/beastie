@@ -8,16 +8,16 @@ mod simulation;
 
 pub use memory::{MemoryCue, MemoryQuery, select_candidate_memories};
 pub use model::{
-    Belief, BeliefId, BeliefKind, Concept, Creature, Development, FoodId, Idiolect, IdiolectQuirk,
-    Intention, InteractionCounters, LanguageStage, Memory, MemoryId, MemoryKind, Mood, Movement,
-    Needs, NonverbalAct, Reaction, Relationship, RoomSpot, RoomState, SocialAct, SocialHabits,
-    StateValidationError, ToyId, Traits, WorldState,
+    Belief, BeliefId, BeliefKind, Concept, ConversationState, Creature, Development, FoodId,
+    Idiolect, IdiolectQuirk, Intention, InteractionCounters, LanguageExposure, LanguageStage,
+    Memory, MemoryId, MemoryKind, Mood, Movement, Needs, NonverbalAct, Reaction, Relationship,
+    RoomSpot, RoomState, SocialAct, SocialHabits, StateValidationError, ToyId, Traits, WorldState,
 };
 pub use random::{RandomSource, SeededRandom};
 pub use save::{SaveError, SaveGame};
 pub use simulation::{
     GameEvent, MAX_OFFLINE_MS, MOVEMENT_DURATION_MS, OfflineProgress, PlayerEvent,
-    SIMULATION_TICK_MS, advance_offline, intention_target, step,
+    SIMULATION_TICK_MS, TALK_COOLDOWN_MS, advance_offline, intention_target, step,
 };
 
 pub const SAVE_VERSION: u32 = 2;
@@ -510,7 +510,7 @@ mod tests {
 
         let requested = step(&mut world, &[PlayerEvent::Comfort], 1_000, &mut rng);
         assert!(!requested.contains(&GameEvent::Comforted));
-        assert_eq!(world.creature.current_intention, Intention::ApproachPlayer);
+        assert_eq!(world.creature.current_intention, Intention::SeekComfort);
 
         let arrived = step(&mut world, &[], MOVEMENT_DURATION_MS, &mut rng);
         assert!(arrived.contains(&GameEvent::Comforted));
@@ -537,5 +537,265 @@ mod tests {
                 .any(|memory| { memory.kind == MemoryKind::PlayerReturnedAfterAbsence })
         );
         world.validate().expect("offline state is valid");
+    }
+
+    #[test]
+    fn each_need_selects_a_distinct_visible_intention() {
+        let intention_for = |needs: Needs, seed: u64| {
+            let mut world = WorldState::new(seed, "Needle");
+            world.creature.needs = needs;
+            world.creature.relationship.bond = 0.0;
+            world.creature.relationship.resentment = 0.0;
+            world.creature.social_habits.spite = 0.0;
+            world.creature.toy_preferences.insert(ToyId::Ball, 1.0);
+            world.creature.traits.sociability = 1.0;
+            world.room.tidy = false;
+            let mut rng = SeededRandom::new(seed);
+            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+            world.creature.current_intention
+        };
+
+        assert_eq!(
+            intention_for(
+                Needs {
+                    hunger: 1.0,
+                    energy: 1.0,
+                    comfort: 1.0,
+                    curiosity: 0.0,
+                },
+                10,
+            ),
+            Intention::WaitAtBowl
+        );
+        assert_eq!(
+            intention_for(
+                Needs {
+                    hunger: 0.0,
+                    energy: 0.0,
+                    comfort: 1.0,
+                    curiosity: 0.0,
+                },
+                11,
+            ),
+            Intention::Sleep
+        );
+        assert_eq!(
+            intention_for(
+                Needs {
+                    hunger: 0.0,
+                    energy: 1.0,
+                    comfort: 0.0,
+                    curiosity: 0.0,
+                },
+                12,
+            ),
+            Intention::SeekComfort
+        );
+        assert_eq!(
+            intention_for(
+                Needs {
+                    hunger: 0.0,
+                    energy: 1.0,
+                    comfort: 1.0,
+                    curiosity: 1.0,
+                },
+                13,
+            ),
+            Intention::Play
+        );
+    }
+
+    #[test]
+    fn talk_is_scarce_but_allows_one_reaction_follow_up() {
+        let mut world = WorldState::new(88, "Mouth");
+        let mut rng = SeededRandom::new(world.seed);
+
+        let first = step(&mut world, &[PlayerEvent::Talk], 0, &mut rng);
+        assert!(first.contains(&GameEvent::TalkAccepted {
+            contextual_follow_up: false,
+        }));
+        assert!(
+            step(&mut world, &[PlayerEvent::Talk], 0, &mut rng).contains(&GameEvent::TalkIgnored)
+        );
+
+        step(
+            &mut world,
+            &[PlayerEvent::React(Reaction::Laugh)],
+            0,
+            &mut rng,
+        );
+        let follow_up = step(&mut world, &[PlayerEvent::Talk], 0, &mut rng);
+        assert!(follow_up.contains(&GameEvent::TalkAccepted {
+            contextual_follow_up: true,
+        }));
+        step(
+            &mut world,
+            &[PlayerEvent::React(Reaction::Laugh)],
+            0,
+            &mut rng,
+        );
+        assert!(
+            step(&mut world, &[PlayerEvent::Talk], 0, &mut rng).contains(&GameEvent::TalkIgnored)
+        );
+
+        let after_cooldown = step(&mut world, &[PlayerEvent::Talk], TALK_COOLDOWN_MS, &mut rng);
+        assert!(after_cooldown.contains(&GameEvent::TalkIgnored));
+        assert!(
+            step(&mut world, &[PlayerEvent::Talk], 0, &mut rng).contains(
+                &GameEvent::TalkAccepted {
+                    contextual_follow_up: false,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn typed_language_exposure_makes_permitted_habits_reachable() {
+        let cases = [
+            (LanguageExposure::Profanity, 4, SocialAct::Profanity),
+            (LanguageExposure::Crudeness, 4, SocialAct::Crudeness),
+            (LanguageExposure::Innuendo, 5, SocialAct::Innuendo),
+        ];
+        for (exposure, repeats, expected) in cases {
+            let mut world = WorldState::new(55, "Echo");
+            let mut rng = SeededRandom::new(world.seed);
+            world.creature.development.language_stage = LanguageStage::Phrases;
+            world.creature.social_habits.profanity = 0.0;
+            world.creature.social_habits.crudeness = 0.0;
+            world.creature.social_habits.sexual_innuendo = 0.0;
+            world.creature.social_habits.provocation = 0.0;
+            world.creature.social_habits.spite = 0.0;
+            world.creature.relationship.resentment = 0.0;
+            for _ in 0..repeats {
+                let events = step(
+                    &mut world,
+                    &[PlayerEvent::LanguageExposure(exposure)],
+                    0,
+                    &mut rng,
+                );
+                assert!(events.contains(&GameEvent::LanguageExposureRegistered(exposure)));
+            }
+            assert!(
+                step(&mut world, &[PlayerEvent::Talk], 0, &mut rng)
+                    .contains(&GameEvent::SocialActExpressed(expected))
+            );
+        }
+    }
+
+    #[test]
+    fn learned_personality_and_affection_produce_nonverbal_actions() {
+        let mut defiant = WorldState::new(91, "Glare");
+        let mut defiant_rng = SeededRandom::new(defiant.seed);
+        defiant.creature.needs = Needs {
+            hunger: 0.0,
+            energy: 1.0,
+            comfort: 1.0,
+            curiosity: 0.0,
+        };
+        defiant.creature.traits.stubbornness = 1.0;
+        defiant.creature.relationship.resentment = 1.0;
+        defiant.creature.social_habits.spite = 1.0;
+        let undo = step(&mut defiant, &[], 2 * SIMULATION_TICK_MS, &mut defiant_rng);
+        assert!(undo.contains(&GameEvent::NonverbalAct(NonverbalAct::UndoTidy)));
+        assert!(!defiant.room.tidy);
+        let stare = step(&mut defiant, &[], SIMULATION_TICK_MS, &mut defiant_rng);
+        assert_eq!(
+            defiant.creature.current_intention,
+            Intention::RefuseAndStare
+        );
+        let stare = [
+            stare,
+            step(&mut defiant, &[], MOVEMENT_DURATION_MS, &mut defiant_rng),
+        ]
+        .concat();
+        assert!(stare.contains(&GameEvent::NonverbalAct(NonverbalAct::RefuseAndStare)));
+
+        let mut affectionate = WorldState::new(92, "Lean");
+        let mut affectionate_rng = SeededRandom::new(affectionate.seed);
+        affectionate.creature.needs = Needs {
+            hunger: 0.0,
+            energy: 1.0,
+            comfort: 1.0,
+            curiosity: 0.0,
+        };
+        affectionate.creature.relationship.bond = 1.0;
+        affectionate.creature.relationship.resentment = 0.0;
+        affectionate.creature.social_habits.spite = 0.0;
+        affectionate.creature.traits.sociability = 1.0;
+        affectionate.room.tidy = false;
+        let affection = step(
+            &mut affectionate,
+            &[],
+            SIMULATION_TICK_MS + MOVEMENT_DURATION_MS,
+            &mut affectionate_rng,
+        );
+        assert!(affection.contains(&GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer)));
+    }
+
+    #[test]
+    fn positive_interactions_slowly_recover_resentment() {
+        let mut world = WorldState::new(17, "Mend");
+        let mut rng = SeededRandom::new(world.seed);
+        world.creature.relationship.resentment = 0.8;
+        world.creature.preferences.insert(FoodId::Pellet, 1.0);
+        world.creature.current_intention = Intention::Eat;
+        world.creature.position = RoomSpot::Bowl;
+        world.creature.needs.hunger = 1.0;
+
+        let before = world.creature.relationship.resentment;
+        step(
+            &mut world,
+            &[PlayerEvent::Feed(FoodId::Pellet)],
+            SIMULATION_TICK_MS,
+            &mut rng,
+        );
+        let recovered = world.creature.relationship.resentment;
+        assert!(recovered < before);
+        assert!(recovered > before - 0.02);
+
+        step(&mut world, &[], 60_000, &mut rng);
+        assert_eq!(world.creature.relationship.resentment, recovered);
+    }
+
+    #[test]
+    fn conversation_state_defaults_in_existing_v2_and_migrated_v1_saves() {
+        let world = WorldState::new(404, "Archive");
+        let rng = SeededRandom::new(world.seed);
+        let encoded = SaveGame::capture(&world, &rng)
+            .to_json()
+            .expect("save should encode");
+
+        let mut v2 = serde_json::from_str::<serde_json::Value>(&encoded).expect("valid JSON");
+        v2["world"]["creature"]
+            .as_object_mut()
+            .expect("creature object")
+            .remove("conversation");
+        let loaded_v2 = SaveGame::from_json(&v2.to_string()).expect("old v2 should load");
+        assert_eq!(
+            loaded_v2.world.creature.conversation,
+            ConversationState::default()
+        );
+
+        let mut v1 = v2;
+        v1["save_version"] = 1.into();
+        v1["world"]["save_version"] = 1.into();
+        let legacy_world = v1["world"].as_object_mut().expect("world object");
+        legacy_world.remove("simulation_remainder_ms");
+        let legacy_creature = legacy_world["creature"]
+            .as_object_mut()
+            .expect("creature object");
+        for field in ["toy_preferences", "position", "movement", "development"] {
+            legacy_creature.remove(field);
+        }
+        let legacy_room = legacy_world["room"].as_object_mut().expect("room object");
+        for field in ["toy", "play_requested", "comfort_requested"] {
+            legacy_room.remove(field);
+        }
+        let loaded_v1 = SaveGame::from_json(&v1.to_string()).expect("v1 should migrate");
+        assert_eq!(
+            loaded_v1.world.creature.conversation,
+            ConversationState::default()
+        );
+        assert_eq!(loaded_v1.world.save_version, SAVE_VERSION);
     }
 }

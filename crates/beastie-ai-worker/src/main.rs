@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use beastie_ai_worker::{
     FixtureBackend, LlamaCppBackend, LlamaCppConfig, LlamaServerBackend, LlamaServerConfig,
-    run_jsonl, run_llama_server_supervisor,
+    MAX_LLAMA_THREADS, default_llama_threads, run_jsonl, run_llama_server_supervisor,
 };
 use clap::{Parser, ValueEnum};
 
@@ -47,6 +47,10 @@ struct Args {
     #[arg(long, env = "BEASTIE_AI_CPU_ONLY")]
     cpu_only: bool,
 
+    /// llama.cpp generation and batch threads. Defaults to logical CPUs minus two.
+    #[arg(long, env = "BEASTIE_AI_THREADS", value_parser = parse_threads, default_value_t = default_llama_threads())]
+    threads: usize,
+
     /// Extra argument passed to llama-cli before Beastie's fixed arguments.
     #[arg(long = "llama-arg", allow_hyphen_values = true)]
     llama_args: Vec<std::ffi::OsString>,
@@ -54,6 +58,18 @@ struct Args {
     /// Extra argument passed to llama-server before Beastie's fixed arguments.
     #[arg(long = "llama-server-arg", allow_hyphen_values = true)]
     llama_server_args: Vec<std::ffi::OsString>,
+}
+
+fn parse_threads(value: &str) -> Result<usize, String> {
+    let threads = value
+        .parse::<usize>()
+        .map_err(|_| "thread count must be an integer".to_owned())?;
+    if !(1..=MAX_LLAMA_THREADS).contains(&threads) {
+        return Err(format!(
+            "thread count must be within 1..={MAX_LLAMA_THREADS}"
+        ));
+    }
+    Ok(threads)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -82,6 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 timeout: Duration::from_millis(args.timeout_ms),
                 max_output_bytes: args.max_output_bytes,
                 cpu_only: args.cpu_only,
+                threads: args.threads,
                 extra_args: args.llama_args,
             });
             run_jsonl(stdin.lock(), stdout.lock(), &mut backend)?;
@@ -99,6 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 timeout: Duration::from_millis(args.timeout_ms),
                 max_output_bytes: args.max_output_bytes,
                 cpu_only: args.cpu_only,
+                threads: args.threads,
                 extra_args: args.llama_server_args,
                 supervisor: Some(std::env::current_exe()?),
             });

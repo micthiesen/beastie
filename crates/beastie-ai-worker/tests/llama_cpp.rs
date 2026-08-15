@@ -36,6 +36,7 @@ fn backend(mode: &str, extra: Vec<OsString>) -> LlamaCppBackend {
         timeout: Duration::from_millis(40),
         max_output_bytes: 512,
         cpu_only: true,
+        threads: 3,
         extra_args: args,
     })
 }
@@ -109,16 +110,29 @@ fn cpu_only_flags_reach_the_replaceable_process() {
             .any(|argument| argument == "--no-op-offload")
     );
     assert!(arguments.lines().any(|argument| argument == "-ngl"));
+    let arguments = arguments.lines().collect::<Vec<_>>();
+    assert!(arguments.windows(2).any(|pair| pair == ["--threads", "3"]));
+    assert!(
+        arguments
+            .windows(2)
+            .any(|pair| pair == ["--threads-batch", "3"])
+    );
     fs::remove_file(record).expect("argument record should exist");
 }
 
 #[test]
 fn environment_selects_llama_backend_without_changing_jsonl_transport() {
+    let record = temporary_path("env-threads");
     let mut child = Command::new(env!("CARGO_BIN_EXE_beastie-ai-worker"))
         .env("BEASTIE_AI_BACKEND", "llama-cpp")
         .env("BEASTIE_AI_MODEL", "ignored-test-model.gguf")
         .env("BEASTIE_LLAMA_CLI", fixture_program())
         .env("BEASTIE_AI_TIMEOUT_MS", "1000")
+        .env("BEASTIE_AI_THREADS", "4")
+        .arg("--llama-arg")
+        .arg("--fake-record")
+        .arg("--llama-arg")
+        .arg(&record)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -134,4 +148,37 @@ fn environment_selects_llama_backend_without_changing_jsonl_transport() {
     let reply: beastie_protocol::DialogueReply =
         serde_json::from_slice(&output.stdout).expect("worker should emit one JSONL reply");
     assert_eq!(reply.say, "berry remains bad.");
+    let arguments = fs::read_to_string(&record).expect("arguments should be recorded");
+    let arguments = arguments.lines().collect::<Vec<_>>();
+    assert!(arguments.windows(2).any(|pair| pair == ["--threads", "4"]));
+    assert!(
+        arguments
+            .windows(2)
+            .any(|pair| pair == ["--threads-batch", "4"])
+    );
+    fs::remove_file(record).expect("argument record should exist");
+}
+
+#[test]
+fn cli_and_environment_thread_overrides_are_bounded() {
+    for mut command in [
+        {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_beastie-ai-worker"));
+            command.args(["--threads", "0"]);
+            command
+        },
+        {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_beastie-ai-worker"));
+            command.env("BEASTIE_AI_THREADS", "257");
+            command
+        },
+    ] {
+        assert!(
+            !command
+                .output()
+                .expect("worker should execute")
+                .status
+                .success()
+        );
+    }
 }

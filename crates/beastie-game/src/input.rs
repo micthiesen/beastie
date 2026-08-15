@@ -54,21 +54,33 @@ pub fn append_text(buffer: &mut String, text: &str) {
 #[cfg(test)]
 mod tests {
     use beastie_core::{ToyId, WorldState};
-    use beastie_view::{UiMode, ViewState, plan};
+    use beastie_view::{UiMode, UiTarget, ViewState, plan};
 
     use super::*;
 
     #[test]
-    fn focus_cycles_only_enabled_regions() {
+    fn modal_focus_starts_on_the_first_relevant_action() {
         let world = WorldState::new(42, "Mop");
-        let view = ViewState {
-            mode: UiMode::TextEntry,
-            ..ViewState::default()
-        };
-        let (plan, _) = plan(&world, &view);
-        assert_eq!(move_focus(&plan, None, 1).as_deref(), Some("target/bowl"));
-        let focused = move_focus(&plan, Some("text-entry/cancel"), 1);
-        assert_ne!(focused.as_deref(), Some("text-entry/send"));
+        for (mode, expected) in [
+            (UiMode::Context(UiTarget::Creature), "action/comfort"),
+            (UiMode::FoodChoice, "action/feed-berry"),
+            (UiMode::ToyChoice, "action/play-ball"),
+            (UiMode::TextEntry, "text-entry/cancel"),
+            (UiMode::OnScreenKeyboard, "keyboard/a"),
+        ] {
+            let view = ViewState {
+                mode,
+                ..ViewState::default()
+            };
+            let render = plan(&world, &view).0;
+            assert_eq!(move_focus(&render, None, 1).as_deref(), Some(expected));
+            assert!(
+                render
+                    .hit_regions
+                    .iter()
+                    .all(|hit| !hit.id.starts_with("target/"))
+            );
+        }
     }
 
     #[test]
@@ -118,6 +130,37 @@ mod tests {
         assert_eq!(
             move_focus(&render, Some("action/play-ball"), 1).as_deref(),
             Some("action/play-bell")
+        );
+    }
+
+    #[test]
+    fn controller_keyboard_focus_types_deletes_submits_and_cancels() {
+        let world = WorldState::new(42, "Mop");
+        let view = ViewState {
+            mode: UiMode::OnScreenKeyboard,
+            text_buffer: "hi".to_owned(),
+            ..ViewState::default()
+        };
+        let render = plan(&world, &view).0;
+        for (id, expected) in [
+            ("keyboard/question", UiAction::TypeCharacter('?')),
+            ("keyboard/delete", UiAction::Backspace),
+            ("keyboard/send", UiAction::SubmitText),
+            ("keyboard/cancel", UiAction::CancelText),
+        ] {
+            assert_eq!(focused_action(&render, Some(id)), Some(expected), "{id}");
+        }
+        assert_eq!(
+            move_focus(&render, Some("keyboard/exclamation"), 1).as_deref(),
+            Some("keyboard/delete")
+        );
+        assert_eq!(
+            move_focus(&render, Some("keyboard/delete"), 1).as_deref(),
+            Some("keyboard/cancel")
+        );
+        assert_eq!(
+            move_focus(&render, Some("keyboard/cancel"), 1).as_deref(),
+            Some("keyboard/send")
         );
     }
 }

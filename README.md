@@ -30,3 +30,7 @@ offline speech. See [the MVP specification](docs/mvp-spec.md) and
 
 Real model weights and generated outputs are not committed. Their pinned metadata belongs in
 `models/manifest.toml` and `assets/manifest.toml`.
+
+Release staging, local inference, content boundaries, and the Steam disclosure draft are documented
+in [packaging](docs/packaging.md), [local mouth](docs/local-mouth.md), and
+[Steam AI disclosure](docs/steam-ai-disclosure.md).

@@ -79,6 +79,9 @@ enum Task {
         /// Check an existing package instead of staging one.
         #[arg(long)]
         check: bool,
+        /// Permit a development-only package without the required release TTS bundle.
+        #[arg(long)]
+        development_package: bool,
         /// Already-built game executable.
         #[arg(long, required_unless_present = "check")]
         game: Option<PathBuf>,
@@ -103,6 +106,12 @@ enum Task {
         /// Selected local GGUF file.
         #[arg(long, required_unless_present = "check")]
         model: Option<PathBuf>,
+        /// Exact upstream license snapshot for the selected model revision.
+        #[arg(long, required_unless_present = "check")]
+        model_license: Option<PathBuf>,
+        /// Exact upstream model-card snapshot for the selected model revision.
+        #[arg(long, required_unless_present = "check")]
+        model_card: Option<PathBuf>,
         /// llama-server executable and each dynamic runtime library. Repeatable.
         #[arg(long, required_unless_present = "check")]
         runtime: Vec<PathBuf>,
@@ -160,6 +169,14 @@ enum DialogueTask {
 enum AssetTask {
     /// Validate asset files, metadata, palette references, and runtime readiness.
     Check,
+    /// Generate one single-frame manifest asset with PixelLab.
+    Generate {
+        /// Exact manifest asset id, such as creature/sleep.
+        id: String,
+        /// Replace an existing generated candidate.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -196,6 +213,9 @@ fn main() -> Result<()> {
         Task::Asset {
             command: AssetTask::Check,
         } => asset::check(Path::new("assets/manifest.toml"), true),
+        Task::Asset {
+            command: AssetTask::Generate { id, force },
+        } => asset::generate(Path::new("assets/manifest.toml"), &id, force),
         Task::Dialogue {
             command:
                 DialogueTask::Eval {
@@ -245,6 +265,7 @@ fn main() -> Result<()> {
             destination,
             platform,
             check,
+            development_package,
             game,
             worker,
             tts_worker,
@@ -253,11 +274,14 @@ fn main() -> Result<()> {
             espeak_license,
             espeak_source,
             model,
+            model_license,
+            model_card,
             runtime,
         } => package(PackageCommandOptions {
             destination: &destination,
             platform: platform.unwrap_or(PackagePlatform::host()?).into(),
             check_only: check,
+            require_release_complete: !development_package,
             game: game.as_deref(),
             worker: worker.as_deref(),
             tts_worker: tts_worker.as_deref(),
@@ -266,6 +290,8 @@ fn main() -> Result<()> {
             espeak_license: espeak_license.as_deref(),
             espeak_source: espeak_source.as_deref(),
             model: model.as_deref(),
+            model_license: model_license.as_deref(),
+            model_card: model_card.as_deref(),
             runtime: &runtime,
         }),
         Task::Sim { seed, days } => sim(seed, days),
@@ -281,6 +307,7 @@ struct PackageCommandOptions<'a> {
     destination: &'a Path,
     platform: packaging::Platform,
     check_only: bool,
+    require_release_complete: bool,
     game: Option<&'a Path>,
     worker: Option<&'a Path>,
     tts_worker: Option<&'a Path>,
@@ -289,6 +316,8 @@ struct PackageCommandOptions<'a> {
     espeak_license: Option<&'a Path>,
     espeak_source: Option<&'a Path>,
     model: Option<&'a Path>,
+    model_license: Option<&'a Path>,
+    model_card: Option<&'a Path>,
     runtime: &'a [PathBuf],
 }
 
@@ -297,6 +326,7 @@ fn package(options: PackageCommandOptions<'_>) -> Result<()> {
         destination,
         platform,
         check_only,
+        require_release_complete,
         game,
         worker,
         tts_worker,
@@ -305,10 +335,12 @@ fn package(options: PackageCommandOptions<'_>) -> Result<()> {
         espeak_license,
         espeak_source,
         model,
+        model_license,
+        model_card,
         runtime,
     } = options;
     if check_only {
-        packaging::check(destination, platform)?;
+        packaging::check(destination, platform, require_release_complete)?;
         return Ok(());
     }
     packaging::build(packaging::PackageOptions {
@@ -321,8 +353,12 @@ fn package(options: PackageCommandOptions<'_>) -> Result<()> {
         espeak_data,
         espeak_license,
         espeak_source,
+        require_tts: require_release_complete,
         runtime,
         model: model.context("--model is required when staging a package")?,
+        model_license: model_license
+            .context("--model-license is required when staging a package")?,
+        model_card: model_card.context("--model-card is required when staging a package")?,
         model_id: "qwen3.5-0.8b-q4_0",
         repository_root: Path::new("."),
     })?;
@@ -330,9 +366,6 @@ fn package(options: PackageCommandOptions<'_>) -> Result<()> {
 }
 
 fn verify() -> Result<()> {
-    asset::check(Path::new("assets/manifest.toml"), true)?;
-    verify_manifest("models/manifest.toml")?;
-    dialogue_eval::verify_fixtures()?;
     run("cargo", &["fmt", "--all", "--", "--check"])?;
     run(
         "cargo",
@@ -347,6 +380,9 @@ fn verify() -> Result<()> {
         ],
     )?;
     run("cargo", &["test", "--workspace", "--locked"])?;
+    asset::check(Path::new("assets/manifest.toml"), true)?;
+    verify_manifest("models/manifest.toml")?;
+    dialogue_eval::verify_fixtures()?;
     run("cargo", &["build", "--workspace", "--locked"])?;
     replay_scenario(BERRY_GRUDGE_SCENARIO)
 }
@@ -624,6 +660,7 @@ fn fixture_reply(request: &DialogueRequest) -> std::result::Result<DialogueReply
                 .unwrap_or(Gesture::None)
         },
         recalled_memory: memory.map(|candidate| candidate.id),
+        recalled_belief: None,
     };
     validate_reply(request, reply).map_err(|error| {
         AdapterError::new(

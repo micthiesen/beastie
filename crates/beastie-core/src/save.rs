@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    Belief, Concept, Creature, Development, FoodId, Intention, Memory, MemoryId, MemoryKind, Needs,
-    NonverbalAct, Reaction, Relationship, RoomSpot, RoomState, SAVE_VERSION, SeededRandom,
-    SocialAct, SocialHabits, StateValidationError, ToyId, Traits, WorldState,
+    Belief, Concept, ConversationState, Creature, Development, FoodId, Intention, Memory, MemoryId,
+    MemoryKind, Needs, NonverbalAct, Reaction, Relationship, RoomSpot, RoomState, SAVE_VERSION,
+    SeededRandom, SocialAct, SocialHabits, StateValidationError, ToyId, Traits, WorldState,
 };
 
 const LEGACY_SAVE_VERSION: u32 = 1;
@@ -161,6 +161,7 @@ impl LegacyCreature {
             social_habits: self.social_habits,
             current_intention: self.current_intention,
             last_social_act: self.last_social_act,
+            conversation: ConversationState::default(),
             position: RoomSpot::Center,
             movement: None,
             development: Development::default(),

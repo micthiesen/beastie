@@ -1,6 +1,8 @@
 //! Display-free projection of authoritative state into a small, fixed room.
 
-use beastie_core::{FoodId, Intention, Reaction, RoomSpot, ToyId, WorldState};
+use beastie_core::{
+    FoodId, GameEvent, Intention, NonverbalAct, Reaction, RoomSpot, ToyId, WorldState,
+};
 use serde::{Deserialize, Serialize};
 
 pub const LOGICAL_WIDTH: i32 = 320;
@@ -8,6 +10,8 @@ pub const LOGICAL_HEIGHT: i32 = 180;
 
 const ACTION_WIDTH: i32 = 64;
 const ACTION_HEIGHT: i32 = 18;
+pub const SPEECH_LIFETIME_MS: u64 = 8_000;
+pub const NONVERBAL_LIFETIME_MS: u64 = 5_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rect {
@@ -78,6 +82,55 @@ pub struct ViewState {
     pub text_buffer: String,
     pub pending: bool,
     pub speech: Option<String>,
+    #[serde(default)]
+    pub speech_expires_at_ms: Option<u64>,
+    #[serde(default)]
+    pub nonverbal: Option<TransientNonverbal>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransientNonverbal {
+    pub act: NonverbalAct,
+    pub expires_at_ms: u64,
+}
+
+impl ViewState {
+    pub fn show_speech(&mut self, speech: String, now_ms: u64) {
+        self.speech = Some(speech);
+        self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_LIFETIME_MS));
+    }
+
+    pub fn observe_events(&mut self, events: &[GameEvent], now_ms: u64) {
+        if let Some(act) = events.iter().rev().find_map(|event| match event {
+            GameEvent::NonverbalAct(act) => Some(*act),
+            _ => None,
+        }) {
+            self.speech = None;
+            self.speech_expires_at_ms = None;
+            self.nonverbal = Some(TransientNonverbal {
+                act,
+                expires_at_ms: now_ms.saturating_add(NONVERBAL_LIFETIME_MS),
+            });
+        }
+        self.expire(now_ms);
+    }
+
+    pub fn expire(&mut self, now_ms: u64) {
+        if self
+            .speech_expires_at_ms
+            .is_some_and(|expires| now_ms >= expires)
+        {
+            self.speech = None;
+            self.speech_expires_at_ms = None;
+        }
+        if self
+            .nonverbal
+            .is_some_and(|presentation| now_ms >= presentation.expires_at_ms)
+        {
+            self.nonverbal = None;
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,7 +202,7 @@ pub fn contextual_actions(target: UiTarget) -> Vec<UiAction> {
 #[must_use]
 pub fn plan(state: &WorldState, view: &ViewState) -> (RenderPlan, AudioPlan) {
     let (creature_x, creature_y) = creature_position(state);
-    let mut sprites = room_sprites(state, creature_x, creature_y);
+    let mut sprites = room_sprites(state, view, creature_x, creature_y);
     let mut rects = vec![RectCommand {
         id: "room/floor-shadow".to_owned(),
         rect: Rect {
@@ -163,7 +216,21 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (RenderPlan, AudioPlan) {
     }];
     add_room_lighting(state, &mut rects);
     let mut text = Vec::new();
-    let mut hit_regions = room_hit_regions(creature_x, creature_y);
+    add_nonverbal_presentation(
+        view,
+        creature_x,
+        creature_y,
+        &mut sprites,
+        &mut rects,
+        &mut text,
+    );
+    // Every open overlay is modal. Keeping room targets out of the plan also
+    // makes pointer and focus navigation obey the same boundary.
+    let mut hit_regions = if view.mode == UiMode::Idle {
+        room_hit_regions(creature_x, creature_y)
+    } else {
+        Vec::new()
+    };
 
     match view.mode {
         UiMode::Idle => {}
@@ -215,15 +282,39 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (RenderPlan, AudioPlan) {
     )
 }
 
-fn room_sprites(state: &WorldState, creature_x: i32, creature_y: i32) -> Vec<SpriteCommand> {
-    let creature_id = match state.creature.current_intention {
-        Intention::Sleep => "creature/sleep",
-        Intention::Eat => "creature/eat",
-        Intention::RejectFood => "creature/annoyed",
-        Intention::Play => "creature/play",
-        Intention::ApproachPlayer => "creature/walk",
-        Intention::Idle if state.creature.movement.is_some() => "creature/walk",
-        Intention::Idle => "creature/idle",
+fn room_sprites(
+    state: &WorldState,
+    view: &ViewState,
+    creature_x: i32,
+    creature_y: i32,
+) -> Vec<SpriteCommand> {
+    let creature_id = if matches!(
+        view.nonverbal.map(|presentation| presentation.act),
+        Some(
+            NonverbalAct::PushFoodAway(_)
+                | NonverbalAct::RefuseToEat
+                | NonverbalAct::UndoTidy
+                | NonverbalAct::RefuseAndStare
+        )
+    ) {
+        "creature/annoyed"
+    } else if matches!(
+        view.nonverbal.map(|presentation| presentation.act),
+        Some(NonverbalAct::TakeToyAway(_))
+    ) {
+        "creature/play"
+    } else {
+        match state.creature.current_intention {
+            Intention::Sleep => "creature/sleep",
+            Intention::Eat => "creature/eat",
+            Intention::WaitAtBowl | Intention::RejectFood => "creature/annoyed",
+            Intention::Play => "creature/play",
+            Intention::ApproachPlayer | Intention::SeekComfort => "creature/walk",
+            Intention::UndoTidy | Intention::RefuseAndStare => "creature/annoyed",
+            Intention::ShowAffection => "creature/idle",
+            Intention::Idle if state.creature.movement.is_some() => "creature/walk",
+            Intention::Idle => "creature/idle",
+        }
     };
     let creature_frame = animation_frame(creature_id, state.elapsed_ms);
     let (creature_x_offset, creature_y_offset) = pose_offset(creature_id, creature_frame);
@@ -232,7 +323,6 @@ fn room_sprites(state: &WorldState, creature_x: i32, creature_y: i32) -> Vec<Spr
         framed_sprite("room/window", 140, 18, 2, window_frame(state.elapsed_ms)),
         sprite("room/bed", 22, 103, 2),
         sprite("room/bowl", 238, 132, 3),
-        sprite("room/toy", 95, 139, 3),
         sprite(
             if state.room.tidy {
                 "room/clutter-tidy"
@@ -244,6 +334,12 @@ fn room_sprites(state: &WorldState, creature_x: i32, creature_y: i32) -> Vec<Spr
             3,
         ),
     ];
+    if !matches!(
+        view.nonverbal.map(|presentation| presentation.act),
+        Some(NonverbalAct::TakeToyAway(_))
+    ) {
+        sprites.push(sprite("room/toy", 95, 139, 3));
+    }
     if let Some(food) = state.room.food_in_bowl {
         sprites.push(sprite(
             match food {
@@ -264,6 +360,59 @@ fn room_sprites(state: &WorldState, creature_x: i32, creature_y: i32) -> Vec<Spr
         creature_frame,
     ));
     sprites
+}
+
+fn add_nonverbal_presentation(
+    view: &ViewState,
+    creature_x: i32,
+    creature_y: i32,
+    sprites: &mut Vec<SpriteCommand>,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+) {
+    let Some(presentation) = view.nonverbal else {
+        return;
+    };
+    let (cue, cue_text) = match presentation.act {
+        NonverbalAct::PushFoodAway(food) => {
+            let id = match food {
+                FoodId::Berry => "food/berry",
+                FoodId::Mushroom => "food/mushroom",
+                FoodId::Pellet => "food/pellet",
+            };
+            sprites.push(sprite(id, 282, 145, 9));
+            ("food-pushed", "skrrt")
+        }
+        NonverbalAct::TakeToyAway(_) => {
+            sprites.push(sprite("room/toy", creature_x + 22, creature_y + 18, 9));
+            ("toy-taken", "mine")
+        }
+        NonverbalAct::RefuseToEat => ("food-refused", "..."),
+        NonverbalAct::UndoTidy => {
+            sprites.push(sprite("room/clutter", 252, 139, 9));
+            ("clutter-scattered", "rustle")
+        }
+        NonverbalAct::RefuseAndStare => ("refuse-and-stare", "..."),
+        NonverbalAct::LeanAgainstPlayer => ("affection", "<3"),
+    };
+    rects.push(RectCommand {
+        id: format!("presentation/{cue}/backing"),
+        rect: Rect {
+            x: creature_x + 3,
+            y: creature_y - 12,
+            w: 38,
+            h: 13,
+        },
+        color: [25, 23, 31, 210],
+        layer: 18,
+    });
+    text.push(TextCommand {
+        id: format!("presentation/{cue}"),
+        text: cue_text.to_owned(),
+        x: creature_x + 7,
+        y: creature_y - 9,
+        layer: 19,
+    });
 }
 
 fn sprite(id: &str, x: i32, y: i32, layer: i16) -> SpriteCommand {
@@ -438,7 +587,7 @@ fn add_context_menu(
     for (index, action) in actions.into_iter().enumerate() {
         let x =
             (LOGICAL_WIDTH - width) / 2 + i32::try_from(index).unwrap_or_default() * ACTION_WIDTH;
-        add_button(action, x, 156, text, hits);
+        add_button(action, x, 156, rects, text, hits);
     }
 }
 
@@ -465,6 +614,7 @@ fn add_food_choice(
             action,
             64 + i32::try_from(index).unwrap_or_default() * 64,
             155,
+            rects,
             text,
             hits,
         );
@@ -491,8 +641,9 @@ fn add_toy_choice(
     {
         add_button(
             UiAction::Play(toy),
-            96 + i32::try_from(index).unwrap_or_default() * 64,
+            64 + i32::try_from(index).unwrap_or_default() * 64,
             155,
+            rects,
             text,
             hits,
         );
@@ -537,6 +688,12 @@ fn add_speech(
             action: UiAction::React(reaction),
             rect,
             enabled: true,
+        });
+        rects.push(RectCommand {
+            id: format!("reaction/{}/background", reaction_name(reaction)),
+            rect,
+            color: [63, 57, 75, 245],
+            layer: 20,
         });
         text.push(TextCommand {
             id: format!("reaction/{}/label", reaction_name(reaction)),
@@ -629,25 +786,26 @@ fn add_on_screen_keyboard(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    const KEYS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ ";
+    const KEYS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ .,?!";
     for (index, character) in KEYS.chars().enumerate() {
-        let column = i32::try_from(index % 9).unwrap_or_default();
-        let row = i32::try_from(index / 9).unwrap_or_default();
+        let column = i32::try_from(index % 11).unwrap_or_default();
+        let row = i32::try_from(index / 11).unwrap_or_default();
         let rect = Rect {
-            x: 17 + column * 32,
+            x: 12 + column * 27,
             y: 40 + row * 27,
-            w: 29,
+            w: 25,
             h: 23,
         };
-        let key_name = if character == ' ' {
-            "space".to_owned()
-        } else {
-            character.to_ascii_lowercase().to_string()
-        };
-        let label = if character == ' ' {
-            "Space".to_owned()
-        } else {
-            character.to_string()
+        let (key_name, label) = match character {
+            ' ' => ("space".to_owned(), "SP".to_owned()),
+            '.' => ("period".to_owned(), ".".to_owned()),
+            ',' => ("comma".to_owned(), ",".to_owned()),
+            '?' => ("question".to_owned(), "?".to_owned()),
+            '!' => ("exclamation".to_owned(), "!".to_owned()),
+            _ => (
+                character.to_ascii_lowercase().to_string(),
+                character.to_string(),
+            ),
         };
         add_text_control(
             &format!("keyboard/{key_name}"),
@@ -749,6 +907,7 @@ fn add_button(
     action: UiAction,
     x: i32,
     y: i32,
+    rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
@@ -759,6 +918,12 @@ fn add_button(
         h: ACTION_HEIGHT,
     };
     let id = action_name(action);
+    rects.push(RectCommand {
+        id: format!("action/{id}/background"),
+        rect,
+        color: [63, 57, 75, 245],
+        layer: 20,
+    });
     hits.push(HitRegion {
         id: format!("action/{id}"),
         target: action_target(action),
@@ -912,6 +1077,51 @@ mod tests {
             .expect("expected sprite")
     }
 
+    fn render_snapshot(plan: &RenderPlan) -> u64 {
+        serde_json::to_vec(plan)
+            .expect("render plan should serialize")
+            .into_iter()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |digest, byte| {
+                (digest ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+            })
+    }
+
+    #[test]
+    fn canonical_render_plans_match_reviewed_snapshots() {
+        let state = WorldState::new(42, "Mop");
+        let idle = plan(&state, &ViewState::default()).0;
+        let food = plan(
+            &state,
+            &ViewState {
+                mode: UiMode::FoodChoice,
+                ..ViewState::default()
+            },
+        )
+        .0;
+        let keyboard = plan(
+            &state,
+            &ViewState {
+                mode: UiMode::OnScreenKeyboard,
+                text_buffer: "red shit?".to_owned(),
+                ..ViewState::default()
+            },
+        )
+        .0;
+
+        assert_eq!(
+            [
+                render_snapshot(&idle),
+                render_snapshot(&food),
+                render_snapshot(&keyboard),
+            ],
+            [
+                12_972_460_615_842_783_258,
+                14_689_240_953_404_013_970,
+                14_147_963_766_883_881_031,
+            ]
+        );
+    }
+
     #[test]
     fn room_plan_contains_the_whole_play_space() {
         let state = WorldState::new(42, "Mop");
@@ -966,6 +1176,12 @@ mod tests {
         assert!(actions.contains(&UiAction::Feed(FoodId::Berry)));
         assert!(actions.contains(&UiAction::Feed(FoodId::Mushroom)));
         assert!(actions.contains(&UiAction::Feed(FoodId::Pellet)));
+        assert!(
+            render
+                .hit_regions
+                .iter()
+                .all(|hit| !hit.id.starts_with("target/"))
+        );
     }
 
     #[test]
@@ -995,6 +1211,23 @@ mod tests {
                 .iter()
                 .all(|hit| hit.rect.x + hit.rect.w <= LOGICAL_WIDTH)
         );
+        let panel = render
+            .rects
+            .iter()
+            .find(|rect| rect.id == "ui/toy-panel")
+            .expect("toy panel")
+            .rect;
+        assert!(
+            choices.iter().all(|hit| {
+                hit.rect.x >= panel.x && hit.rect.x + hit.rect.w <= panel.x + panel.w
+            })
+        );
+        assert!(choices.iter().all(|hit| {
+            render
+                .rects
+                .iter()
+                .any(|rect| rect.id == format!("{}/background", hit.id))
+        }));
     }
 
     #[test]
@@ -1054,10 +1287,15 @@ mod tests {
         let cases = [
             (Intention::Idle, "creature/idle", 1_200),
             (Intention::Eat, "creature/eat", 400),
+            (Intention::WaitAtBowl, "creature/annoyed", 500),
             (Intention::Sleep, "creature/sleep", 1_600),
             (Intention::Play, "creature/play", 300),
             (Intention::RejectFood, "creature/annoyed", 500),
             (Intention::ApproachPlayer, "creature/walk", 250),
+            (Intention::SeekComfort, "creature/walk", 250),
+            (Intention::UndoTidy, "creature/annoyed", 500),
+            (Intention::RefuseAndStare, "creature/annoyed", 500),
+            (Intention::ShowAffection, "creature/idle", 1_200),
         ];
         for (intention, id, elapsed_ms) in cases {
             let mut state = WorldState::new(42, "Mop");
@@ -1065,6 +1303,22 @@ mod tests {
             state.elapsed_ms = elapsed_ms;
             let (render, _) = plan(&state, &ViewState::default());
             assert_eq!(sprite(&render, id).frame, 1, "{id}");
+        }
+    }
+
+    #[test]
+    fn primary_needs_have_four_distinct_readable_pose_intents() {
+        let cases = [
+            (Intention::WaitAtBowl, "creature/annoyed"),
+            (Intention::Sleep, "creature/sleep"),
+            (Intention::SeekComfort, "creature/walk"),
+            (Intention::Play, "creature/play"),
+        ];
+        for (intention, expected_pose) in cases {
+            let mut state = WorldState::new(42, "Mop");
+            state.creature.current_intention = intention;
+            let render = plan(&state, &ViewState::default()).0;
+            sprite(&render, expected_pose);
         }
     }
 
@@ -1105,6 +1359,14 @@ mod tests {
                 .hit_regions
                 .iter()
                 .filter(|hit| matches!(hit.action, UiAction::React(_)))
+                .count(),
+            3
+        );
+        assert_eq!(
+            speaking
+                .rects
+                .iter()
+                .filter(|rect| rect.id.starts_with("reaction/") && rect.id.ends_with("/background"))
                 .count(),
             3
         );
@@ -1160,6 +1422,18 @@ mod tests {
                 .iter()
                 .any(|hit| hit.id == "keyboard/space")
         );
+        for (id, character) in [
+            ("keyboard/period", '.'),
+            ("keyboard/comma", ','),
+            ("keyboard/question", '?'),
+            ("keyboard/exclamation", '!'),
+        ] {
+            assert!(
+                render.hit_regions.iter().any(|hit| {
+                    hit.id == id && hit.action == UiAction::TypeCharacter(character)
+                })
+            );
+        }
         assert!(
             render
                 .hit_regions
@@ -1197,5 +1471,107 @@ mod tests {
                 UiAction::SubmitText | UiAction::TypeCharacter(_) | UiAction::Backspace
             )
         }));
+    }
+
+    #[test]
+    fn every_open_overlay_suppresses_room_targets() {
+        let state = WorldState::new(42, "Mop");
+        for mode in [
+            UiMode::Context(UiTarget::Creature),
+            UiMode::FoodChoice,
+            UiMode::ToyChoice,
+            UiMode::TextEntry,
+            UiMode::OnScreenKeyboard,
+        ] {
+            let view = ViewState {
+                mode,
+                ..ViewState::default()
+            };
+            let render = plan(&state, &view).0;
+            assert!(
+                render
+                    .hit_regions
+                    .iter()
+                    .all(|hit| !hit.id.starts_with("target/")),
+                "{mode:?} leaked a room target"
+            );
+        }
+    }
+
+    #[test]
+    fn nonverbal_events_clear_speech_and_project_bounded_visible_cues() {
+        let state = WorldState::new(42, "Mop");
+        let cases = [
+            (
+                NonverbalAct::PushFoodAway(FoodId::Berry),
+                "presentation/food-pushed",
+            ),
+            (
+                NonverbalAct::TakeToyAway(ToyId::Sock),
+                "presentation/toy-taken",
+            ),
+            (NonverbalAct::UndoTidy, "presentation/clutter-scattered"),
+            (NonverbalAct::LeanAgainstPlayer, "presentation/affection"),
+        ];
+        for (act, cue) in cases {
+            let mut view = ViewState::default();
+            view.show_speech("stale".to_owned(), 10);
+            view.observe_events(&[GameEvent::NonverbalAct(act)], 20);
+            assert!(view.speech.is_none());
+            let render = plan(&state, &view).0;
+            assert!(render.text.iter().any(|text| text.id == cue), "{act:?}");
+            assert!(render.rects.iter().any(|rect| {
+                rect.id == format!("{cue}/backing")
+                    && rect.rect.x >= 0
+                    && rect.rect.x + rect.rect.w <= LOGICAL_WIDTH
+            }));
+            match act {
+                NonverbalAct::PushFoodAway(_) => assert!(
+                    render
+                        .sprites
+                        .iter()
+                        .any(|sprite| sprite.id == "food/berry" && sprite.x == 282)
+                ),
+                NonverbalAct::TakeToyAway(_) => {
+                    let toys = render
+                        .sprites
+                        .iter()
+                        .filter(|sprite| sprite.id == "room/toy")
+                        .collect::<Vec<_>>();
+                    assert_eq!(toys.len(), 1);
+                    assert_ne!(toys[0].x, 95);
+                }
+                NonverbalAct::UndoTidy => assert!(
+                    render
+                        .sprites
+                        .iter()
+                        .any(|sprite| sprite.id == "room/clutter" && sprite.x == 252)
+                ),
+                NonverbalAct::LeanAgainstPlayer => {}
+                NonverbalAct::RefuseToEat | NonverbalAct::RefuseAndStare => {
+                    unreachable!("not part of this cue table")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn speech_and_nonverbal_cues_expire_on_authoritative_play_time() {
+        let mut view = ViewState::default();
+        view.show_speech("brief".to_owned(), 100);
+        view.observe_events(
+            &[GameEvent::NonverbalAct(NonverbalAct::RefuseAndStare)],
+            200,
+        );
+        view.expire(200 + NONVERBAL_LIFETIME_MS - 1);
+        assert!(view.nonverbal.is_some());
+        view.expire(200 + NONVERBAL_LIFETIME_MS);
+        assert!(view.nonverbal.is_none());
+
+        view.show_speech("brief".to_owned(), 1_000);
+        view.expire(1_000 + SPEECH_LIFETIME_MS - 1);
+        assert!(view.speech.is_some());
+        view.expire(1_000 + SPEECH_LIFETIME_MS);
+        assert!(view.speech.is_none());
     }
 }

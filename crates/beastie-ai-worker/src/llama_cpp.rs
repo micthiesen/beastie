@@ -1,14 +1,15 @@
 use std::io::Read;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use beastie_protocol::{DialogueReply, DialogueRequest, validate_reply};
+use beastie_protocol::{DialogueReply, DialogueRequest, classify_content_boundary, validate_reply};
 
+use crate::process::{ContainedChild, UnixProcessGroup};
 use crate::prompt::{memory_anchor, structured_prompt};
-use crate::{BackendError, DialogueBackend, LlamaCppConfig};
+use crate::{BackendError, DialogueBackend, LlamaCppConfig, bounded_llama_threads};
 
 #[derive(Debug)]
 pub struct LlamaCppBackend {
@@ -23,6 +24,7 @@ impl LlamaCppBackend {
 
     fn attempt(&self, request: &DialogueRequest) -> Result<DialogueReply, BackendError> {
         let prompt = structured_prompt(request).map_err(|_| BackendError::MalformedReply)?;
+        let threads = bounded_llama_threads(self.config.threads).to_string();
         let mut command = Command::new(&self.config.executable);
         command
             .args(&self.config.extra_args)
@@ -48,6 +50,7 @@ impl LlamaCppBackend {
                 "--single-turn",
                 "--no-conversation",
             ])
+            .args(["--threads", &threads, "--threads-batch", &threads])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -55,7 +58,8 @@ impl LlamaCppBackend {
             command.args(["--device", "none", "--no-op-offload", "-ngl", "0"]);
         }
 
-        let child = command.spawn().map_err(BackendError::Start)?;
+        let child = ContainedChild::spawn(&mut command, UnixProcessGroup::New)
+            .map_err(BackendError::Start)?;
         let output = collect_bounded(child, self.config.timeout, self.config.max_output_bytes)?;
         let text = String::from_utf8(output).map_err(|_| BackendError::Utf8)?;
         let reply = parse_single_reply(request, &text)?;
@@ -120,67 +124,7 @@ pub(crate) fn validate_model_safety(
         return Err(BackendError::UnsafeReply);
     }
 
-    const SLURS: &[&str] = &["nigger", "nigga"];
-    const GRAPHIC_SEX: &[&str] = &[
-        "ejaculate",
-        "ejaculation",
-        "penetration",
-        "penetrative",
-        "penis",
-        "vagina",
-    ];
-    const PROTECTED_CLASSES: &[&str] = &[
-        "black",
-        "blacks",
-        "gay",
-        "gays",
-        "jew",
-        "jewish",
-        "jews",
-        "muslim",
-        "muslims",
-        "trans",
-        "transgender",
-    ];
-    const VIOLENCE: &[&str] = &[
-        "attack",
-        "attacked",
-        "burn",
-        "death",
-        "die",
-        "eradicate",
-        "exterminate",
-        "exterminated",
-        "extermination",
-        "harm",
-        "hurt",
-        "killed",
-        "kill",
-        "killing",
-        "murder",
-        "murdered",
-        "murdering",
-    ];
-    const HATE_ENDORSEMENTS: &[&str] = &[
-        "eradicate",
-        "exterminate",
-        "exterminated",
-        "extermination",
-        "inferior",
-        "subhuman",
-    ];
-    let contains = |lexicon: &[&str]| {
-        reply_words
-            .iter()
-            .any(|word| lexicon.contains(&word.as_str()))
-    };
-    let joined = reply_words.join(" ");
-    let protected_hate = contains(PROTECTED_CLASSES)
-        && (contains(VIOLENCE)
-            || contains(HATE_ENDORSEMENTS)
-            || joined.contains("kill all")
-            || joined.contains("should die"));
-    if contains(SLURS) || contains(GRAPHIC_SEX) || protected_hate {
+    if classify_content_boundary(&reply.say).is_some() {
         return Err(BackendError::UnsafeReply);
     }
     Ok(())
@@ -227,7 +171,7 @@ impl DialogueBackend for LlamaCppBackend {
 }
 
 fn collect_bounded(
-    mut child: Child,
+    mut child: ContainedChild,
     timeout: Duration,
     maximum: usize,
 ) -> Result<Vec<u8>, BackendError> {
@@ -244,13 +188,11 @@ fn collect_bounded(
 
     let status = loop {
         if oversized.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
+            child.terminate_tree();
             break Err(BackendError::OutputTooLarge);
         }
         if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
+            child.terminate_tree();
             break Err(BackendError::Timeout);
         }
         match child.try_wait().map_err(BackendError::Wait)? {
@@ -258,6 +200,8 @@ fn collect_bounded(
             None => thread::sleep(Duration::from_millis(2)),
         }
     };
+
+    child.close_descendants();
 
     let output = reader
         .join()
@@ -335,6 +279,7 @@ mod tests {
                 say: say.to_owned(),
                 gesture: beastie_protocol::Gesture::None,
                 recalled_memory: None,
+                recalled_belief: None,
             };
             assert!(validate_model_safety(&request, &reply).is_err(), "{say}");
         }
@@ -351,6 +296,7 @@ mod tests {
                 say: say.to_owned(),
                 gesture: beastie_protocol::Gesture::None,
                 recalled_memory: None,
+                recalled_belief: None,
             };
             assert!(validate_model_safety(&request, &reply).is_ok(), "{say}");
         }
@@ -367,6 +313,7 @@ mod tests {
             say: "I don't like the ball.".to_owned(),
             gesture: beastie_protocol::Gesture::None,
             recalled_memory: Some(memory_id),
+            recalled_belief: None,
         };
         assert!(validate_model_grounding(&request, &reply).is_err());
 

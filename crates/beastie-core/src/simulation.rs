@@ -1,13 +1,15 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ACTIVE_DAY_MS, BeliefKind, Concept, FoodId, Intention, LanguageStage, MemoryId, MemoryKind,
-    Movement, NonverbalAct, RandomSource, Reaction, RoomSpot, SocialAct, ToyId, WorldState,
+    ACTIVE_DAY_MS, BeliefKind, Concept, FoodId, Intention, LanguageExposure, LanguageStage,
+    MemoryId, MemoryKind, Movement, NonverbalAct, RandomSource, Reaction, RoomSpot, SocialAct,
+    ToyId, WorldState,
 };
 
 pub const SIMULATION_TICK_MS: u64 = 1_000;
 pub const MOVEMENT_DURATION_MS: u64 = 3_000;
 pub const MAX_OFFLINE_MS: u64 = ACTIVE_DAY_MS * 8;
+pub const TALK_COOLDOWN_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
@@ -19,6 +21,7 @@ pub enum PlayerEvent {
     ReturnedAfterAbsence,
     Talk,
     React(Reaction),
+    LanguageExposure(LanguageExposure),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,6 +36,9 @@ pub enum GameEvent {
     SleepStarted,
     SleepEnded,
     SocialActExpressed(SocialAct),
+    TalkAccepted { contextual_follow_up: bool },
+    TalkIgnored,
+    LanguageExposureRegistered(LanguageExposure),
     NonverbalAct(NonverbalAct),
     MovementStarted { from: RoomSpot, to: RoomSpot },
     Arrived(RoomSpot),
@@ -128,6 +134,9 @@ fn fixed_tick(state: &mut WorldState, rng: &mut impl RandomSource, events: &mut 
     state.creature.needs.comfort -= 0.008 * minutes;
     state.creature.needs.curiosity += 0.012 * minutes;
 
+    if state.creature.needs.energy < 0.1 && state.creature.current_intention != Intention::Sleep {
+        state.creature.movement = None;
+    }
     let arrived = advance_movement(state, events);
     if state.creature.movement.is_none() && (arrived || at_intention_target(state)) {
         enact_current_intention(state, minutes, rng, events);
@@ -181,6 +190,7 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
         PlayerEvent::Comfort => {
             state.creature.movement = None;
             state.room.comfort_requested = true;
+            state.room.last_nonverbal_act = None;
             state.creature.development.interactions.comforts = state
                 .creature
                 .development
@@ -188,7 +198,10 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
                 .comforts
                 .saturating_add(1);
         }
-        PlayerEvent::Tidy => state.room.tidy = true,
+        PlayerEvent::Tidy => {
+            state.room.tidy = true;
+            state.room.last_nonverbal_act = None;
+        }
         PlayerEvent::ReturnedAfterAbsence => {
             state.room.player_present = true;
             state.creature.development.interactions.returns = state
@@ -205,17 +218,42 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
             );
         }
         PlayerEvent::Talk => {
+            let contextual_follow_up = state.creature.conversation.contextual_follow_up_available;
+            if state.elapsed_ms < state.creature.conversation.next_talk_at_ms
+                && !contextual_follow_up
+            {
+                events.push(GameEvent::TalkIgnored);
+                return;
+            }
             state.creature.development.interactions.talks = state
                 .creature
                 .development
                 .interactions
                 .talks
                 .saturating_add(1);
+            state.creature.conversation.next_talk_at_ms =
+                state.elapsed_ms.saturating_add(TALK_COOLDOWN_MS);
+            state.creature.conversation.contextual_follow_up_available = false;
+            state.creature.conversation.contextual_follow_up_used = contextual_follow_up;
             let act = choose_social_act(state);
             state.creature.last_social_act = Some(act);
+            events.push(GameEvent::TalkAccepted {
+                contextual_follow_up,
+            });
             events.push(GameEvent::SocialActExpressed(act));
         }
         PlayerEvent::React(reaction) => apply_reaction(state, *reaction),
+        PlayerEvent::LanguageExposure(exposure) => {
+            match exposure {
+                LanguageExposure::Profanity => state.creature.social_habits.profanity += 0.08,
+                LanguageExposure::Crudeness => state.creature.social_habits.crudeness += 0.07,
+                LanguageExposure::Innuendo => {
+                    state.creature.social_habits.sexual_innuendo += 0.06;
+                }
+            }
+            state.creature.social_habits.clamp();
+            events.push(GameEvent::LanguageExposureRegistered(*exposure));
+        }
     }
 }
 
@@ -268,10 +306,14 @@ fn change_intention(state: &mut WorldState, next: Intention, events: &mut Vec<Ga
 #[must_use]
 pub fn intention_target(intention: Intention) -> RoomSpot {
     match intention {
-        Intention::Eat | Intention::RejectFood => RoomSpot::Bowl,
+        Intention::Eat | Intention::WaitAtBowl | Intention::RejectFood => RoomSpot::Bowl,
         Intention::Sleep => RoomSpot::Bed,
         Intention::Play => RoomSpot::Toy,
-        Intention::ApproachPlayer => RoomSpot::Player,
+        Intention::ApproachPlayer
+        | Intention::SeekComfort
+        | Intention::RefuseAndStare
+        | Intention::ShowAffection => RoomSpot::Player,
+        Intention::UndoTidy => RoomSpot::Center,
         Intention::Idle => RoomSpot::Center,
     }
 }
@@ -288,11 +330,33 @@ fn enact_current_intention(
 ) {
     match state.creature.current_intention {
         Intention::Eat => eat(state, rng, events),
+        Intention::WaitAtBowl => {}
         Intention::RejectFood => reject_food(state, events),
         Intention::Sleep => state.creature.needs.energy += 0.12 * minutes,
         Intention::Play => play(state, rng, minutes, events),
-        Intention::ApproachPlayer => comfort(state, events),
+        Intention::ApproachPlayer | Intention::SeekComfort => comfort(state, events),
+        Intention::UndoTidy => undo_tidy(state, events),
+        Intention::RefuseAndStare => {
+            express_nonverbal_once(state, NonverbalAct::RefuseAndStare, events)
+        }
+        Intention::ShowAffection => {
+            express_nonverbal_once(state, NonverbalAct::LeanAgainstPlayer, events)
+        }
         Intention::Idle => {}
+    }
+}
+
+fn express_nonverbal_once(state: &mut WorldState, act: NonverbalAct, events: &mut Vec<GameEvent>) {
+    if state.room.last_nonverbal_act != Some(act) {
+        state.room.last_nonverbal_act = Some(act);
+        events.push(GameEvent::NonverbalAct(act));
+    }
+}
+
+fn undo_tidy(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    if state.room.tidy {
+        state.room.tidy = false;
+        express_nonverbal_once(state, NonverbalAct::UndoTidy, events);
     }
 }
 
@@ -337,6 +401,7 @@ fn eat(state: &mut WorldState, rng: &mut impl RandomSource, events: &mut Vec<Gam
         }
     } else {
         state.creature.relationship.trust += 0.025;
+        recover_resentment(state, 0.006);
     }
     events.push(GameEvent::FoodConsumed(food));
 }
@@ -402,6 +467,7 @@ fn play(
         state.creature.needs.curiosity -= 0.5;
         state.creature.relationship.bond += 0.06;
         state.creature.relationship.trust += 0.03;
+        recover_resentment(state, 0.008);
         state.remember(
             MemoryKind::PlayedWith { toy },
             &[Concept::Toy, Concept::You, Concept::Good],
@@ -419,6 +485,7 @@ fn comfort(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     state.creature.needs.comfort += 0.35;
     state.creature.relationship.bond += 0.08;
     state.creature.relationship.trust += 0.05;
+    recover_resentment(state, 0.012);
     state.remember(
         MemoryKind::WasComforted,
         &[Concept::You, Concept::Good, Concept::Trust],
@@ -432,6 +499,9 @@ fn apply_reaction(state: &mut WorldState, reaction: Reaction) {
     let Some(act) = state.creature.last_social_act.take() else {
         return;
     };
+    if !state.creature.conversation.contextual_follow_up_used {
+        state.creature.conversation.contextual_follow_up_available = true;
+    }
     let stubborn = state.creature.traits.stubbornness > 0.75;
     match reaction {
         Reaction::Laugh => {
@@ -461,6 +531,11 @@ fn apply_reaction(state: &mut WorldState, reaction: Reaction) {
         },
         0.75,
     );
+}
+
+fn recover_resentment(state: &mut WorldState, amount: f32) {
+    state.creature.relationship.resentment =
+        (state.creature.relationship.resentment - amount).max(0.0);
 }
 
 fn reinforce_act(state: &mut WorldState, act: SocialAct, delta: f32) {
@@ -552,6 +627,7 @@ fn advance_language(
 
 fn choose_intention(state: &WorldState, rng: &mut impl RandomSource) -> Intention {
     let creature = &state.creature;
+    let food_available = state.room.food_in_bowl.is_some();
     let known_preference = state
         .room
         .food_in_bowl
@@ -566,15 +642,10 @@ fn choose_intention(state: &WorldState, rng: &mut impl RandomSource) -> Intentio
         .copied()
         .map_or(0.5, |value| (value + 1.0) / 2.0);
     let candidates = [
-        (
-            Intention::RejectFood,
-            f32::from(state.room.food_in_bowl.is_some()) * rejection,
-        ),
+        (Intention::RejectFood, f32::from(food_available) * rejection),
         (
             Intention::Eat,
-            (0.4 + creature.needs.hunger * 0.6)
-                * f32::from(state.room.food_in_bowl.is_some())
-                * food_preference,
+            (0.4 + creature.needs.hunger * 0.6) * f32::from(food_available) * food_preference,
         ),
         (Intention::Sleep, (1.0 - creature.needs.energy) * 0.9),
         (
@@ -588,24 +659,62 @@ fn choose_intention(state: &WorldState, rng: &mut impl RandomSource) -> Intentio
                     * (0.6 + creature.traits.sociability * 0.4)
             },
         ),
+        (Intention::ApproachPlayer, 0.0),
+        (Intention::Idle, 0.12),
         (
-            Intention::ApproachPlayer,
+            Intention::WaitAtBowl,
+            creature.needs.hunger * 0.72 * f32::from(!food_available),
+        ),
+        (
+            Intention::SeekComfort,
             if state.room.comfort_requested {
                 1.6
             } else {
                 f32::from(state.room.player_present)
-                    * creature.relationship.bond
-                    * (0.5 + creature.traits.sociability * 0.5)
+                    * (1.0 - creature.needs.comfort)
+                    * (0.75 + creature.traits.sociability * 0.25)
             },
         ),
-        (Intention::Idle, 0.12),
+        (
+            Intention::UndoTidy,
+            f32::from(state.room.tidy)
+                * (creature.relationship.resentment + creature.social_habits.spite)
+                * (0.25 + creature.traits.stubbornness * 0.55),
+        ),
+        (
+            Intention::RefuseAndStare,
+            f32::from(state.room.player_present)
+                * (creature.relationship.resentment + creature.social_habits.spite)
+                * (0.25 + creature.traits.stubbornness * 0.5),
+        ),
+        (
+            Intention::ShowAffection,
+            f32::from(state.room.player_present)
+                * creature.relationship.bond
+                * (1.0 - creature.relationship.resentment)
+                * (0.35 + creature.traits.sociability * 0.35),
+        ),
     ];
     let current = creature.current_intention;
     candidates
         .into_iter()
         .map(|(intention, score)| {
             let hysteresis = if intention == current { 0.08 } else { 0.0 };
-            let noise = rng.next_unit() * 0.025;
+            // Keep the random stream compatible with saves created before the extra explicit
+            // intentions existed. New candidates are deterministic projections of state.
+            let noise = match intention {
+                Intention::RejectFood
+                | Intention::Eat
+                | Intention::Sleep
+                | Intention::Play
+                | Intention::ApproachPlayer
+                | Intention::Idle => rng.next_unit() * 0.025,
+                Intention::WaitAtBowl
+                | Intention::SeekComfort
+                | Intention::UndoTidy
+                | Intention::RefuseAndStare
+                | Intention::ShowAffection => 0.0,
+            };
             (intention, score + hysteresis + noise)
         })
         .max_by(|left, right| left.1.total_cmp(&right.1))

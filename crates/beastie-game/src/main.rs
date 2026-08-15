@@ -3,6 +3,7 @@ mod args;
 mod audio;
 mod dialogue;
 mod input;
+mod process;
 mod renderer;
 mod save_store;
 mod scenario;

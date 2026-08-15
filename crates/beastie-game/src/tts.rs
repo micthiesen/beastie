@@ -2,17 +2,20 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use beastie_core::WorldState;
 use beastie_protocol::{
-    TTS_PROTOCOL_VERSION, TtsOutcome, TtsReply, TtsRequest, TtsVoiceSettings, validate_tts_reply,
-    validate_tts_request,
+    TTS_PROTOCOL_VERSION, TtsOutcome, TtsReply, TtsRequest, identity_tts_voice_settings,
+    validate_tts_reply, validate_tts_request,
 };
+
+use crate::process::ContainedChild;
 
 const MAX_REPLY_BYTES: usize = 1_024;
 const MAX_WAV_BYTES: u64 = 44 + 192_000 * 30 * 2;
@@ -161,16 +164,11 @@ impl TtsManager {
         }
     }
 
-    pub fn request(&mut self, text: String) -> bool {
+    pub fn request(&mut self, text: String, world: &WorldState) -> bool {
         if !self.enabled {
             return false;
         }
-        let request = TtsRequest {
-            protocol_version: TTS_PROTOCOL_VERSION,
-            request_id: self.next_request_id,
-            text,
-            settings: TtsVoiceSettings::default(),
-        };
+        let request = build_request(self.next_request_id, text, world);
         if validate_tts_request(&request).is_err() {
             return false;
         }
@@ -214,6 +212,15 @@ impl TtsManager {
             .expect("TTS completion should arrive");
         self.pending = false;
         completion
+    }
+}
+
+fn build_request(request_id: u64, text: String, world: &WorldState) -> TtsRequest {
+    TtsRequest {
+        protocol_version: TTS_PROTOCOL_VERSION,
+        request_id,
+        text,
+        settings: identity_tts_voice_settings(world),
     }
 }
 
@@ -331,7 +338,7 @@ fn read_scoped_cache_file(cache_root: &Path, cache_key: &str) -> io::Result<Arc<
 }
 
 struct WorkerSession {
-    child: Child,
+    child: ContainedChild,
     stdin: ChildStdin,
     lines: Receiver<io::Result<String>>,
     exchanged: bool,
@@ -345,16 +352,15 @@ impl WorkerSession {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        configure_process_containment(&mut command);
-        let mut child = command.spawn()?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| io::Error::other("TTS worker stdin unavailable"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| io::Error::other("TTS worker stdout unavailable"))?;
+        let mut child = ContainedChild::spawn(&mut command)?;
+        let Some(stdin) = child.stdin.take() else {
+            child.terminate_tree();
+            return Err(io::Error::other("TTS worker stdin unavailable"));
+        };
+        let Some(stdout) = child.stdout.take() else {
+            child.terminate_tree();
+            return Err(io::Error::other("TTS worker stdout unavailable"));
+        };
         let (sender, lines) = mpsc::sync_channel(1);
         thread::spawn(move || read_worker_lines(BufReader::new(stdout), sender));
         Ok(Self {
@@ -427,27 +433,7 @@ impl WorkerSession {
     }
 
     fn terminate(&mut self) {
-        terminate_child(&mut self.child);
-    }
-}
-
-fn terminate_child(child: &mut Child) {
-    #[cfg(unix)]
-    if let Ok(process_group) = i32::try_from(child.id()) {
-        unsafe {
-            libc::kill(-process_group, libc::SIGKILL);
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-fn configure_process_containment(command: &mut Command) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-
-        command.process_group(0);
+        self.child.terminate_tree();
     }
 }
 
@@ -508,7 +494,23 @@ mod tests {
     static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     #[test]
+    fn request_voice_is_derived_deterministically_from_authoritative_identity() {
+        let world = WorldState::new(42, "Mop");
+        let first = build_request(1, "hello".to_owned(), &world);
+        let repeated = build_request(2, "again".to_owned(), &world);
+        assert_eq!(first.settings, identity_tts_voice_settings(&world));
+        assert_eq!(first.settings, repeated.settings);
+
+        let mut different_identity = world.clone();
+        different_identity.creature.traits.sociability = 1.0;
+        let changed = build_request(3, "hello".to_owned(), &different_identity);
+        assert_ne!(first.settings, changed.settings);
+        assert_eq!(validate_tts_request(&changed), Ok(()));
+    }
+
+    #[test]
     fn fake_worker_is_reused_and_wav_bytes_are_copied_from_scoped_cache() {
+        let world = WorldState::new(42, "Mop");
         let root = temporary_path("cache");
         fs::create_dir_all(&root).unwrap();
         let (source, executable) = compile_worker();
@@ -519,12 +521,12 @@ mod tests {
         );
         let mut manager = TtsManager::new(Some(config));
 
-        assert!(manager.request("hello".to_owned()));
+        assert!(manager.request("hello".to_owned(), &world));
         let first = manager.recv_timeout(Duration::from_secs(2));
         assert_eq!(first.request_id, 1);
         assert_eq!(first.wav.as_deref().map(<[u8]>::len), Some(46));
 
-        assert!(manager.request("again".to_owned()));
+        assert!(manager.request("again".to_owned(), &world));
         let second = manager.recv_timeout(Duration::from_secs(2));
         assert_eq!(second.request_id, 2);
         assert_eq!(second.wav.as_deref().map(<[u8]>::len), Some(46));
@@ -539,6 +541,7 @@ mod tests {
 
     #[test]
     fn superseding_request_discards_the_older_completion() {
+        let world = WorldState::new(42, "Mop");
         let root = temporary_path("supersede-cache");
         fs::create_dir_all(&root).unwrap();
         let (source, executable) = compile_worker();
@@ -548,10 +551,10 @@ mod tests {
             root.clone(),
         );
         let mut manager = TtsManager::new(Some(config));
-        assert!(manager.request("old".to_owned()));
+        assert!(manager.request("old".to_owned(), &world));
 
         let enqueue_started = Instant::now();
-        while !manager.request("new".to_owned()) {
+        while !manager.request("new".to_owned(), &world) {
             assert!(enqueue_started.elapsed() < Duration::from_secs(2));
             thread::sleep(Duration::from_millis(5));
         }
@@ -577,6 +580,7 @@ mod tests {
 
     #[test]
     fn unsolicited_worker_output_restarts_the_worker() {
+        let world = WorldState::new(42, "Mop");
         let root = temporary_path("extra-output-cache");
         fs::create_dir_all(&root).unwrap();
         let (source, executable) = compile_worker_with_mode("extra");
@@ -587,13 +591,13 @@ mod tests {
         );
         let mut manager = TtsManager::new(Some(config));
 
-        assert!(manager.request("hello".to_owned()));
+        assert!(manager.request("hello".to_owned(), &world));
         assert_eq!(manager.recv_timeout(Duration::from_secs(2)).request_id, 1);
-        assert!(manager.request("again".to_owned()));
+        assert!(manager.request("again".to_owned(), &world));
         let second = manager.recv_timeout(Duration::from_secs(2));
         assert_eq!(second.request_id, 2);
         assert!(second.wav.is_none());
-        assert!(manager.request("recovered".to_owned()));
+        assert!(manager.request("recovered".to_owned(), &world));
         assert!(manager.recv_timeout(Duration::from_secs(2)).wav.is_some());
 
         drop(manager);
@@ -604,6 +608,7 @@ mod tests {
 
     #[test]
     fn rejected_newer_request_invalidates_older_completion() {
+        let world = WorldState::new(42, "Mop");
         let root = temporary_path("queue-cache");
         fs::create_dir_all(&root).unwrap();
         let (source, executable) = compile_worker();
@@ -613,10 +618,10 @@ mod tests {
             root.clone(),
         );
         let mut manager = TtsManager::new(Some(config));
-        assert!(manager.request("one".to_owned()));
+        assert!(manager.request("one".to_owned(), &world));
         let mut rejected = false;
         for index in 0..100 {
-            if !manager.request(format!("queued-{index}")) {
+            if !manager.request(format!("queued-{index}"), &world) {
                 rejected = true;
                 break;
             }

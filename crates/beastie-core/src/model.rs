@@ -278,10 +278,31 @@ impl SocialHabits {
 pub enum Intention {
     Idle,
     Eat,
+    WaitAtBowl,
     RejectFood,
     Sleep,
     Play,
     ApproachPlayer,
+    SeekComfort,
+    UndoTidy,
+    RefuseAndStare,
+    ShowAffection,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationState {
+    pub next_talk_at_ms: u64,
+    pub contextual_follow_up_available: bool,
+    pub contextual_follow_up_used: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LanguageExposure {
+    Profanity,
+    Crudeness,
+    Innuendo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -310,6 +331,8 @@ pub enum NonverbalAct {
     TakeToyAway(ToyId),
     RefuseToEat,
     UndoTidy,
+    RefuseAndStare,
+    LeanAgainstPlayer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -369,6 +392,8 @@ pub struct Creature {
     pub social_habits: SocialHabits,
     pub current_intention: Intention,
     pub last_social_act: Option<SocialAct>,
+    #[serde(default)]
+    pub conversation: ConversationState,
     #[serde(default)]
     pub position: RoomSpot,
     #[serde(default)]
@@ -471,6 +496,7 @@ impl WorldState {
                 },
                 current_intention: Intention::Idle,
                 last_social_act: None,
+                conversation: ConversationState::default(),
                 position: RoomSpot::Center,
                 movement: None,
                 development: Development::default(),

@@ -17,6 +17,7 @@ use beastie_protocol::{
 use sha2::{Digest, Sha256};
 
 use crate::bounded::{BoundedLine, read_bounded_line};
+use crate::process::{ContainedChild, UnixProcessGroup};
 
 pub const KITTEN_MODEL_ID: &str = "kitten-nano-en-v0_8-int8";
 pub const KITTEN_MODEL_SHA256: &str =
@@ -440,7 +441,7 @@ impl TtsSynthesizer for EspeakNgSynthesizer {
                 argument.push(parent);
                 command.arg(argument);
             }
-            let mut child = command
+            command
                 .arg("--stdin")
                 .arg("-w")
                 .arg(&output_path)
@@ -450,8 +451,8 @@ impl TtsSynthesizer for EspeakNgSynthesizer {
                 .arg(words_per_minute.to_string())
                 .stdin(Stdio::piped())
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
+                .stderr(Stdio::null());
+            let mut child = ContainedChild::spawn(&mut command, UnixProcessGroup::Inherit)
                 .map_err(|error| {
                     TtsError::Backend(format!(
                         "could not start {}: {error}",
@@ -468,13 +469,13 @@ impl TtsSynthesizer for EspeakNgSynthesizer {
                     })
                 });
             if let Err(error) = write_result {
-                let _ = child.kill();
-                let _ = child.wait();
+                child.terminate_tree();
                 return Err(error);
             }
             let status = child.wait().map_err(|error| {
                 TtsError::Backend(format!("could not wait for eSpeak NG: {error}"))
             })?;
+            child.close_descendants();
             if !status.success() {
                 return Err(TtsError::Backend(format!("eSpeak NG exited with {status}")));
             }

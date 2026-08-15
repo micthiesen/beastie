@@ -73,8 +73,10 @@ mod tests {
             mood: "content".to_owned(),
             known_concepts: BTreeSet::new(),
             candidate_memories: Vec::new(),
+            candidate_beliefs: Vec::new(),
             idiolect: beastie_protocol::Idiolect { quirk },
             desired_social_act: None,
+            input_rejection: None,
             player_said: "hello".to_owned(),
             constraints: DialogueConstraints {
                 max_words,
@@ -90,6 +92,7 @@ mod tests {
             say: say.to_owned(),
             gesture: Gesture::None,
             recalled_memory: None,
+            recalled_belief: None,
         }
     }
 

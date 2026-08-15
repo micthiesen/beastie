@@ -74,10 +74,10 @@ impl Game {
             })
             .transpose()
             .map_err(|error| GameError::ConfigError(error.to_string()))?;
-        let view = ViewState {
-            speech: load_message,
-            ..ViewState::default()
-        };
+        let mut view = ViewState::default();
+        if let Some(message) = load_message {
+            view.show_speech(message, session.world().elapsed_ms);
+        }
         ctx.gfx
             .window()
             .set_cursor_hittest(true)
@@ -118,6 +118,9 @@ impl Game {
     }
 
     fn apply_command(&mut self, command: SessionCommand, persist: bool) -> GameResult {
+        if clears_speech(&command) {
+            self.clear_speech();
+        }
         let observation = self
             .session
             .apply(CommandEnvelope {
@@ -127,6 +130,8 @@ impl Game {
             .map_err(session_error)?;
         self.queued_audio
             .extend(observation.events.iter().filter_map(sound_for_event));
+        self.view
+            .observe_events(&observation.events, self.session.world().elapsed_ms);
         if let Some(request) = observation.dialogue_request
             && self.dialogue.request(request)
         {
@@ -162,14 +167,18 @@ impl Game {
             Ok(reply) => {
                 self.view.pending = false;
                 self.audio.stop_speech();
-                let _ = self.tts.request(reply.say.clone());
-                self.view.speech = Some(reply.say);
+                let _ = self.tts.request(reply.say.clone(), self.session.world());
+                self.view
+                    .show_speech(reply.say, self.session.world().elapsed_ms);
                 self.view.mode = UiMode::Idle;
                 self.view.focused_region = Some("reaction/laugh".to_owned());
             }
             Err(TryRecvError::Disconnected) => {
                 self.view.pending = false;
-                self.view.speech = Some("too many thought.".to_owned());
+                self.view.show_speech(
+                    "too many thought.".to_owned(),
+                    self.session.world().elapsed_ms,
+                );
             }
             Err(TryRecvError::Empty) => {}
         }
@@ -188,6 +197,19 @@ impl Game {
     }
 
     fn apply_ui_action(&mut self, action: UiAction, controller: bool) -> GameResult {
+        if matches!(
+            action,
+            UiAction::OpenContext(_)
+                | UiAction::OpenFoodChoice
+                | UiAction::OpenToyChoice
+                | UiAction::Feed(_)
+                | UiAction::Play(_)
+                | UiAction::Tidy
+                | UiAction::Comfort
+                | UiAction::Talk
+        ) {
+            self.clear_speech();
+        }
         match action {
             UiAction::OpenContext(target) => {
                 self.view.mode = UiMode::Context(target);
@@ -232,7 +254,7 @@ impl Game {
             }
             UiAction::React(reaction) => {
                 self.apply_command(SessionCommand::React { reaction }, true)?;
-                self.view.speech = None;
+                self.clear_speech();
                 self.close_menu();
             }
             UiAction::TypeCharacter(character) => {
@@ -268,6 +290,12 @@ impl Game {
     fn close_menu(&mut self) {
         self.view.mode = UiMode::Idle;
         self.view.focused_region = None;
+    }
+
+    fn clear_speech(&mut self) {
+        self.view.speech = None;
+        self.view.speech_expires_at_ms = None;
+        self.audio.stop_speech();
     }
 
     fn reset_focus(&mut self) {
@@ -312,6 +340,9 @@ impl Game {
         };
         match step {
             ScenarioStep::Session(envelope) => {
+                if clears_speech(&envelope.command) {
+                    self.clear_speech();
+                }
                 let persist = matches!(
                     &envelope.command,
                     SessionCommand::Feed { .. }
@@ -324,6 +355,8 @@ impl Game {
                 let observation = self.session.apply(envelope).map_err(session_error)?;
                 self.queued_audio
                     .extend(observation.events.iter().filter_map(sound_for_event));
+                self.view
+                    .observe_events(&observation.events, self.session.world().elapsed_ms);
                 if let Some(request) = observation.dialogue_request
                     && self.dialogue.request(request)
                 {
@@ -347,6 +380,7 @@ impl Game {
 
 impl EventHandler for Game {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
+        let speech_was_visible = self.view.speech.is_some();
         self.poll_dialogue();
         self.poll_tts();
         if self.scenario.is_some() {
@@ -373,6 +407,10 @@ impl EventHandler for Game {
             if *frames == 0 {
                 ctx.request_quit();
             }
+        }
+        self.view.expire(self.session.world().elapsed_ms);
+        if speech_was_visible && self.view.speech.is_none() {
+            self.audio.stop_speech();
         }
         self.audio.play_queued(&mut self.queued_audio);
         Ok(())
@@ -478,17 +516,10 @@ impl EventHandler for Game {
             }
             Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) => self.navigate(-1),
             Key::Named(NamedKey::Enter | NamedKey::Space) => self.activate_focus(false)?,
-            Key::Character(character) if character.eq_ignore_ascii_case("f") => {
-                self.apply_confirmed_ui_action(UiAction::OpenFoodChoice, false)?;
-            }
-            Key::Character(character) if character.eq_ignore_ascii_case("p") => {
-                self.apply_confirmed_ui_action(UiAction::OpenToyChoice, false)?;
-            }
-            Key::Character(character) if character.eq_ignore_ascii_case("c") => {
-                self.apply_confirmed_ui_action(UiAction::Comfort, false)?;
-            }
-            Key::Character(character) if character.eq_ignore_ascii_case("t") => {
-                self.apply_confirmed_ui_action(UiAction::Talk, false)?;
+            Key::Character(character) => {
+                if let Some(action) = idle_shortcut(self.view.mode, character) {
+                    self.apply_confirmed_ui_action(action, false)?;
+                }
             }
             _ => {}
         }
@@ -529,6 +560,23 @@ impl EventHandler for Game {
     fn resize_event(&mut self, _ctx: &mut Context, width: f32, height: f32) -> GameResult {
         self.viewport = Viewport::for_drawable(width, height);
         Ok(())
+    }
+}
+
+fn idle_shortcut(mode: UiMode, character: &str) -> Option<UiAction> {
+    if mode != UiMode::Idle {
+        return None;
+    }
+    if character.eq_ignore_ascii_case("f") {
+        Some(UiAction::OpenFoodChoice)
+    } else if character.eq_ignore_ascii_case("p") {
+        Some(UiAction::OpenToyChoice)
+    } else if character.eq_ignore_ascii_case("c") {
+        Some(UiAction::Comfort)
+    } else if character.eq_ignore_ascii_case("t") {
+        Some(UiAction::Talk)
+    } else {
+        None
     }
 }
 
@@ -587,13 +635,24 @@ fn play_command(toy: ToyId) -> SessionCommand {
     SessionCommand::Play { toy }
 }
 
+fn clears_speech(command: &SessionCommand) -> bool {
+    matches!(
+        command,
+        SessionCommand::Feed { .. }
+            | SessionCommand::Play { .. }
+            | SessionCommand::Comfort
+            | SessionCommand::Tidy
+            | SessionCommand::Talk { .. }
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use beastie_core::{Reaction, ToyId};
     use beastie_session::SessionCommand;
-    use beastie_view::UiAction;
+    use beastie_view::{UiAction, UiMode};
 
-    use super::play_command;
+    use super::{clears_speech, idle_shortcut, play_command};
 
     #[test]
     fn toy_ui_actions_map_to_typed_play_commands() {
@@ -623,5 +682,41 @@ mod tests {
             UiAction::React(Reaction::Laugh),
         ];
         assert_eq!(mappings.len(), 7);
+    }
+
+    #[test]
+    fn unrelated_player_commands_clear_visible_speech_but_ticks_do_not() {
+        assert!(clears_speech(&SessionCommand::Feed {
+            food: beastie_core::FoodId::Berry,
+        }));
+        assert!(clears_speech(&SessionCommand::Play { toy: ToyId::Ball }));
+        assert!(clears_speech(&SessionCommand::Comfort));
+        assert!(clears_speech(&SessionCommand::Tidy));
+        assert!(clears_speech(&SessionCommand::Talk {
+            text: "hello".to_owned(),
+        }));
+        assert!(!clears_speech(&SessionCommand::Tick {
+            milliseconds: 1_000,
+        }));
+        assert!(!clears_speech(&SessionCommand::React {
+            reaction: Reaction::Laugh,
+        }));
+    }
+
+    #[test]
+    fn direct_shortcuts_do_not_bypass_open_modals() {
+        assert_eq!(
+            idle_shortcut(UiMode::Idle, "F"),
+            Some(UiAction::OpenFoodChoice)
+        );
+        for mode in [
+            UiMode::Context(beastie_view::UiTarget::Bowl),
+            UiMode::FoodChoice,
+            UiMode::ToyChoice,
+            UiMode::OnScreenKeyboard,
+        ] {
+            assert_eq!(idle_shortcut(mode, "f"), None);
+            assert_eq!(idle_shortcut(mode, "t"), None);
+        }
     }
 }

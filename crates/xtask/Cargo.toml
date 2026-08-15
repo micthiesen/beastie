@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+base64 = "0.22"
 beastie-core = { path = "../beastie-core" }
 beastie-protocol = { path = "../beastie-protocol" }
 beastie-session = { path = "../beastie-session" }
@@ -15,6 +16,10 @@ image.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+ureq = { version = "2.12", features = ["json"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

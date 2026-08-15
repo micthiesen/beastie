@@ -94,10 +94,14 @@ pub struct PackageOptions<'a> {
     pub espeak_data: Option<&'a Path>,
     pub espeak_license: Option<&'a Path>,
     pub espeak_source: Option<&'a Path>,
+    /// Release packages require speech. Development-only staging may opt out explicitly.
+    pub require_tts: bool,
     /// The warm local inference runtime and any dynamic libraries it needs.
     /// A worker binary alone is not considered a complete release runtime.
     pub runtime: &'a [PathBuf],
     pub model: &'a Path,
+    pub model_license: &'a Path,
+    pub model_card: &'a Path,
     pub model_id: &'a str,
     pub repository_root: &'a Path,
 }
@@ -106,6 +110,8 @@ pub struct PackageOptions<'a> {
 pub struct PackageReport {
     pub platform: String,
     pub network: bool,
+    #[serde(default)]
+    pub release_complete: bool,
     pub total_bytes: u64,
     pub size_budget_bytes: u64,
     pub files: BTreeMap<String, FileRecord>,
@@ -137,7 +143,17 @@ struct DialogueSelection {
 #[derive(Debug, Deserialize)]
 struct ModelCandidate {
     id: String,
+    #[serde(default)]
+    upstream_revision: String,
+    #[serde(default)]
+    quantization_revision: String,
+    #[serde(default)]
+    source_revision: String,
     license: String,
+    #[serde(default)]
+    license_sha256: String,
+    #[serde(default)]
+    model_card_sha256: String,
     file: String,
     bytes: u64,
     sha256: String,
@@ -159,9 +175,23 @@ pub fn build(options: PackageOptions<'_>) -> Result<PackageReport> {
         );
     }
     validate_model_file(options.model, model)?;
-    validate_destination(options.destination)?;
-
+    validate_provenance_file(
+        options.model_license,
+        &model.license_sha256,
+        "model license",
+    )?;
+    validate_provenance_file(options.model_card, &model.model_card_sha256, "model card")?;
+    for (label, revision) in [
+        ("upstream", &model.upstream_revision),
+        ("quantization", &model.quantization_revision),
+        ("source", &model.source_revision),
+    ] {
+        if revision.len() != 40 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            bail!("model {} has an invalid {label} revision", model.id);
+        }
+    }
     let platform_root = options.destination.join(options.platform.as_str());
+    validate_destination(&platform_root)?;
     fs::create_dir_all(&platform_root).with_context(|| {
         format!(
             "failed to create package destination {}",
@@ -283,9 +313,24 @@ pub fn build(options: PackageOptions<'_>) -> Result<PackageReport> {
         "dialogue model",
     )?;
     copy_required_file(
+        options.model_license,
+        &models_destination.join("LICENSE"),
+        "model license",
+    )?;
+    copy_required_file(
+        options.model_card,
+        &models_destination.join("README.md"),
+        "model card",
+    )?;
+    copy_required_file(
         &options.repository_root.join("THIRD_PARTY_NOTICES"),
         &platform_root.join("THIRD_PARTY_NOTICES"),
         "third-party notices",
+    )?;
+    copy_required_file(
+        &options.repository_root.join("LICENSE"),
+        &platform_root.join("LICENSE"),
+        "Beastie license",
     )?;
 
     let files = inventory(&platform_root)?;
@@ -305,6 +350,7 @@ pub fn build(options: PackageOptions<'_>) -> Result<PackageReport> {
     let report = PackageReport {
         platform: options.platform.as_str().to_owned(),
         network: false,
+        release_complete: tts_inputs_complete(&options)?,
         total_bytes,
         size_budget_bytes: INSTALL_SIZE_BUDGET,
         files,
@@ -325,7 +371,11 @@ pub fn build(options: PackageOptions<'_>) -> Result<PackageReport> {
 }
 
 /// Check an existing staged package without changing it.
-pub fn check(destination: &Path, platform: Platform) -> Result<PackageReport> {
+pub fn check(
+    destination: &Path,
+    platform: Platform,
+    require_release_complete: bool,
+) -> Result<PackageReport> {
     let root = destination.join(platform.as_str());
     let manifest_path = root.join("package-manifest.json");
     let source = fs::read_to_string(&manifest_path)
@@ -342,6 +392,9 @@ pub fn check(destination: &Path, platform: Platform) -> Result<PackageReport> {
     if report.network {
         bail!("package manifest enables network access; Beastie releases must be offline");
     }
+    if require_release_complete && !report.release_complete {
+        bail!("package is development-only because the required release TTS bundle is absent");
+    }
     if report.size_budget_bytes != INSTALL_SIZE_BUDGET {
         bail!("package manifest has an unexpected installed-size budget");
     }
@@ -350,12 +403,21 @@ pub fn check(destination: &Path, platform: Platform) -> Result<PackageReport> {
         platform.worker_name(),
         "assets/manifest.toml",
         "models/manifest.toml",
+        "models/LICENSE",
+        "models/README.md",
         "THIRD_PARTY_NOTICES",
+        "LICENSE",
     ] {
         if !root.join(required).is_file() {
             bail!("package is missing required file: {required}");
         }
     }
+    validate_executable(&root.join(platform.game_name()), platform, "packaged game")?;
+    validate_executable(
+        &root.join(platform.worker_name()),
+        platform,
+        "packaged AI worker",
+    )?;
     let packaged_model_manifest = load_model_manifest(&root.join("models/manifest.toml"))?;
     let packaged_model_id = packaged_model_manifest
         .selection
@@ -367,6 +429,16 @@ pub fn check(destination: &Path, platform: Platform) -> Result<PackageReport> {
         &root.join("models").join(&packaged_model.file),
         packaged_model,
     )?;
+    validate_provenance_file(
+        &root.join("models/LICENSE"),
+        &packaged_model.license_sha256,
+        "packaged model license",
+    )?;
+    validate_provenance_file(
+        &root.join("models/README.md"),
+        &packaged_model.model_card_sha256,
+        "packaged model card",
+    )?;
     let runtime = root.join("runtime");
     if !runtime.join(platform.runtime_name()).is_file() {
         bail!(
@@ -377,7 +449,15 @@ pub fn check(destination: &Path, platform: Platform) -> Result<PackageReport> {
     if !runtime.join("LICENSE").is_file() {
         bail!("package is missing required llama.cpp license: runtime/LICENSE");
     }
-    validate_packaged_tts(&root, platform)?;
+    validate_executable(
+        &runtime.join(platform.runtime_name()),
+        platform,
+        "packaged llama-server",
+    )?;
+    let has_tts = validate_packaged_tts(&root, platform)?;
+    if has_tts != report.release_complete {
+        bail!("package release-complete flag does not match its TTS contents");
+    }
     for path in report.files.keys() {
         let file = root.join(path);
         let record = report.files.get(path).expect("key from map");
@@ -428,14 +508,21 @@ fn validate_options(options: &PackageOptions<'_>) -> Result<()> {
             bail!("required {label} runtime is absent: {}", path.display());
         }
     }
-    if options.model_id.trim().is_empty() {
-        bail!("--model-id must not be empty");
-    }
     if options.runtime.is_empty() {
         bail!("required local inference runtime is absent: provide llama-server and its libraries");
     }
+    validate_executable(options.game, options.platform, "game")?;
+    validate_executable(options.worker, options.platform, "AI worker")?;
+    if options.model_id.trim().is_empty() {
+        bail!("--model-id must not be empty");
+    }
     validate_runtime_inputs(options)?;
-    tts_inputs_complete(options)?;
+    let has_tts = tts_inputs_complete(options)?;
+    if options.require_tts && !has_tts {
+        bail!(
+            "release package requires local TTS; provide all five TTS inputs or use --development-package"
+        );
+    }
     if !options.repository_root.is_dir() {
         bail!(
             "repository root is absent: {}",
@@ -481,6 +568,16 @@ fn tts_inputs_complete(options: &PackageOptions<'_>) -> Result<bool> {
             bail!("required {label} is absent: {}", path.display());
         }
     }
+    validate_executable(
+        options.tts_worker.expect("checked present"),
+        options.platform,
+        "TTS worker",
+    )?;
+    validate_executable(
+        options.espeak.expect("checked present"),
+        options.platform,
+        "eSpeak NG executable",
+    )?;
     let data = options.espeak_data.expect("checked present");
     if !data.is_dir() || !directory_contains_file(data)? {
         bail!(
@@ -505,7 +602,7 @@ fn tts_inputs_complete(options: &PackageOptions<'_>) -> Result<bool> {
     Ok(true)
 }
 
-fn validate_packaged_tts(root: &Path, platform: Platform) -> Result<()> {
+fn validate_packaged_tts(root: &Path, platform: Platform) -> Result<bool> {
     let worker = root.join(platform.tts_worker_name());
     let espeak = root.join("runtime").join(platform.espeak_name());
     let data = root.join("runtime/espeak-ng-data");
@@ -520,7 +617,7 @@ fn validate_packaged_tts(root: &Path, platform: Platform) -> Result<()> {
     ];
     let count = present.into_iter().filter(|value| *value).count();
     if count == 0 {
-        return Ok(());
+        return Ok(false);
     }
     if count != present.len() || !directory_contains_file(&data)? || license.metadata()?.len() == 0
     {
@@ -534,7 +631,9 @@ fn validate_packaged_tts(root: &Path, platform: Platform) -> Result<()> {
     if source_record.bytes != ESPEAK_SOURCE_BYTES || source_record.sha256 != ESPEAK_SOURCE_SHA256 {
         bail!("packaged eSpeak NG corresponding source does not match the pinned 1.52.0 archive");
     }
-    Ok(())
+    validate_executable(&worker, platform, "packaged TTS worker")?;
+    validate_executable(&espeak, platform, "packaged eSpeak NG executable")?;
+    Ok(true)
 }
 
 fn validate_runtime_inputs(options: &PackageOptions<'_>) -> Result<()> {
@@ -554,6 +653,15 @@ fn validate_runtime_inputs(options: &PackageOptions<'_>) -> Result<()> {
     {
         bail!("runtime files do not include the required llama.cpp LICENSE");
     }
+    let server = options
+        .runtime
+        .iter()
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name == options.platform.runtime_name())
+        })
+        .expect("required server checked above");
+    validate_executable(server, options.platform, "llama-server")?;
     let mut names = BTreeSet::new();
     for path in options.runtime {
         if !path.is_file() {
@@ -566,6 +674,37 @@ fn validate_runtime_inputs(options: &PackageOptions<'_>) -> Result<()> {
                 name.to_string_lossy()
             );
         }
+    }
+    Ok(())
+}
+
+fn validate_executable(path: &Path, platform: Platform, label: &str) -> Result<()> {
+    let mut file = File::open(path)
+        .with_context(|| format!("failed to open {label} executable {}", path.display()))?;
+    let mut magic = [0_u8; 4];
+    file.read_exact(&mut magic)
+        .with_context(|| format!("{label} executable is too short: {}", path.display()))?;
+    let valid = match platform {
+        Platform::Windows => magic.starts_with(b"MZ"),
+        Platform::Linux => magic == *b"\x7fELF",
+        Platform::Macos => matches!(
+            magic,
+            [0xfe, 0xed, 0xfa, 0xce]
+                | [0xce, 0xfa, 0xed, 0xfe]
+                | [0xfe, 0xed, 0xfa, 0xcf]
+                | [0xcf, 0xfa, 0xed, 0xfe]
+                | [0xca, 0xfe, 0xba, 0xbe]
+                | [0xbe, 0xba, 0xfe, 0xca]
+                | [0xca, 0xfe, 0xba, 0xbf]
+                | [0xbf, 0xba, 0xfe, 0xca]
+        ),
+    };
+    if !valid {
+        bail!(
+            "{label} executable does not match the {} binary format: {}",
+            platform.as_str(),
+            path.display()
+        );
     }
     Ok(())
 }
@@ -663,6 +802,24 @@ fn validate_model_file(path: &Path, expected: &ModelCandidate) -> Result<()> {
     Ok(())
 }
 
+fn validate_provenance_file(path: &Path, expected_sha256: &str, label: &str) -> Result<()> {
+    if expected_sha256.len() != SHA256_HEX_LEN
+        || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        bail!("{label} has an invalid manifest SHA-256");
+    }
+    let actual = file_record(path)?;
+    if actual.sha256 != expected_sha256 {
+        bail!(
+            "{label} SHA-256 mismatch for {}: got {}, expected {}",
+            path.display(),
+            actual.sha256,
+            expected_sha256
+        );
+    }
+    Ok(())
+}
+
 fn copy_binary(source: &Path, destination: &Path, label: &str) -> Result<()> {
     copy_required_file(source, destination, label)
 }
@@ -705,10 +862,18 @@ fn copy_required_file(source: &Path, destination: &Path, label: &str) -> Result<
 }
 
 fn copy_optional_directory(source: &Path, destination: &Path) -> Result<()> {
-    if !source.exists() {
-        return Ok(());
+    let metadata = match fs::symlink_metadata(source) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to inspect asset source {}", source.display()));
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        bail!("asset source must not be a symlink: {}", source.display());
     }
-    if !source.is_dir() {
+    if !metadata.is_dir() {
         bail!("asset source is not a directory: {}", source.display());
     }
     for entry in
@@ -977,6 +1142,8 @@ mod tests {
         espeak_license: PathBuf,
         espeak_source: PathBuf,
         model: PathBuf,
+        model_license: PathBuf,
+        model_card: PathBuf,
         runtime: Vec<PathBuf>,
     }
 
@@ -1018,7 +1185,12 @@ preferred_candidate = "test-model"
 
 [[candidate]]
 id = "test-model"
+upstream_revision = "1111111111111111111111111111111111111111"
+quantization_revision = "2222222222222222222222222222222222222222"
+source_revision = "1111111111111111111111111111111111111111"
 license = "Apache-2.0"
+license_sha256 = "a098d20414682e24cee9b629c4ce804c487c434d7ab92df8f17b18c52bfe1baf"
+model_card_sha256 = "1768200bb6bba3ddcc1f2c0596bc5f95bf17bf92b2ed34abdb72cf3a04d19733"
 file = "test.gguf"
 bytes = 4
 sha256 = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
@@ -1027,6 +1199,7 @@ tracked = false
         );
         write_file(&root.join("assets/manifest.toml"), b"version = 1\n");
         write_file(&root.join("THIRD_PARTY_NOTICES"), b"test notices\n");
+        write_file(&root.join("LICENSE"), b"MIT license\n");
         let game = root.join("inputs/game");
         let worker = root.join("inputs/worker");
         let tts_worker = root.join("inputs/beastie-tts");
@@ -1035,18 +1208,23 @@ tracked = false
         let espeak_license = root.join("inputs/espeak-ng-COPYING");
         let espeak_source = root.join("inputs/espeak-ng-1.52.0.tar.gz");
         let model = root.join("inputs/model.gguf");
-        write_file(&game, b"game");
-        write_file(&worker, b"worker");
-        write_file(&tts_worker, b"tts worker");
-        write_file(&espeak, b"espeak");
+        let model_license = root.join("inputs/model-LICENSE");
+        let model_card = root.join("inputs/model-README.md");
+        let macho = b"\xcf\xfa\xed\xfe fixture";
+        write_file(&game, macho);
+        write_file(&worker, macho);
+        write_file(&tts_worker, macho);
+        write_file(&espeak, macho);
         write_file(&espeak_data.join("voices/en"), b"voice data");
         write_file(&espeak_license, b"GPLv3 license\n");
         write_file(&espeak_source, b"source archive fixture");
         write_file(&model, b"test");
+        write_file(&model_license, b"model license\n");
+        write_file(&model_card, b"model card\n");
         let llama_server = root.join("inputs/llama-server");
         let runtime_library = root.join("inputs/libllama.dylib");
         let runtime_license = root.join("inputs/LICENSE");
-        write_file(&llama_server, b"llama-server");
+        write_file(&llama_server, macho);
         write_file(&runtime_library, b"library");
         write_file(&runtime_license, b"MIT license\n");
         TestPackage {
@@ -1060,6 +1238,8 @@ tracked = false
             espeak_license,
             espeak_source,
             model,
+            model_license,
+            model_card,
             runtime: vec![llama_server, runtime_library, runtime_license],
         }
     }
@@ -1075,8 +1255,11 @@ tracked = false
             espeak_data: Some(&package.espeak_data),
             espeak_license: Some(&package.espeak_license),
             espeak_source: Some(&package.espeak_source),
+            require_tts: true,
             runtime,
             model: &package.model,
+            model_license: &package.model_license,
+            model_card: &package.model_card,
             model_id: "test-model",
             repository_root: &package.root,
         }
@@ -1121,8 +1304,11 @@ tracked = false
             espeak_data: None,
             espeak_license: None,
             espeak_source: None,
+            require_tts: true,
             runtime: &[],
             model: Path::new("Cargo.toml"),
+            model_license: Path::new("Cargo.toml"),
+            model_card: Path::new("Cargo.toml"),
             model_id: "qwen3.5-0.8b-q4_0",
             repository_root: Path::new("."),
         };
@@ -1164,6 +1350,55 @@ tracked = false
     }
 
     #[test]
+    fn wrong_platform_executable_is_rejected() {
+        let package = test_package("wrong-platform-binary");
+        write_file(&package.game, b"MZ\0\0 windows fixture");
+        let error = build(options(&package, &package.runtime))
+            .expect_err("a Windows executable must not enter a macOS package");
+        assert!(error.to_string().contains("macos binary format"));
+    }
+
+    #[test]
+    fn executable_format_sanity_covers_every_release_platform() {
+        let root = temporary_root("binary-formats");
+        let windows = root.join("beastie.exe");
+        let linux = root.join("beastie-linux");
+        let macos = root.join("beastie-macos");
+        write_file(&windows, b"MZ\0\0 fixture");
+        write_file(&linux, b"\x7fELF fixture");
+        write_file(&macos, b"\xcf\xfa\xed\xfe fixture");
+
+        validate_executable(&windows, Platform::Windows, "Windows fixture")
+            .expect("PE magic should pass the Windows sanity gate");
+        validate_executable(&linux, Platform::Linux, "Linux fixture")
+            .expect("ELF magic should pass the Linux sanity gate");
+        validate_executable(&macos, Platform::Macos, "macOS fixture")
+            .expect("Mach-O magic should pass the macOS sanity gate");
+        assert!(validate_executable(&windows, Platform::Linux, "mismatch").is_err());
+    }
+
+    #[test]
+    fn platform_package_preserves_sibling_platforms() {
+        let package = test_package("platform-siblings");
+        let windows_marker = package.destination.join("windows/existing-package.txt");
+        write_file(&windows_marker, b"keep me");
+
+        build(options(&package, &package.runtime))
+            .expect("macOS staging should allow an existing Windows sibling");
+
+        assert_eq!(
+            fs::read(&windows_marker).expect("sibling package should remain readable"),
+            b"keep me"
+        );
+        assert!(
+            package
+                .destination
+                .join("macos/package-manifest.json")
+                .is_file()
+        );
+    }
+
+    #[test]
     fn tts_inputs_must_be_complete_or_absent() {
         let package = test_package("partial-tts-input");
         let mut package_options = options(&package, &package.runtime);
@@ -1178,8 +1413,15 @@ tracked = false
         package_options.espeak_data = None;
         package_options.espeak_license = None;
         package_options.espeak_source = None;
+        package_options.require_tts = false;
         let report = build(package_options).expect("fully absent optional TTS should stage");
         assert!(!report.files.contains_key("beastie-tts"));
+        assert!(!report.release_complete);
+        check(&package.destination, Platform::Macos, false)
+            .expect("explicit development-package check should allow missing TTS");
+        let error = check(&package.destination, Platform::Macos, true)
+            .expect_err("release check must require TTS");
+        assert!(error.to_string().contains("development-only"));
     }
 
     #[test]
@@ -1196,10 +1438,10 @@ tracked = false
         );
         assert!(report.files.contains_key("runtime/espeak-ng-COPYING"));
         assert!(report.files.contains_key("runtime/espeak-ng-1.52.0.tar.gz"));
-        check(&package.destination, Platform::Macos)
+        check(&package.destination, Platform::Macos, true)
             .expect("complete packaged TTS should pass validation");
         fs::remove_file(package.destination.join("macos/runtime/espeak-ng-COPYING")).unwrap();
-        let error = check(&package.destination, Platform::Macos)
+        let error = check(&package.destination, Platform::Macos, true)
             .expect_err("partial packaged TTS must fail before launch");
         assert!(error.to_string().contains("packaged TTS is incomplete"));
     }
@@ -1236,7 +1478,7 @@ tracked = false
         let package = test_package("escaping-link");
         let outside = temporary_root("escaping-target");
         let outside_server = outside.join("llama-server");
-        write_file(&outside_server, b"outside");
+        write_file(&outside_server, b"\xcf\xfa\xed\xfe outside");
         let link = package.root.join("inputs/llama-server");
         fs::remove_file(&package.runtime[0]).expect("runtime source should be removed for link");
         symlink(&outside_server, &link).expect("escaping symlink should be created");
@@ -1244,6 +1486,27 @@ tracked = false
         let error = build(options(&package, &runtime)).expect_err("escaping link must fail");
         assert!(error.to_string().contains("must resolve to a sibling file"));
         fs::remove_dir_all(outside).expect("outside test directory should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_asset_root_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let package = test_package("symlinked-asset-root");
+        let outside = temporary_root("external-assets");
+        write_file(&outside.join("room/background.png"), b"not packaged");
+        symlink(&outside, package.root.join("assets/generated"))
+            .expect("asset-root symlink should be created");
+
+        let error = build(options(&package, &package.runtime))
+            .expect_err("a symlinked asset root must not be followed");
+        assert!(
+            error
+                .to_string()
+                .contains("asset source must not be a symlink")
+        );
+        fs::remove_dir_all(outside).expect("outside fixture should be removed");
     }
 
     #[test]
@@ -1257,7 +1520,7 @@ tracked = false
             .expect("packaged game should exist");
         file.write_all(b"tampered")
             .expect("packaged game should be writable in test");
-        let error = check(&package.destination, Platform::Macos)
+        let error = check(&package.destination, Platform::Macos, true)
             .expect_err("tampered package must fail integrity check");
         assert!(error.to_string().contains("hash or size changed"));
     }
@@ -1268,7 +1531,7 @@ tracked = false
         build(options(&package, &package.runtime)).expect("test package should stage");
         fs::remove_file(package.destination.join("macos/runtime/llama-server"))
             .expect("packaged server should be removable");
-        let error = check(&package.destination, Platform::Macos)
+        let error = check(&package.destination, Platform::Macos, true)
             .expect_err("package without its server must fail");
         assert!(error.to_string().contains("inference executable"));
 
@@ -1276,7 +1539,7 @@ tracked = false
         build(options(&package, &package.runtime)).expect("test package should stage");
         fs::remove_file(package.destination.join("macos/runtime/LICENSE"))
             .expect("packaged license should be removable");
-        let error = check(&package.destination, Platform::Macos)
+        let error = check(&package.destination, Platform::Macos, true)
             .expect_err("package without the llama.cpp license must fail");
         assert!(error.to_string().contains("llama.cpp license"));
     }
@@ -1291,7 +1554,7 @@ tracked = false
                 .join("macos/runtime/espeak-ng-1.52.0.tar.gz"),
         )
         .expect("packaged source should be removable");
-        let error = check(&package.destination, Platform::Macos)
+        let error = check(&package.destination, Platform::Macos, true)
             .expect_err("eSpeak package without corresponding source must fail");
         assert!(error.to_string().contains("packaged TTS is incomplete"));
     }

@@ -1,7 +1,8 @@
 use std::ffi::OsString;
-use std::io::{self, BufRead, BufReader, Write};
-use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::fs::{self, File};
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
@@ -11,8 +12,39 @@ use std::time::Duration;
 use beastie_protocol::{
     DialogueReply, DialogueRequest, constrained_fallback_reply, validate_reply, validate_request,
 };
+use sha2::{Digest, Sha256};
+use thiserror::Error;
+
+use crate::process::ContainedChild;
 
 const MAX_REPLY_BYTES: usize = 16 * 1024;
+const MAX_MODEL_MANIFEST_BYTES: u64 = 256 * 1024;
+
+#[derive(Debug, Error)]
+enum PackageDiscoveryError {
+    #[error("models/manifest.toml is missing or unreadable: {0}")]
+    ManifestIo(io::Error),
+    #[error("models/manifest.toml is malformed: {0}")]
+    Manifest(&'static str),
+    #[error("selected dialogue model `{0}` is absent from models/manifest.toml")]
+    Selection(String),
+    #[error("selected dialogue model file is missing: {0}")]
+    ModelMissing(PathBuf),
+    #[error("selected dialogue model cannot be read ({path}): {source}")]
+    ModelIo { path: PathBuf, source: io::Error },
+    #[error("selected dialogue model byte count mismatch: expected {expected}, found {actual}")]
+    ModelBytes { expected: u64, actual: u64 },
+    #[error("selected dialogue model SHA-256 mismatch: expected {expected}, found {actual}")]
+    ModelSha256 { expected: String, actual: String },
+}
+
+#[derive(Debug, Default)]
+struct ManifestCandidate {
+    id: Option<String>,
+    file: Option<String>,
+    bytes: Option<u64>,
+    sha256: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
@@ -56,19 +88,36 @@ impl WorkerConfig {
             return None;
         }
         let executable = std::env::current_exe().ok()?;
-        Self::from_package_root(executable.parent()?, reply_timeout)
+        Self::from_package_root_with_fallback(executable.parent()?, reply_timeout)
     }
 
-    fn from_package_root(root: &std::path::Path, reply_timeout: Duration) -> Option<Self> {
+    fn from_package_root_with_fallback(root: &Path, reply_timeout: Duration) -> Option<Self> {
+        match Self::from_package_root(root, reply_timeout) {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!(
+                    "Beastie warning: packaged dialogue disabled ({error}); using authored fallback."
+                );
+                None
+            }
+        }
+    }
+
+    fn from_package_root(
+        root: &Path,
+        reply_timeout: Duration,
+    ) -> Result<Option<Self>, PackageDiscoveryError> {
         let executable = root.join(format!("beastie-ai-worker{}", std::env::consts::EXE_SUFFIX));
         let server = root
             .join("runtime")
             .join(format!("llama-server{}", std::env::consts::EXE_SUFFIX));
-        let model = root.join("models").join("Qwen3.5-0.8B-Q4_0.gguf");
-        if !executable.is_file() || !server.is_file() || !model.is_file() {
-            return None;
+        if !executable.is_file() || !server.is_file() {
+            return Ok(None);
         }
-        Some(Self {
+        let selected = selected_dialogue_model(&root.join("models/manifest.toml"))?;
+        let model = root.join("models").join(&selected.file);
+        verify_model(&model, selected.bytes, &selected.sha256)?;
+        Ok(Some(Self {
             executable,
             arguments: vec![
                 OsString::from("--backend"),
@@ -79,7 +128,7 @@ impl WorkerConfig {
                 server.into_os_string(),
             ],
             reply_timeout,
-        })
+        }))
     }
 
     #[cfg(test)]
@@ -90,6 +139,170 @@ impl WorkerConfig {
             reply_timeout,
         }
     }
+}
+
+#[derive(Debug)]
+struct SelectedDialogueModel {
+    file: String,
+    bytes: u64,
+    sha256: String,
+}
+
+fn selected_dialogue_model(path: &Path) -> Result<SelectedDialogueModel, PackageDiscoveryError> {
+    let metadata = fs::metadata(path).map_err(PackageDiscoveryError::ManifestIo)?;
+    if metadata.len() > MAX_MODEL_MANIFEST_BYTES {
+        return Err(PackageDiscoveryError::Manifest("file exceeds size limit"));
+    }
+    let source = fs::read_to_string(path).map_err(PackageDiscoveryError::ManifestIo)?;
+    let mut in_dialogue_selection = false;
+    let mut preferred = None;
+    for line in source.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_dialogue_selection = line == "[selection.dialogue]";
+        } else if in_dialogue_selection
+            && let Some(value) = string_assignment(line, "preferred_candidate")
+        {
+            preferred = Some(value);
+            break;
+        }
+    }
+    let preferred = preferred.ok_or(PackageDiscoveryError::Manifest(
+        "selection.dialogue.preferred_candidate is missing",
+    ))?;
+    let mut candidates = Vec::new();
+    let mut current = None;
+    for line in source.lines().map(str::trim) {
+        if line == "[[candidate]]" {
+            if let Some(candidate) = current.take() {
+                candidates.push(candidate);
+            }
+            current = Some(ManifestCandidate::default());
+            continue;
+        }
+        let Some(candidate) = current.as_mut() else {
+            continue;
+        };
+        if line.starts_with('[') {
+            candidates.push(current.take().expect("candidate exists"));
+            continue;
+        }
+        if let Some(value) = string_assignment(line, "id") {
+            candidate.id = Some(value);
+        } else if let Some(value) = string_assignment(line, "file") {
+            candidate.file = Some(value);
+        } else if let Some(value) = integer_assignment(line, "bytes") {
+            candidate.bytes = Some(value);
+        } else if let Some(value) = string_assignment(line, "sha256") {
+            candidate.sha256 = Some(value);
+        }
+    }
+    if let Some(candidate) = current {
+        candidates.push(candidate);
+    }
+    let candidate = candidates
+        .into_iter()
+        .find(|candidate| candidate.id.as_deref() == Some(preferred.as_str()))
+        .ok_or_else(|| PackageDiscoveryError::Selection(preferred.clone()))?;
+    let file = candidate.file.ok_or(PackageDiscoveryError::Manifest(
+        "selected candidate.file is missing",
+    ))?;
+    if Path::new(&file).file_name().and_then(|name| name.to_str()) != Some(file.as_str()) {
+        return Err(PackageDiscoveryError::Manifest(
+            "selected candidate.file must be a plain file name",
+        ));
+    }
+    let bytes = candidate.bytes.ok_or(PackageDiscoveryError::Manifest(
+        "selected candidate.bytes is missing",
+    ))?;
+    if bytes == 0 {
+        return Err(PackageDiscoveryError::Manifest(
+            "selected candidate.bytes must be positive",
+        ));
+    }
+    let sha256 = candidate.sha256.ok_or(PackageDiscoveryError::Manifest(
+        "selected candidate.sha256 is missing",
+    ))?;
+    if sha256.len() != 64
+        || !sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(PackageDiscoveryError::Manifest(
+            "selected candidate.sha256 must be 64 lowercase hexadecimal characters",
+        ));
+    }
+    Ok(SelectedDialogueModel {
+        file,
+        bytes,
+        sha256,
+    })
+}
+
+fn string_assignment(line: &str, key: &str) -> Option<String> {
+    let (candidate, value) = line.trim().split_once('=')?;
+    if candidate.trim() != key {
+        return None;
+    }
+    let value = value.trim().strip_prefix('"')?.strip_suffix('"')?;
+    (!value.is_empty() && !value.contains('"')).then(|| value.to_owned())
+}
+
+fn integer_assignment(line: &str, key: &str) -> Option<u64> {
+    let (candidate, value) = line.trim().split_once('=')?;
+    (candidate.trim() == key)
+        .then(|| value.trim().parse::<u64>().ok())
+        .flatten()
+}
+
+fn verify_model(
+    path: &Path,
+    expected_bytes: u64,
+    expected_sha256: &str,
+) -> Result<(), PackageDiscoveryError> {
+    let actual_bytes = fs::metadata(path)
+        .map_err(|source| {
+            if source.kind() == io::ErrorKind::NotFound {
+                PackageDiscoveryError::ModelMissing(path.to_path_buf())
+            } else {
+                PackageDiscoveryError::ModelIo {
+                    path: path.to_path_buf(),
+                    source,
+                }
+            }
+        })?
+        .len();
+    if actual_bytes != expected_bytes {
+        return Err(PackageDiscoveryError::ModelBytes {
+            expected: expected_bytes,
+            actual: actual_bytes,
+        });
+    }
+    let mut file = File::open(path).map_err(|source| PackageDiscoveryError::ModelIo {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|source| PackageDiscoveryError::ModelIo {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != expected_sha256 {
+        return Err(PackageDiscoveryError::ModelSha256 {
+            expected: expected_sha256.to_owned(),
+            actual,
+        });
+    }
+    Ok(())
 }
 
 enum ManagerCommand {
@@ -250,7 +463,7 @@ fn exchange_with_recovery(
 }
 
 struct WorkerSession {
-    child: Child,
+    child: ContainedChild,
     stdin: ChildStdin,
     lines: Receiver<io::Result<String>>,
     exchanged: bool,
@@ -264,14 +477,13 @@ impl WorkerSession {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        configure_process_containment(&mut command);
-        let mut child = command.spawn()?;
+        let mut child = ContainedChild::spawn(&mut command)?;
         let Some(stdin) = child.stdin.take() else {
-            terminate_child(&mut child);
+            child.terminate_tree();
             return Err(io::Error::other("worker stdin unavailable"));
         };
         let Some(stdout) = child.stdout.take() else {
-            terminate_child(&mut child);
+            child.terminate_tree();
             return Err(io::Error::other("worker stdout unavailable"));
         };
         let (line_sender, lines) = mpsc::sync_channel(1);
@@ -344,29 +556,7 @@ impl WorkerSession {
     }
 
     fn terminate(&mut self) {
-        terminate_child(&mut self.child);
-    }
-}
-
-fn terminate_child(child: &mut Child) {
-    #[cfg(unix)]
-    if let Ok(process_group) = i32::try_from(child.id()) {
-        // The worker starts a fresh process group, and llama-cli inherits it.
-        // Killing the group prevents a timed-out worker from orphaning inference.
-        unsafe {
-            libc::kill(-process_group, libc::SIGKILL);
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-fn configure_process_containment(command: &mut Command) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-
-        command.process_group(0);
+        self.child.terminate_tree();
     }
 }
 
@@ -425,12 +615,43 @@ mod tests {
     use std::collections::BTreeSet;
     use std::io::Cursor;
     use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use beastie_protocol::{
         DialogueConstraints, Gesture, Idiolect, PROTOCOL_VERSION, validate_reply,
     };
 
     use super::*;
+
+    static PACKAGE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    fn packaged_runtime_fixture() -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "beastie-package-discovery-{}-{}",
+            std::process::id(),
+            PACKAGE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let worker = root.join(format!("beastie-ai-worker{}", std::env::consts::EXE_SUFFIX));
+        let server = root
+            .join("runtime")
+            .join(format!("llama-server{}", std::env::consts::EXE_SUFFIX));
+        let model = root.join("models/Qwen3.5-0.8B-Q4_0.gguf");
+        fs::create_dir_all(server.parent().expect("server parent")).unwrap();
+        fs::create_dir_all(model.parent().expect("model parent")).unwrap();
+        fs::write(&worker, b"fixture").unwrap();
+        fs::write(&server, b"fixture").unwrap();
+        fs::write(&model, b"fixture").unwrap();
+        let sha256 = format!("{:x}", Sha256::digest(b"fixture"));
+        fs::write(
+            root.join("models/manifest.toml"),
+            format!(
+                "[selection.dialogue]\npreferred_candidate = \"selected\"\n\n[[candidate]]\nid = \"other\"\nfile = \"other.gguf\"\nbytes = 1\nsha256 = \"{}\"\n\n[[candidate]]\nid = \"selected\"\nfile = \"Qwen3.5-0.8B-Q4_0.gguf\"\nbytes = 7\nsha256 = \"{sha256}\"\n",
+                "0".repeat(64)
+            ),
+        )
+        .unwrap();
+        (root, worker, server, model)
+    }
 
     fn request() -> DialogueRequest {
         DialogueRequest {
@@ -440,8 +661,10 @@ mod tests {
             mood: "wary".to_owned(),
             known_concepts: BTreeSet::new(),
             candidate_memories: Vec::new(),
+            candidate_beliefs: Vec::new(),
             idiolect: Idiolect::default(),
             desired_social_act: None,
+            input_rejection: None,
             player_said: "hello".to_owned(),
             constraints: DialogueConstraints {
                 max_words: 3,
@@ -521,20 +744,10 @@ mod tests {
 
     #[test]
     fn packaged_runtime_is_discovered_without_environment_configuration() {
-        let root =
-            std::env::temp_dir().join(format!("beastie-package-discovery-{}", std::process::id()));
-        let worker = root.join(format!("beastie-ai-worker{}", std::env::consts::EXE_SUFFIX));
-        let server = root
-            .join("runtime")
-            .join(format!("llama-server{}", std::env::consts::EXE_SUFFIX));
-        let model = root.join("models").join("Qwen3.5-0.8B-Q4_0.gguf");
-        std::fs::create_dir_all(server.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(model.parent().unwrap()).unwrap();
-        for path in [&worker, &server, &model] {
-            std::fs::write(path, b"fixture").unwrap();
-        }
+        let (root, worker, server, model) = packaged_runtime_fixture();
 
         let config = WorkerConfig::from_package_root(&root, Duration::from_secs(5))
+            .expect("valid package should pass integrity")
             .expect("complete package should be discovered");
         assert_eq!(config.executable, worker);
         assert!(
@@ -551,6 +764,34 @@ mod tests {
         );
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn packaged_runtime_rejects_selected_model_byte_count_mismatch() {
+        let (root, _, _, model) = packaged_runtime_fixture();
+        fs::write(&model, b"truncated").unwrap();
+        let error = WorkerConfig::from_package_root(&root, Duration::from_secs(5))
+            .expect_err("wrong model bytes must fail closed");
+        assert!(matches!(error, PackageDiscoveryError::ModelBytes { .. }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn packaged_runtime_sha_mismatch_uses_authored_dialogue_fallback() {
+        let (root, _, _, model) = packaged_runtime_fixture();
+        fs::write(&model, b"fIxture").unwrap();
+        let config = WorkerConfig::from_package_root_with_fallback(&root, Duration::from_secs(5));
+        assert!(config.is_none(), "wrong model digest must fail closed");
+
+        let dialogue = request();
+        let mut manager = DialogueManager::new(config);
+        assert!(manager.request(dialogue.clone()));
+        let fallback = manager.recv_timeout(Duration::from_secs(1));
+        assert_eq!(
+            fallback,
+            beastie_protocol::constrained_fallback_reply(&dialogue)
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -688,7 +929,10 @@ mod tests {
 
     #[cfg(unix)]
     fn process_exists(pid: i32) -> bool {
-        unsafe { libc::kill(pid, 0) == 0 }
+        use nix::sys::signal::kill;
+        use nix::unistd::Pid;
+
+        kill(Pid::from_raw(pid), None).is_ok()
     }
 
     fn compile_worker(label: &str) -> PathBuf {

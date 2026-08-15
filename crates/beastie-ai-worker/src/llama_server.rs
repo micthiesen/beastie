@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use beastie_protocol::{DialogueReply, DialogueRequest};
@@ -10,8 +10,9 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::llama_cpp::{parse_single_reply, validate_model_grounding, validate_model_safety};
+use crate::process::{ContainedChild, UnixProcessGroup};
 use crate::prompt::structured_prompt;
-use crate::{BackendError, DialogueBackend, LlamaServerConfig};
+use crate::{BackendError, DialogueBackend, LlamaServerConfig, bounded_llama_threads};
 
 const LOOPBACK_HOST: &str = "127.0.0.1";
 const MAX_HTTP_HEADER_BYTES: usize = 8 * 1024;
@@ -28,7 +29,7 @@ pub struct LlamaServerBackend {
 
 #[derive(Debug)]
 struct RunningServer {
-    child: Child,
+    child: ContainedChild,
     shutdown: Option<std::process::ChildStdin>,
     address: SocketAddr,
 }
@@ -124,6 +125,7 @@ impl LlamaServerBackend {
         drop(listener);
 
         let mut server_args = self.config.extra_args.clone();
+        let threads = bounded_llama_threads(self.config.threads).to_string();
         server_args.extend([
             OsString::from("--model"),
             self.config.model.clone().into_os_string(),
@@ -137,6 +139,10 @@ impl LlamaServerBackend {
             OsString::from("2048"),
             OsString::from("--parallel"),
             OsString::from("1"),
+            OsString::from("--threads"),
+            OsString::from(&threads),
+            OsString::from("--threads-batch"),
+            OsString::from(&threads),
             OsString::from("--no-warmup"),
             OsString::from("--offline"),
             OsString::from("--log-disable"),
@@ -165,8 +171,8 @@ impl LlamaServerBackend {
             command
         };
         command.stdout(Stdio::null()).stderr(Stdio::null());
-        configure_process_containment(&mut command);
-        let mut child = command.spawn().map_err(BackendError::Start)?;
+        let mut child = ContainedChild::spawn(&mut command, UnixProcessGroup::New)
+            .map_err(BackendError::Start)?;
         let shutdown = if self.config.supervisor.is_some() {
             Some(child.stdin.take().ok_or(BackendError::ExitFailure)?)
         } else {
@@ -210,11 +216,16 @@ fn server_prompt(request: &DialogueRequest) -> Result<String, BackendError> {
     let recalled_memory = scaffold
         .get("recalled_memory")
         .ok_or(BackendError::MalformedReply)?;
+    let recalled_belief = scaffold
+        .get("recalled_belief")
+        .ok_or(BackendError::MalformedReply)?;
     let gesture = serde_json::to_string(gesture).map_err(|_| BackendError::MalformedReply)?;
     let recalled_memory =
         serde_json::to_string(recalled_memory).map_err(|_| BackendError::MalformedReply)?;
+    let recalled_belief =
+        serde_json::to_string(recalled_belief).map_err(|_| BackendError::MalformedReply)?;
     Ok(format!(
-        "{prefix}\n{{\"protocol_version\":{},\"request_id\":{},\"say\":\"__WRITE_SAY__\",\"gesture\":{gesture},\"recalled_memory\":{recalled_memory}}}",
+        "{prefix}\n{{\"protocol_version\":{},\"request_id\":{},\"say\":\"__WRITE_SAY__\",\"gesture\":{gesture},\"recalled_memory\":{recalled_memory},\"recalled_belief\":{recalled_belief}}}",
         request.protocol_version, request.request_id
     ))
 }
@@ -270,8 +281,7 @@ pub fn run_llama_server_supervisor(arguments: Vec<OsString>) -> io::Result<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    configure_process_containment(&mut command);
-    let mut child = command.spawn()?;
+    let mut child = ContainedChild::spawn(&mut command, UnixProcessGroup::New)?;
     let (closed_sender, closed_receiver) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
         let mut stdin = io::stdin().lock();
@@ -320,7 +330,7 @@ fn wait_for_health(
     api_key: &str,
     timeout: Duration,
     maximum: usize,
-    child: &mut Child,
+    child: &mut ContainedChild,
 ) -> Result<(), BackendError> {
     let started = Instant::now();
     loop {
@@ -340,7 +350,29 @@ fn wait_for_health(
             maximum,
         );
         if matches!(response, Ok(HttpResponse { status: 200, .. })) {
-            return Ok(());
+            // The port probe and server bind cannot be atomic. Do not trust the first listener
+            // that answers: a squatter would make llama-server exit on EADDRINUSE. Give the child
+            // time to report that failure, require it to remain alive, then confirm health again
+            // before any dialogue is sent.
+            std::thread::sleep(Duration::from_millis(50).min(remaining));
+            if child.try_wait().map_err(BackendError::Wait)?.is_some() {
+                return Err(BackendError::ExitFailure);
+            }
+            let remaining = timeout
+                .checked_sub(started.elapsed())
+                .ok_or(BackendError::Timeout)?;
+            let confirmation = http_request(
+                address,
+                "GET",
+                "/health",
+                None,
+                api_key,
+                remaining.min(Duration::from_millis(250)),
+                maximum,
+            );
+            if matches!(confirmation, Ok(HttpResponse { status: 200, .. })) {
+                return Ok(());
+            }
         }
         std::thread::sleep(STARTUP_POLL.min(remaining));
     }
@@ -476,29 +508,8 @@ fn hex_key(bytes: impl IntoIterator<Item = u8>) -> String {
     key
 }
 
-fn terminate_child(child: &mut Child) {
-    #[cfg(unix)]
-    if let Ok(process_group) = i32::try_from(child.id()) {
-        // The server has its own group, so its descendants cannot outlive a restart or drop.
-        unsafe extern "C" {
-            fn kill(pid: i32, signal: i32) -> i32;
-        }
-        const SIGKILL: i32 = 9;
-        unsafe {
-            kill(-process_group, SIGKILL);
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-fn configure_process_containment(command: &mut Command) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-
-        command.process_group(0);
-    }
+fn terminate_child(child: &mut ContainedChild) {
+    child.terminate_tree();
 }
 
 #[cfg(test)]
@@ -516,7 +527,7 @@ mod tests {
         let request: DialogueRequest = serde_json::from_str(BERRY_MEMORY).expect("valid request");
         let prompt = server_prompt(&request).expect("prompt should build");
         assert!(prompt.ends_with(
-            "{\"protocol_version\":1,\"request_id\":41,\"say\":\"__WRITE_SAY__\",\"gesture\":\"none\",\"recalled_memory\":41}"
+            "{\"protocol_version\":1,\"request_id\":41,\"say\":\"__WRITE_SAY__\",\"gesture\":\"none\",\"recalled_memory\":41,\"recalled_belief\":null}"
         ));
     }
 
@@ -528,6 +539,7 @@ mod tests {
             timeout: Duration::from_secs(1),
             max_output_bytes: usize::MAX,
             cpu_only: true,
+            threads: 2,
             extra_args: Vec::new(),
             supervisor: None,
         });

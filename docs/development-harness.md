@@ -14,18 +14,21 @@ Completed on the development Mac on 2026-08-15:
 - captured the real rendered window by window ID to a valid RGBA PNG;
 - inspected the captured fixture dialogue and placeholder creature;
 - submitted a real Talk interaction through the native keyboard path and observed its durable
-  dialogue request ID advance.
+  dialogue request ID advance;
+- used real macOS pointer events to open the Bowl context, open the food chooser, select Berry, and
+  observe the modal close with changed state.
 
 Alacritty required Screen Recording/Accessibility approval before capture and focus worked. Launching
 the Metal window directly from the automation backend can produce a blank or occluded window, while
 launching through Alacritty renders correctly. During repeated release-package automation, yabai
 occasionally trapped the ggez window on a blank first frame at 100% CPU. `yabai --stop-service`
 before launch made the same package complete immediately; restart it with `yabai --start-service`
-afterward. The current interactive room accepts pointer input in
-code and its logical coordinate mapping is unit-tested, but macOS host-driven clicks appeared to fall
-through to the Alacritty/loginwindow stack even after raising the Beastie window and temporarily
-stopping yabai. Treat real pointer delivery as unverified, not as a gameplay failure. Physical
-controller input is also still unverified.
+afterward. Stopping yabai for the focused native input run made real pointer and keyboard delivery
+reliable; the service was restored afterward. No physical controller was attached. A small native
+IOHID user-device probe compiled but macOS rejected device creation before any report was sent, so
+the remaining controller host smoke requires suitable hardware or a signed virtual-device setup.
+Controller callbacks, modal focus, action selection, and the on-screen keyboard remain covered by
+automated tests.
 
 ## Shared session boundary
 
@@ -146,8 +149,9 @@ corresponding real interaction is implemented. By the end of the relevant slices
 2. Run the identical scenario through the visible ggez game with fixture AI.
 3. Produce and inspect a framebuffer PNG.
 4. Correlate authoritative state, emitted events, dialogue, and `RenderPlan` in one trace.
-5. Launch the real window and verify at least one genuine pointer or keyboard path. Keyboard Talk is
-   proven on macOS; pointer delivery and physical controller input remain outstanding host checks.
+5. Launch the real window and verify at least one genuine pointer or keyboard path. Pointer feeding
+   and keyboard Talk are proven on macOS; physical-controller input remains the outstanding host
+   check.
 
 Keep completed scenarios as permanent fixtures and include their headless checks in
 `cargo xtask verify`. Visible capture and host-input smoke tests remain explicit host checks when a

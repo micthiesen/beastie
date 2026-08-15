@@ -35,6 +35,7 @@ fn backend(mode: &str, record: &Path, maximum: usize) -> LlamaServerBackend {
         timeout: Duration::from_millis(300),
         max_output_bytes: maximum,
         cpu_only: true,
+        threads: 3,
         extra_args: vec![
             fixture_program().into_os_string(),
             OsString::from("--fake-mode"),
@@ -88,6 +89,7 @@ fn warm_server_reuses_one_pid_and_receives_flags_auth_and_bounded_payload() {
         .expect("start record");
     assert!(start.contains("--host 127.0.0.1"));
     assert!(start.contains("--device none --no-op-offload -ngl 0"));
+    assert!(start.contains("--threads 3 --threads-batch 3"));
     let post = lines
         .iter()
         .find(|line| line.contains("POST /v1/chat/completions"))

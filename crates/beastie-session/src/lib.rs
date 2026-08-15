@@ -3,11 +3,12 @@
 use std::collections::BTreeSet;
 
 use beastie_core::{
-    Concept, FoodId, GameEvent, MemoryCue, MemoryQuery, Mood, OfflineProgress, PlayerEvent,
-    Reaction, SaveGame, SeededRandom, ToyId, WorldState, advance_offline, step,
+    Concept, FoodId, GameEvent, LanguageExposure, MemoryCue, MemoryQuery, Mood, OfflineProgress,
+    PlayerEvent, Reaction, SaveGame, SeededRandom, ToyId, WorldState, advance_offline, step,
 };
 use beastie_protocol::{
-    DialogueRequest, DialogueRequestContext, Gesture, build_dialogue_request, validate_request,
+    DialogueRequest, DialogueRequestContext, Gesture, build_dialogue_request,
+    classify_content_boundary, normalize_dialogue_request, progression_max_words, validate_request,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -48,6 +49,9 @@ pub enum SessionCommand {
     },
     React {
         reaction: Reaction,
+    },
+    LanguageExposure {
+        exposure: LanguageExposure,
     },
     Save,
     Load,
@@ -161,6 +165,13 @@ impl GameSession {
             checkpoint: None,
         };
         let progress = advance_offline(&mut session.world, offline_ms, &mut session.random);
+        if progress.applied_ms > 0 {
+            let conversation = &mut session.world.creature.conversation;
+            conversation.next_talk_at_ms = conversation
+                .next_talk_at_ms
+                .saturating_sub(progress.applied_ms);
+            conversation.contextual_follow_up_available = false;
+        }
         session.world.validate().map_err(SessionError::State)?;
         Ok((session, progress))
     }
@@ -216,7 +227,7 @@ impl GameSession {
         let mut events = Vec::new();
         let mut dialogue_request = None;
         let mut inspected_world = None;
-        let save_json = None;
+        let mut save_json = None;
 
         match envelope.command {
             SessionCommand::Feed { food } => {
@@ -240,37 +251,63 @@ impl GameSession {
                 events = step(&mut self.world, &[], milliseconds, &mut self.random);
             }
             SessionCommand::Talk { text } => {
-                events = self.apply_player_event(PlayerEvent::Talk);
-                let desired_social_act = events.iter().find_map(|event| match event {
-                    GameEvent::SocialActExpressed(act) => Some(*act),
-                    _ => None,
-                });
-                let request = build_dialogue_request(
-                    &self.world,
-                    &memory_query(&text),
-                    DialogueRequestContext {
-                        request_id: self.next_request_id,
-                        mood: mood(&self.world),
-                        player_said: &text,
-                        desired_social_act,
-                        max_words: 24,
-                        allowed_gestures: BTreeSet::from([
-                            Gesture::None,
-                            Gesture::LookPlayer,
-                            Gesture::LookWindow,
-                            Gesture::Shiver,
-                            Gesture::Sleepy,
-                        ]),
-                    },
-                );
-                validate_request(&request).map_err(SessionError::Dialogue)?;
-                self.next_request_id = self.next_request_id.saturating_add(1);
-                dialogue_request = Some(request);
+                let talk_events = self.apply_player_event(PlayerEvent::Talk);
+                let accepted = talk_events
+                    .iter()
+                    .any(|event| matches!(event, GameEvent::TalkAccepted { .. }));
+                events.extend(talk_events);
+                if accepted && classify_content_boundary(&text).is_none() {
+                    for exposure in language_exposures(&text) {
+                        events.extend(
+                            self.apply_player_event(PlayerEvent::LanguageExposure(exposure)),
+                        );
+                    }
+                }
+                if accepted {
+                    let desired_social_act = events.iter().find_map(|event| match event {
+                        GameEvent::SocialActExpressed(act) => Some(*act),
+                        _ => None,
+                    });
+                    let mut request = build_dialogue_request(
+                        &self.world,
+                        &memory_query(&text),
+                        DialogueRequestContext {
+                            request_id: self.next_request_id,
+                            mood: mood(&self.world),
+                            player_said: &text,
+                            desired_social_act,
+                            max_words: progression_max_words(&self.world),
+                            allowed_gestures: BTreeSet::from([
+                                Gesture::None,
+                                Gesture::LookPlayer,
+                                Gesture::LookWindow,
+                                Gesture::Shiver,
+                                Gesture::Sleepy,
+                            ]),
+                        },
+                    );
+                    normalize_dialogue_request(&mut request);
+                    validate_request(&request).map_err(SessionError::Dialogue)?;
+                    self.next_request_id = self.next_request_id.saturating_add(1);
+                    dialogue_request = Some(request);
+                }
             }
             SessionCommand::React { reaction } => {
                 events = self.apply_player_event(PlayerEvent::React(reaction));
             }
+            SessionCommand::LanguageExposure { exposure } => {
+                events = self.apply_player_event(PlayerEvent::LanguageExposure(exposure));
+            }
             SessionCommand::Save => {
+                let durable = SessionSave {
+                    version: SESSION_SAVE_VERSION,
+                    saved_at_ms: self.world.elapsed_ms,
+                    world: self.world.clone(),
+                    random: self.random,
+                    sequence: next_sequence,
+                    next_request_id: self.next_request_id,
+                };
+                save_json = Some(durable.to_json()?);
                 self.checkpoint = Some(Checkpoint {
                     world: self.world.clone(),
                     random: self.random,
@@ -301,6 +338,40 @@ impl GameSession {
     fn apply_player_event(&mut self, event: PlayerEvent) -> Vec<GameEvent> {
         step(&mut self.world, &[event], 0, &mut self.random)
     }
+}
+
+fn language_exposures(text: &str) -> Vec<LanguageExposure> {
+    let words = text
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>();
+    let contains = |terms: &[&str]| {
+        terms
+            .iter()
+            .any(|term| words.iter().any(|word| word == term))
+    };
+    let mut exposures = Vec::new();
+    if contains(&["fuck", "fucking", "fucked", "damn", "bastard"]) {
+        exposures.push(LanguageExposure::Profanity);
+    }
+    if contains(&["shit", "shitty", "piss", "fart", "ass", "arse", "butt"]) {
+        exposures.push(LanguageExposure::Crudeness);
+    }
+    let normalized = words.join(" ");
+    if [
+        "that is what she said",
+        "that s what she said",
+        "nice package",
+        "come to bed",
+        "under the sheets",
+    ]
+    .iter()
+    .any(|phrase| normalized.contains(phrase))
+    {
+        exposures.push(LanguageExposure::Innuendo);
+    }
+    exposures
 }
 
 #[derive(Deserialize)]
@@ -493,6 +564,12 @@ mod tests {
                 .candidate_memories
                 .iter()
                 .any(|memory| memory.fact.contains("berry"))
+        );
+        assert!(
+            request
+                .candidate_beliefs
+                .iter()
+                .any(|belief| belief.proposition == beastie_core::BeliefKind::RedFoodIsATrick)
         );
     }
 
@@ -739,7 +816,12 @@ mod tests {
             .apply(command(SessionCommand::Save))
             .expect("save command");
         assert_eq!(save_observation.sequence, 1);
-        assert_eq!(save_observation.save_json, None);
+        let durable_json = save_observation
+            .save_json
+            .expect("save command should return durable JSON");
+        let durable = SessionSave::from_json(&durable_json).expect("durable session save");
+        assert_eq!(durable.sequence, 1);
+        assert_eq!(durable.world, *session.world());
         session
             .apply(command(SessionCommand::Load))
             .expect("load command");
@@ -747,5 +829,194 @@ mod tests {
             .apply(command(SessionCommand::Inspect))
             .expect("next command");
         assert_eq!(inspect.sequence, 3);
+    }
+
+    #[test]
+    fn save_observation_round_trips_in_a_fresh_session() {
+        let mut session = GameSession::new(64, "Portable");
+        session
+            .apply(command(SessionCommand::Tick {
+                milliseconds: 1_500,
+            }))
+            .expect("tick before save");
+        let saved_world = session.world().clone();
+        let observation = session
+            .apply(command(SessionCommand::Save))
+            .expect("save command");
+        let source = observation.save_json.expect("durable JSON");
+        let decoded = SessionSave::from_json(&source).expect("decode save observation");
+        assert_eq!(decoded.sequence, observation.sequence);
+        assert_eq!(decoded.world, saved_world);
+
+        let (resumed, progress) = GameSession::resume_json(&source, decoded.saved_at_ms)
+            .expect("fresh session should resume");
+        assert_eq!(progress.applied_ms, 0);
+        assert_eq!(resumed.world(), &saved_world);
+    }
+
+    #[test]
+    fn ignored_talk_is_silent_and_one_reaction_follow_up_is_emitted() {
+        let mut session = GameSession::new(70, "Sparse");
+        let first = session
+            .apply(command(SessionCommand::Talk {
+                text: "hello".to_owned(),
+            }))
+            .expect("first talk");
+        assert!(first.dialogue_request.is_some());
+        assert!(first.events.iter().any(|event| matches!(
+            event,
+            GameEvent::TalkAccepted {
+                contextual_follow_up: false
+            }
+        )));
+
+        let ignored = session
+            .apply(command(SessionCommand::Talk {
+                text: "again already".to_owned(),
+            }))
+            .expect("ignored talk command");
+        assert_eq!(ignored.dialogue_request, None);
+        assert!(ignored.events.contains(&GameEvent::TalkIgnored));
+
+        session
+            .apply(command(SessionCommand::React {
+                reaction: Reaction::Laugh,
+            }))
+            .expect("reaction");
+        let follow_up = session
+            .apply(command(SessionCommand::Talk {
+                text: "well?".to_owned(),
+            }))
+            .expect("contextual follow-up");
+        assert_eq!(
+            follow_up
+                .dialogue_request
+                .expect("follow-up request")
+                .request_id,
+            2
+        );
+        assert!(follow_up.events.iter().any(|event| matches!(
+            event,
+            GameEvent::TalkAccepted {
+                contextual_follow_up: true
+            }
+        )));
+
+        session
+            .apply(command(SessionCommand::React {
+                reaction: Reaction::Laugh,
+            }))
+            .expect("second reaction");
+        let exhausted = session
+            .apply(command(SessionCommand::Talk {
+                text: "and again?".to_owned(),
+            }))
+            .expect("exhausted follow-up");
+        assert_eq!(exhausted.dialogue_request, None);
+        assert!(exhausted.events.contains(&GameEvent::TalkIgnored));
+    }
+
+    #[test]
+    fn language_exposure_command_is_typed_and_carries_no_raw_content() {
+        let parsed = GameSession::parse_command(
+            r#"{"version":1,"command":"language_exposure","exposure":"profanity"}"#,
+        )
+        .expect("typed exposure command");
+        assert_eq!(
+            parsed.command,
+            SessionCommand::LanguageExposure {
+                exposure: LanguageExposure::Profanity,
+            }
+        );
+        assert!(
+            GameSession::parse_command(
+                r#"{"version":1,"command":"language_exposure","exposure":"profanity","text":"raw"}"#
+            )
+            .is_err()
+        );
+
+        let mut session = GameSession::new(71, "Learner");
+        let observation = session.apply(parsed).expect("apply exposure");
+        assert!(
+            observation
+                .events
+                .contains(&GameEvent::LanguageExposureRegistered(
+                    LanguageExposure::Profanity
+                ))
+        );
+        assert!(session.world().creature.social_habits.profanity > 0.02);
+        assert!(session.world().creature.memories.is_empty());
+    }
+
+    #[test]
+    fn ordinary_player_language_teaches_permitted_lanes_without_storing_raw_text() {
+        let mut session = GameSession::new(75, "Bad Influence");
+        let observation = session
+            .apply(command(SessionCommand::Talk {
+                text: "Fuck, that shitty bell has a nice package.".to_owned(),
+            }))
+            .expect("permitted rough language should be accepted");
+
+        for exposure in [
+            LanguageExposure::Profanity,
+            LanguageExposure::Crudeness,
+            LanguageExposure::Innuendo,
+        ] {
+            assert!(
+                observation
+                    .events
+                    .contains(&GameEvent::LanguageExposureRegistered(exposure))
+            );
+        }
+        assert!(session.world().creature.social_habits.profanity > 0.02);
+        assert!(session.world().creature.social_habits.crudeness > 0.02);
+        assert!(session.world().creature.social_habits.sexual_innuendo > 0.01);
+        assert!(session.world().creature.memories.is_empty());
+        let save = session.capture(session.world().elapsed_ms);
+        assert!(!save.to_json().expect("save JSON").contains("nice package"));
+    }
+
+    #[test]
+    fn ignored_talk_cannot_farm_language_exposure_during_cooldown() {
+        let mut session = GameSession::new(76, "Selective Hearing");
+        session
+            .apply(command(SessionCommand::Talk {
+                text: "hello".to_owned(),
+            }))
+            .expect("first talk");
+        let before = session.world().creature.social_habits;
+        let ignored = session
+            .apply(command(SessionCommand::Talk {
+                text: "fuck that shitty nice package".to_owned(),
+            }))
+            .expect("cooldown talk");
+
+        assert!(ignored.events.contains(&GameEvent::TalkIgnored));
+        assert!(
+            !ignored
+                .events
+                .iter()
+                .any(|event| matches!(event, GameEvent::LanguageExposureRegistered(_)))
+        );
+        assert_eq!(session.world().creature.social_habits, before);
+    }
+
+    #[test]
+    fn prohibited_talk_input_is_normalized_before_request_serialization() {
+        let mut session = GameSession::new(72, "Boundary");
+        let observation = session
+            .apply(command(SessionCommand::Talk {
+                text: "go kill yourself".to_owned(),
+            }))
+            .expect("boundary input produces a constrained request");
+        let request = observation.dialogue_request.expect("accepted talk request");
+        assert!(request.player_said.is_empty());
+        assert_eq!(
+            request.input_rejection,
+            Some(beastie_protocol::ContentBoundaryViolation::SelfHarmEncouragement)
+        );
+        let serialized = serde_json::to_string(&request).expect("serialize request");
+        assert!(!serialized.contains("go kill yourself"));
+        assert!(session.world().creature.memories.is_empty());
     }
 }

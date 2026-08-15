@@ -93,7 +93,8 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
             .any(|belief| belief.kind == BeliefKind::RedFoodIsATrick)
     );
 
-    // The first day includes an explicit play command, and the autonomous loop sleeps.
+    // The arc includes an explicit play command, and the autonomous loop sleeps once energy wins
+    // over the competing visible comfort and hunger intentions.
     assert!(
         session
             .world()
@@ -102,8 +103,10 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
             .iter()
             .any(|memory| { memory.kind == (MemoryKind::PlayedWith { toy: ToyId::Ball }) })
     );
-    assert!(has_event(&observations[3].events, |event| {
-        matches!(event, GameEvent::SleepStarted)
+    assert!(observations.iter().any(|observation| {
+        has_event(&observation.events, |event| {
+            matches!(event, GameEvent::SleepStarted)
+        })
     }));
 
     let first_talk = &observations[4];
@@ -219,6 +222,6 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
     }));
     assert_eq!(
         session.world().creature.current_intention,
-        Intention::ApproachPlayer
+        Intention::WaitAtBowl
     );
 }

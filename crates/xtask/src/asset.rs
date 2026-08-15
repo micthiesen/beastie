@@ -1,8 +1,19 @@
-use std::{collections::HashSet, fs, path::Path};
+use std::{
+    collections::HashSet,
+    env, fs,
+    io::{Cursor, Write},
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{Context, Result, bail};
-use image::{GenericImageView, ImageReader};
-use serde::Deserialize;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, ImageReader, Rgba};
+use serde::{Deserialize, Serialize};
+
+const PIXELLAB_API_URL: &str = "https://api.pixellab.ai/v2/create-image-pixflux";
+static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +77,87 @@ struct Provenance {
     human_modifications: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PixfluxRequest {
+    description: String,
+    image_size: ImageSize,
+    no_background: bool,
+    seed: i64,
+    color_image: EncodedImage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    init_image: Option<EncodedImage>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ImageSize {
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EncodedImage {
+    #[serde(rename = "type")]
+    #[serde(default = "base64_kind")]
+    kind: String,
+    base64: String,
+    #[serde(default = "png_format")]
+    format: String,
+}
+
+fn base64_kind() -> String {
+    "base64".to_owned()
+}
+
+fn png_format() -> String {
+    "png".to_owned()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PixfluxResponse {
+    image: EncodedImage,
+    #[serde(default)]
+    usage: Option<serde_json::Value>,
+}
+
+trait PixelLabClient {
+    fn create_image(&self, token: &str, request: &PixfluxRequest) -> Result<PixfluxResponse>;
+}
+
+struct HttpPixelLabClient;
+
+impl PixelLabClient for HttpPixelLabClient {
+    fn create_image(&self, token: &str, request: &PixfluxRequest) -> Result<PixfluxResponse> {
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(15))
+            .timeout_read(Duration::from_secs(180))
+            .timeout_write(Duration::from_secs(30))
+            .build();
+        let response = agent
+            .post(PIXELLAB_API_URL)
+            .set("Authorization", &format!("Bearer {token}"))
+            .set("Content-Type", "application/json")
+            .send_json(request)
+            .map_err(|error| anyhow::anyhow!("PixelLab request failed: {error}"))?;
+        response
+            .into_json::<PixfluxResponse>()
+            .context("PixelLab returned malformed JSON")
+    }
+}
+
+#[derive(Debug)]
+struct GenerationReport {
+    destination: PathBuf,
+    seed: i64,
+    prompt: String,
+    references: Vec<String>,
+    generated_at: String,
+    usage: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 enum Source {
     Final,
@@ -100,6 +192,350 @@ pub(crate) fn check(manifest_path: &Path, require_runtime: bool) -> Result<()> {
             "disabled"
         }
     );
+    Ok(())
+}
+
+pub(crate) fn generate(manifest_path: &Path, id: &str, force: bool) -> Result<()> {
+    let token = env::var("PIXELLAB_API_TOKEN")
+        .context("PIXELLAB_API_TOKEN is required for asset generation")?;
+    if token.trim().is_empty() {
+        bail!("PIXELLAB_API_TOKEN must not be empty");
+    }
+    let report = generate_with_client(manifest_path, id, force, &HttpPixelLabClient, &token)?;
+    println!("generated {}", report.destination.display());
+    println!("PixelLab endpoint: {PIXELLAB_API_URL}");
+    println!("PixelLab job: synchronous endpoint (no background job id)");
+    if let Some(usage) = &report.usage {
+        println!("PixelLab usage: {usage}");
+    }
+    println!("manifest provenance:");
+    println!("  generator = \"pixellab\"");
+    println!("  job_id = \"synchronous:create-image-pixflux\"");
+    println!("  generated_at = {:?}", report.generated_at);
+    println!("  prompt = {:?}", report.prompt);
+    println!("  seed = {:?}", report.seed.to_string());
+    println!("  references = {:?}", report.references);
+    println!(
+        "  terms = {:?}",
+        format!("PixelLab Terms of Use, accessed {}", report.generated_at)
+    );
+    Ok(())
+}
+
+fn generate_with_client(
+    manifest_path: &Path,
+    id: &str,
+    force: bool,
+    client: &impl PixelLabClient,
+    token: &str,
+) -> Result<GenerationReport> {
+    let source = fs::read_to_string(manifest_path)
+        .with_context(|| format!("failed to read asset manifest {}", manifest_path.display()))?;
+    let manifest: Manifest = toml::from_str(&source)
+        .with_context(|| format!("failed to parse asset manifest {}", manifest_path.display()))?;
+    let asset_root = manifest_path
+        .parent()
+        .context("asset manifest must have a parent directory")?;
+    let asset = select_generation_asset(&manifest, id)?;
+    let provenance = asset
+        .provenance
+        .as_ref()
+        .context("asset generation requires manifest provenance with prompt and numeric seed")?;
+    let seed = provenance.seed.parse::<i64>().with_context(|| {
+        format!(
+            "asset {} provenance seed {:?} is not a numeric PixelLab seed",
+            asset.id, provenance.seed
+        )
+    })?;
+    let destination = candidate_path(asset_root, Source::Generated, &asset.id, 1, 0);
+    if destination.exists() && !force {
+        bail!(
+            "refusing to overwrite {}; pass --force to replace it",
+            destination.display()
+        );
+    }
+
+    let palette = read_palette(asset, asset_root)?;
+    let color_image = encode_palette_image(&palette)?;
+    let init_image = provenance
+        .references
+        .first()
+        .map(|reference| {
+            let path = checked_relative_path(asset_root, reference, "reference", &asset.id)?;
+            encode_png_file(&path)
+        })
+        .transpose()?;
+    let request = PixfluxRequest {
+        description: provenance.prompt.clone(),
+        image_size: ImageSize {
+            width: asset.width,
+            height: asset.height,
+        },
+        no_background: asset.transparent,
+        seed,
+        color_image,
+        init_image,
+    };
+    let response = client.create_image(token, &request)?;
+    let bytes = decode_response_image(&response.image)?;
+    validate_png_bytes(asset, &bytes)?;
+    publish_png(asset, asset_root, &bytes, force)?;
+
+    Ok(GenerationReport {
+        destination,
+        seed,
+        prompt: provenance.prompt.clone(),
+        references: provenance.references.clone(),
+        generated_at: utc_date()?,
+        usage: response.usage,
+    })
+}
+
+fn utc_date() -> Result<String> {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before the Unix epoch")?
+        .as_secs();
+    let days = i64::try_from(seconds / 86_400).context("system date is out of range")?;
+    let shifted = days + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    Ok(format!("{year:04}-{month:02}-{day:02}"))
+}
+
+fn select_generation_asset<'a>(manifest: &'a Manifest, id: &str) -> Result<&'a Asset> {
+    if manifest.audio.iter().any(|audio| audio.id == id) {
+        bail!("asset {id} is audio; PixelLab image generation does not support audio entries");
+    }
+    let asset = manifest
+        .asset
+        .iter()
+        .find(|asset| asset.id == id)
+        .with_context(|| format!("asset manifest has no entry with id {id}"))?;
+    validate_id(&asset.id, &format!("asset {}", asset.id))?;
+    if asset.status == Status::Reference {
+        bail!("asset {id} is a reference entry and cannot be generated into assets/generated");
+    }
+    if asset.frames != 1 {
+        bail!(
+            "asset {id} declares {} frames; this generator supports single-frame entries only",
+            asset.frames
+        );
+    }
+    if !(16..=400).contains(&asset.width) || !(16..=400).contains(&asset.height) {
+        bail!(
+            "asset {id} is {}x{}; PixelLab create-image-pixflux supports each side from 16 through 400",
+            asset.width,
+            asset.height
+        );
+    }
+    Ok(asset)
+}
+
+fn read_palette(asset: &Asset, asset_root: &Path) -> Result<Vec<[u8; 3]>> {
+    let path = checked_relative_path(asset_root, &asset.palette, "palette", &asset.id)?;
+    let contents = fs::read_to_string(&path).with_context(|| {
+        format!(
+            "asset {} failed to read palette {}",
+            asset.id,
+            path.display()
+        )
+    })?;
+    let colors = contents
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with(';'))
+        .map(|line| line.strip_prefix('#').unwrap_or(line))
+        .map(|color| {
+            if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                bail!("invalid RGB hex color {color:?}");
+            }
+            Ok([
+                u8::from_str_radix(&color[0..2], 16)?,
+                u8::from_str_radix(&color[2..4], 16)?,
+                u8::from_str_radix(&color[4..6], 16)?,
+            ])
+        })
+        .collect::<Result<Vec<_>>>()
+        .with_context(|| {
+            format!(
+                "asset {} palette {} must contain one RGB hex color per line",
+                asset.id,
+                path.display()
+            )
+        })?;
+    if colors.is_empty() {
+        bail!(
+            "asset {} palette {} must contain one RGB hex color per line",
+            asset.id,
+            path.display()
+        );
+    }
+    Ok(colors)
+}
+
+fn encode_palette_image(colors: &[[u8; 3]]) -> Result<EncodedImage> {
+    let width = u32::try_from(colors.len()).context("palette contains too many colors")?;
+    let image = ImageBuffer::from_fn(width, 1, |x, _| {
+        let [red, green, blue] = colors[x as usize];
+        Rgba([red, green, blue, u8::MAX])
+    });
+    encode_dynamic_image(&DynamicImage::ImageRgba8(image))
+}
+
+fn encode_png_file(path: &Path) -> Result<EncodedImage> {
+    let bytes = fs::read(path)
+        .with_context(|| format!("failed to read PixelLab reference {}", path.display()))?;
+    image::load_from_memory_with_format(&bytes, ImageFormat::Png)
+        .with_context(|| format!("PixelLab reference {} is not a valid PNG", path.display()))?;
+    Ok(EncodedImage {
+        kind: "base64".to_owned(),
+        base64: BASE64.encode(bytes),
+        format: "png".to_owned(),
+    })
+}
+
+fn encode_dynamic_image(image: &DynamicImage) -> Result<EncodedImage> {
+    let mut bytes = Cursor::new(Vec::new());
+    image
+        .write_to(&mut bytes, ImageFormat::Png)
+        .context("failed to encode PixelLab palette image")?;
+    Ok(EncodedImage {
+        kind: "base64".to_owned(),
+        base64: BASE64.encode(bytes.into_inner()),
+        format: "png".to_owned(),
+    })
+}
+
+fn decode_response_image(image: &EncodedImage) -> Result<Vec<u8>> {
+    if image.kind != "base64" || !image.format.eq_ignore_ascii_case("png") {
+        bail!(
+            "PixelLab returned unsupported image encoding type={:?} format={:?}",
+            image.kind,
+            image.format
+        );
+    }
+    let encoded = image
+        .base64
+        .strip_prefix("data:image/png;base64,")
+        .unwrap_or(&image.base64);
+    BASE64
+        .decode(encoded)
+        .context("PixelLab returned invalid base64 image data")
+}
+
+fn validate_png_bytes(asset: &Asset, bytes: &[u8]) -> Result<()> {
+    let image = image::load_from_memory_with_format(bytes, ImageFormat::Png)
+        .context("PixelLab response is not a valid PNG")?;
+    validate_decoded_png(asset, &image, "PixelLab response")
+}
+
+fn publish_png(asset: &Asset, asset_root: &Path, bytes: &[u8], force: bool) -> Result<PathBuf> {
+    let destination = candidate_path(asset_root, Source::Generated, &asset.id, 1, 0);
+    if destination.exists() && !force {
+        bail!(
+            "refusing to overwrite {}; pass --force to replace it",
+            destination.display()
+        );
+    }
+    let parent = destination
+        .parent()
+        .context("generated asset path must have a parent")?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create generated directory {}", parent.display()))?;
+    let sequence = NEXT_TEMP_FILE.fetch_add(1, Ordering::Relaxed);
+    let file_name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("generated asset path must have a UTF-8 filename")?;
+    let temporary = parent.join(format!(
+        ".{file_name}.tmp-{}-{sequence}",
+        std::process::id()
+    ));
+    let publish_result = (|| -> Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .with_context(|| format!("failed to create temporary asset {}", temporary.display()))?;
+        file.write_all(bytes)
+            .with_context(|| format!("failed to write temporary asset {}", temporary.display()))?;
+        file.sync_all()
+            .with_context(|| format!("failed to sync temporary asset {}", temporary.display()))?;
+        validate_png(asset, &temporary, "generated temporary")?;
+        if destination.exists() && !force {
+            bail!(
+                "destination appeared during generation: {}",
+                destination.display()
+            );
+        }
+        if force {
+            atomic_replace(&temporary, &destination)?;
+        } else {
+            fs::hard_link(&temporary, &destination).with_context(|| {
+                format!(
+                    "failed to atomically publish {} without overwriting an existing file",
+                    destination.display()
+                )
+            })?;
+        }
+        Ok(())
+    })();
+    if temporary.exists() {
+        let _ = fs::remove_file(&temporary);
+    }
+    publish_result?;
+    Ok(destination)
+}
+
+#[cfg(not(windows))]
+fn atomic_replace(source: &Path, destination: &Path) -> Result<()> {
+    fs::rename(source, destination).with_context(|| {
+        format!(
+            "failed to atomically replace {} with {}",
+            destination.display(),
+            source.display()
+        )
+    })
+}
+
+#[cfg(windows)]
+fn atomic_replace(source: &Path, destination: &Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: Both paths are live, NUL-terminated UTF-16 buffers for the duration of the call.
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        return Err(std::io::Error::last_os_error()).context("failed to atomically replace asset");
+    }
     Ok(())
 }
 
@@ -318,31 +754,7 @@ fn validate_id(id: &str, label: &str) -> Result<()> {
 }
 
 fn validate_palette(asset: &Asset, asset_root: &Path) -> Result<()> {
-    let path = checked_relative_path(asset_root, &asset.palette, "palette", &asset.id)?;
-    let contents = fs::read_to_string(&path).with_context(|| {
-        format!(
-            "asset {} failed to read palette {}",
-            asset.id,
-            path.display()
-        )
-    })?;
-    let colors = contents
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with(';'))
-        .map(|line| line.strip_prefix('#').unwrap_or(line))
-        .collect::<Vec<_>>();
-    if colors.is_empty()
-        || colors
-            .iter()
-            .any(|color| color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()))
-    {
-        bail!(
-            "asset {} palette {} must contain one RGB hex color per line",
-            asset.id,
-            path.display()
-        );
-    }
+    read_palette(asset, asset_root)?;
     Ok(())
 }
 
@@ -529,11 +941,15 @@ fn validate_png(asset: &Asset, path: &Path, source: &str) -> Result<()> {
             path.display()
         )
     })?;
+    validate_decoded_png(asset, &image, &path.display().to_string())
+}
+
+fn validate_decoded_png(asset: &Asset, image: &DynamicImage, candidate: &str) -> Result<()> {
     if image.dimensions() != (asset.width, asset.height) {
         bail!(
             "asset {} candidate {} is {}x{}, expected {}x{}",
             asset.id,
-            path.display(),
+            candidate,
             image.width(),
             image.height(),
             asset.width,
@@ -545,14 +961,14 @@ fn validate_png(asset: &Asset, path: &Path, source: &str) -> Result<()> {
         bail!(
             "asset {} candidate {} must contain transparent pixels",
             asset.id,
-            path.display()
+            candidate
         );
     }
     if !asset.transparent && has_transparency {
         bail!(
             "asset {} candidate {} must be fully opaque",
             asset.id,
-            path.display()
+            candidate
         );
     }
     Ok(())
@@ -576,6 +992,7 @@ fn is_iso_date(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::RefCell,
         fs,
         sync::atomic::{AtomicU64, Ordering},
     };
@@ -660,12 +1077,104 @@ terms = "test fixture"
             fs::write(&path, bytes).expect("wav");
             path
         }
+
+        fn generation_manifest(&self, frames: u32, status: &str) -> PathBuf {
+            let reference = self.root.join("style/reference.png");
+            let reference_image = ImageBuffer::from_pixel(16, 16, Rgba([1_u8, 2, 3, 0]));
+            reference_image
+                .save_with_format(reference, ImageFormat::Png)
+                .expect("reference PNG");
+            let path = self.root.join("manifest.toml");
+            fs::write(
+                &path,
+                format!(
+                    r#"
+version = 1
+
+[[asset]]
+id = "creature/test"
+kind = "sprite"
+width = 16
+height = 16
+frames = {frames}
+transparent = true
+palette = "style/main.hex"
+status = "{status}"
+
+[asset.provenance]
+generator = "pixellab"
+generated_at = "2026-08-15"
+prompt = "awkward test creature"
+seed = "4242"
+terms = "test"
+references = ["style/reference.png"]
+
+[[audio]]
+id = "audio/test"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "planned"
+provenance = "docs/audio.md"
+"#
+                ),
+            )
+            .expect("generation manifest");
+            path
+        }
     }
 
     impl Drop for TestAssets {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.root).expect("remove test assets");
         }
+    }
+
+    struct MockPixelLab {
+        response: RefCell<Option<PixfluxResponse>>,
+        request: RefCell<Option<serde_json::Value>>,
+        token: RefCell<Option<String>>,
+    }
+
+    impl MockPixelLab {
+        fn returning(bytes: &[u8]) -> Self {
+            Self {
+                response: RefCell::new(Some(PixfluxResponse {
+                    image: EncodedImage {
+                        kind: "base64".to_owned(),
+                        base64: format!("data:image/png;base64,{}", BASE64.encode(bytes)),
+                        format: "png".to_owned(),
+                    },
+                    usage: Some(serde_json::json!({"type": "usd", "usd": 0.01})),
+                })),
+                request: RefCell::new(None),
+                token: RefCell::new(None),
+            }
+        }
+    }
+
+    impl PixelLabClient for MockPixelLab {
+        fn create_image(&self, token: &str, request: &PixfluxRequest) -> Result<PixfluxResponse> {
+            self.request.replace(Some(
+                serde_json::to_value(request).expect("serialize captured request"),
+            ));
+            self.token.replace(Some(token.to_owned()));
+            self.response
+                .borrow_mut()
+                .take()
+                .context("mock response already consumed")
+        }
+    }
+
+    fn png_bytes(transparent: bool, red: u8) -> Vec<u8> {
+        let alpha = if transparent { 0 } else { u8::MAX };
+        let image =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(16, 16, Rgba([red, 34, 51, alpha])));
+        let mut bytes = Cursor::new(Vec::new());
+        image
+            .write_to(&mut bytes, ImageFormat::Png)
+            .expect("encode PNG");
+        bytes.into_inner()
     }
 
     #[test]
@@ -777,5 +1286,126 @@ terms = "test fixture"
             .to_string();
 
         assert!(error.contains("2ch"), "{error}");
+    }
+
+    #[test]
+    fn generation_selection_rejects_audio_references_and_multiple_frames() {
+        let assets = TestAssets::new();
+        let multi_path = assets.generation_manifest(4, "planned");
+        let source = fs::read_to_string(&multi_path).expect("manifest source");
+        let multi: Manifest = toml::from_str(&source).expect("multi-frame manifest");
+        let error = select_generation_asset(&multi, "creature/test")
+            .expect_err("multi-frame generation should fail")
+            .to_string();
+        assert!(error.contains("single-frame"), "{error}");
+        let error = select_generation_asset(&multi, "audio/test")
+            .expect_err("audio generation should fail")
+            .to_string();
+        assert!(error.contains("does not support audio"), "{error}");
+
+        let reference_path = assets.generation_manifest(1, "reference");
+        let source = fs::read_to_string(reference_path).expect("reference manifest source");
+        let reference: Manifest = toml::from_str(&source).expect("reference manifest");
+        let error = select_generation_asset(&reference, "creature/test")
+            .expect_err("reference generation should fail")
+            .to_string();
+        assert!(error.contains("reference entry"), "{error}");
+    }
+
+    #[test]
+    fn generation_builds_documented_payload_decodes_response_and_publishes_expected_path() {
+        let assets = TestAssets::new();
+        let manifest_path = assets.generation_manifest(1, "planned");
+        let bytes = png_bytes(true, 17);
+        let client = MockPixelLab::returning(&bytes);
+
+        let report = generate_with_client(&manifest_path, "creature/test", false, &client, "token")
+            .expect("mock generation");
+        assert_eq!(
+            report.destination,
+            assets.root.join("generated/creature/test.png")
+        );
+        validate_png(
+            &toml::from_str::<Manifest>(&fs::read_to_string(manifest_path).expect("manifest"))
+                .expect("parse manifest")
+                .asset[0],
+            &report.destination,
+            "test generated",
+        )
+        .expect("published PNG contract");
+        assert_eq!(client.token.borrow().as_deref(), Some("token"));
+        let request = client.request.borrow();
+        let request = request.as_ref().expect("captured request");
+        assert_eq!(request["description"], "awkward test creature");
+        assert_eq!(
+            request["image_size"],
+            serde_json::json!({"width": 16, "height": 16})
+        );
+        assert_eq!(request["no_background"], true);
+        assert_eq!(request["seed"], 4242);
+        assert_eq!(request["color_image"]["type"], "base64");
+        assert_eq!(request["init_image"]["format"], "png");
+    }
+
+    #[test]
+    fn generation_never_calls_service_or_overwrites_without_force() {
+        let assets = TestAssets::new();
+        let manifest_path = assets.generation_manifest(1, "planned");
+        let original = png_bytes(true, 17);
+        let destination = assets.root.join("generated/creature/test.png");
+        fs::create_dir_all(destination.parent().expect("destination parent"))
+            .expect("generated parent");
+        fs::write(&destination, &original).expect("existing candidate");
+        let unused_client = MockPixelLab::returning(&png_bytes(true, 99));
+
+        let error = generate_with_client(
+            &manifest_path,
+            "creature/test",
+            false,
+            &unused_client,
+            "token",
+        )
+        .expect_err("overwrite should require force")
+        .to_string();
+        assert!(error.contains("pass --force"), "{error}");
+        assert!(unused_client.request.borrow().is_none());
+        assert_eq!(fs::read(&destination).expect("original remains"), original);
+
+        let replacement = png_bytes(true, 99);
+        let force_client = MockPixelLab::returning(&replacement);
+        generate_with_client(
+            &manifest_path,
+            "creature/test",
+            true,
+            &force_client,
+            "token",
+        )
+        .expect("forced replacement");
+        assert_eq!(
+            fs::read(&destination).expect("replacement published"),
+            replacement
+        );
+        let temporary_files = fs::read_dir(destination.parent().expect("destination parent"))
+            .expect("generated directory")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+            .count();
+        assert_eq!(temporary_files, 0);
+    }
+
+    #[test]
+    fn response_decoder_rejects_non_png_and_invalid_base64() {
+        let non_png = EncodedImage {
+            kind: "base64".to_owned(),
+            base64: BASE64.encode(b"not png"),
+            format: "jpeg".to_owned(),
+        };
+        assert!(decode_response_image(&non_png).is_err());
+        let invalid = EncodedImage {
+            kind: "base64".to_owned(),
+            base64: "%%%".to_owned(),
+            format: "png".to_owned(),
+        };
+        assert!(decode_response_image(&invalid).is_err());
     }
 }
