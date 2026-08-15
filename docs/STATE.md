@@ -3,7 +3,7 @@
 Fast-moving work state and chosen next step. This records the work, not machine state or
 uncommitted changes. Durable findings live in the linked docs.
 
-Last updated: **2026-08-15** (personality, belief, conversation and content design recorded.)
+Last updated: **2026-08-15** (MVP behavior, content and visual direction recorded.)
 
 ## Now
 
@@ -25,10 +25,14 @@ the authoritative game loop before renderer or model work widens the surface.
 
 - **Interactive room shell**: wait until core events and intentions are stable enough to render.
 - **Real local LLM benchmark**: wait until the protocol fixture corpus can score candidates.
-- **Pixel-art generation**: first approve the tiny art bible and asset-validation contract.
+- **Pixel-art generation**: first create the approved art direction's anchor assets and
+  asset-validation contract.
 
 ## Learned Recently
 
+- The MVP uses a fixed, slightly three-quarter dollhouse view; keyboard/mouse and controller share
+  a minimal contextual interface; and the cozy-grotty pixel art uses warm light, deep shadow, awkward
+  expressiveness, and the window as its main source of visual change → [mvp-spec.md](mvp-spec.md).
 - The MVP now treats learned profanity, crudeness, spite and provocation as simulation-backed
   social habits; adds traceable mistaken beliefs, contextual player reactions, nonverbal spite,
   scarce conversation, ageless-creature framing, and a mature-but-not-Adult-Only content boundary

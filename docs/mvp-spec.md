@@ -51,6 +51,14 @@ The entire playable world is one 320×180 logical-resolution room, nearest-neigh
 
 There is no player avatar. The player interacts with the room almost as though looking into a little enclosure.
 
+### The room and camera
+
+Use a fixed dollhouse view: mostly straight-on, with enough three-quarter depth to give the floor and furniture volume. The player should see the creature's face and posture clearly wherever it moves. Do not use a top-down, isometric or platformer view.
+
+The camera never pans, zooms or follows the creature during ordinary play. The whole room remains visible, with stable positions for the bowl, bed, toy and window. Nearest-neighbour scaling may letterbox the 320×180 canvas to preserve square pixels and the intended composition.
+
+The room provides most of the visual change. Daylight, lamplight, weather at the window, clutter and small creature-made alterations can shift its mood without changing the layout. It should feel like a place the player checks on, not a level they traverse.
+
 ### What exists in the room
 
 The first build needs only four meaningful objects:
@@ -67,6 +75,16 @@ The player has five primary verbs:
 **feed, play, comfort, tidy, talk.**
 
 That is enough.
+
+### The interface
+
+Keyboard/mouse and controller are both first-class. The mouse selects the creature or an object directly. Controller focus moves between the same targets with a clear but quiet highlight. There is no cursor avatar and no movement control for the creature.
+
+Selecting a target reveals only the actions that make sense there, either beside it or in a small strip along the bottom edge. Feed can open a tiny food choice; Play can do the same for toys. Talk alone opens text entry. Physical keyboards type directly; controller-only play uses a compact modal on-screen keyboard. Speech reactions such as laugh, disapprove and comfort sit directly beneath the current speech bubble, then disappear with it.
+
+The interface should feel attached to the enclosure: chunky pixel icons, short labels, compact dialogue frames and restrained electronic sounds. It can borrow the tactility of an old virtual-pet device without drawing a plastic console around the whole game. Controls must remain legible overlays rather than hiding essential actions inside decorative scenery.
+
+When the player is watching rather than acting, most interface chrome fades away. Do not show permanent need bars, relationship meters, floating quest markers or a minimap. Hunger, affection and resentment belong in the creature's behaviour.
 
 No inventory system beyond a tiny contextual selection of food/toys. No crafting. No world map. No breeding. No combat. No procedural environments.
 
@@ -915,7 +933,11 @@ style/furniture_anchor.png
 style/ui_anchor.png
 ```
 
-I would use perhaps a 16–24 colour working palette.
+The visual direction is **cozy-grotty**: warm lamplight, deep shadows, scuffed furniture and a mild electronic unease. The creature is cute because it is awkward and expressive, not because it has been polished into a mascot. Keep silhouettes readable and allow ugly, sulky or unsettling poses when the simulation calls for them.
+
+Use a 16–24 colour working palette with warm, dirty neutrals and a few sharp electronic accents. Animation should be chunky and restrained. A held stare, one irritated foot movement or an object shoved a few pixels can carry more personality than constant squash-and-stretch motion.
+
+The window is the room's main source of visual variety: daylight, night, rain, birds, odd silhouettes and changes in ambient colour. These events should alter the mood while preserving the fixed composition.
 
 Then agents are required to provide the style anchor to all subsequent generations.
 
@@ -1362,6 +1384,9 @@ I would consider the vertical slice complete only when all of these are true:
 | Acceptance criterion | Required |
 |---|---|
 | Creature autonomously moves between its bed, food, toy and player-oriented positions | ✓ |
+| The fixed dollhouse view keeps the whole room and the creature's body language readable | ✓ |
+| Every primary interaction, including text entry, is usable with keyboard/mouse and controller | ✓ |
+| Contextual UI recedes when idle and exposes no permanent need or relationship bars | ✓ |
 | Hunger, energy, comfort and curiosity produce visibly different behaviour | ✓ |
 | Creature forms persistent preferences from interactions | ✓ |
 | Creature forms traceable beliefs that may be mistaken without changing factual memory | ✓ |
