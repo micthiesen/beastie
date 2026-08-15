@@ -46,6 +46,21 @@ pub(crate) fn apply(request: &DialogueRequest, reply: DialogueReply) -> Dialogue
         }
     };
 
+    let styled = if request.context.repetition_count > 0 {
+        let ending = match request.mood.to_ascii_lowercase().as_str() {
+            "sleepy" | "lonely" => "...",
+            "resentful" => "!",
+            _ => "",
+        };
+        if ending.is_empty() {
+            styled
+        } else {
+            format!("{}{}", styled.trim_end_matches(['.', '!', '?']), ending)
+        }
+    } else {
+        styled
+    };
+
     if styled.is_empty() || styled.len() > MAX_DIALOGUE_REPLY_BYTES {
         return reply;
     }
@@ -77,6 +92,7 @@ mod tests {
             idiolect: beastie_protocol::Idiolect { quirk },
             desired_social_act: None,
             input_rejection: None,
+            context: beastie_protocol::DialogueContext::default(),
             player_said: "hello".to_owned(),
             constraints: DialogueConstraints {
                 max_words,

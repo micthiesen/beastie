@@ -150,6 +150,12 @@ fn cache_key_binds_both_pinned_voice_artifacts() {
         &[settings.speaker_id],
         &settings.speed.to_bits().to_le_bytes(),
         &settings.silence_scale.to_bits().to_le_bytes(),
+        &settings.pitch.to_bits().to_le_bytes(),
+        &settings.pause_scale.to_bits().to_le_bytes(),
+        &[settings.vocal_noise as u8],
+        &settings.mouth_timing.open_ms.to_le_bytes(),
+        &settings.mouth_timing.close_ms.to_le_bytes(),
+        &settings.mouth_timing.syllable_ms.to_le_bytes(),
         b"hello".as_slice(),
     ] {
         expected.update((field.len() as u64).to_le_bytes());
@@ -280,6 +286,38 @@ fn espeak_process_receives_bounded_stdin_and_produces_validated_pcm() {
     fs::remove_file(record).unwrap();
     fs::remove_file(arguments_record).unwrap();
     fs::remove_dir_all(data_parent).unwrap();
+    fs::remove_file(source).unwrap();
+    fs::remove_file(executable).unwrap();
+}
+
+#[test]
+fn espeak_applies_bounded_pitch_speed_and_pause_controls() {
+    let (source, executable) = compile_fake_espeak("valid");
+    let cache_dir = temporary_dir();
+    let mut synthesizer = EspeakNgSynthesizer::new(executable.clone(), "en-us".to_owned(), None)
+        .expect("voice should validate");
+    let settings = VoiceSettings {
+        pitch: 1.4,
+        speed: 1.5,
+        pause_scale: 1.7,
+        ..VoiceSettings::default()
+    };
+    synthesize_to_cache(&cache_dir, "bounded voice", settings, &mut synthesizer)
+        .expect("fake eSpeak should produce audio");
+    let args = fs::read_to_string(executable.with_extension("args")).unwrap();
+    let argument = |flag: &str| {
+        args.lines()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .find(|pair| pair[0] == flag)
+            .map(|pair| pair[1].to_owned())
+    };
+    assert_eq!(argument("-p").as_deref(), Some("70"));
+    assert_eq!(argument("-s").as_deref(), Some("263"));
+    assert_eq!(argument("-g").as_deref(), Some("20"));
+    fs::remove_dir_all(cache_dir).unwrap();
+    fs::remove_file(executable.with_extension("args")).unwrap();
+    fs::remove_file(executable.with_extension("input")).unwrap();
     fs::remove_file(source).unwrap();
     fs::remove_file(executable).unwrap();
 }

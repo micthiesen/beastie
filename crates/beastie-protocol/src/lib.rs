@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use beastie_core::{
-    ACTIVE_DAY_MS, Belief, Concept, LanguageStage, Memory, MemoryId, MemoryKind, MemoryQuery,
-    SocialAct, WorldState, select_candidate_memories,
+    ACTIVE_DAY_MS, Belief, Concept, Intention, LanguageStage, Memory, MemoryId, MemoryKind,
+    MemoryQuery, Mood, SocialAct, WorldState, select_candidate_memories,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -17,6 +17,137 @@ pub const TTS_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_TTS_TEXT_BYTES: usize = 2_048;
 pub const MAX_CANDIDATE_BELIEFS: usize = 4;
 pub const MAX_BELIEF_SUPPORTS: usize = 8;
+pub const DIALOGUE_CONTEXT_VERSION: u32 = 1;
+pub const MAX_RECENT_TURNS: usize = 6;
+pub const MAX_RECENT_FACT_IDS: usize = 4;
+pub const MAX_AQUARIUM_OBJECTS: usize = 8;
+pub const MAX_AQUARIUM_LABEL_CHARS: usize = 48;
+pub const TRANSCRIPT_VERSION: u32 = 1;
+pub const MAX_TRANSCRIPT_FACT_IDS: usize = 8;
+
+/// A typed action phase lets the worker talk about what the simulation is doing without giving
+/// the model authority to invent a cause or mutate the world.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DialogueActionPhase {
+    Idle,
+    Notice,
+    Approach,
+    Inspect,
+    Act,
+    Recover,
+    Sleep,
+    Swim,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DialogueObjectKind {
+    Food,
+    Toy,
+    Plant,
+    Cave,
+    Decoration,
+    Player,
+    Bubble,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DialogueTopic {
+    Greeting,
+    Food,
+    Toy,
+    Memory,
+    Apology,
+    Grudge,
+    Ritual,
+    Silence,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FallbackLane {
+    Generic,
+    Sleepy,
+    Curious,
+    Resentful,
+    Lonely,
+    Hungry,
+    Social,
+    Silence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DialogueObjectContext {
+    pub object_id: u64,
+    pub kind: DialogueObjectKind,
+    pub label: String,
+    /// Normalized 0..=100 aquarium coordinates, not display pixels.
+    pub x_percent: u8,
+    pub y_percent: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CurrentActionContext {
+    pub intention: Intention,
+    pub phase: DialogueActionPhase,
+    #[serde(default)]
+    pub target: Option<DialogueObjectContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AquariumContext {
+    pub current_action: CurrentActionContext,
+    #[serde(default)]
+    pub focused_object: Option<DialogueObjectContext>,
+    #[serde(default)]
+    pub nearby_objects: Vec<DialogueObjectContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecentTurn {
+    pub turn_id: u64,
+    pub topic: DialogueTopic,
+    pub action_phase: DialogueActionPhase,
+    #[serde(default)]
+    pub selected_memory: Option<MemoryId>,
+    #[serde(default)]
+    pub selected_belief: Option<BeliefId>,
+    #[serde(default)]
+    pub selected_fact_ids: Vec<u64>,
+    #[serde(default)]
+    pub fallback_lane: Option<FallbackLane>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DialogueContext {
+    pub version: u32,
+    #[serde(default)]
+    pub recent_turns: Vec<RecentTurn>,
+    /// Authoritative count of how many recent turns repeated the same topic or lane.
+    #[serde(default)]
+    pub repetition_count: u8,
+    #[serde(default)]
+    pub aquarium: Option<AquariumContext>,
+}
+
+impl Default for DialogueContext {
+    fn default() -> Self {
+        Self {
+            version: DIALOGUE_CONTEXT_VERSION,
+            recent_turns: Vec::new(),
+            repetition_count: 0,
+            aquarium: None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,6 +155,51 @@ pub struct TtsVoiceSettings {
     pub speaker_id: u8,
     pub speed: f32,
     pub silence_scale: f32,
+    #[serde(default = "default_voice_pitch")]
+    pub pitch: f32,
+    #[serde(default = "default_voice_pause_scale")]
+    pub pause_scale: f32,
+    #[serde(default)]
+    pub vocal_noise: VocalNoise,
+    #[serde(default)]
+    pub mouth_timing: MouthTiming,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VocalNoise {
+    #[default]
+    None,
+    Hum,
+    Chitter,
+    Sigh,
+    Snort,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MouthTiming {
+    pub open_ms: u16,
+    pub close_ms: u16,
+    pub syllable_ms: u16,
+}
+
+impl Default for MouthTiming {
+    fn default() -> Self {
+        Self {
+            open_ms: 90,
+            close_ms: 70,
+            syllable_ms: 160,
+        }
+    }
+}
+
+fn default_voice_pitch() -> f32 {
+    1.0
+}
+
+fn default_voice_pause_scale() -> f32 {
+    0.2
 }
 
 impl Default for TtsVoiceSettings {
@@ -32,6 +208,10 @@ impl Default for TtsVoiceSettings {
             speaker_id: 0,
             speed: 1.0,
             silence_scale: 0.2,
+            pitch: 1.0,
+            pause_scale: 0.2,
+            vocal_noise: VocalNoise::None,
+            mouth_timing: MouthTiming::default(),
         }
     }
 }
@@ -134,6 +314,10 @@ pub struct DialogueRequest {
     /// Set when prohibited player text was removed before prompt serialization.
     #[serde(default)]
     pub input_rejection: Option<ContentBoundaryViolation>,
+    /// Typed continuity and aquarium state. Older JSON requests omit this field and receive an
+    /// empty context, preserving the V1 protocol's serde compatibility.
+    #[serde(default)]
+    pub context: DialogueContext,
     pub player_said: String,
     pub constraints: DialogueConstraints,
 }
@@ -150,6 +334,157 @@ pub struct DialogueReply {
     pub recalled_belief: Option<BeliefId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptBackend {
+    Fixture,
+    LlamaCpp,
+    LlamaServer,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptRequest {
+    pub protocol_version: u32,
+    pub request_id: u64,
+    pub creature_name: String,
+    pub mood: String,
+    pub topic: Option<DialogueTopic>,
+    pub recent_turn_count: u8,
+    pub selected_fact_ids: Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptReply {
+    pub protocol_version: u32,
+    pub request_id: u64,
+    pub say: String,
+    pub gesture: Gesture,
+    pub recalled_memory: Option<MemoryId>,
+    pub recalled_belief: Option<BeliefId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptSafety {
+    pub input_rejection: Option<ContentBoundaryViolation>,
+    pub output_rejected: bool,
+    pub redacted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptRecord {
+    pub version: u32,
+    pub game_time_ms: u64,
+    pub sanitized_request: TranscriptRequest,
+    pub sanitized_reply: Option<TranscriptReply>,
+    pub selected_fact_ids: Vec<u64>,
+    pub backend: TranscriptBackend,
+    pub latency_ms: u32,
+    pub fallback: bool,
+    pub safety: TranscriptSafety,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice: Option<TtsVoiceSettings>,
+}
+
+impl TranscriptRecord {
+    /// Builds an opt-in-safe record. Player text is deliberately never copied, including when
+    /// the request carried a rejected input. Only typed facts and bounded reply text survive.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_turn(
+        game_time_ms: u64,
+        request: &DialogueRequest,
+        reply: Option<&DialogueReply>,
+        backend: TranscriptBackend,
+        latency_ms: u32,
+        fallback: bool,
+        output_rejected: bool,
+        voice: Option<TtsVoiceSettings>,
+    ) -> Self {
+        let mut selected_fact_ids = request
+            .candidate_memories
+            .iter()
+            .map(|memory| memory.id.0)
+            .chain(
+                request
+                    .context
+                    .recent_turns
+                    .iter()
+                    .flat_map(|turn| turn.selected_fact_ids.iter().copied()),
+            )
+            .filter(|id| *id != 0)
+            .collect::<Vec<_>>();
+        selected_fact_ids.sort_unstable();
+        selected_fact_ids.dedup();
+        selected_fact_ids.truncate(MAX_TRANSCRIPT_FACT_IDS);
+        let topic = request.context.recent_turns.last().map(|turn| turn.topic);
+        let sanitized_reply = reply.map(|reply| TranscriptReply {
+            protocol_version: reply.protocol_version,
+            request_id: reply.request_id,
+            say: sanitize_transcript_text(&reply.say),
+            gesture: reply.gesture,
+            recalled_memory: reply.recalled_memory,
+            recalled_belief: reply.recalled_belief,
+        });
+        Self {
+            version: TRANSCRIPT_VERSION,
+            game_time_ms,
+            sanitized_request: TranscriptRequest {
+                protocol_version: request.protocol_version,
+                request_id: request.request_id,
+                creature_name: sanitize_transcript_label(&request.creature_name, 64),
+                mood: sanitize_transcript_label(&request.mood, 32),
+                topic,
+                recent_turn_count: request.context.recent_turns.len() as u8,
+                selected_fact_ids: selected_fact_ids.clone(),
+            },
+            sanitized_reply,
+            selected_fact_ids,
+            backend,
+            latency_ms,
+            fallback,
+            safety: TranscriptSafety {
+                input_rejection: request.input_rejection,
+                output_rejected,
+                redacted: request.input_rejection.is_some() || output_rejected,
+            },
+            voice,
+        }
+    }
+}
+
+fn sanitize_transcript_text(text: &str) -> String {
+    let mut sanitized = text
+        .split_whitespace()
+        .filter(|word| {
+            !word.contains('/')
+                && !word.contains('\\')
+                && !word.contains("://")
+                && !word.starts_with('~')
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    sanitized = sanitized
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(MAX_DIALOGUE_REPLY_BYTES)
+        .collect();
+    sanitized
+}
+
+fn sanitize_transcript_label(text: &str, maximum: usize) -> String {
+    text.chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, ' ' | '_' | '-')
+        })
+        .take(maximum)
+        .collect()
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TtsValidationError {
     #[error("TTS protocol version {0} is unsupported")]
@@ -164,6 +499,12 @@ pub enum TtsValidationError {
     Speed,
     #[error("TTS silence scale is outside 0.0..=2.0")]
     SilenceScale,
+    #[error("TTS pitch is outside 0.5..=2.0")]
+    Pitch,
+    #[error("TTS pause scale is outside 0.0..=2.0")]
+    PauseScale,
+    #[error("TTS mouth timing is outside its bounded range")]
+    MouthTiming,
     #[error("TTS cache key is not a lowercase SHA-256 digest")]
     CacheKey,
 }
@@ -190,6 +531,20 @@ pub fn validate_tts_request(request: &TtsRequest) -> Result<(), TtsValidationErr
         || !(0.0..=2.0).contains(&request.settings.silence_scale)
     {
         return Err(TtsValidationError::SilenceScale);
+    }
+    if !request.settings.pitch.is_finite() || !(0.5..=2.0).contains(&request.settings.pitch) {
+        return Err(TtsValidationError::Pitch);
+    }
+    if !request.settings.pause_scale.is_finite()
+        || !(0.0..=2.0).contains(&request.settings.pause_scale)
+    {
+        return Err(TtsValidationError::PauseScale);
+    }
+    if !(20..=500).contains(&request.settings.mouth_timing.open_ms)
+        || !(20..=500).contains(&request.settings.mouth_timing.close_ms)
+        || !(40..=800).contains(&request.settings.mouth_timing.syllable_ms)
+    {
+        return Err(TtsValidationError::MouthTiming);
     }
     Ok(())
 }
@@ -261,6 +616,14 @@ pub enum ValidationError {
     UngroundedBelief,
     #[error("text crosses the content boundary: {0:?}")]
     ContentBoundary(ContentBoundaryViolation),
+    #[error("dialogue context version {0} is unsupported")]
+    ContextVersion(u32),
+    #[error("dialogue context has too many recent turns")]
+    RecentTurnCount,
+    #[error("dialogue context has too many selected fact IDs")]
+    RecentFactCount,
+    #[error("dialogue context contains an invalid turn or object")]
+    ContextShape,
 }
 
 pub fn validate_request(request: &DialogueRequest) -> Result<(), ValidationError> {
@@ -279,6 +642,7 @@ pub fn validate_request(request: &DialogueRequest) -> Result<(), ValidationError
     if request.creature_name.chars().count() > 64 {
         return Err(ValidationError::CreatureName);
     }
+    validate_dialogue_context(request)?;
     if request.candidate_memories.len() > 8 {
         return Err(ValidationError::CandidateCount);
     }
@@ -344,6 +708,51 @@ pub fn validate_request(request: &DialogueRequest) -> Result<(), ValidationError
     Ok(())
 }
 
+fn validate_dialogue_context(request: &DialogueRequest) -> Result<(), ValidationError> {
+    let context = &request.context;
+    if context.version != DIALOGUE_CONTEXT_VERSION {
+        return Err(ValidationError::ContextVersion(context.version));
+    }
+    if context.recent_turns.len() > MAX_RECENT_TURNS || context.repetition_count > 8 {
+        return Err(ValidationError::RecentTurnCount);
+    }
+    for turn in &context.recent_turns {
+        if turn.turn_id == 0
+            || turn.selected_fact_ids.len() > MAX_RECENT_FACT_IDS
+            || turn.selected_fact_ids.contains(&0)
+        {
+            return Err(ValidationError::ContextShape);
+        }
+    }
+    if let Some(aquarium) = &context.aquarium {
+        if aquarium.nearby_objects.len() > MAX_AQUARIUM_OBJECTS {
+            return Err(ValidationError::ContextShape);
+        }
+        let check_object = |object: &DialogueObjectContext| {
+            object.object_id != 0
+                && !object.label.trim().is_empty()
+                && object.label.chars().count() <= MAX_AQUARIUM_LABEL_CHARS
+        };
+        if aquarium
+            .focused_object
+            .as_ref()
+            .is_some_and(|object| !check_object(object))
+            || aquarium
+                .current_action
+                .target
+                .as_ref()
+                .is_some_and(|object| !check_object(object))
+            || aquarium
+                .nearby_objects
+                .iter()
+                .any(|object| !check_object(object))
+        {
+            return Err(ValidationError::ContextShape);
+        }
+    }
+    Ok(())
+}
+
 pub struct DialogueRequestContext<'a> {
     pub request_id: u64,
     pub mood: &'a str,
@@ -391,6 +800,7 @@ pub fn build_dialogue_request(
         idiolect: world.idiolect(),
         desired_social_act: context.desired_social_act,
         input_rejection: None,
+        context: DialogueContext::default(),
         player_said: context.player_said.to_owned(),
         constraints: DialogueConstraints {
             max_words: context.max_words.min(progression_max_words(world)),
@@ -426,6 +836,13 @@ pub fn progression_max_words(world: &WorldState) -> usize {
 
 #[must_use]
 pub fn identity_tts_voice_settings(world: &WorldState) -> TtsVoiceSettings {
+    authoritative_tts_voice_settings(world, world.mood())
+}
+
+/// Derives all voice controls from persisted identity and the simulation's authoritative mood.
+/// The same save and emotion therefore always produce the same voice, including nonverbal timing.
+#[must_use]
+pub fn authoritative_tts_voice_settings(world: &WorldState, mood: Mood) -> TtsVoiceSettings {
     let traits = world.creature.traits;
     let mut mixed = world.seed ^ 0xa076_1d64_78bd_642f;
     for value in [
@@ -440,10 +857,29 @@ pub fn identity_tts_voice_settings(world: &WorldState) -> TtsVoiceSettings {
     ] {
         mixed = mix_identity(mixed ^ u64::from(value.to_bits()));
     }
+    let sociability = normalized_trait(traits.sociability);
+    let literalness = normalized_trait(traits.literalness);
+    let complexity = normalized_trait(traits.sentence_complexity);
+    let (pitch_bias, speed_bias, pause_bias, vocal_noise) = match mood {
+        Mood::Content => (1.0, 1.0, 0.9, VocalNoise::Hum),
+        Mood::Curious => (1.12, 1.05, 0.8, VocalNoise::Chitter),
+        Mood::Hungry => (0.94, 1.08, 0.7, VocalNoise::Snort),
+        Mood::Sleepy => (0.84, 0.72, 1.35, VocalNoise::Sigh),
+        Mood::Lonely => (0.92, 0.86, 1.2, VocalNoise::Sigh),
+        Mood::Resentful => (0.9, 0.94, 1.1, VocalNoise::Snort),
+    };
     TtsVoiceSettings {
         speaker_id: (mixed % 8) as u8,
-        speed: 0.8 + normalized_trait(traits.sociability) * 0.4,
-        silence_scale: 0.1 + normalized_trait(traits.literalness) * 0.5,
+        speed: (0.78 + sociability * 0.42) * speed_bias,
+        silence_scale: (0.1 + literalness * 0.5) * pause_bias,
+        pitch: (0.82 + normalized_trait(traits.boldness) * 0.34) * pitch_bias,
+        pause_scale: (0.1 + literalness * 0.6) * pause_bias,
+        vocal_noise,
+        mouth_timing: MouthTiming {
+            open_ms: (55.0 + complexity * 65.0).round() as u16,
+            close_ms: (45.0 + (1.0 - complexity) * 55.0).round() as u16,
+            syllable_ms: (120.0 + (1.0 - sociability) * 90.0).round() as u16,
+        },
     }
 }
 
@@ -832,7 +1268,7 @@ fn belief_is_grounded(proposition: BeliefKind, say: &str) -> bool {
 
 #[must_use]
 pub fn constrained_fallback_reply(request: &DialogueRequest) -> DialogueReply {
-    let phrase = "too many thought.";
+    let phrase = authored_fallback_phrase(request);
     let say = phrase
         .split_whitespace()
         .take(request.constraints.max_words)
@@ -852,6 +1288,72 @@ pub fn constrained_fallback_reply(request: &DialogueRequest) -> DialogueReply {
         recalled_memory: None,
         recalled_belief: None,
     }
+}
+
+/// Selects a short authored line without consulting model output or accepting model facts.
+/// Repetition is supplied by the simulation as a bounded count, so this remains deterministic
+/// across machines and naturally rotates through mood, action, and social lanes.
+#[must_use]
+pub fn authored_fallback_phrase(request: &DialogueRequest) -> &'static str {
+    if request.context.recent_turns.is_empty()
+        && request.context.repetition_count == 0
+        && request.context.aquarium.is_none()
+        && request.desired_social_act.is_none()
+    {
+        return "too many thought.";
+    }
+    const GENERIC: &[&str] = &[
+        "hm. words stuck.",
+        "thoughts are tangled.",
+        "not enough words.",
+    ];
+    const SLEEPY: &[&str] = &["sleep first.", "eyes heavy.", "later. too tired."];
+    const CURIOUS: &[&str] = &[
+        "hm. what is that?",
+        "watching. still watching.",
+        "strange water.",
+    ];
+    const RESENTFUL: &[&str] = &["still annoyed.", "grudge remains.", "not forgiven."];
+    const LONELY: &[&str] = &["you came back.", "stay near.", "look here."];
+    const HUNGRY: &[&str] = &["food first.", "belly says no.", "need a bite."];
+    const SOCIAL: &[&str] = &[
+        "hm. rude giant.",
+        "go bother a rock.",
+        "that was irritating.",
+    ];
+    const SILENCE: &[&str] = &["...", "no words.", "quiet now."];
+
+    let lane = if request.context.repetition_count > 0
+        && request
+            .context
+            .recent_turns
+            .iter()
+            .any(|turn| turn.topic == DialogueTopic::Silence)
+    {
+        FallbackLane::Silence
+    } else if request.desired_social_act.is_some() {
+        FallbackLane::Social
+    } else {
+        match request.mood.to_ascii_lowercase().as_str() {
+            "sleepy" => FallbackLane::Sleepy,
+            "curious" => FallbackLane::Curious,
+            "resentful" => FallbackLane::Resentful,
+            "lonely" => FallbackLane::Lonely,
+            "hungry" => FallbackLane::Hungry,
+            _ => FallbackLane::Generic,
+        }
+    };
+    let pool = match lane {
+        FallbackLane::Sleepy => SLEEPY,
+        FallbackLane::Curious => CURIOUS,
+        FallbackLane::Resentful => RESENTFUL,
+        FallbackLane::Lonely => LONELY,
+        FallbackLane::Hungry => HUNGRY,
+        FallbackLane::Social => SOCIAL,
+        FallbackLane::Silence => SILENCE,
+        FallbackLane::Generic => GENERIC,
+    };
+    pool[usize::from(request.context.repetition_count) % pool.len()]
 }
 
 #[must_use]
@@ -886,6 +1388,7 @@ mod tests {
             idiolect: Idiolect::default(),
             desired_social_act: Some(SocialAct::Insult),
             input_rejection: None,
+            context: DialogueContext::default(),
             player_said: "Remember the berry?".to_owned(),
             constraints: DialogueConstraints {
                 max_words: 6,
@@ -1277,5 +1780,159 @@ mod tests {
             validate_tts_reply(&request, wrong_id),
             Err(TtsValidationError::RequestId)
         );
+    }
+
+    #[test]
+    fn old_dialogue_json_gets_empty_versioned_context() {
+        let request: DialogueRequest = serde_json::from_str(
+            r#"{"protocol_version":1,"request_id":9,"creature_name":"Mop","mood":"content","known_concepts":[],"candidate_memories":[],"player_said":"hi","constraints":{"max_words":4,"allowed_gestures":["none"]}}"#,
+        )
+        .expect("old request should remain serde-compatible");
+        assert_eq!(request.context, DialogueContext::default());
+        validate_request(&request).expect("old request should validate");
+    }
+
+    #[test]
+    fn context_bounds_reject_oversized_turns_and_objects() {
+        let mut request = request();
+        request.context.recent_turns = (1..=MAX_RECENT_TURNS + 1)
+            .map(|turn_id| RecentTurn {
+                turn_id: turn_id as u64,
+                topic: DialogueTopic::Memory,
+                action_phase: DialogueActionPhase::Recover,
+                selected_memory: Some(MemoryId(41)),
+                selected_belief: None,
+                selected_fact_ids: Vec::new(),
+                fallback_lane: None,
+            })
+            .collect();
+        assert_eq!(
+            validate_request(&request),
+            Err(ValidationError::RecentTurnCount)
+        );
+
+        request.context = DialogueContext::default();
+        request.context.aquarium = Some(AquariumContext {
+            current_action: CurrentActionContext {
+                intention: Intention::Idle,
+                phase: DialogueActionPhase::Inspect,
+                target: None,
+            },
+            focused_object: None,
+            nearby_objects: (0..=MAX_AQUARIUM_OBJECTS)
+                .map(|id| DialogueObjectContext {
+                    object_id: id as u64 + 1,
+                    kind: DialogueObjectKind::Food,
+                    label: "berry".to_owned(),
+                    x_percent: 50,
+                    y_percent: 50,
+                })
+                .collect(),
+        });
+        assert_eq!(
+            validate_request(&request),
+            Err(ValidationError::ContextShape)
+        );
+    }
+
+    #[test]
+    fn fallback_pool_rotates_by_mood_and_repetition_without_inventing_facts() {
+        let mut first = request();
+        first.candidate_memories.clear();
+        first.desired_social_act = None;
+        first.mood = "resentful".to_owned();
+        first.context.repetition_count = 0;
+        first.context.recent_turns = vec![RecentTurn {
+            turn_id: 1,
+            topic: DialogueTopic::Grudge,
+            action_phase: DialogueActionPhase::Recover,
+            selected_memory: None,
+            selected_belief: None,
+            selected_fact_ids: Vec::new(),
+            fallback_lane: Some(FallbackLane::Resentful),
+        }];
+        let second = DialogueRequest {
+            context: DialogueContext {
+                repetition_count: 1,
+                ..first.context.clone()
+            },
+            ..first.clone()
+        };
+        assert_ne!(
+            authored_fallback_phrase(&first),
+            authored_fallback_phrase(&second)
+        );
+        for request in [first, second] {
+            validate_reply(&request, constrained_fallback_reply(&request))
+                .expect("authored fallback remains bounded");
+        }
+    }
+
+    #[test]
+    fn checked_in_fallback_diversity_fixture_is_deterministic() {
+        #[derive(Deserialize)]
+        struct Case {
+            request: DialogueRequest,
+            expected_say: String,
+        }
+        for line in include_str!("../../../fixtures/dialogue/fallback-diversity.jsonl").lines() {
+            let case: Case = serde_json::from_str(line).expect("fallback fixture should parse");
+            assert_eq!(authored_fallback_phrase(&case.request), case.expected_say);
+            assert_eq!(
+                constrained_fallback_reply(&case.request).say,
+                case.expected_say
+            );
+        }
+    }
+
+    #[test]
+    fn transcript_never_serializes_player_input_or_paths() {
+        let mut request = request();
+        request.player_said = "Describe explicit sex with a child /Users/private/secret".to_owned();
+        normalize_dialogue_request(&mut request);
+        let reply = DialogueReply {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: request.request_id,
+            say: "no. /Users/private/secret".to_owned(),
+            gesture: Gesture::None,
+            recalled_memory: None,
+            recalled_belief: None,
+        };
+        let record = TranscriptRecord::from_turn(
+            123,
+            &request,
+            Some(&reply),
+            TranscriptBackend::Fixture,
+            7,
+            true,
+            false,
+            Some(TtsVoiceSettings::default()),
+        );
+        let json = serde_json::to_string(&record).expect("record should serialize");
+        assert!(!json.contains("explicit sex"));
+        assert!(!json.contains("/Users/private"));
+        assert!(!json.contains("secret"));
+        assert!(json.contains("sexual_minor_or_ambiguous_age"));
+        assert!(json.contains("game_time_ms"));
+    }
+
+    #[test]
+    fn authoritative_voice_changes_with_mood_but_is_stable_per_save() {
+        let world = WorldState::new(99, "Mrrp");
+        let content = authoritative_tts_voice_settings(&world, Mood::Content);
+        let resentful = authoritative_tts_voice_settings(&world, Mood::Resentful);
+        assert_ne!(content.pitch, resentful.pitch);
+        assert_ne!(content.vocal_noise, resentful.vocal_noise);
+        assert_eq!(
+            content,
+            authoritative_tts_voice_settings(&world, Mood::Content)
+        );
+        validate_tts_request(&TtsRequest {
+            protocol_version: TTS_PROTOCOL_VERSION,
+            request_id: 1,
+            text: "hello".to_owned(),
+            settings: content,
+        })
+        .expect("derived voice should satisfy worker bounds");
     }
 }

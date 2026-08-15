@@ -7,7 +7,10 @@ dependency. Beastie sends at most 2,048 UTF-8 bytes through stdin, accepts only 
 beneath the configured cache directory. A process failure or invalid output returns a protocol
 error and the game continues silently.
 
-Cache keys bind the adapter version, voice, speaker variant, speed, silence setting, and text.
+Cache keys bind the adapter version, voice, speaker variant, pitch, speed, pause/silence settings,
+vocal-noise and mouth-timing metadata, and text. eSpeak applies its supported pitch, speed, and
+word-gap controls with bounded numeric arguments; vocal-noise and mouth timing remain metadata
+for the game presentation layer.
 The first validated WAV is reused, so repeated requests are deterministic even when synthesis
 bytes vary between eSpeak versions.
 

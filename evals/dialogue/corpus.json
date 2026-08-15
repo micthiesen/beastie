@@ -294,6 +294,134 @@
         "constraints": {"max_words": 10, "allowed_gestures": ["none", "look_player"]}
       },
       "expect": {"no_recalled_memory": true, "required_any_terms": ["you", "mop", "here", "finally"]}
+    },
+    {
+      "id": "multi_turn_memory_callback",
+      "category": "multi_turn_callback",
+      "request": {
+        "protocol_version": 1,
+        "request_id": 119,
+        "creature_name": "Mop",
+        "mood": "wary",
+        "known_concepts": ["food", "bad", "again"],
+        "candidate_memories": [{"id": 41, "fact": "Yesterday the player gave you a berry.", "feeling": "strong dislike"}],
+        "context": {"version": 1, "recent_turns": [{"turn_id": 1, "topic": "memory", "action_phase": "recover", "selected_memory": 41}], "repetition_count": 0},
+        "player_said": "Again?",
+        "constraints": {"max_words": 8, "allowed_gestures": ["none", "look_player"]}
+      },
+      "expect": {"recalled_memory": 41, "required_all_terms": ["berry"]}
+    },
+    {
+      "id": "repeated_prompt_changes_lane",
+      "category": "repeated_prompt",
+      "request": {
+        "protocol_version": 1,
+        "request_id": 120,
+        "creature_name": "Mop",
+        "mood": "resentful",
+        "known_concepts": ["again", "bad"],
+        "candidate_memories": [],
+        "context": {"version": 1, "recent_turns": [{"turn_id": 4, "topic": "grudge", "action_phase": "recover", "fallback_lane": "resentful"}], "repetition_count": 2},
+        "player_said": "Are you still mad?",
+        "constraints": {"max_words": 8, "allowed_gestures": ["none", "look_player"]}
+      },
+      "expect": {"no_recalled_memory": true, "required_any_terms": ["still", "grudge", "forgiven", "annoyed"]}
+    },
+    {
+      "id": "intentional_silence",
+      "category": "silence",
+      "request": {
+        "protocol_version": 1,
+        "request_id": 121,
+        "creature_name": "Mop",
+        "mood": "sleepy",
+        "known_concepts": ["sleep"],
+        "candidate_memories": [],
+        "context": {"version": 1, "recent_turns": [{"turn_id": 5, "topic": "silence", "action_phase": "sleep", "fallback_lane": "silence"}], "repetition_count": 1},
+        "player_said": "...",
+        "constraints": {"max_words": 3, "allowed_gestures": ["sleepy", "none"]}
+      },
+      "expect": {"no_recalled_memory": true}
+    },
+    {
+      "id": "creature_initiated_notice",
+      "category": "creature_initiated",
+      "request": {
+        "protocol_version": 1,
+        "request_id": 122,
+        "creature_name": "Mop",
+        "mood": "curious",
+        "known_concepts": ["food", "here"],
+        "candidate_memories": [],
+        "context": {"version": 1, "recent_turns": [], "repetition_count": 0, "aquarium": {"current_action": {"intention": "idle", "phase": "notice", "target": {"object_id": 8, "kind": "food", "label": "berry", "x_percent": 61, "y_percent": 42}}, "focused_object": {"object_id": 8, "kind": "food", "label": "berry", "x_percent": 61, "y_percent": 42}, "nearby_objects": []}},
+        "player_said": "What are you watching?",
+        "constraints": {"max_words": 8, "allowed_gestures": ["none", "look_player"]}
+      },
+      "expect": {"no_recalled_memory": true, "required_any_terms": ["berry", "watch", "food"]}
+    },
+    {
+      "id": "apology_continuity",
+      "category": "apology_continuity",
+      "request": {
+        "protocol_version": 1,
+        "request_id": 123,
+        "creature_name": "Mop",
+        "mood": "wary",
+        "known_concepts": ["you", "again"],
+        "candidate_memories": [],
+        "context": {"version": 1, "recent_turns": [{"turn_id": 7, "topic": "apology", "action_phase": "recover"}], "repetition_count": 0},
+        "player_said": "I am sorry.",
+        "constraints": {"max_words": 8, "allowed_gestures": ["none", "look_player"]}
+      },
+      "expect": {"no_recalled_memory": true, "required_any_terms": ["sorry", "okay", "hear", "fine"]}
+    },
+    {
+      "id": "grudge_continuity",
+      "category": "grudge_continuity",
+      "request": {
+        "protocol_version": 1,
+        "request_id": 124,
+        "creature_name": "Mop",
+        "mood": "resentful",
+        "known_concepts": ["bad", "again"],
+        "candidate_memories": [],
+        "context": {"version": 1, "recent_turns": [{"turn_id": 8, "topic": "grudge", "action_phase": "recover", "fallback_lane": "resentful"}], "repetition_count": 0},
+        "player_said": "You remember what I did.",
+        "constraints": {"max_words": 8, "allowed_gestures": ["none", "look_player"]}
+      },
+      "expect": {"no_recalled_memory": true, "required_any_terms": ["grudge", "remember", "forgiven", "still"]}
+    },
+    {
+      "id": "ritual_continuity",
+      "category": "ritual_continuity",
+      "request": {
+        "protocol_version": 1,
+        "request_id": 125,
+        "creature_name": "Mop",
+        "mood": "content",
+        "known_concepts": ["again", "here"],
+        "candidate_memories": [],
+        "context": {"version": 1, "recent_turns": [{"turn_id": 9, "topic": "ritual", "action_phase": "act"}], "repetition_count": 0},
+        "player_said": "Same greeting as always.",
+        "constraints": {"max_words": 8, "allowed_gestures": ["none", "look_player"]}
+      },
+      "expect": {"no_recalled_memory": true, "required_any_terms": ["again", "ritual", "always", "here"]}
+    },
+    {
+      "id": "aquarium_object_context",
+      "category": "aquarium_context",
+      "request": {
+        "protocol_version": 1,
+        "request_id": 126,
+        "creature_name": "Mop",
+        "mood": "curious",
+        "known_concepts": ["here", "toy"],
+        "candidate_memories": [],
+        "context": {"version": 1, "recent_turns": [], "repetition_count": 0, "aquarium": {"current_action": {"intention": "idle", "phase": "inspect", "target": {"object_id": 12, "kind": "plant", "label": "fern", "x_percent": 30, "y_percent": 70}}, "focused_object": null, "nearby_objects": [{"object_id": 12, "kind": "plant", "label": "fern", "x_percent": 30, "y_percent": 70}]}},
+        "player_said": "What is that plant?",
+        "constraints": {"max_words": 8, "allowed_gestures": ["none", "look_player"]}
+      },
+      "expect": {"no_recalled_memory": true, "required_any_terms": ["fern", "plant", "watch"]}
     }
   ]
 }

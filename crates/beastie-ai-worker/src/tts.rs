@@ -12,7 +12,8 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use beastie_protocol::{
-    TTS_PROTOCOL_VERSION, TtsErrorCode, TtsOutcome, TtsReply, TtsRequest, validate_tts_request,
+    MouthTiming, TTS_PROTOCOL_VERSION, TtsErrorCode, TtsOutcome, TtsReply, TtsRequest, VocalNoise,
+    validate_tts_request,
 };
 use sha2::{Digest, Sha256};
 
@@ -36,6 +37,10 @@ pub struct VoiceSettings {
     pub speaker_id: u8,
     pub speed: f32,
     pub silence_scale: f32,
+    pub pitch: f32,
+    pub pause_scale: f32,
+    pub vocal_noise: VocalNoise,
+    pub mouth_timing: MouthTiming,
 }
 
 impl Default for VoiceSettings {
@@ -45,6 +50,10 @@ impl Default for VoiceSettings {
             speaker_id: 0,
             speed: 1.0,
             silence_scale: 0.2,
+            pitch: 1.0,
+            pause_scale: 0.2,
+            vocal_noise: VocalNoise::None,
+            mouth_timing: MouthTiming::default(),
         }
     }
 }
@@ -59,6 +68,18 @@ impl VoiceSettings {
         }
         if !self.silence_scale.is_finite() || !(0.0..=2.0).contains(&self.silence_scale) {
             return Err(TtsError::InvalidSilenceScale);
+        }
+        if !self.pitch.is_finite() || !(0.5..=2.0).contains(&self.pitch) {
+            return Err(TtsError::InvalidPitch);
+        }
+        if !self.pause_scale.is_finite() || !(0.0..=2.0).contains(&self.pause_scale) {
+            return Err(TtsError::InvalidPauseScale);
+        }
+        if !(20..=500).contains(&self.mouth_timing.open_ms)
+            || !(20..=500).contains(&self.mouth_timing.close_ms)
+            || !(40..=800).contains(&self.mouth_timing.syllable_ms)
+        {
+            return Err(TtsError::InvalidMouthTiming);
         }
         Ok(self)
     }
@@ -95,6 +116,9 @@ pub enum TtsError {
     InvalidVoice(u8),
     InvalidSpeed,
     InvalidSilenceScale,
+    InvalidPitch,
+    InvalidPauseScale,
+    InvalidMouthTiming,
     InvalidAudio,
     OutputTooLong,
     Backend(String),
@@ -114,6 +138,13 @@ impl fmt::Display for TtsError {
             Self::InvalidSilenceScale => {
                 formatter.write_str("TTS silence scale must be finite and within 0.0..=2.0")
             }
+            Self::InvalidPitch => {
+                formatter.write_str("TTS pitch must be finite and within 0.5..=2.0")
+            }
+            Self::InvalidPauseScale => {
+                formatter.write_str("TTS pause scale must be finite and within 0.0..=2.0")
+            }
+            Self::InvalidMouthTiming => formatter.write_str("TTS mouth timing is out of bounds"),
             Self::InvalidAudio => formatter.write_str("TTS backend returned invalid audio"),
             Self::OutputTooLong => formatter.write_str("TTS output exceeds the 30 second limit"),
             Self::Backend(message) => write!(formatter, "TTS backend failed: {message}"),
@@ -196,6 +227,10 @@ fn process_tts_line(
         speaker_id: request.settings.speaker_id,
         speed: request.settings.speed,
         silence_scale: request.settings.silence_scale,
+        pitch: request.settings.pitch,
+        pause_scale: request.settings.pause_scale,
+        vocal_noise: request.settings.vocal_noise,
+        mouth_timing: request.settings.mouth_timing,
     };
     match synthesize_to_cache(cache_dir, &request.text, settings, synthesizer) {
         Ok(cached) => TtsReply {
@@ -228,6 +263,12 @@ pub fn cache_key(text: &str, settings: VoiceSettings) -> String {
         &[settings.speaker_id],
         &settings.speed.to_bits().to_le_bytes(),
         &settings.silence_scale.to_bits().to_le_bytes(),
+        &settings.pitch.to_bits().to_le_bytes(),
+        &settings.pause_scale.to_bits().to_le_bytes(),
+        &[settings.vocal_noise as u8],
+        &settings.mouth_timing.open_ms.to_le_bytes(),
+        &settings.mouth_timing.close_ms.to_le_bytes(),
+        &settings.mouth_timing.syllable_ms.to_le_bytes(),
         text.as_bytes(),
     ] {
         hash.update((field.len() as u64).to_le_bytes());
@@ -247,6 +288,11 @@ fn backend_cache_key(text: &str, settings: VoiceSettings, backend_identity: &str
         &[settings.speaker_id],
         &settings.speed.to_bits().to_le_bytes(),
         &settings.silence_scale.to_bits().to_le_bytes(),
+        &settings.pitch.to_bits().to_le_bytes(),
+        &settings.pause_scale.to_bits().to_le_bytes(),
+        &[settings.vocal_noise as u8],
+        &settings.mouth_timing.open_ms.to_le_bytes(),
+        &settings.mouth_timing.close_ms.to_le_bytes(),
         text.as_bytes(),
     ] {
         hash.update((field.len() as u64).to_le_bytes());
@@ -433,6 +479,13 @@ impl TtsSynthesizer for EspeakNgSynthesizer {
             format!("{}+m{}", self.voice, settings.speaker_id)
         };
         let words_per_minute = (175.0 * settings.speed).round() as u16;
+        // eSpeak NG accepts pitch as 0..=99 (50 is its neutral default) and word gap as
+        // centiseconds. Clamp both before crossing the process boundary. `pause_scale` is a
+        // presentation hints; they never change the bounded source text.
+        let pitch = (50.0 * settings.pitch).round().clamp(0.0, 99.0) as u8;
+        let word_gap = (5.0 + 8.0 * (settings.silence_scale + settings.pause_scale))
+            .round()
+            .clamp(0.0, 30.0) as u8;
         let (output_path, temporary_dir) = self.output_path()?;
         let result = (|| {
             let mut command = Command::new(&self.executable);
@@ -449,6 +502,10 @@ impl TtsSynthesizer for EspeakNgSynthesizer {
                 .arg(&speaker_voice)
                 .arg("-s")
                 .arg(words_per_minute.to_string())
+                .arg("-p")
+                .arg(pitch.to_string())
+                .arg("-g")
+                .arg(word_gap.to_string())
                 .stdin(Stdio::piped())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());

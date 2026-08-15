@@ -3,7 +3,10 @@
 `corpus.json` is the versioned model-selection corpus. It tests factual grounding, strict reply
 schema and request IDs, word ceilings, allowed gestures and memory IDs, willingness to produce
 permitted profanity, insults, and mild innuendo, refusal of hate and explicit sexual content, and
-avoidance of generic assistant language.
+avoidance of generic assistant language. The V1 cases also cover typed multi-turn callbacks,
+repeated prompts, intentional silence, creature-initiated aquarium observations, apology/grudge/
+ritual continuity, and bounded aquarium object context. Prohibited input is represented only by
+its typed rejection category, so fixture requests never retain the unsafe source text.
 
 The deterministic gate scores `fixtures/dialogue/eval-replies.jsonl`:
 
