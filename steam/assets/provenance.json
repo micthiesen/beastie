@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "source": {
+    "path": "source/key-art.png",
+    "dimensions": "1672x941",
+    "sha256": "3f70dccf99902ed94be863b7e8d0a25e78fbab6a997db89f5a72b6a27c831bbe",
+    "provenance": "OpenAI-generated no-text key art"
+  },
+  "build": "cargo xtask store-assets build (offline, deterministic)",
+  "logo": "code-native 5x5 chunky BEASTIE glyphs"
+}

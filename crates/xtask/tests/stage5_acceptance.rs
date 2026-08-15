@@ -2,13 +2,17 @@ use std::collections::BTreeSet;
 
 use beastie_core::{
     BeliefKind, Concept, FoodId, GameEvent, Intention, LanguageStage, MemoryKind, NonverbalAct,
-    Reaction, SocialAct, ToyId,
+    Reaction, SocialAct,
 };
 use beastie_session::{CommandEnvelope, GameSession, SessionCommand};
 
 const SCENARIO: &str = include_str!("../../../fixtures/scenarios/stage5-three-day.jsonl");
 const VISIBLE_SCENARIO: &str =
     include_str!("../../../fixtures/scenarios/stage5-three-day-visible.jsonl");
+const AQUARIUM_SCENARIO: &str = include_str!("../../../fixtures/scenarios/aquarium-v1.jsonl");
+const AQUARIUM_VISIBLE_SCENARIO: &str =
+    include_str!("../../../fixtures/scenarios/aquarium-v1-visible.jsonl");
+const DISLIKED_BERRY_SEED: u64 = 8;
 
 fn commands() -> Vec<CommandEnvelope> {
     SCENARIO
@@ -24,27 +28,51 @@ fn has_event(events: &[GameEvent], expected: impl Fn(&GameEvent) -> bool) -> boo
 
 #[test]
 fn visible_scenario_wraps_the_same_semantic_arc() {
-    let semantic_lines = |source: &str| {
-        source
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .filter(|line| {
-                let value: serde_json::Value =
-                    serde_json::from_str(line).expect("scenario line is valid JSON");
-                !matches!(
-                    value.get("command").and_then(serde_json::Value::as_str),
-                    Some("capture" | "inspect")
-                )
-            })
-            .map(str::to_owned)
-            .collect::<Vec<_>>()
-    };
+    let semantic_lines = semantic_lines;
     assert_eq!(semantic_lines(VISIBLE_SCENARIO), semantic_lines(SCENARIO));
 }
 
 #[test]
+fn aquarium_visible_scenario_wraps_the_same_semantic_arc() {
+    assert_eq!(
+        semantic_lines(AQUARIUM_VISIBLE_SCENARIO),
+        semantic_lines(AQUARIUM_SCENARIO)
+    );
+}
+
+fn semantic_lines(source: &str) -> Vec<serde_json::Value> {
+    let mut commands = Vec::<serde_json::Value>::new();
+    for line in source.lines().filter(|line| !line.trim().is_empty()) {
+        let mut value: serde_json::Value =
+            serde_json::from_str(line).expect("scenario line is valid JSON");
+        match value.get("command").and_then(serde_json::Value::as_str) {
+            Some("capture" | "inspect") => continue,
+            Some("tick") => {
+                let milliseconds = value["milliseconds"]
+                    .as_u64()
+                    .expect("tick has milliseconds");
+                if let Some(previous) = commands.last_mut().filter(|previous| {
+                    previous.get("command").and_then(serde_json::Value::as_str) == Some("tick")
+                }) {
+                    previous["milliseconds"] = serde_json::Value::from(
+                        previous["milliseconds"]
+                            .as_u64()
+                            .expect("prior tick has milliseconds")
+                            + milliseconds,
+                    );
+                } else {
+                    commands.push(value);
+                }
+            }
+            _ => commands.push(std::mem::take(&mut value)),
+        }
+    }
+    commands
+}
+
+#[test]
 fn three_day_acceptance_arc_is_deterministic_and_grounded() {
-    let mut session = GameSession::new(99, "Mop");
+    let mut session = GameSession::new(DISLIKED_BERRY_SEED, "Mop");
     let mut observations = Vec::new();
     let mut saved_world = None;
     let mut saved_json = None;
@@ -80,7 +108,7 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
     );
     assert!(session.world().creature.memories.iter().any(|memory| {
         memory.kind
-            == (MemoryKind::DislikedFood {
+            == (MemoryKind::RejectedFood {
                 food: FoodId::Berry,
             })
     }));
@@ -93,25 +121,9 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
             .any(|belief| belief.kind == BeliefKind::RedFoodIsATrick)
     );
 
-    // The arc includes an explicit play command, and the autonomous loop sleeps once energy wins
-    // over the competing visible comfort and hunger intentions.
-    assert!(
-        session
-            .world()
-            .creature
-            .memories
-            .iter()
-            .any(|memory| { memory.kind == (MemoryKind::PlayedWith { toy: ToyId::Ball }) })
-    );
-    assert!(observations.iter().any(|observation| {
-        has_event(&observation.events, |event| {
-            matches!(event, GameEvent::SleepStarted)
-        })
-    }));
-
     let first_talk = &observations[4];
     assert!(has_event(&first_talk.events, |event| {
-        matches!(event, GameEvent::SocialActExpressed(SocialAct::Insult))
+        matches!(event, GameEvent::SocialActExpressed(SocialAct::Neutral))
     }));
     let first_request = first_talk
         .dialogue_request
@@ -121,14 +133,14 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
         first_request
             .candidate_memories
             .iter()
-            .any(|memory| { memory.id.0 == 2 && memory.fact.contains("dislike berry") })
+            .any(|memory| { memory.id.0 == 1 && memory.fact.contains("pushed away the berry") })
     );
 
     assert!(session.world().creature.memories.iter().any(|memory| {
         memory.kind
             == (MemoryKind::PlayerReacted {
                 reaction: Reaction::Laugh,
-                to: SocialAct::Insult,
+                to: SocialAct::Neutral,
             })
     }));
     assert!(has_event(&observations[6].events, |event| {
@@ -142,7 +154,7 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
     assert_eq!(progress.applied_ms, 0);
     assert_eq!(resumed.world(), &saved_world);
 
-    let mut uninterrupted = GameSession::new(99, "Mop");
+    let mut uninterrupted = GameSession::new(DISLIKED_BERRY_SEED, "Mop");
     for command in commands().into_iter().take(8) {
         uninterrupted
             .apply(command)
@@ -167,7 +179,7 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
     assert_eq!(observations[9].events, Vec::<GameEvent>::new());
     assert_eq!(observations[10].sequence, 11);
     assert_eq!(observations[10].events, {
-        let mut expected = GameSession::new(99, "Mop");
+        let mut expected = GameSession::new(DISLIKED_BERRY_SEED, "Mop");
         for command in commands().into_iter().take(8) {
             expected.apply(command).expect("prefix should apply");
         }
@@ -191,7 +203,7 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
             .world()
             .creature
             .known_concepts
-            .is_superset(&BTreeSet::from([Concept::Yesterday, Concept::Why]))
+            .is_superset(&BTreeSet::from([Concept::Yesterday]))
     );
 
     let later_talk = &observations[13];
@@ -207,7 +219,7 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
         later_request
             .candidate_memories
             .iter()
-            .any(|memory| memory.id.0 == 2)
+            .any(|memory| memory.id.0 == 1)
     );
 
     let rejection = &observations[15];

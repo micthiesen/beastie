@@ -1,0 +1,16 @@
+{
+  "name": "Beastie default gamepad",
+  "version": 1,
+  "actions": {
+    "move": {"type": "analog", "description": "Move focus or cursor"},
+    "confirm": {"type": "button", "description": "Confirm focused action"},
+    "cancel": {"type": "button", "description": "Close chooser or clear text"},
+    "talk": {"type": "button", "description": "Focus the persistent message field"}
+  },
+  "bindings": [
+    {"input": "left_stick", "action": "move"},
+    {"input": "south_button", "action": "confirm"},
+    {"input": "east_button", "action": "cancel"},
+    {"input": "north_button", "action": "talk"}
+  ]
+}

@@ -1,19 +1,28 @@
-//! Display-free projection of authoritative state into a small, fixed room.
+//! Display-free projection of the authoritative aquarium into a 320x180 scene.
+//!
+//! This crate owns logical pixels, presentation timing, semantic hit regions, and
+//! presentation-only effects. It never mutates simulation state.
 
 use beastie_core::{
-    FoodId, GameEvent, Intention, NonverbalAct, Reaction, RoomSpot, ToyId, WorldState,
+    ActionPhase, FoodDisposition, FoodDropRejectionReason, FoodId, GameEvent, GazeTarget,
+    Intention, Mood, NonverbalAct, NormalizedPosition, Reaction, SteeringMode, ToyId, WorldObject,
+    WorldState,
 };
 use serde::{Deserialize, Serialize};
 
 pub const LOGICAL_WIDTH: i32 = 320;
 pub const LOGICAL_HEIGHT: i32 = 180;
-
-const ACTION_WIDTH: i32 = 64;
-const ACTION_HEIGHT: i32 = 18;
+pub const AQUARIUM_BOTTOM: i32 = 129;
+pub const COMPOSE_BAR_TOP: i32 = 130;
+/// The selected 80x80 character has a 54x42 opaque footprint and is drawn at 2x.
+pub const CREATURE_CANVAS_SIZE: i32 = 160;
+pub const CREATURE_HIT_WIDTH: i32 = 108;
+pub const CREATURE_HIT_HEIGHT: i32 = 84;
 pub const SPEECH_LIFETIME_MS: u64 = 8_000;
-pub const NONVERBAL_LIFETIME_MS: u64 = 5_000;
+pub const CUE_QUEUE_LIMIT: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -31,15 +40,15 @@ impl Rect {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UiTarget {
-    Window,
-    Bed,
-    Bowl,
-    Toy,
-    Clutter,
+    OpenWater,
     Creature,
-    Food(FoodId),
-    ToyChoice(ToyId),
+    Cave,
+    Plant(u64),
+    FoodObject(u64),
+    Toy(ToyId),
     Reaction(Reaction),
+    ComposeField,
+    Actions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,50 +58,217 @@ pub enum UiAction {
     CloseContext,
     OpenFoodChoice,
     OpenToyChoice,
-    Feed(FoodId),
+    SelectFood(FoodId),
+    /// The game shell combines this with the pointer's normalized aquarium position.
+    DropFood(FoodId),
     Play(ToyId),
-    Tidy,
     Comfort,
+    Inspect,
     Talk,
     React(Reaction),
+    FocusCompose,
     TypeCharacter(char),
     Backspace,
     SubmitText,
-    CancelText,
+    ClearText,
+    CancelMode,
+    OpenSettings,
+    SetTextScale(u8),
+    ToggleReducedMotion,
+    ToggleReducedFlashes,
+    ToggleReducedShake,
+    TogglePixelGrid,
+    CycleWindowScale,
+    ToggleFullscreen,
+    CycleEffectsVolume,
+    CycleSpeechVolume,
+    ToggleVoice,
+    ToggleSubtitles,
+    CycleTextSpeed,
+    OpenBindings,
+    BeginRebind(BindableAction),
+    ResetBindings,
+    Rename,
+    SubmitName,
+    OpenDataManagement,
+    RecoverBackup,
+    RequestReset,
+    ConfirmReset,
+    ToggleTranscript,
+    ExportTranscript,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BindableAction {
+    Food,
+    Play,
+    Comfort,
+    Settings,
+    Cancel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum UiMode {
+    /// Normal play. The compose field remains focused and accepts printable text.
     #[default]
-    Idle,
+    Compose,
     Context(UiTarget),
     FoodChoice,
+    FoodDrop(FoodId),
     ToyChoice,
-    TextEntry,
     OnScreenKeyboard,
+    Settings,
+    Bindings,
+    Rebinding(BindableAction),
+    Rename,
+    DataManagement,
+    ConfirmReset,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorKind {
+    Default,
+    Pointer,
+    FoodDrop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresentationCueKind {
+    Notice,
+    Recoil,
+    Delight,
+    Suspicion,
+    Affection,
+    Spit,
+    Crumbs,
+    SandPuff,
+    Wake,
+    Sleep,
+    AquariumFull,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PresentationCue {
+    pub kind: PresentationCueKind,
+    pub starts_at_ms: u64,
+    pub expires_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ViewState {
     pub mode: UiMode,
     /// Stable [`HitRegion::id`] selected by keyboard or controller navigation.
     pub focused_region: Option<String>,
+    /// Stable [`HitRegion::id`] beneath the pointer.
+    pub hovered_region: Option<String>,
     pub text_buffer: String,
     pub pending: bool,
     pub speech: Option<String>,
-    #[serde(default)]
     pub speech_expires_at_ms: Option<u64>,
     #[serde(default)]
-    pub nonverbal: Option<TransientNonverbal>,
+    pub cue_queue: Vec<PresentationCue>,
+    #[serde(default)]
+    pub pixel_grid: bool,
+    #[serde(default = "default_text_scale")]
+    pub text_scale: u8,
+    #[serde(default)]
+    pub reduced_motion: bool,
+    #[serde(default)]
+    pub reduced_flashes: bool,
+    #[serde(default)]
+    pub reduced_shake: bool,
+    #[serde(default = "default_window_scale")]
+    pub window_scale: u8,
+    #[serde(default)]
+    pub fullscreen: bool,
+    #[serde(default = "default_volume")]
+    pub effects_volume: u8,
+    #[serde(default = "default_volume")]
+    pub speech_volume: u8,
+    #[serde(default = "default_true")]
+    pub voice_enabled: bool,
+    #[serde(default = "default_true")]
+    pub subtitles: bool,
+    /// 0 = instant, 1 = normal, 2 = slow.
+    #[serde(default = "default_text_speed")]
+    pub text_speed: u8,
+    #[serde(default)]
+    pub binding_labels: BindingLabels,
+    #[serde(default)]
+    pub controller_active: bool,
+    #[serde(default)]
+    pub speaking: bool,
+    /// Protocol/game-owned mouth phase: 0 closed, 1 resting, 2 open.
+    #[serde(default)]
+    pub mouth_phase: u8,
+    #[serde(default)]
+    pub transcript_enabled: bool,
+    #[serde(default)]
+    pub status_message: Option<String>,
+    #[serde(default)]
+    pub transcript_status: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct TransientNonverbal {
-    pub act: NonverbalAct,
-    pub expires_at_ms: u64,
+pub struct BindingLabels {
+    pub food: String,
+    pub play: String,
+    pub comfort: String,
+    pub settings: String,
+    pub cancel: String,
+}
+
+impl Default for BindingLabels {
+    fn default() -> Self {
+        Self {
+            food: "F1".to_owned(),
+            play: "F2".to_owned(),
+            comfort: "F3".to_owned(),
+            settings: "F10".to_owned(),
+            cancel: "Escape".to_owned(),
+        }
+    }
+}
+
+impl Default for ViewState {
+    fn default() -> Self {
+        Self {
+            mode: UiMode::Compose,
+            focused_region: Some("compose/input".to_owned()),
+            hovered_region: None,
+            text_buffer: String::new(),
+            pending: false,
+            speech: None,
+            speech_expires_at_ms: None,
+            cue_queue: Vec::new(),
+            pixel_grid: false,
+            text_scale: default_text_scale(),
+            reduced_motion: false,
+            reduced_flashes: false,
+            reduced_shake: false,
+            window_scale: default_window_scale(),
+            fullscreen: false,
+            effects_volume: default_volume(),
+            speech_volume: default_volume(),
+            voice_enabled: true,
+            subtitles: true,
+            text_speed: default_text_speed(),
+            binding_labels: BindingLabels::default(),
+            controller_active: false,
+            speaking: false,
+            mouth_phase: 0,
+            transcript_enabled: false,
+            status_message: None,
+            transcript_status: None,
+        }
+    }
 }
 
 impl ViewState {
@@ -101,19 +277,15 @@ impl ViewState {
         self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_LIFETIME_MS));
     }
 
+    /// Appends important reactions instead of replacing the cue currently on screen.
     pub fn observe_events(&mut self, events: &[GameEvent], now_ms: u64) {
-        if let Some(act) = events.iter().rev().find_map(|event| match event {
-            GameEvent::NonverbalAct(act) => Some(*act),
-            _ => None,
-        }) {
-            self.speech = None;
-            self.speech_expires_at_ms = None;
-            self.nonverbal = Some(TransientNonverbal {
-                act,
-                expires_at_ms: now_ms.saturating_add(NONVERBAL_LIFETIME_MS),
-            });
-        }
         self.expire(now_ms);
+        for event in events {
+            let cue = cue_for_event(event);
+            if let Some((kind, duration_ms)) = cue {
+                self.enqueue_cue(kind, duration_ms, now_ms);
+            }
+        }
     }
 
     pub fn expire(&mut self, now_ms: u64) {
@@ -124,299 +296,2633 @@ impl ViewState {
             self.speech = None;
             self.speech_expires_at_ms = None;
         }
-        if self
-            .nonverbal
-            .is_some_and(|presentation| now_ms >= presentation.expires_at_ms)
-        {
-            self.nonverbal = None;
+        self.cue_queue.retain(|cue| now_ms < cue.expires_at_ms);
+    }
+
+    pub fn enqueue_cue(&mut self, kind: PresentationCueKind, duration_ms: u64, now_ms: u64) {
+        if self.cue_queue.len() >= CUE_QUEUE_LIMIT {
+            return;
         }
+        let starts_at_ms = self
+            .cue_queue
+            .last()
+            .map_or(now_ms, |cue| cue.expires_at_ms.max(now_ms));
+        self.cue_queue.push(PresentationCue {
+            kind,
+            starts_at_ms,
+            expires_at_ms: starts_at_ms.saturating_add(duration_ms.max(1)),
+        });
+    }
+
+    #[must_use]
+    pub fn active_cue(&self, now_ms: u64) -> Option<PresentationCueKind> {
+        self.cue_queue
+            .iter()
+            .find(|cue| now_ms >= cue.starts_at_ms && now_ms < cue.expires_at_ms)
+            .map(|cue| cue.kind)
     }
 }
 
+const fn default_text_scale() -> u8 {
+    1
+}
+
+const fn default_window_scale() -> u8 {
+    3
+}
+
+const fn default_volume() -> u8 {
+    100
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+const fn default_text_speed() -> u8 {
+    1
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpriteFlip {
+    None,
+    Horizontal,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SpriteCommand {
     pub id: String,
     pub x: i32,
     pub y: i32,
     pub layer: i16,
-    /// Zero-based deterministic animation frame. Runtime assets use
-    /// `<id>-<frame>.png`, falling back to the unnumbered `<id>.png`.
     #[serde(default)]
     pub frame: u8,
+    pub flip: SpriteFlip,
+    /// Optional whole-pixel source crop. `None` selects the complete asset.
+    pub source_rect: Option<Rect>,
+    /// Positive integer nearest-neighbor scale.
+    pub scale: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RectCommand {
     pub id: String,
     pub rect: Rect,
     pub color: [u8; 4],
     pub layer: i16,
+    /// An outline has no scaling semantics and remains one logical pixel wide.
+    #[serde(default)]
+    pub outline: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TextCommand {
     pub id: String,
     pub text: String,
     pub x: i32,
     pub y: i32,
     pub layer: i16,
+    pub scale: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HitRegion {
     pub id: String,
     pub target: Option<UiTarget>,
     pub action: UiAction,
     pub rect: Rect,
     pub enabled: bool,
+    pub label: String,
+    pub cursor: CursorKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreatureSummary {
+    pub name: String,
+    pub mood: Mood,
+    pub mood_label: String,
+    pub behavior: String,
+    pub stage: String,
+    pub discovered_fact: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RenderPlan {
     pub sprites: Vec<SpriteCommand>,
     pub rects: Vec<RectCommand>,
     pub text: Vec<TextCommand>,
     pub hit_regions: Vec<HitRegion>,
+    pub summary: CreatureSummary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioCue {
+    AquariumHum,
+    Bubble,
+    Wake,
+    FoodDrop,
+    FoodEat,
+    FoodReject,
+    Sand,
+    Affection,
+    Sleep,
+    UiReject,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AudioPlan {
-    pub events: Vec<String>,
+    pub ambience: Vec<AudioCue>,
+    pub events: Vec<AudioCue>,
 }
 
 #[must_use]
 pub fn contextual_actions(target: UiTarget) -> Vec<UiAction> {
     match target {
-        UiTarget::Bowl => vec![UiAction::OpenFoodChoice],
-        UiTarget::Toy => vec![UiAction::OpenToyChoice],
-        UiTarget::Clutter => vec![UiAction::Tidy],
-        UiTarget::Creature => vec![UiAction::Comfort, UiAction::Talk],
-        UiTarget::Window
-        | UiTarget::Bed
-        | UiTarget::Food(_)
-        | UiTarget::ToyChoice(_)
-        | UiTarget::Reaction(_) => Vec::new(),
+        UiTarget::Creature => vec![
+            UiAction::Comfort,
+            UiAction::OpenToyChoice,
+            UiAction::Inspect,
+            UiAction::Rename,
+        ],
+        UiTarget::Toy(toy) => vec![UiAction::Play(toy), UiAction::Inspect],
+        UiTarget::Cave | UiTarget::Plant(_) | UiTarget::FoodObject(_) | UiTarget::OpenWater => {
+            vec![UiAction::Inspect]
+        }
+        UiTarget::Reaction(_) | UiTarget::ComposeField | UiTarget::Actions => Vec::new(),
     }
+}
+
+/// Maps a simulation coordinate to a whole logical pixel in the visible water volume.
+#[must_use]
+pub fn world_to_logical(position: NormalizedPosition) -> (i32, i32) {
+    const X_MIN: i32 = 4;
+    const X_SPAN: i32 = 311;
+    const Y_MIN: i32 = 4;
+    const Y_SPAN: i32 = 121;
+    let position = position.clamped();
+    let x = X_MIN + rounded_ratio(position.x, X_SPAN);
+    let y = Y_MIN + rounded_ratio(position.y, Y_SPAN);
+    (x, y)
+}
+
+#[must_use]
+pub fn logical_to_world(x: i32, y: i32) -> NormalizedPosition {
+    const X_MIN: i32 = 4;
+    const X_SPAN: i32 = 311;
+    const Y_MIN: i32 = 4;
+    const Y_SPAN: i32 = 121;
+    NormalizedPosition::new(
+        ((x - X_MIN).clamp(0, X_SPAN) * NormalizedPosition::SCALE + X_SPAN / 2) / X_SPAN,
+        ((y - Y_MIN).clamp(0, Y_SPAN) * NormalizedPosition::SCALE + Y_SPAN / 2) / Y_SPAN,
+    )
 }
 
 #[must_use]
 pub fn plan(state: &WorldState, view: &ViewState) -> (RenderPlan, AudioPlan) {
-    let (creature_x, creature_y) = creature_position(state);
-    let mut sprites = room_sprites(state, view, creature_x, creature_y);
-    let mut rects = vec![RectCommand {
-        id: "room/floor-shadow".to_owned(),
-        rect: Rect {
-            x: 0,
-            y: 137,
-            w: LOGICAL_WIDTH,
-            h: 43,
-        },
-        color: [38, 35, 44, 96],
-        layer: 1,
-    }];
-    add_room_lighting(state, &mut rects);
+    let now_ms = state.elapsed_ms;
+    let mut sprites = environment_sprites(state, view);
+    let mut rects = environment_rects(state, view);
     let mut text = Vec::new();
-    add_nonverbal_presentation(
-        view,
-        creature_x,
-        creature_y,
-        &mut sprites,
-        &mut rects,
-        &mut text,
-    );
-    // Every open overlay is modal. Keeping room targets out of the plan also
-    // makes pointer and focus navigation obey the same boundary.
-    let mut hit_regions = if view.mode == UiMode::Idle {
-        room_hit_regions(creature_x, creature_y)
-    } else {
-        Vec::new()
-    };
+    let mut hit_regions = world_hit_regions(state, view.mode);
 
-    match view.mode {
-        UiMode::Idle => {}
-        UiMode::Context(target) => {
-            add_context_menu(target, &mut rects, &mut text, &mut hit_regions)
-        }
-        UiMode::FoodChoice => add_food_choice(&mut rects, &mut text, &mut hit_regions),
-        UiMode::ToyChoice => add_toy_choice(&mut rects, &mut text, &mut hit_regions),
-        UiMode::TextEntry => add_text_entry(view, false, &mut rects, &mut text, &mut hit_regions),
-        UiMode::OnScreenKeyboard => {
-            add_text_entry(view, true, &mut rects, &mut text, &mut hit_regions)
+    add_objects(state, &mut sprites);
+    add_creature(state, view, &mut sprites, &mut rects);
+    add_speech(view, &mut rects, &mut text, &mut hit_regions);
+    add_persistent_bar(state, view, &mut rects, &mut text, &mut hit_regions);
+    add_temporary_mode(view, &mut rects, &mut text, &mut hit_regions);
+    add_status(view, state.elapsed_ms, &mut rects, &mut text);
+    add_hover_and_focus(view, &hit_regions, &mut rects, &mut text);
+    if view.pixel_grid {
+        add_pixel_grid(&mut rects);
+    }
+    let text_scale = view.text_scale.clamp(1, 2);
+    for command in &mut text {
+        command.scale = text_scale;
+    }
+    if view.reduced_flashes {
+        for command in &mut rects {
+            if command.id.starts_with("effect/") || command.id.starts_with("aquarium/caustic-") {
+                command.color[3] = command.color[3].min(80);
+            }
         }
     }
 
-    if let Some(speech) = view
-        .speech
-        .as_deref()
-        .filter(|speech| !speech.trim().is_empty())
-    {
-        add_speech(speech, &mut rects, &mut text, &mut hit_regions);
-    }
-
-    if let Some(focused) = view.focused_region.as_deref()
-        && let Some(rect) = hit_regions
-            .iter()
-            .find(|hit| hit.id == focused)
-            .map(|hit| hit.rect)
-    {
-        rects.push(RectCommand {
-            id: "ui/focus".to_owned(),
-            rect: grow(rect, 2),
-            color: [255, 225, 133, 180],
-            layer: 22,
-        });
-    }
-
-    // Keep ordering deterministic even when UI modes append overlays.
     sprites.sort_by_key(|command| command.layer);
     rects.sort_by_key(|command| command.layer);
     text.sort_by_key(|command| command.layer);
+    let active_cue = view.active_cue(now_ms);
+    let events = active_cue.into_iter().map(audio_for_cue).collect();
     (
         RenderPlan {
             sprites,
             rects,
             text,
             hit_regions,
+            summary: creature_summary(state),
         },
-        AudioPlan { events: Vec::new() },
+        AudioPlan {
+            ambience: vec![AudioCue::AquariumHum],
+            events,
+        },
     )
 }
 
-fn room_sprites(
-    state: &WorldState,
-    view: &ViewState,
-    creature_x: i32,
-    creature_y: i32,
-) -> Vec<SpriteCommand> {
-    let creature_id = if matches!(
-        view.nonverbal.map(|presentation| presentation.act),
-        Some(
-            NonverbalAct::PushFoodAway(_)
-                | NonverbalAct::RefuseToEat
-                | NonverbalAct::UndoTidy
-                | NonverbalAct::RefuseAndStare
-        )
-    ) {
-        "creature/annoyed"
-    } else if matches!(
-        view.nonverbal.map(|presentation| presentation.act),
-        Some(NonverbalAct::TakeToyAway(_))
-    ) {
-        "creature/play"
-    } else {
-        match state.creature.current_intention {
-            Intention::Sleep => "creature/sleep",
-            Intention::Eat => "creature/eat",
-            Intention::WaitAtBowl | Intention::RejectFood => "creature/annoyed",
-            Intention::Play => "creature/play",
-            Intention::ApproachPlayer | Intention::SeekComfort => "creature/walk",
-            Intention::UndoTidy | Intention::RefuseAndStare => "creature/annoyed",
-            Intention::ShowAffection => "creature/idle",
-            Intention::Idle if state.creature.movement.is_some() => "creature/walk",
-            Intention::Idle => "creature/idle",
-        }
-    };
-    let creature_frame = animation_frame(creature_id, state.elapsed_ms);
-    let (creature_x_offset, creature_y_offset) = pose_offset(creature_id, creature_frame);
-    let mut sprites = vec![
-        sprite("room/background", 0, 0, 0),
-        framed_sprite("room/window", 140, 18, 2, window_frame(state.elapsed_ms)),
-        sprite("room/bed", 22, 103, 2),
-        sprite("room/bowl", 238, 132, 3),
-        sprite(
-            if state.room.tidy {
-                "room/clutter-tidy"
-            } else {
-                "room/clutter"
-            },
-            278,
-            125,
-            3,
-        ),
-    ];
-    if !matches!(
-        view.nonverbal.map(|presentation| presentation.act),
-        Some(NonverbalAct::TakeToyAway(_))
-    ) {
-        sprites.push(sprite("room/toy", 95, 139, 3));
-    }
-    if let Some(food) = state.room.food_in_bowl {
-        sprites.push(sprite(
-            match food {
-                FoodId::Berry => "food/berry",
-                FoodId::Mushroom => "food/mushroom",
-                FoodId::Pellet => "food/pellet",
-            },
-            245,
-            132,
-            4,
-        ));
-    }
-    sprites.push(framed_sprite(
-        creature_id,
-        creature_x + creature_x_offset,
-        creature_y + creature_y_offset,
-        5,
-        creature_frame,
-    ));
-    sprites
+fn rounded_ratio(normalized: i32, span: i32) -> i32 {
+    (normalized * span + NormalizedPosition::SCALE / 2) / NormalizedPosition::SCALE
 }
 
-fn add_nonverbal_presentation(
+fn environment_sprites(state: &WorldState, view: &ViewState) -> Vec<SpriteCommand> {
+    let elapsed_ms = if view.reduced_motion {
+        0
+    } else {
+        state.elapsed_ms
+    };
+    vec![
+        SpriteCommand {
+            id: "aquarium/background".to_owned(),
+            x: 0,
+            y: 0,
+            layer: 0,
+            frame: 0,
+            flip: SpriteFlip::None,
+            // Crop the unwanted surface at 1:1 instead of resampling the art.
+            source_rect: Some(Rect {
+                x: 0,
+                y: 25,
+                w: 320,
+                h: 130,
+            }),
+            scale: 1,
+        },
+        framed_sprite(
+            "aquarium/caustics",
+            0,
+            0,
+            1,
+            u8::try_from((elapsed_ms / 900) % 4).unwrap_or_default(),
+        ),
+        framed_sprite(
+            "aquarium/distant-bubbles",
+            0,
+            0,
+            3,
+            u8::try_from((elapsed_ms / 700) % 4).unwrap_or_default(),
+        ),
+    ]
+}
+
+fn environment_rects(state: &WorldState, view: &ViewState) -> Vec<RectCommand> {
+    let elapsed_ms = if view.reduced_motion {
+        0
+    } else {
+        state.elapsed_ms
+    };
+    let cycle = (state.elapsed_ms % beastie_core::ACTIVE_DAY_MS) * 3 / beastie_core::ACTIVE_DAY_MS;
+    let tint = match cycle {
+        0 => [47, 123, 130, 12],
+        1 => [151, 113, 87, 12],
+        _ => [18, 36, 73, 34],
+    };
+    let mut rects = vec![
+        rect(
+            "aquarium/light-cycle",
+            Rect {
+                x: 0,
+                y: 0,
+                w: LOGICAL_WIDTH,
+                h: AQUARIUM_BOTTOM + 1,
+            },
+            tint,
+            4,
+        ),
+        rect(
+            "aquarium/sand-bed",
+            Rect {
+                x: 0,
+                y: 112,
+                w: LOGICAL_WIDTH,
+                h: 18,
+            },
+            [64, 76, 68, 255],
+            5,
+        ),
+    ];
+    for index in 0..7_i32 {
+        let phase = i32::try_from((elapsed_ms / 1_100) % 19).unwrap_or_default();
+        let x = (index * 53 + phase * 2) % LOGICAL_WIDTH;
+        let y = (index * 29 + phase * 3) % 108;
+        rects.push(rect(
+            &format!("aquarium/bubble-{index}-top"),
+            Rect { x, y, w: 3, h: 1 },
+            [171, 225, 216, 130],
+            3,
+        ));
+        rects.push(rect(
+            &format!("aquarium/bubble-{index}-side"),
+            Rect {
+                x: x - 1,
+                y: y + 1,
+                w: 1,
+                h: 2,
+            },
+            [171, 225, 216, 90],
+            3,
+        ));
+    }
+    for index in 0..5_i32 {
+        let x = 18 + index * 70 + i32::try_from((elapsed_ms / 1_600) % 6).unwrap_or_default();
+        rects.push(rect(
+            &format!("aquarium/caustic-{index}"),
+            Rect {
+                x,
+                y: 18 + index % 2 * 26,
+                w: 24,
+                h: 1,
+            },
+            [164, 220, 194, 28],
+            3,
+        ));
+    }
+    for index in 0..12_i32 {
+        let phase = i32::try_from((elapsed_ms / 420) % 31).unwrap_or_default();
+        let x = (index * 47 + phase * (index % 3 + 1)) % LOGICAL_WIDTH;
+        let y = (index * 23 + phase) % 110;
+        rects.push(rect(
+            &format!("aquarium/particle-{index}"),
+            Rect { x, y, w: 1, h: 1 },
+            [178, 221, 190, 85],
+            2,
+        ));
+    }
+    rects
+}
+
+fn add_objects(state: &WorldState, sprites: &mut Vec<SpriteCommand>) {
+    for object in state.aquarium.objects.values() {
+        let (asset, position, layer, source_rect) = match object {
+            WorldObject::Food(food) if !matches!(food.disposition, FoodDisposition::Consumed) => {
+                (food_asset(food.food), food.position, 10, None)
+            }
+            WorldObject::Food(_) => continue,
+            WorldObject::Toy { toy, position } => (
+                "aquarium/toys",
+                *position,
+                9,
+                Some(Rect {
+                    x: toy_sheet_x(*toy),
+                    y: 0,
+                    w: 32,
+                    h: 32,
+                }),
+            ),
+            WorldObject::Plant { position } => (
+                "aquarium/plants",
+                *position,
+                6,
+                Some(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 32,
+                    h: 64,
+                }),
+            ),
+            WorldObject::Cave { position } => ("aquarium/cave", *position, 5, None),
+        };
+        let (x, y) = world_to_logical(position);
+        sprites.push(SpriteCommand {
+            id: asset.to_owned(),
+            x: x - 8,
+            y: y - 8,
+            layer,
+            frame: 0,
+            flip: SpriteFlip::None,
+            source_rect,
+            scale: 1,
+        });
+    }
+}
+
+fn add_creature(
+    state: &WorldState,
     view: &ViewState,
-    creature_x: i32,
-    creature_y: i32,
     sprites: &mut Vec<SpriteCommand>,
+    rects: &mut Vec<RectCommand>,
+) {
+    let creature = state.creature.aquarium;
+    let (center_x, center_y) = world_to_logical(creature.position);
+    let mut x =
+        (center_x - CREATURE_CANVAS_SIZE / 2).clamp(-52, LOGICAL_WIDTH - CREATURE_CANVAS_SIZE + 52);
+    let y = (center_y - CREATURE_CANVAS_SIZE / 2)
+        .clamp(-50, AQUARIUM_BOTTOM - CREATURE_CANVAS_SIZE + 50);
+    let pose = creature_pose(state);
+    let flip = if matches!(creature.facing, beastie_core::Facing::Left) {
+        SpriteFlip::Horizontal
+    } else {
+        SpriteFlip::None
+    };
+    let elapsed_ms = if view.reduced_motion {
+        0
+    } else {
+        state.elapsed_ms
+    };
+    let bob = if view.reduced_motion {
+        0
+    } else {
+        bob_offset(state)
+    };
+    if !view.reduced_shake
+        && matches!(
+            view.active_cue(state.elapsed_ms),
+            Some(PresentationCueKind::Recoil | PresentationCueKind::Spit)
+        )
+    {
+        x += if (state.elapsed_ms / 80).is_multiple_of(2) {
+            -2
+        } else {
+            2
+        };
+    }
+    let frame = animation_frame(pose, elapsed_ms);
+    sprites.push(SpriteCommand {
+        id: body_asset(pose).to_owned(),
+        x,
+        y: y + bob,
+        layer: 12,
+        frame,
+        flip,
+        source_rect: None,
+        scale: 2,
+    });
+    let expression = expression(state, view.active_cue(state.elapsed_ms));
+    sprites.push(SpriteCommand {
+        id: format!("creature-v1/face/{expression}"),
+        x,
+        y: y + bob,
+        layer: 14,
+        frame: blink_frame(state),
+        flip,
+        source_rect: None,
+        scale: 2,
+    });
+    sprites.push(SpriteCommand {
+        id: format!("creature-v1/gaze/{}", gaze_name(creature.gaze)),
+        x,
+        y: y + bob,
+        layer: 15,
+        frame: 0,
+        flip,
+        source_rect: None,
+        scale: 2,
+    });
+    add_procedural_expression(state, view, x, y + bob, flip, rects);
+
+    if !view.reduced_motion
+        && creature.velocity.x.unsigned_abs() + creature.velocity.y.unsigned_abs() > 25
+    {
+        sprites.push(framed_sprite(
+            "aquarium/wake",
+            if matches!(flip, SpriteFlip::Horizontal) {
+                x + 51
+            } else {
+                x - 13
+            },
+            y + 37,
+            11,
+            u8::try_from((elapsed_ms / 180) % 4).unwrap_or_default(),
+        ));
+    }
+    if let Some(cue) = view.active_cue(state.elapsed_ms) {
+        sprites.push(framed_sprite(
+            &format!("creature-v1/effect/{}", cue_name(cue)),
+            x,
+            y - 8,
+            15,
+            u8::try_from((elapsed_ms / 180) % 4).unwrap_or_default(),
+        ));
+    }
+    if matches!(creature.steering, SteeringMode::Settle) && center_y > 120 {
+        sprites.push(framed_sprite(
+            "aquarium/sand-puff",
+            center_x - 22,
+            center_y + 16,
+            11,
+            u8::try_from((elapsed_ms / 250) % 4).unwrap_or_default(),
+        ));
+    }
+
+    if let Some(action) = creature.action {
+        let width =
+            i32::try_from(action.elapsed_ms.saturating_mul(24) / action.phase_duration_ms.max(1))
+                .unwrap_or(24)
+                .clamp(1, 24);
+        rects.push(rect(
+            "creature/action-phase",
+            Rect {
+                x: center_x - 12,
+                y: (y - 3).max(1),
+                w: width,
+                h: 1,
+            },
+            phase_color(action.phase),
+            16,
+        ));
+    }
+}
+
+fn world_hit_regions(state: &WorldState, mode: UiMode) -> Vec<HitRegion> {
+    if let UiMode::FoodDrop(food) = mode {
+        return vec![HitRegion {
+            id: "world/drop-food".to_owned(),
+            target: Some(UiTarget::OpenWater),
+            action: UiAction::DropFood(food),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: LOGICAL_WIDTH,
+                h: AQUARIUM_BOTTOM,
+            },
+            enabled: true,
+            label: format!("Drop {}", food_name(food)),
+            cursor: CursorKind::FoodDrop,
+        }];
+    }
+    if !matches!(mode, UiMode::Compose) {
+        return Vec::new();
+    }
+    let (x, y) = world_to_logical(state.creature.aquarium.position);
+    let mut hits = vec![HitRegion {
+        id: "target/creature".to_owned(),
+        target: Some(UiTarget::Creature),
+        action: UiAction::OpenContext(UiTarget::Creature),
+        rect: Rect {
+            x: x - CREATURE_HIT_WIDTH / 2,
+            y: y - CREATURE_HIT_HEIGHT / 2,
+            w: CREATURE_HIT_WIDTH,
+            h: CREATURE_HIT_HEIGHT,
+        },
+        enabled: true,
+        label: state.creature.name.clone(),
+        cursor: CursorKind::Pointer,
+    }];
+    for (id, object) in &state.aquarium.objects {
+        let (target, position, label) = match object {
+            WorldObject::Food(food) if !matches!(food.disposition, FoodDisposition::Consumed) => (
+                UiTarget::FoodObject(*id),
+                food.position,
+                state
+                    .aquarium
+                    .object_names
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| food_name(food.food).to_owned()),
+            ),
+            WorldObject::Food(_) => continue,
+            WorldObject::Toy { toy, position } => (
+                UiTarget::Toy(*toy),
+                *position,
+                state
+                    .aquarium
+                    .object_names
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| toy_name(*toy).to_owned()),
+            ),
+            WorldObject::Plant { position } => {
+                (UiTarget::Plant(*id), *position, "Plant".to_owned())
+            }
+            WorldObject::Cave { position } => (UiTarget::Cave, *position, "Cave".to_owned()),
+        };
+        let (x, y) = world_to_logical(position);
+        hits.push(HitRegion {
+            id: format!("target/object-{id}"),
+            target: Some(target),
+            action: UiAction::OpenContext(target),
+            rect: Rect {
+                x: x - 10,
+                y: y - 10,
+                w: 20,
+                h: 20,
+            },
+            enabled: true,
+            label,
+            cursor: CursorKind::Pointer,
+        });
+    }
+    hits
+}
+
+fn add_persistent_bar(
+    state: &WorldState,
+    view: &ViewState,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    let summary = creature_summary(state);
+    let text_scale = view.text_scale.clamp(1, 2);
+    let hint = input_hint(view.controller_active, text_scale);
+    let glyph_width = i32::from(text_scale) * 6;
+    let hint_width = i32::try_from(hint.chars().count()).unwrap_or_default() * glyph_width;
+    let hint_x = LOGICAL_WIDTH - 5 - hint_width;
+    let summary_capacity = usize::try_from((hint_x - 11) / glyph_width).unwrap_or_default();
+    let summary_line = compact_summary(&summary, summary_capacity);
+    rects.push(rect(
+        "compose/bar",
+        Rect {
+            x: 0,
+            y: COMPOSE_BAR_TOP,
+            w: LOGICAL_WIDTH,
+            h: LOGICAL_HEIGHT - COMPOSE_BAR_TOP,
+        },
+        [19, 25, 38, 245],
+        30,
+    ));
+    if visible_status(view, state.elapsed_ms).is_none() {
+        text.push(label("compose/summary", &summary_line, 5, 135, 32));
+        text.push(label("compose/input-hints", hint, hint_x, 135, 32));
+    }
+
+    let (input_rect, food_rect, settings_rect, send_rect) = if text_scale >= 2 {
+        (
+            Rect {
+                x: 5,
+                y: 152,
+                w: 155,
+                h: 23,
+            },
+            Rect {
+                x: 163,
+                y: 152,
+                w: 50,
+                h: 23,
+            },
+            Rect {
+                x: 216,
+                y: 152,
+                w: 40,
+                h: 23,
+            },
+            Rect {
+                x: 259,
+                y: 152,
+                w: 57,
+                h: 23,
+            },
+        )
+    } else {
+        (
+            Rect {
+                x: 5,
+                y: 152,
+                w: 215,
+                h: 23,
+            },
+            Rect {
+                x: 223,
+                y: 152,
+                w: 29,
+                h: 23,
+            },
+            Rect {
+                x: 255,
+                y: 152,
+                w: 23,
+                h: 23,
+            },
+            Rect {
+                x: 281,
+                y: 152,
+                w: 35,
+                h: 23,
+            },
+        )
+    };
+    rects.push(rect(
+        "compose/input-background",
+        input_rect,
+        [39, 49, 65, 255],
+        31,
+    ));
+    let input_value = if view.pending {
+        "Thinking...".to_owned()
+    } else if view.text_buffer.is_empty() {
+        if text_scale >= 2 {
+            "Message...".to_owned()
+        } else {
+            "Say something...".to_owned()
+        }
+    } else {
+        tail_fit(
+            &view.text_buffer,
+            usize::try_from((input_rect.w - 11) / glyph_width).unwrap_or(1),
+        )
+    };
+    text.push(label("compose/input-text", &input_value, 10, 159, 32));
+    hits.push(hit(
+        "compose/input",
+        Some(UiTarget::ComposeField),
+        UiAction::FocusCompose,
+        input_rect,
+        !view.pending,
+        "Message",
+    ));
+    hits.push(hit(
+        "compose/food",
+        Some(UiTarget::Actions),
+        UiAction::OpenFoodChoice,
+        food_rect,
+        !view.pending,
+        "Food",
+    ));
+    rects.push(rect(
+        "compose/food-background",
+        hits.last().expect("action hit exists").rect,
+        [69, 75, 92, 255],
+        31,
+    ));
+    text.push(label(
+        "compose/food-label",
+        "Food",
+        food_rect.x + if text_scale >= 2 { 2 } else { 3 },
+        159,
+        32,
+    ));
+    hits.push(hit(
+        "compose/settings",
+        Some(UiTarget::Actions),
+        UiAction::OpenSettings,
+        settings_rect,
+        !view.pending,
+        "Settings",
+    ));
+    rects.push(rect(
+        "compose/settings-background",
+        hits.last().expect("settings hit exists").rect,
+        [69, 75, 92, 255],
+        31,
+    ));
+    text.push(label(
+        "compose/settings-label",
+        "Set",
+        settings_rect.x + if text_scale >= 2 { 2 } else { 3 },
+        159,
+        32,
+    ));
+    let send_action = if matches!(view.mode, UiMode::Rename) {
+        UiAction::SubmitName
+    } else {
+        UiAction::SubmitText
+    };
+    let send_label = if matches!(view.mode, UiMode::Rename) {
+        "Name"
+    } else {
+        "Send"
+    };
+    hits.push(hit(
+        "compose/send",
+        None,
+        send_action,
+        send_rect,
+        !view.pending && !view.text_buffer.trim().is_empty(),
+        send_label,
+    ));
+    rects.push(rect(
+        "compose/send-background",
+        hits.last().expect("send hit exists").rect,
+        if view.text_buffer.trim().is_empty() {
+            [44, 48, 59, 255]
+        } else {
+            [108, 91, 80, 255]
+        },
+        31,
+    ));
+    text.push(label(
+        "compose/send-label",
+        send_label,
+        send_rect.x + if text_scale >= 2 { 4 } else { 3 },
+        159,
+        32,
+    ));
+}
+
+fn input_hint(controller_active: bool, text_scale: u8) -> &'static str {
+    match (controller_active, text_scale >= 2) {
+        (true, true) => "[A]/[B]",
+        (true, false) => "[A] select [B] back",
+        (false, true) => "Ent/Esc",
+        (false, false) => "Enter send  Esc back",
+    }
+}
+
+fn compact_summary(summary: &CreatureSummary, capacity: usize) -> String {
+    let values = [
+        summary.name.as_str(),
+        summary.mood_label.as_str(),
+        summary.behavior.as_str(),
+    ];
+    let separators = values.len() - 1;
+    let available = capacity.saturating_sub(separators);
+    let mut budgets = values.map(|value| value.chars().count());
+    while budgets.iter().sum::<usize>() > available {
+        let Some((index, _)) = budgets
+            .iter()
+            .enumerate()
+            .filter(|(_, budget)| **budget > 2)
+            .max_by_key(|(index, budget)| (**budget, usize::MAX - *index))
+        else {
+            break;
+        };
+        budgets[index] -= 1;
+    }
+    values
+        .into_iter()
+        .zip(budgets)
+        .map(|(value, budget)| head_fit(value, budget))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn head_fit(value: &str, capacity: usize) -> String {
+    if value.chars().count() <= capacity {
+        return value.to_owned();
+    }
+    match capacity {
+        0 => String::new(),
+        1 => "~".to_owned(),
+        _ => format!("{}~", value.chars().take(capacity - 1).collect::<String>()),
+    }
+}
+
+fn tail_fit(value: &str, capacity: usize) -> String {
+    let count = value.chars().count();
+    if count <= capacity {
+        return value.to_owned();
+    }
+    match capacity {
+        0 => String::new(),
+        1 => "~".to_owned(),
+        _ => format!(
+            "~{}",
+            value.chars().skip(count - capacity + 1).collect::<String>()
+        ),
+    }
+}
+
+fn add_temporary_mode(
+    view: &ViewState,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    match view.mode {
+        UiMode::Compose => {}
+        UiMode::Context(target) => {
+            let actions = contextual_actions(target);
+            add_action_strip("context", &actions, 100, rects, text, hits);
+        }
+        UiMode::FoodChoice => add_action_strip(
+            "food",
+            &[
+                UiAction::SelectFood(FoodId::Berry),
+                UiAction::SelectFood(FoodId::Mushroom),
+                UiAction::SelectFood(FoodId::Pellet),
+            ],
+            100,
+            rects,
+            text,
+            hits,
+        ),
+        UiMode::FoodDrop(food) => {
+            rects.push(rect(
+                "mode/drop-food",
+                Rect {
+                    x: 79,
+                    y: 4,
+                    w: 162,
+                    h: 18,
+                },
+                [22, 31, 43, 232],
+                28,
+            ));
+            text.push(label(
+                "mode/drop-food-label",
+                &format!("Drop {} into open water  [Esc]", food_name(food)),
+                84,
+                9,
+                29,
+            ));
+        }
+        UiMode::ToyChoice => add_action_strip(
+            "toy",
+            &[
+                UiAction::Play(ToyId::Ball),
+                UiAction::Play(ToyId::Bell),
+                UiAction::Play(ToyId::Sock),
+            ],
+            100,
+            rects,
+            text,
+            hits,
+        ),
+        UiMode::OnScreenKeyboard => add_keyboard(view, rects, text, hits),
+        UiMode::Settings => add_settings(view, rects, text, hits),
+        UiMode::Bindings => add_bindings(view, rects, text, hits),
+        UiMode::Rebinding(action) => add_rebinding(action, rects, text),
+        UiMode::Rename => add_rename(view, rects, text),
+        UiMode::DataManagement => add_data_management(view, rects, text, hits),
+        UiMode::ConfirmReset => add_reset_confirmation(rects, text, hits),
+    }
+}
+
+fn add_settings(
+    view: &ViewState,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    rects.push(rect(
+        "settings/panel",
+        Rect {
+            x: 5,
+            y: 3,
+            w: 310,
+            h: 124,
+        },
+        [19, 25, 38, 250],
+        27,
+    ));
+    text.push(label("settings/title", "Settings", 12, 8, 29));
+    let settings = [
+        (
+            "text-scale",
+            "Text size",
+            if view.text_scale >= 2 {
+                "Large"
+            } else {
+                "Normal"
+            },
+            UiAction::SetTextScale(if view.text_scale >= 2 { 1 } else { 2 }),
+        ),
+        (
+            "motion",
+            "Reduced motion",
+            on_off(view.reduced_motion),
+            UiAction::ToggleReducedMotion,
+        ),
+        (
+            "flashes",
+            "Reduced flashes",
+            on_off(view.reduced_flashes),
+            UiAction::ToggleReducedFlashes,
+        ),
+        (
+            "shake",
+            "Reduced shake",
+            on_off(view.reduced_shake),
+            UiAction::ToggleReducedShake,
+        ),
+        (
+            "grid",
+            "Pixel grid",
+            on_off(view.pixel_grid),
+            UiAction::TogglePixelGrid,
+        ),
+        (
+            "window-scale",
+            "Window scale",
+            scale_label(view.window_scale),
+            UiAction::CycleWindowScale,
+        ),
+        (
+            "fullscreen",
+            "Fullscreen",
+            on_off(view.fullscreen),
+            UiAction::ToggleFullscreen,
+        ),
+        (
+            "effects-volume",
+            "Effects",
+            volume_label(view.effects_volume),
+            UiAction::CycleEffectsVolume,
+        ),
+        (
+            "speech-volume",
+            "Speech",
+            volume_label(view.speech_volume),
+            UiAction::CycleSpeechVolume,
+        ),
+        (
+            "voice",
+            "Voice",
+            on_off(view.voice_enabled),
+            UiAction::ToggleVoice,
+        ),
+        (
+            "subtitles",
+            "Subtitles",
+            on_off(view.subtitles),
+            UiAction::ToggleSubtitles,
+        ),
+        (
+            "text-speed",
+            "Text speed",
+            text_speed_label(view.text_speed),
+            UiAction::CycleTextSpeed,
+        ),
+        ("bindings", "Bindings", "Open", UiAction::OpenBindings),
+        (
+            "reset-bindings",
+            "Reset keys",
+            "Reset",
+            UiAction::ResetBindings,
+        ),
+        ("data", "Save & data", "Open", UiAction::OpenDataManagement),
+    ];
+    for (index, (id, setting, value, action)) in settings.into_iter().enumerate() {
+        let column = i32::try_from(index / 8).unwrap_or_default();
+        let row = i32::try_from(index % 8).unwrap_or_default();
+        let column_x = 12 + column * 151;
+        let y = 18 + row * 13;
+        text.push(label(
+            &format!("settings/{id}-name"),
+            setting,
+            column_x,
+            y + 3,
+            29,
+        ));
+        let button = Rect {
+            x: column_x + 96,
+            y,
+            w: 48,
+            h: 11,
+        };
+        hits.push(hit(
+            &format!("settings/{id}"),
+            None,
+            action,
+            button,
+            true,
+            setting,
+        ));
+        rects.push(rect(
+            &format!("settings/{id}-background"),
+            button,
+            [69, 75, 92, 255],
+            28,
+        ));
+        text.push(label(
+            &format!("settings/{id}-value"),
+            value,
+            button.x + 5,
+            button.y + 3,
+            29,
+        ));
+    }
+}
+
+fn add_rename(view: &ViewState, rects: &mut Vec<RectCommand>, text: &mut Vec<TextCommand>) {
+    rects.push(rect(
+        "rename/prompt-background",
+        Rect {
+            x: 74,
+            y: 16,
+            w: 172,
+            h: 27,
+        },
+        [19, 25, 38, 245],
+        27,
+    ));
+    text.push(label(
+        "rename/prompt",
+        if view.text_buffer.trim().is_empty() {
+            "Type a real name"
+        } else {
+            "Enter confirms, Escape cancels"
+        },
+        82,
+        25,
+        29,
+    ));
+}
+
+fn add_data_management(
+    view: &ViewState,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    rects.push(rect(
+        "data/panel",
+        Rect {
+            x: 43,
+            y: 16,
+            w: 234,
+            h: 108,
+        },
+        [19, 25, 38, 250],
+        27,
+    ));
+    text.push(label("data/title", "Save & local data", 51, 23, 29));
+    let actions = [
+        ("recover", "Recover backup", UiAction::RecoverBackup, true),
+        ("reset", "Reset creature", UiAction::RequestReset, true),
+        (
+            "transcript",
+            if view.transcript_enabled {
+                "Transcript: On"
+            } else {
+                "Transcript: Off"
+            },
+            UiAction::ToggleTranscript,
+            true,
+        ),
+        (
+            "export",
+            "Export transcript",
+            UiAction::ExportTranscript,
+            view.transcript_enabled,
+        ),
+    ];
+    for (index, (id, name, action, enabled)) in actions.into_iter().enumerate() {
+        let button = Rect {
+            x: 53,
+            y: 39 + i32::try_from(index).unwrap_or_default() * 20,
+            w: 214,
+            h: 17,
+        };
+        hits.push(hit(
+            &format!("data/{id}"),
+            None,
+            action,
+            button,
+            enabled,
+            name,
+        ));
+        rects.push(rect(
+            &format!("data/{id}-background"),
+            button,
+            if enabled {
+                [69, 75, 92, 255]
+            } else {
+                [39, 43, 53, 255]
+            },
+            28,
+        ));
+        text.push(label(
+            &format!("data/{id}-label"),
+            name,
+            button.x + 6,
+            button.y + 5,
+            29,
+        ));
+    }
+}
+
+fn add_reset_confirmation(
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    rects.push(rect(
+        "reset/panel",
+        Rect {
+            x: 49,
+            y: 39,
+            w: 222,
+            h: 59,
+        },
+        [35, 24, 32, 252],
+        31,
+    ));
+    text.push(label(
+        "reset/warning",
+        "Reset this creature? Backup stays recoverable.",
+        57,
+        48,
+        32,
+    ));
+    for (id, name, action, x) in [
+        ("cancel", "Cancel", UiAction::CancelMode, 57),
+        ("confirm", "Reset", UiAction::ConfirmReset, 165),
+    ] {
+        let button = Rect {
+            x,
+            y: 72,
+            w: 98,
+            h: 19,
+        };
+        hits.push(hit(
+            &format!("reset/{id}"),
+            None,
+            action,
+            button,
+            true,
+            name,
+        ));
+        rects.push(rect(
+            &format!("reset/{id}-background"),
+            button,
+            if id == "confirm" {
+                [122, 61, 67, 255]
+            } else {
+                [69, 75, 92, 255]
+            },
+            32,
+        ));
+        text.push(label(
+            &format!("reset/{id}-label"),
+            name,
+            button.x + 8,
+            button.y + 5,
+            33,
+        ));
+    }
+}
+
+fn add_bindings(
+    view: &ViewState,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    rects.push(rect(
+        "bindings/panel",
+        Rect {
+            x: 38,
+            y: 14,
+            w: 244,
+            h: 110,
+        },
+        [19, 25, 38, 250],
+        27,
+    ));
+    text.push(label("bindings/title", "Input bindings", 46, 20, 29));
+    let rows = [
+        (
+            BindableAction::Food,
+            "Food",
+            view.binding_labels.food.as_str(),
+        ),
+        (
+            BindableAction::Play,
+            "Play",
+            view.binding_labels.play.as_str(),
+        ),
+        (
+            BindableAction::Comfort,
+            "Comfort",
+            view.binding_labels.comfort.as_str(),
+        ),
+        (
+            BindableAction::Settings,
+            "Settings",
+            view.binding_labels.settings.as_str(),
+        ),
+        (
+            BindableAction::Cancel,
+            "Cancel",
+            view.binding_labels.cancel.as_str(),
+        ),
+    ];
+    for (index, (action, name, binding)) in rows.into_iter().enumerate() {
+        let y = 35 + i32::try_from(index).unwrap_or_default() * 17;
+        text.push(label(
+            &format!("bindings/{}-name", bindable_id(action)),
+            name,
+            48,
+            y + 4,
+            29,
+        ));
+        let button = Rect {
+            x: 181,
+            y,
+            w: 91,
+            h: 14,
+        };
+        hits.push(hit(
+            &format!("bindings/{}", bindable_id(action)),
+            None,
+            UiAction::BeginRebind(action),
+            button,
+            true,
+            &format!("Rebind {name}"),
+        ));
+        rects.push(rect(
+            &format!("bindings/{}-background", bindable_id(action)),
+            button,
+            [69, 75, 92, 255],
+            28,
+        ));
+        text.push(label(
+            &format!("bindings/{}-value", bindable_id(action)),
+            binding,
+            button.x + 5,
+            button.y + 3,
+            29,
+        ));
+    }
+}
+
+fn add_rebinding(
+    action: BindableAction,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
 ) {
-    let Some(presentation) = view.nonverbal else {
-        return;
-    };
-    let (cue, cue_text) = match presentation.act {
-        NonverbalAct::PushFoodAway(food) => {
-            let id = match food {
-                FoodId::Berry => "food/berry",
-                FoodId::Mushroom => "food/mushroom",
-                FoodId::Pellet => "food/pellet",
-            };
-            sprites.push(sprite(id, 282, 145, 9));
-            ("food-pushed", "skrrt")
-        }
-        NonverbalAct::TakeToyAway(_) => {
-            sprites.push(sprite("room/toy", creature_x + 22, creature_y + 18, 9));
-            ("toy-taken", "mine")
-        }
-        NonverbalAct::RefuseToEat => ("food-refused", "..."),
-        NonverbalAct::UndoTidy => {
-            sprites.push(sprite("room/clutter", 252, 139, 9));
-            ("clutter-scattered", "rustle")
-        }
-        NonverbalAct::RefuseAndStare => ("refuse-and-stare", "..."),
-        NonverbalAct::LeanAgainstPlayer => ("affection", "<3"),
-    };
-    rects.push(RectCommand {
-        id: format!("presentation/{cue}/backing"),
-        rect: Rect {
-            x: creature_x + 3,
-            y: creature_y - 12,
-            w: 38,
-            h: 13,
+    rects.push(rect(
+        "bindings/capture-panel",
+        Rect {
+            x: 53,
+            y: 46,
+            w: 214,
+            h: 42,
         },
-        color: [25, 23, 31, 210],
-        layer: 18,
-    });
-    text.push(TextCommand {
-        id: format!("presentation/{cue}"),
-        text: cue_text.to_owned(),
-        x: creature_x + 7,
-        y: creature_y - 9,
-        layer: 19,
-    });
+        [19, 25, 38, 252],
+        31,
+    ));
+    text.push(label(
+        "bindings/capture-prompt",
+        &format!("Press a key for {}", bindable_name(action)),
+        64,
+        57,
+        32,
+    ));
+    text.push(label(
+        "bindings/capture-cancel",
+        "Escape cancels",
+        64,
+        72,
+        32,
+    ));
 }
 
-fn sprite(id: &str, x: i32, y: i32, layer: i16) -> SpriteCommand {
-    framed_sprite(id, x, y, layer, 0)
+fn on_off(value: bool) -> &'static str {
+    if value { "On" } else { "Off" }
+}
+
+fn scale_label(scale: u8) -> &'static str {
+    match scale.clamp(1, 6) {
+        1 => "1x",
+        2 => "2x",
+        3 => "3x",
+        4 => "4x",
+        5 => "5x",
+        _ => "6x",
+    }
+}
+
+fn volume_label(volume: u8) -> &'static str {
+    match volume.min(100) {
+        0..=12 => "0%",
+        13..=37 => "25%",
+        38..=62 => "50%",
+        63..=87 => "75%",
+        _ => "100%",
+    }
+}
+
+fn text_speed_label(speed: u8) -> &'static str {
+    match speed.min(2) {
+        0 => "Instant",
+        1 => "Normal",
+        _ => "Slow",
+    }
+}
+
+fn bindable_id(action: BindableAction) -> &'static str {
+    match action {
+        BindableAction::Food => "food",
+        BindableAction::Play => "play",
+        BindableAction::Comfort => "comfort",
+        BindableAction::Settings => "settings",
+        BindableAction::Cancel => "cancel",
+    }
+}
+
+fn bindable_name(action: BindableAction) -> &'static str {
+    match action {
+        BindableAction::Food => "food",
+        BindableAction::Play => "play",
+        BindableAction::Comfort => "comfort",
+        BindableAction::Settings => "settings",
+        BindableAction::Cancel => "cancel",
+    }
+}
+
+fn add_action_strip(
+    id: &str,
+    actions: &[UiAction],
+    y: i32,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    let item_width = 72;
+    let width = item_width * i32::try_from(actions.len()).unwrap_or_default() + 4;
+    let start = (LOGICAL_WIDTH - width) / 2;
+    rects.push(rect(
+        &format!("mode/{id}-panel"),
+        Rect {
+            x: start,
+            y,
+            w: width,
+            h: 27,
+        },
+        [19, 25, 38, 245],
+        27,
+    ));
+    for (index, action) in actions.iter().copied().enumerate() {
+        let button_rect = Rect {
+            x: start + 2 + i32::try_from(index).unwrap_or_default() * item_width,
+            y: y + 3,
+            w: item_width - 2,
+            h: 21,
+        };
+        let label_text = action_label(action);
+        let region_id = format!("action/{}", action_id(action));
+        hits.push(hit(
+            &region_id,
+            None,
+            action,
+            button_rect,
+            true,
+            &label_text,
+        ));
+        rects.push(rect(
+            &format!("{region_id}-background"),
+            button_rect,
+            [69, 75, 92, 255],
+            28,
+        ));
+        text.push(label(
+            &format!("{region_id}-label"),
+            &label_text,
+            button_rect.x + 5,
+            button_rect.y + 6,
+            29,
+        ));
+    }
+}
+
+fn add_keyboard(
+    view: &ViewState,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    const KEYS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ .,?!";
+    rects.push(rect(
+        "keyboard/panel",
+        Rect {
+            x: 6,
+            y: 3,
+            w: 308,
+            h: 124,
+        },
+        [19, 25, 38, 248],
+        27,
+    ));
+    for (index, character) in KEYS.chars().enumerate() {
+        let column = i32::try_from(index % 11).unwrap_or_default();
+        let row = i32::try_from(index / 11).unwrap_or_default();
+        let key = Rect {
+            x: 12 + column * 27,
+            y: 9 + row * 27,
+            w: 25,
+            h: 23,
+        };
+        let key_name = match character {
+            ' ' => "space".to_owned(),
+            '?' => "question".to_owned(),
+            '!' => "exclamation".to_owned(),
+            _ => character.to_ascii_lowercase().to_string(),
+        };
+        let shown = if character == ' ' {
+            "SP".to_owned()
+        } else {
+            character.to_string()
+        };
+        add_key(
+            &format!("keyboard/{key_name}"),
+            &shown,
+            UiAction::TypeCharacter(character.to_ascii_lowercase()),
+            key,
+            true,
+            rects,
+            text,
+            hits,
+        );
+    }
+    for (id, shown, action, x, enabled) in [
+        ("keyboard/delete", "Delete", UiAction::Backspace, 12, true),
+        ("keyboard/cancel", "Close", UiAction::CancelMode, 112, true),
+        (
+            "keyboard/send",
+            "Send",
+            UiAction::SubmitText,
+            212,
+            !view.text_buffer.trim().is_empty(),
+        ),
+    ] {
+        add_key(
+            id,
+            shown,
+            action,
+            Rect {
+                x,
+                y: 101,
+                w: 96,
+                h: 23,
+            },
+            enabled,
+            rects,
+            text,
+            hits,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_key(
+    id: &str,
+    shown: &str,
+    action: UiAction,
+    key: Rect,
+    enabled: bool,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    rects.push(rect(
+        &format!("{id}-background"),
+        key,
+        if enabled {
+            [69, 75, 92, 255]
+        } else {
+            [39, 43, 53, 255]
+        },
+        28,
+    ));
+    text.push(label(
+        &format!("{id}-label"),
+        shown,
+        key.x + 5,
+        key.y + 6,
+        29,
+    ));
+    hits.push(hit(id, None, action, key, enabled, shown));
+}
+
+fn add_speech(
+    view: &ViewState,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    let Some(speech) = view
+        .speech
+        .as_deref()
+        .filter(|line| !line.trim().is_empty())
+    else {
+        return;
+    };
+    rects.push(rect(
+        "speech/panel",
+        Rect {
+            x: 73,
+            y: 7,
+            w: 174,
+            h: 43,
+        },
+        [22, 31, 43, 238],
+        24,
+    ));
+    text.push(label("speech/text", speech, 80, 14, 25));
+    for (index, reaction) in [Reaction::Laugh, Reaction::Disapprove, Reaction::Comfort]
+        .into_iter()
+        .enumerate()
+    {
+        let reaction_rect = Rect {
+            x: 77 + i32::try_from(index).unwrap_or_default() * 56,
+            y: 52,
+            w: 54,
+            h: 18,
+        };
+        hits.push(hit(
+            &format!("reaction/{}", reaction_name(reaction)),
+            Some(UiTarget::Reaction(reaction)),
+            UiAction::React(reaction),
+            reaction_rect,
+            true,
+            reaction_name(reaction),
+        ));
+    }
+}
+
+fn add_status(
+    view: &ViewState,
+    now_ms: u64,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+) {
+    let Some(message) = visible_status(view, now_ms) else {
+        return;
+    };
+    let text_scale = view.text_scale.clamp(1, 2);
+    let glyph_width = usize::from(text_scale) * 6;
+    let fitted = head_fit(message, 300 / glyph_width);
+    rects.push(rect(
+        "status/background",
+        Rect {
+            x: 4,
+            y: 130,
+            w: 312,
+            h: 22,
+        },
+        [36, 29, 42, 246],
+        36,
+    ));
+    text.push(label("status/message", &fitted, 10, 133, 37));
+}
+
+fn visible_status(view: &ViewState, now_ms: u64) -> Option<&str> {
+    view.status_message
+        .as_deref()
+        .or(view.transcript_status.as_deref())
+        .or_else(|| {
+            matches!(
+                view.active_cue(now_ms),
+                Some(PresentationCueKind::AquariumFull)
+            )
+            .then_some("Aquarium full. Clean up old food first.")
+        })
+}
+
+fn add_hover_and_focus(
+    view: &ViewState,
+    hits: &[HitRegion],
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+) {
+    for (id, color, command_id) in [
+        (
+            view.hovered_region.as_deref(),
+            [142, 231, 202, 255],
+            "ui/hover",
+        ),
+        (
+            view.focused_region.as_deref(),
+            [255, 225, 133, 255],
+            "ui/focus",
+        ),
+    ] {
+        let Some(id) = id else { continue };
+        let Some(hit_region) = hits
+            .iter()
+            .find(|hit_region| hit_region.id == id && hit_region.enabled)
+        else {
+            continue;
+        };
+        rects.push(RectCommand {
+            id: command_id.to_owned(),
+            rect: grow(hit_region.rect, 1),
+            color,
+            layer: 34,
+            outline: true,
+        });
+        if command_id == "ui/hover" && hit_region.target.is_some() {
+            let label_width = (i32::try_from(hit_region.label.chars().count()).unwrap_or(12) * 6
+                + 8)
+            .clamp(24, 120);
+            let x = hit_region.rect.x.clamp(2, LOGICAL_WIDTH - label_width - 2);
+            let y = (hit_region.rect.y - 15).clamp(2, AQUARIUM_BOTTOM - 15);
+            rects.push(rect(
+                "ui/hover-label-background",
+                Rect {
+                    x,
+                    y,
+                    w: label_width,
+                    h: 13,
+                },
+                [19, 25, 38, 235],
+                34,
+            ));
+            text.push(label("ui/hover-label", &hit_region.label, x + 4, y + 3, 35));
+        }
+    }
+}
+
+fn add_pixel_grid(rects: &mut Vec<RectCommand>) {
+    for x in 0..LOGICAL_WIDTH {
+        rects.push(rect(
+            &format!("debug/grid-x-{x}"),
+            Rect {
+                x,
+                y: 0,
+                w: 1,
+                h: LOGICAL_HEIGHT,
+            },
+            [255, 0, 255, if x % 8 == 0 { 36 } else { 10 }],
+            100,
+        ));
+    }
+    for y in 0..LOGICAL_HEIGHT {
+        rects.push(rect(
+            &format!("debug/grid-y-{y}"),
+            Rect {
+                x: 0,
+                y,
+                w: LOGICAL_WIDTH,
+                h: 1,
+            },
+            [0, 255, 255, if y % 8 == 0 { 36 } else { 10 }],
+            100,
+        ));
+    }
+}
+
+/// Guaranteed hard-pixel expression rig used even when optional overlay art is absent.
+fn add_procedural_expression(
+    state: &WorldState,
+    view: &ViewState,
+    canvas_x: i32,
+    canvas_y: i32,
+    flip: SpriteFlip,
+    rects: &mut Vec<RectCommand>,
+) {
+    const INK: [u8; 4] = [25, 25, 29, 255];
+    const EYE: [u8; 4] = [232, 216, 151, 255];
+    const BLUSH: [u8; 4] = [196, 91, 93, 220];
+    const EFFECT: [u8; 4] = [179, 229, 213, 235];
+    let expression = expression(state, view.active_cue(state.elapsed_ms));
+    let blinking = blink_frame(state) == 1 || expression == "sleepy";
+    if blinking {
+        face_pixel(
+            rects,
+            "face/eye-left",
+            42,
+            36,
+            5,
+            1,
+            INK,
+            canvas_x,
+            canvas_y,
+            flip,
+            17,
+        );
+        face_pixel(
+            rects,
+            "face/eye-right",
+            52,
+            35,
+            5,
+            1,
+            INK,
+            canvas_x,
+            canvas_y,
+            flip,
+            17,
+        );
+    } else {
+        face_pixel(
+            rects,
+            "face/eye-left",
+            42,
+            34,
+            5,
+            5,
+            EYE,
+            canvas_x,
+            canvas_y,
+            flip,
+            17,
+        );
+        face_pixel(
+            rects,
+            "face/eye-right",
+            52,
+            33,
+            5,
+            5,
+            EYE,
+            canvas_x,
+            canvas_y,
+            flip,
+            17,
+        );
+        let (world_gaze_x, gaze_y) = gaze_offset(state);
+        let gaze_x = if matches!(flip, SpriteFlip::Horizontal) {
+            -world_gaze_x
+        } else {
+            world_gaze_x
+        };
+        face_pixel(
+            rects,
+            "face/pupil-left",
+            44 + gaze_x,
+            36 + gaze_y,
+            2,
+            2,
+            INK,
+            canvas_x,
+            canvas_y,
+            flip,
+            18,
+        );
+        face_pixel(
+            rects,
+            "face/pupil-right",
+            54 + gaze_x,
+            35 + gaze_y,
+            2,
+            2,
+            INK,
+            canvas_x,
+            canvas_y,
+            flip,
+            18,
+        );
+    }
+
+    match expression {
+        "curious" | "suspicious" => {
+            face_pixel(
+                rects,
+                "face/brow-left",
+                41,
+                31,
+                5,
+                1,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+            face_pixel(
+                rects,
+                "face/brow-right",
+                52,
+                29,
+                6,
+                1,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+            face_pixel(
+                rects,
+                "face/mouth-curious",
+                50,
+                46,
+                2,
+                2,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+        }
+        "hungry" => {
+            face_pixel(
+                rects,
+                "face/mouth-hungry-top",
+                48,
+                45,
+                7,
+                1,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+            face_pixel(
+                rects,
+                "face/mouth-hungry-bottom",
+                49,
+                49,
+                5,
+                1,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+            face_pixel(
+                rects,
+                "face/mouth-hungry-left",
+                48,
+                46,
+                1,
+                3,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+            face_pixel(
+                rects,
+                "face/mouth-hungry-right",
+                54,
+                46,
+                1,
+                3,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+        }
+        "lonely" => {
+            face_pixel(
+                rects,
+                "face/brow-left-sad",
+                41,
+                30,
+                4,
+                1,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+            face_pixel(
+                rects,
+                "face/brow-right-sad",
+                54,
+                30,
+                4,
+                1,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+            face_pixel(
+                rects,
+                "face/mouth-sad",
+                49,
+                48,
+                6,
+                1,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+            face_pixel(
+                rects,
+                "face/mouth-sad-center",
+                51,
+                47,
+                2,
+                1,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+        }
+        "anger" => {
+            face_pixel(
+                rects,
+                "face/brow-left-angry",
+                41,
+                30,
+                6,
+                2,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+            face_pixel(
+                rects,
+                "face/brow-right-angry",
+                52,
+                30,
+                6,
+                2,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+            face_pixel(
+                rects,
+                "face/mouth-angry",
+                48,
+                47,
+                8,
+                2,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+        }
+        "sleepy" => {
+            face_pixel(
+                rects,
+                "face/mouth-yawn",
+                50,
+                46,
+                4,
+                4,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+        }
+        _ => {
+            face_pixel(
+                rects,
+                "face/mouth-smile",
+                49,
+                46,
+                6,
+                1,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+            face_pixel(
+                rects,
+                "face/mouth-smile-left",
+                48,
+                45,
+                1,
+                1,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+            face_pixel(
+                rects,
+                "face/mouth-smile-right",
+                55,
+                45,
+                1,
+                1,
+                INK,
+                canvas_x,
+                canvas_y,
+                flip,
+                18,
+            );
+        }
+    }
+
+    if view.speaking {
+        let (mouth_y, mouth_height) = match view.mouth_phase.min(2) {
+            0 => (47, 1),
+            1 => (46, 2),
+            _ => (45, 4),
+        };
+        face_pixel(
+            rects,
+            &format!("face/speech-mouth-{}", view.mouth_phase.min(2)),
+            49,
+            mouth_y,
+            7,
+            mouth_height,
+            INK,
+            canvas_x,
+            canvas_y,
+            flip,
+            20,
+        );
+    }
+
+    let Some(cue) = view.active_cue(state.elapsed_ms) else {
+        return;
+    };
+    match cue {
+        PresentationCueKind::Notice
+        | PresentationCueKind::Suspicion
+        | PresentationCueKind::Recoil
+        | PresentationCueKind::AquariumFull => {
+            face_pixel(
+                rects,
+                "effect/attention-a",
+                58,
+                24,
+                1,
+                4,
+                EFFECT,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+            face_pixel(
+                rects,
+                "effect/attention-b",
+                61,
+                26,
+                3,
+                1,
+                EFFECT,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+        }
+        PresentationCueKind::Delight | PresentationCueKind::Affection => {
+            face_pixel(
+                rects,
+                "effect/blush-left",
+                39,
+                42,
+                4,
+                2,
+                BLUSH,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+            face_pixel(
+                rects,
+                "effect/blush-right",
+                57,
+                41,
+                4,
+                2,
+                BLUSH,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+            face_pixel(
+                rects,
+                "effect/heart-top",
+                61,
+                22,
+                4,
+                2,
+                BLUSH,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+            face_pixel(
+                rects,
+                "effect/heart-tip",
+                62,
+                24,
+                2,
+                2,
+                BLUSH,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+        }
+        PresentationCueKind::Spit | PresentationCueKind::Crumbs => {
+            face_pixel(
+                rects,
+                "effect/mouth-particle-a",
+                61,
+                47,
+                2,
+                2,
+                EFFECT,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+            face_pixel(
+                rects,
+                "effect/mouth-particle-b",
+                66,
+                50,
+                1,
+                1,
+                EFFECT,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+        }
+        PresentationCueKind::SandPuff => {
+            face_pixel(
+                rects,
+                "effect/sand-a",
+                31,
+                62,
+                8,
+                2,
+                [134, 119, 87, 210],
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+            face_pixel(
+                rects,
+                "effect/sand-b",
+                47,
+                64,
+                10,
+                1,
+                [134, 119, 87, 180],
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+        }
+        PresentationCueKind::Wake => {
+            face_pixel(
+                rects,
+                "effect/wake-a",
+                14,
+                43,
+                3,
+                1,
+                EFFECT,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+            face_pixel(
+                rects,
+                "effect/wake-b",
+                9,
+                47,
+                4,
+                1,
+                EFFECT,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+        }
+        PresentationCueKind::Sleep => {
+            face_pixel(
+                rects,
+                "effect/sleep-z-top",
+                59,
+                23,
+                4,
+                1,
+                EFFECT,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+            face_pixel(
+                rects,
+                "effect/sleep-z-bottom",
+                59,
+                27,
+                4,
+                1,
+                EFFECT,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+            face_pixel(
+                rects,
+                "effect/sleep-z-diagonal",
+                61,
+                24,
+                1,
+                3,
+                EFFECT,
+                canvas_x,
+                canvas_y,
+                flip,
+                19,
+            );
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn face_pixel(
+    rects: &mut Vec<RectCommand>,
+    id: &str,
+    source_x: i32,
+    source_y: i32,
+    width: i32,
+    height: i32,
+    color: [u8; 4],
+    canvas_x: i32,
+    canvas_y: i32,
+    flip: SpriteFlip,
+    layer: i16,
+) {
+    const SOURCE_SIZE: i32 = 80;
+    const SCALE: i32 = 2;
+    let source_x = if matches!(flip, SpriteFlip::Horizontal) {
+        SOURCE_SIZE - source_x - width
+    } else {
+        source_x
+    };
+    rects.push(rect(
+        id,
+        Rect {
+            x: canvas_x + source_x * SCALE,
+            y: canvas_y + source_y * SCALE,
+            w: width * SCALE,
+            h: height * SCALE,
+        },
+        color,
+        layer,
+    ));
+}
+
+fn gaze_offset(state: &WorldState) -> (i32, i32) {
+    let origin = state.creature.aquarium.position;
+    let target = match state.creature.aquarium.gaze {
+        GazeTarget::Cursor | GazeTarget::Player => state.aquarium.cursor,
+        GazeTarget::Food(id) => state
+            .aquarium
+            .objects
+            .get(&id)
+            .and_then(|object| match object {
+                WorldObject::Food(food) => Some(food.position),
+                _ => None,
+            }),
+        GazeTarget::Toy(toy) => state
+            .aquarium
+            .objects
+            .values()
+            .find_map(|object| match object {
+                WorldObject::Toy {
+                    toy: candidate,
+                    position,
+                } if *candidate == toy => Some(*position),
+                _ => None,
+            }),
+        GazeTarget::Cave => state
+            .aquarium
+            .objects
+            .values()
+            .find_map(|object| match object {
+                WorldObject::Cave { position } => Some(*position),
+                _ => None,
+            }),
+        GazeTarget::Plant => state
+            .aquarium
+            .objects
+            .values()
+            .find_map(|object| match object {
+                WorldObject::Plant { position } => Some(*position),
+                _ => None,
+            }),
+        GazeTarget::None => None,
+    };
+    let Some(target) = target else { return (0, 0) };
+    (
+        (target.x - origin.x).signum() * 2,
+        (target.y - origin.y).signum(),
+    )
+}
+
+#[must_use]
+pub fn creature_summary(state: &WorldState) -> CreatureSummary {
+    let mood = state.mood();
+    CreatureSummary {
+        name: state.creature.name.clone(),
+        mood,
+        mood_label: mood_name(mood).to_owned(),
+        behavior: behavior_name(state).to_owned(),
+        stage: format!("day {}", state.active_day()),
+        discovered_fact: discovered_fact(state),
+    }
+}
+
+fn discovered_fact(state: &WorldState) -> Option<String> {
+    let (food, preference) = state
+        .creature
+        .preferences
+        .iter()
+        .filter(|(_, preference)| preference.abs() >= 0.35)
+        .max_by(|left, right| left.1.abs().total_cmp(&right.1.abs()))?;
+    Some(if *preference > 0.0 {
+        format!("likes {}", food_name(*food))
+    } else {
+        format!("hates {}", food_name(*food))
+    })
+}
+
+fn creature_pose(state: &WorldState) -> &'static str {
+    if let Some(action) = state.creature.aquarium.action {
+        return match action.phase {
+            ActionPhase::Notice | ActionPhase::Gaze | ActionPhase::Inspect => "inspect",
+            ActionPhase::Brake | ActionPhase::Turn => "turn",
+            ActionPhase::Approach => "swim",
+            ActionPhase::Act => match state.creature.current_intention {
+                Intention::Eat | Intention::RejectFood => "eat",
+                Intention::Sleep => "sleep",
+                Intention::Play => "play",
+                _ => "react",
+            },
+            ActionPhase::Recover => "recover",
+        };
+    }
+    match state.creature.current_intention {
+        Intention::Sleep => "sleep",
+        Intention::Eat | Intention::RejectFood => "eat",
+        Intention::Play => "play",
+        Intention::ApproachPlayer | Intention::SeekComfort => "swim",
+        _ => match state.creature.aquarium.steering {
+            SteeringMode::Approach | SteeringMode::Flee | SteeringMode::Orbit => "swim",
+            SteeringMode::Turn | SteeringMode::Brake => "turn",
+            SteeringMode::Inspect => "inspect",
+            SteeringMode::Settle => "settle",
+            SteeringMode::Hover | SteeringMode::Drift => "hover",
+        },
+    }
+}
+
+fn expression(state: &WorldState, cue: Option<PresentationCueKind>) -> &'static str {
+    if let Some(cue) = cue {
+        return match cue {
+            PresentationCueKind::Delight | PresentationCueKind::Affection => "delight",
+            PresentationCueKind::Recoil
+            | PresentationCueKind::Spit
+            | PresentationCueKind::AquariumFull => "anger",
+            PresentationCueKind::Suspicion | PresentationCueKind::Notice => "suspicious",
+            PresentationCueKind::Sleep => "sleepy",
+            PresentationCueKind::Crumbs
+            | PresentationCueKind::SandPuff
+            | PresentationCueKind::Wake => "content",
+        };
+    }
+    match state.mood() {
+        Mood::Content => "content",
+        Mood::Curious => "curious",
+        Mood::Hungry => "hungry",
+        Mood::Sleepy => "sleepy",
+        Mood::Lonely => "lonely",
+        Mood::Resentful => "anger",
+    }
+}
+
+fn behavior_name(state: &WorldState) -> &'static str {
+    if let Some(action) = state.creature.aquarium.action {
+        return match action.phase {
+            ActionPhase::Notice => "noticed something",
+            ActionPhase::Brake => "stopping",
+            ActionPhase::Gaze => "watching",
+            ActionPhase::Turn => "turning",
+            ActionPhase::Approach => "swimming over",
+            ActionPhase::Inspect => "inspecting",
+            ActionPhase::Act => match state.creature.current_intention {
+                Intention::Eat => "eating",
+                Intention::RejectFood => "rejecting food",
+                Intention::Play => "playing",
+                _ => "doing something",
+            },
+            ActionPhase::Recover => "settling down",
+        };
+    }
+    match state.creature.current_intention {
+        Intention::Sleep => "sleeping",
+        Intention::SeekComfort => "seeking comfort",
+        Intention::ApproachPlayer => "watching you",
+        Intention::RefuseAndStare => "staring",
+        Intention::ShowAffection => "staying close",
+        _ => match state.creature.aquarium.steering {
+            SteeringMode::Drift => "drifting",
+            SteeringMode::Flee => "avoiding you",
+            SteeringMode::Orbit => "circling",
+            SteeringMode::Inspect => "investigating",
+            SteeringMode::Settle => "settling",
+            _ => "hovering",
+        },
+    }
+}
+
+fn cue_for_event(event: &GameEvent) -> Option<(PresentationCueKind, u64)> {
+    match event {
+        GameEvent::FoodDropped { .. } => Some((PresentationCueKind::Notice, 700)),
+        GameEvent::FoodConsumed(_) => Some((PresentationCueKind::Crumbs, 900)),
+        GameEvent::FoodRejected(_) | GameEvent::ToyRejected(_) => {
+            Some((PresentationCueKind::Spit, 1_100))
+        }
+        GameEvent::FoodDropRejected(FoodDropRejectionReason::AquariumFull) => {
+            Some((PresentationCueKind::AquariumFull, 1_300))
+        }
+        GameEvent::Comforted => Some((PresentationCueKind::Affection, 1_200)),
+        GameEvent::SleepStarted => Some((PresentationCueKind::Sleep, 1_000)),
+        GameEvent::FoodSettled(_) => Some((PresentationCueKind::SandPuff, 700)),
+        GameEvent::NonverbalAct(act) => Some((cue_for_nonverbal(*act), 1_100)),
+        GameEvent::ActionPhaseChanged {
+            to: ActionPhase::Approach,
+            ..
+        } => Some((PresentationCueKind::Wake, 650)),
+        _ => None,
+    }
+}
+
+fn cue_for_nonverbal(act: NonverbalAct) -> PresentationCueKind {
+    match act {
+        NonverbalAct::PushFoodAway(_) | NonverbalAct::RefuseToEat => PresentationCueKind::Spit,
+        NonverbalAct::TakeToyAway(_) => PresentationCueKind::Suspicion,
+        NonverbalAct::UndoTidy => PresentationCueKind::SandPuff,
+        NonverbalAct::RefuseAndStare => PresentationCueKind::Recoil,
+        NonverbalAct::LeanAgainstPlayer => PresentationCueKind::Affection,
+    }
+}
+
+fn audio_for_cue(cue: PresentationCueKind) -> AudioCue {
+    match cue {
+        PresentationCueKind::Notice | PresentationCueKind::Wake => AudioCue::Wake,
+        PresentationCueKind::Recoil
+        | PresentationCueKind::Suspicion
+        | PresentationCueKind::Spit => AudioCue::FoodReject,
+        PresentationCueKind::AquariumFull => AudioCue::UiReject,
+        PresentationCueKind::Delight | PresentationCueKind::Crumbs => AudioCue::FoodEat,
+        PresentationCueKind::Affection => AudioCue::Affection,
+        PresentationCueKind::SandPuff => AudioCue::Sand,
+        PresentationCueKind::Sleep => AudioCue::Sleep,
+    }
+}
+
+fn animation_frame(pose: &str, elapsed_ms: u64) -> u8 {
+    let frame_ms = match pose {
+        "swim" => 160,
+        "turn" | "eat" | "play" => 240,
+        "sleep" => 1_200,
+        _ => 700,
+    };
+    u8::try_from((elapsed_ms / frame_ms) % 4).unwrap_or_default()
+}
+
+fn body_asset(pose: &str) -> &'static str {
+    match pose {
+        "swim" | "turn" => "creature-v1/swim",
+        "eat" | "react" | "recover" => "creature-v1/eat-recoil",
+        "sleep" => "creature-v1/sleep",
+        "play" => "creature-v1/play",
+        "hover" | "inspect" | "settle" => "creature-v1/hover",
+        _ => "creature-v1/base",
+    }
+}
+
+fn blink_frame(state: &WorldState) -> u8 {
+    let cycle = (state.elapsed_ms + state.seed % 2_100) % 4_700;
+    if cycle < 110 { 1 } else { 0 }
+}
+
+fn bob_offset(state: &WorldState) -> i32 {
+    const BOB: [i32; 8] = [0, -1, -1, -2, -1, -1, 0, 0];
+    let index = usize::try_from((state.elapsed_ms / 320 + state.seed % 8) % 8).unwrap_or_default();
+    BOB[index]
+}
+
+fn phase_color(phase: ActionPhase) -> [u8; 4] {
+    match phase {
+        ActionPhase::Notice | ActionPhase::Gaze => [244, 219, 128, 210],
+        ActionPhase::Brake | ActionPhase::Turn | ActionPhase::Approach => [119, 209, 205, 210],
+        ActionPhase::Inspect => [196, 158, 214, 210],
+        ActionPhase::Act => [242, 137, 107, 230],
+        ActionPhase::Recover => [151, 206, 153, 190],
+    }
 }
 
 fn framed_sprite(id: &str, x: i32, y: i32, layer: i16, frame: u8) -> SpriteCommand {
@@ -426,526 +2932,49 @@ fn framed_sprite(id: &str, x: i32, y: i32, layer: i16, frame: u8) -> SpriteComma
         y,
         layer,
         frame,
+        flip: SpriteFlip::None,
+        source_rect: None,
+        scale: 1,
     }
 }
 
-fn animation_frame(pose: &str, elapsed_ms: u64) -> u8 {
-    let frame_ms = match pose {
-        "creature/walk" => 250,
-        "creature/eat" => 400,
-        "creature/play" => 300,
-        "creature/annoyed" => 500,
-        "creature/sleep" => 1_600,
-        _ => 1_200,
-    };
-    u8::try_from((elapsed_ms / frame_ms) % 4).unwrap_or_default()
-}
-
-fn pose_offset(pose: &str, frame: u8) -> (i32, i32) {
-    if frame.is_multiple_of(2) {
-        return (0, 0);
-    }
-    match pose {
-        "creature/walk" | "creature/idle" | "creature/eat" => (0, -1),
-        "creature/play" => (0, -2),
-        "creature/annoyed" => (-1, 0),
-        "creature/sleep" => (1, 0),
-        _ => (0, 0),
-    }
-}
-
-fn window_frame(elapsed_ms: u64) -> u8 {
-    let phase = elapsed_ms % beastie_core::ACTIVE_DAY_MS;
-    let third = beastie_core::ACTIVE_DAY_MS / 3;
-    if phase < third {
-        0
-    } else if phase < third * 2 {
-        1
-    } else {
-        2
-    }
-}
-
-fn add_room_lighting(state: &WorldState, rects: &mut Vec<RectCommand>) {
-    let (window_color, room_color) = match window_frame(state.elapsed_ms) {
-        0 => ([151, 210, 230, 24], [255, 230, 184, 7]),
-        1 => ([224, 137, 100, 38], [114, 62, 75, 18]),
-        _ => ([67, 84, 142, 54], [23, 30, 66, 42]),
-    };
-    rects.push(RectCommand {
-        id: "room/window-light".to_owned(),
-        rect: Rect {
-            x: 146,
-            y: 23,
-            w: 76,
-            h: 61,
-        },
-        color: window_color,
-        layer: 7,
-    });
-    rects.push(RectCommand {
-        id: "room/lighting".to_owned(),
-        rect: Rect {
-            x: 0,
-            y: 0,
-            w: LOGICAL_WIDTH,
-            h: LOGICAL_HEIGHT,
-        },
-        color: room_color,
-        layer: 8,
-    });
-}
-
-fn room_hit_regions(creature_x: i32, creature_y: i32) -> Vec<HitRegion> {
-    [
-        (
-            UiTarget::Window,
-            Rect {
-                x: 140,
-                y: 18,
-                w: 87,
-                h: 72,
-            },
-        ),
-        (
-            UiTarget::Bed,
-            Rect {
-                x: 18,
-                y: 98,
-                w: 64,
-                h: 48,
-            },
-        ),
-        (
-            UiTarget::Bowl,
-            Rect {
-                x: 232,
-                y: 125,
-                w: 43,
-                h: 29,
-            },
-        ),
-        (
-            UiTarget::Toy,
-            Rect {
-                x: 88,
-                y: 130,
-                w: 32,
-                h: 28,
-            },
-        ),
-        (
-            UiTarget::Clutter,
-            Rect {
-                x: 272,
-                y: 116,
-                w: 42,
-                h: 40,
-            },
-        ),
-        (
-            UiTarget::Creature,
-            Rect {
-                x: creature_x - 4,
-                y: creature_y - 4,
-                w: 42,
-                h: 48,
-            },
-        ),
-    ]
-    .into_iter()
-    .map(|(target, rect)| HitRegion {
-        id: format!("target/{}", target_name(target)),
-        target: Some(target),
-        action: UiAction::OpenContext(target),
-        rect,
-        enabled: !contextual_actions(target).is_empty(),
-    })
-    .collect()
-}
-
-fn add_context_menu(
-    target: UiTarget,
-    rects: &mut Vec<RectCommand>,
-    text: &mut Vec<TextCommand>,
-    hits: &mut Vec<HitRegion>,
-) {
-    let actions = contextual_actions(target);
-    if actions.is_empty() {
-        return;
-    }
-    let width = ACTION_WIDTH * i32::try_from(actions.len()).unwrap_or(1);
-    rects.push(panel(
-        "ui/context-panel",
-        Rect {
-            x: (LOGICAL_WIDTH - width) / 2,
-            y: 154,
-            w: width,
-            h: 22,
-        },
-    ));
-    for (index, action) in actions.into_iter().enumerate() {
-        let x =
-            (LOGICAL_WIDTH - width) / 2 + i32::try_from(index).unwrap_or_default() * ACTION_WIDTH;
-        add_button(action, x, 156, rects, text, hits);
-    }
-}
-
-fn add_food_choice(
-    rects: &mut Vec<RectCommand>,
-    text: &mut Vec<TextCommand>,
-    hits: &mut Vec<HitRegion>,
-) {
-    rects.push(panel(
-        "ui/food-panel",
-        Rect {
-            x: 61,
-            y: 152,
-            w: 198,
-            h: 24,
-        },
-    ));
-    for (index, food) in [FoodId::Berry, FoodId::Mushroom, FoodId::Pellet]
-        .into_iter()
-        .enumerate()
-    {
-        let action = UiAction::Feed(food);
-        add_button(
-            action,
-            64 + i32::try_from(index).unwrap_or_default() * 64,
-            155,
-            rects,
-            text,
-            hits,
-        );
-    }
-}
-
-fn add_toy_choice(
-    rects: &mut Vec<RectCommand>,
-    text: &mut Vec<TextCommand>,
-    hits: &mut Vec<HitRegion>,
-) {
-    rects.push(panel(
-        "ui/toy-panel",
-        Rect {
-            x: 61,
-            y: 152,
-            w: 198,
-            h: 24,
-        },
-    ));
-    for (index, toy) in [ToyId::Ball, ToyId::Bell, ToyId::Sock]
-        .into_iter()
-        .enumerate()
-    {
-        add_button(
-            UiAction::Play(toy),
-            64 + i32::try_from(index).unwrap_or_default() * 64,
-            155,
-            rects,
-            text,
-            hits,
-        );
-    }
-}
-
-fn add_speech(
-    speech: &str,
-    rects: &mut Vec<RectCommand>,
-    text: &mut Vec<TextCommand>,
-    hits: &mut Vec<HitRegion>,
-) {
-    rects.push(panel(
-        "ui/speech-bubble",
-        Rect {
-            x: 76,
-            y: 12,
-            w: 168,
-            h: 48,
-        },
-    ));
-    text.push(TextCommand {
-        id: "speech/text".to_owned(),
-        text: speech.to_owned(),
-        x: 84,
-        y: 20,
-        layer: 21,
-    });
-    for (index, reaction) in [Reaction::Laugh, Reaction::Disapprove, Reaction::Comfort]
-        .into_iter()
-        .enumerate()
-    {
-        let rect = Rect {
-            x: 77 + i32::try_from(index).unwrap_or_default() * 56,
-            y: 62,
-            w: 54,
-            h: ACTION_HEIGHT,
-        };
-        hits.push(HitRegion {
-            id: format!("reaction/{}", reaction_name(reaction)),
-            target: Some(UiTarget::Reaction(reaction)),
-            action: UiAction::React(reaction),
-            rect,
-            enabled: true,
-        });
-        rects.push(RectCommand {
-            id: format!("reaction/{}/background", reaction_name(reaction)),
-            rect,
-            color: [63, 57, 75, 245],
-            layer: 20,
-        });
-        text.push(TextCommand {
-            id: format!("reaction/{}/label", reaction_name(reaction)),
-            text: action_label(UiAction::React(reaction)).to_owned(),
-            x: rect.x + 4,
-            y: rect.y + 4,
-            layer: 21,
-        });
-    }
-}
-
-fn add_text_entry(
-    view: &ViewState,
-    show_keyboard: bool,
-    rects: &mut Vec<RectCommand>,
-    text: &mut Vec<TextCommand>,
-    hits: &mut Vec<HitRegion>,
-) {
-    let entry_rect = if show_keyboard {
-        Rect {
-            x: 16,
-            y: 8,
-            w: 288,
-            h: 25,
-        }
-    } else {
-        Rect {
-            x: 40,
-            y: 126,
-            w: 240,
-            h: 30,
-        }
-    };
-    rects.push(panel("ui/text-entry", entry_rect));
-    text.push(TextCommand {
-        id: "text-entry/prompt".to_owned(),
-        text: if view.pending {
-            "Thinking...".to_owned()
-        } else if view.text_buffer.is_empty() {
-            "Say something".to_owned()
-        } else {
-            view.text_buffer.clone()
-        },
-        x: entry_rect.x + 7,
-        y: entry_rect.y + 7,
-        layer: 21,
-    });
-    if view.pending {
-        return;
-    }
-    if show_keyboard {
-        add_on_screen_keyboard(!view.text_buffer.trim().is_empty(), rects, text, hits);
-    } else {
-        add_text_control(
-            "text-entry/cancel",
-            "Cancel",
-            UiAction::CancelText,
-            Rect {
-                x: 42,
-                y: 158,
-                w: 60,
-                h: 18,
-            },
-            true,
-            rects,
-            text,
-            hits,
-        );
-        add_text_control(
-            "text-entry/send",
-            "Send",
-            UiAction::SubmitText,
-            Rect {
-                x: 218,
-                y: 158,
-                w: 60,
-                h: 18,
-            },
-            !view.text_buffer.trim().is_empty(),
-            rects,
-            text,
-            hits,
-        );
-    }
-}
-
-fn add_on_screen_keyboard(
-    can_submit: bool,
-    rects: &mut Vec<RectCommand>,
-    text: &mut Vec<TextCommand>,
-    hits: &mut Vec<HitRegion>,
-) {
-    const KEYS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ .,?!";
-    for (index, character) in KEYS.chars().enumerate() {
-        let column = i32::try_from(index % 11).unwrap_or_default();
-        let row = i32::try_from(index / 11).unwrap_or_default();
-        let rect = Rect {
-            x: 12 + column * 27,
-            y: 40 + row * 27,
-            w: 25,
-            h: 23,
-        };
-        let (key_name, label) = match character {
-            ' ' => ("space".to_owned(), "SP".to_owned()),
-            '.' => ("period".to_owned(), ".".to_owned()),
-            ',' => ("comma".to_owned(), ",".to_owned()),
-            '?' => ("question".to_owned(), "?".to_owned()),
-            '!' => ("exclamation".to_owned(), "!".to_owned()),
-            _ => (
-                character.to_ascii_lowercase().to_string(),
-                character.to_string(),
-            ),
-        };
-        add_text_control(
-            &format!("keyboard/{key_name}"),
-            &label,
-            UiAction::TypeCharacter(character.to_ascii_lowercase()),
-            rect,
-            true,
-            rects,
-            text,
-            hits,
-        );
-    }
-    for (id, label, action, rect) in [
-        (
-            "keyboard/delete",
-            "Delete",
-            UiAction::Backspace,
-            Rect {
-                x: 17,
-                y: 124,
-                w: 78,
-                h: 23,
-            },
-        ),
-        (
-            "keyboard/cancel",
-            "Cancel",
-            UiAction::CancelText,
-            Rect {
-                x: 121,
-                y: 124,
-                w: 78,
-                h: 23,
-            },
-        ),
-        (
-            "keyboard/send",
-            "Send",
-            UiAction::SubmitText,
-            Rect {
-                x: 225,
-                y: 124,
-                w: 78,
-                h: 23,
-            },
-        ),
-    ] {
-        add_text_control(
-            id,
-            label,
-            action,
-            rect,
-            action != UiAction::SubmitText || can_submit,
-            rects,
-            text,
-            hits,
-        );
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn add_text_control(
-    id: &str,
-    label: &str,
-    action: UiAction,
-    rect: Rect,
-    enabled: bool,
-    rects: &mut Vec<RectCommand>,
-    text: &mut Vec<TextCommand>,
-    hits: &mut Vec<HitRegion>,
-) {
-    rects.push(RectCommand {
-        id: format!("{id}/background"),
-        rect,
-        color: if enabled {
-            [63, 57, 75, 235]
-        } else {
-            [45, 42, 50, 160]
-        },
-        layer: 20,
-    });
-    text.push(TextCommand {
-        id: format!("{id}/label"),
-        text: label.to_owned(),
-        x: rect.x + 6,
-        y: rect.y + 6,
-        layer: 21,
-    });
-    hits.push(HitRegion {
-        id: id.to_owned(),
-        target: None,
-        action,
-        rect,
-        enabled,
-    });
-}
-
-fn add_button(
-    action: UiAction,
-    x: i32,
-    y: i32,
-    rects: &mut Vec<RectCommand>,
-    text: &mut Vec<TextCommand>,
-    hits: &mut Vec<HitRegion>,
-) {
-    let rect = Rect {
-        x,
-        y,
-        w: 60,
-        h: ACTION_HEIGHT,
-    };
-    let id = action_name(action);
-    rects.push(RectCommand {
-        id: format!("action/{id}/background"),
-        rect,
-        color: [63, 57, 75, 245],
-        layer: 20,
-    });
-    hits.push(HitRegion {
-        id: format!("action/{id}"),
-        target: action_target(action),
-        action,
-        rect,
-        enabled: true,
-    });
-    text.push(TextCommand {
-        id: format!("action/{id}/label"),
-        text: action_label(action).to_owned(),
-        x: x + 4,
-        y: y + 4,
-        layer: 21,
-    });
-}
-
-fn panel(id: &str, rect: Rect) -> RectCommand {
+fn rect(id: &str, dimensions: Rect, color: [u8; 4], layer: i16) -> RectCommand {
     RectCommand {
         id: id.to_owned(),
-        rect,
-        color: [25, 23, 31, 224],
-        layer: 20,
+        rect: dimensions,
+        color,
+        layer,
+        outline: false,
+    }
+}
+
+fn label(id: &str, value: &str, x: i32, y: i32, layer: i16) -> TextCommand {
+    TextCommand {
+        id: id.to_owned(),
+        text: value.to_owned(),
+        x,
+        y,
+        layer,
+        scale: 1,
+    }
+}
+
+fn hit(
+    id: &str,
+    target: Option<UiTarget>,
+    action: UiAction,
+    dimensions: Rect,
+    enabled: bool,
+    label: &str,
+) -> HitRegion {
+    HitRegion {
+        id: id.to_owned(),
+        target,
+        action,
+        rect: dimensions,
+        enabled,
+        label: label.to_owned(),
+        cursor: CursorKind::Pointer,
     }
 }
 
@@ -958,102 +2987,73 @@ fn grow(rect: Rect, amount: i32) -> Rect {
     }
 }
 
-fn creature_position(state: &WorldState) -> (i32, i32) {
-    let spot = |spot| match spot {
-        RoomSpot::Bed => (42.0, 104.0),
-        RoomSpot::Bowl => (224.0, 108.0),
-        RoomSpot::Toy => (100.0, 105.0),
-        RoomSpot::Player => (154.0, 114.0),
-        RoomSpot::Center => (144.0, 96.0),
-    };
-    let (x, y) = if let Some(movement) = state.creature.movement {
-        let (from_x, from_y) = spot(movement.from);
-        let (to_x, to_y) = spot(movement.to);
-        let progress = movement.progress();
-        (
-            from_x + (to_x - from_x) * progress,
-            from_y + (to_y - from_y) * progress,
-        )
-    } else {
-        spot(state.creature.position)
-    };
-    (x.round() as i32, y.round() as i32)
-}
-
-fn action_target(action: UiAction) -> Option<UiTarget> {
-    match action {
-        UiAction::Feed(food) => Some(UiTarget::Food(food)),
-        UiAction::Play(toy) => Some(UiTarget::ToyChoice(toy)),
-        UiAction::React(reaction) => Some(UiTarget::Reaction(reaction)),
-        UiAction::OpenContext(target) => Some(target),
-        _ => None,
+fn food_asset(food: FoodId) -> &'static str {
+    match food {
+        FoodId::Berry => "food/berry",
+        FoodId::Mushroom => "food/mushroom",
+        FoodId::Pellet => "food/pellet",
     }
 }
 
-fn target_name(target: UiTarget) -> &'static str {
-    match target {
-        UiTarget::Window => "window",
-        UiTarget::Bed => "bed",
-        UiTarget::Bowl => "bowl",
-        UiTarget::Toy => "toy",
-        UiTarget::Clutter => "clutter",
-        UiTarget::Creature => "creature",
-        UiTarget::Food(FoodId::Berry) => "berry",
-        UiTarget::Food(FoodId::Mushroom) => "mushroom",
-        UiTarget::Food(FoodId::Pellet) => "pellet",
-        UiTarget::ToyChoice(ToyId::Ball) => "ball",
-        UiTarget::ToyChoice(ToyId::Bell) => "bell",
-        UiTarget::ToyChoice(ToyId::Sock) => "sock",
-        UiTarget::Reaction(reaction) => reaction_name(reaction),
+fn toy_sheet_x(toy: ToyId) -> i32 {
+    match toy {
+        ToyId::Ball => 0,
+        ToyId::Bell => 32,
+        ToyId::Sock => 64,
     }
 }
 
-fn action_name(action: UiAction) -> &'static str {
-    match action {
-        UiAction::OpenContext(_) => "open-context",
-        UiAction::CloseContext => "close-context",
-        UiAction::OpenFoodChoice => "choose-food",
-        UiAction::OpenToyChoice => "choose-toy",
-        UiAction::Feed(FoodId::Berry) => "feed-berry",
-        UiAction::Feed(FoodId::Mushroom) => "feed-mushroom",
-        UiAction::Feed(FoodId::Pellet) => "feed-pellet",
-        UiAction::Play(ToyId::Ball) => "play-ball",
-        UiAction::Play(ToyId::Bell) => "play-bell",
-        UiAction::Play(ToyId::Sock) => "play-sock",
-        UiAction::Tidy => "tidy",
-        UiAction::Comfort => "comfort",
-        UiAction::Talk => "talk",
-        UiAction::React(Reaction::Laugh) => "react-laugh",
-        UiAction::React(Reaction::Disapprove) => "react-disapprove",
-        UiAction::React(Reaction::Comfort) => "react-comfort",
-        UiAction::TypeCharacter(_) => "type-character",
-        UiAction::Backspace => "backspace",
-        UiAction::SubmitText => "submit-text",
-        UiAction::CancelText => "cancel-text",
+fn food_name(food: FoodId) -> &'static str {
+    match food {
+        FoodId::Berry => "berry",
+        FoodId::Mushroom => "mushroom",
+        FoodId::Pellet => "pellet",
     }
 }
 
-fn action_label(action: UiAction) -> &'static str {
-    match action {
-        UiAction::OpenFoodChoice => "Feed",
-        UiAction::OpenToyChoice => "Play",
-        UiAction::Feed(FoodId::Berry) => "Berry",
-        UiAction::Feed(FoodId::Mushroom) => "Mushroom",
-        UiAction::Feed(FoodId::Pellet) => "Pellet",
-        UiAction::Play(ToyId::Ball) => "Ball",
-        UiAction::Play(ToyId::Bell) => "Bell",
-        UiAction::Play(ToyId::Sock) => "Sock",
-        UiAction::Tidy => "Tidy",
-        UiAction::Comfort => "Comfort",
-        UiAction::Talk => "Talk",
-        UiAction::React(Reaction::Laugh) => "Laugh",
-        UiAction::React(Reaction::Disapprove) => "Nope",
-        UiAction::React(Reaction::Comfort) => "Comfort",
-        UiAction::TypeCharacter(_) => "Type",
-        UiAction::Backspace => "Delete",
-        UiAction::SubmitText => "Send",
-        UiAction::CancelText => "Cancel",
-        UiAction::OpenContext(_) | UiAction::CloseContext => "Back",
+fn toy_name(toy: ToyId) -> &'static str {
+    match toy {
+        ToyId::Ball => "ball",
+        ToyId::Bell => "bell",
+        ToyId::Sock => "sock",
+    }
+}
+
+fn gaze_name(gaze: GazeTarget) -> &'static str {
+    match gaze {
+        GazeTarget::Cursor | GazeTarget::Player => "player",
+        GazeTarget::Food(_) => "food",
+        GazeTarget::Toy(_) => "toy",
+        GazeTarget::Cave => "cave",
+        GazeTarget::Plant => "plant",
+        GazeTarget::None => "forward",
+    }
+}
+
+fn mood_name(mood: Mood) -> &'static str {
+    match mood {
+        Mood::Content => "content",
+        Mood::Curious => "curious",
+        Mood::Hungry => "hungry",
+        Mood::Sleepy => "sleepy",
+        Mood::Lonely => "lonely",
+        Mood::Resentful => "resentful",
+    }
+}
+
+fn cue_name(cue: PresentationCueKind) -> &'static str {
+    match cue {
+        PresentationCueKind::Notice => "notice",
+        PresentationCueKind::Recoil => "recoil",
+        PresentationCueKind::Delight => "delight",
+        PresentationCueKind::Suspicion => "suspicion",
+        PresentationCueKind::Affection => "affection",
+        PresentationCueKind::Spit => "spit",
+        PresentationCueKind::Crumbs => "crumbs",
+        PresentationCueKind::SandPuff => "sand-puff",
+        PresentationCueKind::Wake => "wake",
+        PresentationCueKind::Sleep => "sleep",
+        PresentationCueKind::AquariumFull => "aquarium-full",
     }
 }
 
@@ -1065,513 +3065,833 @@ fn reaction_name(reaction: Reaction) -> &'static str {
     }
 }
 
+fn action_id(action: UiAction) -> String {
+    match action {
+        UiAction::SelectFood(food) => format!("select-{}", food_name(food)),
+        UiAction::Play(toy) => format!("play-{}", toy_name(toy)),
+        UiAction::Comfort => "comfort".to_owned(),
+        UiAction::Inspect => "inspect".to_owned(),
+        UiAction::Rename => "rename".to_owned(),
+        UiAction::Talk => "talk".to_owned(),
+        _ => "action".to_owned(),
+    }
+}
+
+fn action_label(action: UiAction) -> String {
+    match action {
+        UiAction::SelectFood(food) => food_name(food).to_owned(),
+        UiAction::Play(toy) => format!("play {}", toy_name(toy)),
+        UiAction::Comfort => "comfort".to_owned(),
+        UiAction::Inspect => "inspect".to_owned(),
+        UiAction::Rename => "rename".to_owned(),
+        UiAction::Talk => "talk".to_owned(),
+        _ => "action".to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
-    use beastie_core::Movement;
+    use beastie_core::{
+        ActionTimeline, FoodBuoyancy, FoodObject, NormalizedVelocity, SemanticDestination,
+    };
 
-    fn sprite<'a>(plan: &'a RenderPlan, id: &str) -> &'a SpriteCommand {
-        plan.sprites
+    #[test]
+    fn coordinate_projection_rounds_to_whole_pixels_and_clamps() {
+        assert_eq!(world_to_logical(NormalizedPosition::new(0, 0)), (4, 4));
+        assert_eq!(
+            world_to_logical(NormalizedPosition::new(10_000, 10_000)),
+            (315, 125)
+        );
+        assert_eq!(
+            world_to_logical(NormalizedPosition::new(-1, 20_000)),
+            (4, 125)
+        );
+        let center = logical_to_world(160, 71);
+        let projected = world_to_logical(center);
+        assert!((projected.0 - 160).abs() <= 1);
+        assert!((projected.1 - 71).abs() <= 1);
+    }
+
+    #[test]
+    fn default_plan_is_aquarium_only_and_compose_is_persistent() {
+        let state = WorldState::new(7, "Mop");
+        let (render, audio) = plan(&state, &ViewState::default());
+        assert!(
+            render
+                .sprites
+                .iter()
+                .any(|sprite| sprite.id == "aquarium/background")
+        );
+        assert!(
+            render
+                .sprites
+                .iter()
+                .any(|sprite| sprite.id == "creature-v1/hover" && sprite.scale == 2)
+        );
+        let background = render
+            .sprites
             .iter()
-            .find(|command| command.id == id)
-            .expect("expected sprite")
-    }
-
-    fn render_snapshot(plan: &RenderPlan) -> u64 {
-        serde_json::to_vec(plan)
-            .expect("render plan should serialize")
-            .into_iter()
-            .fold(0xcbf2_9ce4_8422_2325_u64, |digest, byte| {
-                (digest ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+            .find(|sprite| sprite.id == "aquarium/background")
+            .expect("background sprite");
+        assert_eq!(
+            background.source_rect,
+            Some(Rect {
+                x: 0,
+                y: 25,
+                w: 320,
+                h: 130
             })
-    }
-
-    #[test]
-    fn canonical_render_plans_match_reviewed_snapshots() {
-        let state = WorldState::new(42, "Mop");
-        let idle = plan(&state, &ViewState::default()).0;
-        let food = plan(
-            &state,
-            &ViewState {
-                mode: UiMode::FoodChoice,
-                ..ViewState::default()
-            },
-        )
-        .0;
-        let keyboard = plan(
-            &state,
-            &ViewState {
-                mode: UiMode::OnScreenKeyboard,
-                text_buffer: "red shit?".to_owned(),
-                ..ViewState::default()
-            },
-        )
-        .0;
-
-        assert_eq!(
-            [
-                render_snapshot(&idle),
-                render_snapshot(&food),
-                render_snapshot(&keyboard),
-            ],
-            [
-                12_972_460_615_842_783_258,
-                14_689_240_953_404_013_970,
-                14_147_963_766_883_881_031,
-            ]
         );
-    }
-
-    #[test]
-    fn room_plan_contains_the_whole_play_space() {
-        let state = WorldState::new(42, "Mop");
-        let (render, _) = plan(&state, &ViewState::default());
-        for id in [
-            "room/background",
-            "room/window",
-            "room/bed",
-            "room/bowl",
-            "room/toy",
-            "room/clutter-tidy",
-            "creature/idle",
-        ] {
-            sprite(&render, id);
-        }
+        assert_eq!(background.scale, 1);
+        assert!(
+            render
+                .sprites
+                .iter()
+                .all(|sprite| !sprite.id.starts_with("room/"))
+        );
         assert!(
             render
                 .hit_regions
                 .iter()
-                .any(|hit| hit.target == Some(UiTarget::Bowl))
+                .any(|hit| hit.id == "compose/input")
         );
-        assert_eq!(LOGICAL_WIDTH, 320);
-        assert_eq!(LOGICAL_HEIGHT, 180);
+        assert_eq!(audio.ambience, vec![AudioCue::AquariumHum]);
     }
 
     #[test]
-    fn contextual_actions_match_room_targets() {
-        assert_eq!(
-            contextual_actions(UiTarget::Bowl),
-            vec![UiAction::OpenFoodChoice]
-        );
-        assert_eq!(
-            contextual_actions(UiTarget::Toy),
-            vec![UiAction::OpenToyChoice]
-        );
-        assert_eq!(contextual_actions(UiTarget::Clutter), vec![UiAction::Tidy]);
-        assert_eq!(
-            contextual_actions(UiTarget::Creature),
-            vec![UiAction::Comfort, UiAction::Talk]
-        );
-    }
-
-    #[test]
-    fn food_choice_exposes_all_authoritative_food_actions() {
-        let state = WorldState::new(42, "Mop");
+    fn food_drop_mode_makes_open_water_one_semantic_target() {
+        let state = WorldState::new(7, "Mop");
         let view = ViewState {
-            mode: UiMode::FoodChoice,
+            mode: UiMode::FoodDrop(FoodId::Berry),
             ..ViewState::default()
         };
         let (render, _) = plan(&state, &view);
-        let actions: Vec<_> = render.hit_regions.iter().map(|hit| hit.action).collect();
-        assert!(actions.contains(&UiAction::Feed(FoodId::Berry)));
-        assert!(actions.contains(&UiAction::Feed(FoodId::Mushroom)));
-        assert!(actions.contains(&UiAction::Feed(FoodId::Pellet)));
-        assert!(
-            render
-                .hit_regions
-                .iter()
-                .all(|hit| !hit.id.starts_with("target/"))
-        );
-    }
-
-    #[test]
-    fn toy_choice_exposes_all_authoritative_toys_in_compact_regions() {
-        let state = WorldState::new(42, "Mop");
-        let view = ViewState {
-            mode: UiMode::ToyChoice,
-            ..ViewState::default()
-        };
-        let (render, _) = plan(&state, &view);
-        let choices = render
+        let drop = render
             .hit_regions
             .iter()
-            .filter(|hit| matches!(hit.action, UiAction::Play(_)))
-            .collect::<Vec<_>>();
-        assert_eq!(choices.len(), 3);
-        assert_eq!(choices[0].action, UiAction::Play(ToyId::Ball));
-        assert_eq!(choices[1].action, UiAction::Play(ToyId::Bell));
-        assert_eq!(choices[2].action, UiAction::Play(ToyId::Sock));
-        assert_eq!(choices[0].id, "action/play-ball");
-        assert_eq!(choices[1].id, "action/play-bell");
-        assert_eq!(choices[2].id, "action/play-sock");
-        assert!(choices.iter().all(|hit| hit.rect.y >= 152));
-        assert!(choices.iter().all(|hit| hit.rect.x >= 0));
+            .find(|hit| hit.id == "world/drop-food")
+            .expect("drop target");
+        assert_eq!(drop.action, UiAction::DropFood(FoodId::Berry));
+        assert_eq!(drop.cursor, CursorKind::FoodDrop);
         assert!(
-            choices
+            render
+                .hit_regions
                 .iter()
-                .all(|hit| hit.rect.x + hit.rect.w <= LOGICAL_WIDTH)
+                .any(|hit| hit.id == "compose/input")
         );
-        let panel = render
-            .rects
+    }
+
+    #[test]
+    fn objects_use_authoritative_continuous_positions() {
+        let mut state = WorldState::new(7, "Mop");
+        state.aquarium.objects.insert(
+            9,
+            WorldObject::Food(FoodObject {
+                id: 9,
+                food: FoodId::Mushroom,
+                position: NormalizedPosition::new(2_500, 7_500),
+                velocity: NormalizedVelocity::default(),
+                buoyancy: FoodBuoyancy::Sink,
+                disposition: FoodDisposition::Falling,
+                age_ms: 0,
+                lifetime_ms: 10_000,
+            }),
+        );
+        let (render, _) = plan(&state, &ViewState::default());
+        let sprite = render
+            .sprites
             .iter()
-            .find(|rect| rect.id == "ui/toy-panel")
-            .expect("toy panel")
-            .rect;
+            .find(|sprite| sprite.id == "food/mushroom")
+            .expect("food sprite");
+        let expected = world_to_logical(NormalizedPosition::new(2_500, 7_500));
+        assert_eq!((sprite.x, sprite.y), (expected.0 - 8, expected.1 - 8));
         assert!(
-            choices.iter().all(|hit| {
-                hit.rect.x >= panel.x && hit.rect.x + hit.rect.w <= panel.x + panel.w
-            })
-        );
-        assert!(choices.iter().all(|hit| {
-            render
-                .rects
-                .iter()
-                .any(|rect| rect.id == format!("{}/background", hit.id))
-        }));
-    }
-
-    #[test]
-    fn toy_choice_focus_highlights_and_resolves_each_typed_action() {
-        let state = WorldState::new(42, "Mop");
-        let view = ViewState {
-            mode: UiMode::ToyChoice,
-            focused_region: Some("action/play-sock".to_owned()),
-            ..ViewState::default()
-        };
-        let (render, _) = plan(&state, &view);
-        assert!(render.rects.iter().any(|rect| rect.id == "ui/focus"));
-        assert_eq!(
             render
                 .hit_regions
                 .iter()
-                .find(|hit| hit.id == "action/play-ball")
-                .map(|hit| hit.action),
-            Some(UiAction::Play(ToyId::Ball))
-        );
-        assert_eq!(
-            render
-                .hit_regions
-                .iter()
-                .find(|hit| hit.id == "action/play-sock")
-                .map(|hit| hit.action),
-            Some(UiAction::Play(ToyId::Sock))
+                .any(|hit| hit.id == "target/object-9")
         );
     }
 
     #[test]
-    fn movement_is_interpolated_and_uses_walk_pose() {
-        let mut state = WorldState::new(42, "Mop");
-        state.creature.movement = Some(Movement {
-            from: RoomSpot::Bed,
-            to: RoomSpot::Bowl,
+    fn action_phases_are_legible_in_pose_behavior_and_progress() {
+        let mut state = WorldState::new(7, "Mop");
+        state.creature.aquarium.action = Some(ActionTimeline {
+            phase: ActionPhase::Inspect,
             elapsed_ms: 500,
-            duration_ms: 1_000,
+            phase_duration_ms: 1_000,
+            destination: SemanticDestination::Food(1),
+            food_id: Some(1),
         });
         let (render, _) = plan(&state, &ViewState::default());
-        let creature = sprite(&render, "creature/walk");
-        assert_eq!((creature.x, creature.y), (133, 106));
-    }
-
-    #[test]
-    fn intention_selects_pose_at_semantic_position() {
-        let mut state = WorldState::new(42, "Mop");
-        state.creature.position = RoomSpot::Bed;
-        state.creature.current_intention = Intention::Sleep;
-        let (render, _) = plan(&state, &ViewState::default());
-        let creature = sprite(&render, "creature/sleep");
-        assert_eq!((creature.x, creature.y), (42, 104));
-    }
-
-    #[test]
-    fn pose_frames_are_deterministic_for_authoritative_time() {
-        let cases = [
-            (Intention::Idle, "creature/idle", 1_200),
-            (Intention::Eat, "creature/eat", 400),
-            (Intention::WaitAtBowl, "creature/annoyed", 500),
-            (Intention::Sleep, "creature/sleep", 1_600),
-            (Intention::Play, "creature/play", 300),
-            (Intention::RejectFood, "creature/annoyed", 500),
-            (Intention::ApproachPlayer, "creature/walk", 250),
-            (Intention::SeekComfort, "creature/walk", 250),
-            (Intention::UndoTidy, "creature/annoyed", 500),
-            (Intention::RefuseAndStare, "creature/annoyed", 500),
-            (Intention::ShowAffection, "creature/idle", 1_200),
-        ];
-        for (intention, id, elapsed_ms) in cases {
-            let mut state = WorldState::new(42, "Mop");
-            state.creature.current_intention = intention;
-            state.elapsed_ms = elapsed_ms;
-            let (render, _) = plan(&state, &ViewState::default());
-            assert_eq!(sprite(&render, id).frame, 1, "{id}");
-        }
-    }
-
-    #[test]
-    fn primary_needs_have_four_distinct_readable_pose_intents() {
-        let cases = [
-            (Intention::WaitAtBowl, "creature/annoyed"),
-            (Intention::Sleep, "creature/sleep"),
-            (Intention::SeekComfort, "creature/walk"),
-            (Intention::Play, "creature/play"),
-        ];
-        for (intention, expected_pose) in cases {
-            let mut state = WorldState::new(42, "Mop");
-            state.creature.current_intention = intention;
-            let render = plan(&state, &ViewState::default()).0;
-            sprite(&render, expected_pose);
-        }
-    }
-
-    #[test]
-    fn identical_state_produces_an_identical_lit_plan() {
-        let mut state = WorldState::new(42, "Mop");
-        state.elapsed_ms = beastie_core::ACTIVE_DAY_MS * 2 / 3;
-        let first = plan(&state, &ViewState::default()).0;
-        let second = plan(&state, &ViewState::default()).0;
-        assert_eq!(first, second);
-        assert_eq!(sprite(&first, "room/window").frame, 2);
         assert!(
-            first
-                .rects
+            render
+                .sprites
                 .iter()
-                .any(|rect| { rect.id == "room/lighting" && rect.color == [23, 30, 66, 42] })
+                .any(|sprite| sprite.id == "creature-v1/hover")
         );
-    }
-
-    #[test]
-    fn reactions_exist_only_while_speech_is_visible() {
-        let state = WorldState::new(42, "Mop");
-        let (idle, _) = plan(&state, &ViewState::default());
-        assert!(
-            !idle
-                .hit_regions
-                .iter()
-                .any(|hit| matches!(hit.action, UiAction::React(_)))
-        );
-
-        let speaking = ViewState {
-            speech: Some("Berry again? Bold.".to_owned()),
-            ..ViewState::default()
-        };
-        let (speaking, _) = plan(&state, &speaking);
+        assert_eq!(render.summary.behavior, "inspecting");
         assert_eq!(
-            speaking
-                .hit_regions
-                .iter()
-                .filter(|hit| matches!(hit.action, UiAction::React(_)))
-                .count(),
-            3
-        );
-        assert_eq!(
-            speaking
-                .rects
-                .iter()
-                .filter(|rect| rect.id.starts_with("reaction/") && rect.id.ends_with("/background"))
-                .count(),
-            3
-        );
-    }
-
-    #[test]
-    fn idle_chrome_recedes_and_no_bars_are_projected() {
-        let state = WorldState::new(42, "Mop");
-        let (render, _) = plan(&state, &ViewState::default());
-        assert!(
             render
                 .rects
                 .iter()
-                .all(|command| !command.id.starts_with("ui/"))
+                .find(|rect| rect.id == "creature/action-phase")
+                .expect("phase indicator")
+                .rect
+                .w,
+            12
         );
-        assert!(render.sprites.iter().all(|command| {
-            !command.id.contains("need")
-                && !command.id.contains("relationship")
-                && !command.id.contains("bar")
-        }));
-        assert!(render.text.is_empty());
     }
 
     #[test]
-    fn focus_is_a_declarative_highlight() {
-        let state = WorldState::new(42, "Mop");
-        let view = ViewState {
-            focused_region: Some("target/toy".to_owned()),
-            ..ViewState::default()
-        };
-        let (render, _) = plan(&state, &view);
-        assert!(render.rects.iter().any(|command| command.id == "ui/focus"));
+    fn cue_queue_preserves_order_and_does_not_overwrite() {
+        let mut view = ViewState::default();
+        view.observe_events(
+            &[GameEvent::FoodConsumed(FoodId::Berry), GameEvent::Comforted],
+            1_000,
+        );
+        assert_eq!(view.active_cue(1_000), Some(PresentationCueKind::Crumbs));
+        assert_eq!(view.active_cue(1_899), Some(PresentationCueKind::Crumbs));
+        assert_eq!(view.active_cue(1_900), Some(PresentationCueKind::Affection));
+        view.expire(3_100);
+        assert!(view.cue_queue.is_empty());
     }
 
     #[test]
-    fn on_screen_keyboard_has_stable_character_and_edit_actions() {
-        let state = WorldState::new(42, "Mop");
-        let view = ViewState {
-            mode: UiMode::OnScreenKeyboard,
-            text_buffer: "hi".to_owned(),
-            focused_region: Some("keyboard/send".to_owned()),
-            ..ViewState::default()
-        };
-        let (render, _) = plan(&state, &view);
-        assert!(
-            render.hit_regions.iter().any(|hit| {
-                hit.id == "keyboard/a" && hit.action == UiAction::TypeCharacter('a')
-            })
-        );
-        assert!(
-            render
-                .hit_regions
-                .iter()
-                .any(|hit| hit.id == "keyboard/space")
-        );
-        for (id, character) in [
-            ("keyboard/period", '.'),
-            ("keyboard/comma", ','),
-            ("keyboard/question", '?'),
-            ("keyboard/exclamation", '!'),
-        ] {
-            assert!(
-                render.hit_regions.iter().any(|hit| {
-                    hit.id == id && hit.action == UiAction::TypeCharacter(character)
-                })
-            );
+    fn cue_queue_is_bounded() {
+        let mut view = ViewState::default();
+        for _ in 0..20 {
+            view.enqueue_cue(PresentationCueKind::Notice, 100, 0);
         }
-        assert!(
-            render
-                .hit_regions
-                .iter()
-                .any(|hit| hit.action == UiAction::Backspace)
-        );
-        assert!(
-            render
-                .hit_regions
-                .iter()
-                .any(|hit| hit.action == UiAction::SubmitText)
-        );
-        assert!(render.rects.iter().any(|command| command.id == "ui/focus"));
+        assert_eq!(view.cue_queue.len(), CUE_QUEUE_LIMIT);
     }
 
     #[test]
-    fn pending_text_entry_has_no_acceptance_regions() {
-        let state = WorldState::new(42, "Mop");
+    fn broad_summary_never_exposes_exact_need_or_relationship_values() {
+        let mut state = WorldState::new(7, "Mop");
+        state.creature.needs.hunger = 0.923_456;
+        state.creature.relationship.trust = 0.123_456;
+        let encoded = serde_json::to_string(&creature_summary(&state)).expect("summary serializes");
+        assert!(!encoded.contains("0.923456"));
+        assert!(!encoded.contains("0.123456"));
+        assert!(!encoded.contains("trust"));
+        assert!(!encoded.contains("hunger"));
+    }
+
+    #[test]
+    fn hover_and_controller_focus_use_the_same_stable_region() {
+        let state = WorldState::new(7, "Mop");
         let view = ViewState {
-            mode: UiMode::TextEntry,
-            text_buffer: "hello".to_owned(),
-            pending: true,
+            hovered_region: Some("target/creature".to_owned()),
+            focused_region: Some("target/creature".to_owned()),
             ..ViewState::default()
         };
         let (render, _) = plan(&state, &view);
+        assert!(render.rects.iter().any(|rect| rect.id == "ui/hover"));
+        assert!(render.rects.iter().any(|rect| rect.id == "ui/focus"));
         assert!(
             render
                 .text
                 .iter()
-                .any(|command| command.text == "Thinking...")
+                .any(|text| text.id == "ui/hover-label" && text.text == "Mop")
         );
-        assert!(!render.hit_regions.iter().any(|hit| {
-            matches!(
-                hit.action,
-                UiAction::SubmitText | UiAction::TypeCharacter(_) | UiAction::Backspace
-            )
-        }));
     }
 
     #[test]
-    fn every_open_overlay_suppresses_room_targets() {
-        let state = WorldState::new(42, "Mop");
-        for mode in [
-            UiMode::Context(UiTarget::Creature),
-            UiMode::FoodChoice,
-            UiMode::ToyChoice,
-            UiMode::TextEntry,
-            UiMode::OnScreenKeyboard,
-        ] {
-            let view = ViewState {
-                mode,
+    fn pixel_grid_is_development_only_view_state() {
+        let state = WorldState::new(7, "Mop");
+        let off = plan(&state, &ViewState::default()).0;
+        assert!(
+            !off.rects
+                .iter()
+                .any(|rect| rect.id.starts_with("debug/grid"))
+        );
+        let on = plan(
+            &state,
+            &ViewState {
+                pixel_grid: true,
                 ..ViewState::default()
-            };
-            let render = plan(&state, &view).0;
-            assert!(
-                render
-                    .hit_regions
-                    .iter()
-                    .all(|hit| !hit.id.starts_with("target/")),
-                "{mode:?} leaked a room target"
-            );
+            },
+        )
+        .0;
+        assert_eq!(
+            on.rects
+                .iter()
+                .filter(|rect| rect.id.starts_with("debug/grid"))
+                .count(),
+            usize::try_from(LOGICAL_WIDTH + LOGICAL_HEIGHT).unwrap()
+        );
+    }
+
+    #[test]
+    fn deterministic_plan_is_viewport_independent() {
+        let state = WorldState::new(42, "Mop");
+        let view = ViewState::default();
+        assert_eq!(plan(&state, &view), plan(&state, &view));
+        let serialized = serde_json::to_string(&plan(&state, &view).0).expect("plan serializes");
+        assert!(!serialized.contains("window_width"));
+        assert!(!serialized.contains("scale_factor"));
+    }
+
+    #[test]
+    fn every_mood_has_distinct_code_native_face_geometry() {
+        let mut signatures = BTreeSet::new();
+        for mood in [
+            Mood::Content,
+            Mood::Curious,
+            Mood::Hungry,
+            Mood::Sleepy,
+            Mood::Lonely,
+            Mood::Resentful,
+        ] {
+            let mut state = WorldState::new(7, "Mop");
+            state.creature.needs.hunger = 0.2;
+            state.creature.needs.energy = 0.8;
+            state.creature.needs.curiosity = 0.2;
+            state.creature.relationship.resentment = 0.0;
+            state.creature.relationship.bond = 0.5;
+            state.aquarium.player_present = true;
+            match mood {
+                Mood::Content => {}
+                Mood::Curious => state.creature.needs.curiosity = 0.9,
+                Mood::Hungry => state.creature.needs.hunger = 0.9,
+                Mood::Sleepy => state.creature.needs.energy = 0.1,
+                Mood::Lonely => state.aquarium.player_present = false,
+                Mood::Resentful => state.creature.relationship.resentment = 0.8,
+            }
+            assert_eq!(state.mood(), mood);
+            let face = plan(&state, &ViewState::default())
+                .0
+                .rects
+                .into_iter()
+                .filter(|command| command.id.starts_with("face/"))
+                .map(|command| (command.id, command.rect, command.color))
+                .collect::<Vec<_>>();
+            assert!(!face.is_empty());
+            signatures.insert(format!("{face:?}"));
+        }
+        assert_eq!(signatures.len(), 6);
+    }
+
+    #[test]
+    fn authoritative_gaze_moves_hard_pixel_pupils() {
+        let mut state = WorldState::new(7, "Mop");
+        state.elapsed_ms = 1_000;
+        state.creature.aquarium.gaze = GazeTarget::Cursor;
+        state.aquarium.cursor = Some(NormalizedPosition::new(1_000, 4_500));
+        let left = plan(&state, &ViewState::default())
+            .0
+            .rects
+            .into_iter()
+            .find(|command| command.id == "face/pupil-left")
+            .expect("left-looking pupil")
+            .rect;
+        state.aquarium.cursor = Some(NormalizedPosition::new(9_000, 4_500));
+        let right = plan(&state, &ViewState::default())
+            .0
+            .rects
+            .into_iter()
+            .find(|command| command.id == "face/pupil-left")
+            .expect("right-looking pupil")
+            .rect;
+        assert!(left.x < right.x);
+    }
+
+    #[test]
+    fn key_cues_have_visible_code_native_effects() {
+        let state = WorldState::new(7, "Mop");
+        for cue in [
+            PresentationCueKind::Notice,
+            PresentationCueKind::Affection,
+            PresentationCueKind::Spit,
+            PresentationCueKind::SandPuff,
+            PresentationCueKind::Wake,
+            PresentationCueKind::Sleep,
+        ] {
+            let mut view = ViewState::default();
+            view.enqueue_cue(cue, 1_000, state.elapsed_ms);
+            let effects = plan(&state, &view)
+                .0
+                .rects
+                .into_iter()
+                .filter(|command| command.id.starts_with("effect/"))
+                .count();
+            assert!(effects > 0, "{cue:?} needs a hard-pixel fallback");
         }
     }
 
     #[test]
-    fn nonverbal_events_clear_speech_and_project_bounded_visible_cues() {
-        let state = WorldState::new(42, "Mop");
-        let cases = [
-            (
-                NonverbalAct::PushFoodAway(FoodId::Berry),
-                "presentation/food-pushed",
-            ),
-            (
-                NonverbalAct::TakeToyAway(ToyId::Sock),
-                "presentation/toy-taken",
-            ),
-            (NonverbalAct::UndoTidy, "presentation/clutter-scattered"),
-            (NonverbalAct::LeanAgainstPlayer, "presentation/affection"),
-        ];
-        for (act, cue) in cases {
-            let mut view = ViewState::default();
-            view.show_speech("stale".to_owned(), 10);
-            view.observe_events(&[GameEvent::NonverbalAct(act)], 20);
-            assert!(view.speech.is_none());
-            let render = plan(&state, &view).0;
-            assert!(render.text.iter().any(|text| text.id == cue), "{act:?}");
-            assert!(render.rects.iter().any(|rect| {
-                rect.id == format!("{cue}/backing")
-                    && rect.rect.x >= 0
-                    && rect.rect.x + rect.rect.w <= LOGICAL_WIDTH
+    fn visible_settings_surface_exposes_every_accessibility_control() {
+        let state = WorldState::new(7, "Mop");
+        let view = ViewState {
+            mode: UiMode::Settings,
+            ..ViewState::default()
+        };
+        let plan = plan(&state, &view).0;
+        for id in [
+            "settings/text-scale",
+            "settings/motion",
+            "settings/flashes",
+            "settings/shake",
+            "settings/grid",
+            "settings/window-scale",
+            "settings/fullscreen",
+            "settings/effects-volume",
+            "settings/speech-volume",
+            "settings/voice",
+            "settings/subtitles",
+            "settings/text-speed",
+            "settings/bindings",
+            "settings/reset-bindings",
+            "settings/data",
+        ] {
+            assert!(plan.hit_regions.iter().any(|hit| hit.id == id), "{id}");
+        }
+        assert!(plan.hit_regions.iter().any(|hit| {
+            hit.id == "settings/subtitles" && hit.action == UiAction::ToggleSubtitles
+        }));
+        assert!(
+            plan.text
+                .iter()
+                .any(|text| { text.id == "settings/subtitles-value" && text.text == "On" })
+        );
+        assert!(plan.hit_regions.iter().any(|hit| hit.id == "compose/input"));
+    }
+
+    #[test]
+    fn bindings_surface_emits_typed_rebind_actions_and_capture_prompt() {
+        let state = WorldState::new(7, "Mop");
+        let bindings = plan(
+            &state,
+            &ViewState {
+                mode: UiMode::Bindings,
+                ..ViewState::default()
+            },
+        )
+        .0;
+        for action in [
+            BindableAction::Food,
+            BindableAction::Play,
+            BindableAction::Comfort,
+            BindableAction::Settings,
+            BindableAction::Cancel,
+        ] {
+            assert!(bindings.hit_regions.iter().any(|hit| {
+                hit.action == UiAction::BeginRebind(action)
+                    && hit.id == format!("bindings/{}", bindable_id(action))
             }));
-            match act {
-                NonverbalAct::PushFoodAway(_) => assert!(
-                    render
-                        .sprites
+        }
+        let capture = plan(
+            &state,
+            &ViewState {
+                mode: UiMode::Rebinding(BindableAction::Food),
+                ..ViewState::default()
+            },
+        )
+        .0;
+        assert!(
+            capture
+                .text
+                .iter()
+                .any(|text| { text.id == "bindings/capture-prompt" && text.text.contains("food") })
+        );
+    }
+
+    #[test]
+    fn accessibility_preferences_materially_change_the_plan() {
+        let mut state = WorldState::new(7, "Mop");
+        state.elapsed_ms = 1_360;
+        let standard = plan(&state, &ViewState::default()).0;
+        let accessible = plan(
+            &state,
+            &ViewState {
+                text_scale: 2,
+                reduced_motion: true,
+                reduced_flashes: true,
+                reduced_shake: true,
+                cue_queue: vec![PresentationCue {
+                    kind: PresentationCueKind::Spit,
+                    starts_at_ms: 0,
+                    expires_at_ms: 2_000,
+                }],
+                ..ViewState::default()
+            },
+        )
+        .0;
+        assert!(accessible.text.iter().all(|text| text.scale == 2));
+        let standard_particle = standard
+            .rects
+            .iter()
+            .find(|rect| rect.id == "aquarium/particle-1")
+            .expect("standard particle");
+        let reduced_particle = accessible
+            .rects
+            .iter()
+            .find(|rect| rect.id == "aquarium/particle-1")
+            .expect("reduced particle");
+        assert_ne!(standard_particle.rect, reduced_particle.rect);
+        assert!(
+            accessible
+                .rects
+                .iter()
+                .filter(|rect| rect.id.starts_with("effect/"))
+                .all(|rect| rect.color[3] <= 80)
+        );
+    }
+
+    #[test]
+    fn body_pose_maps_only_to_shipped_animation_sets() {
+        assert_eq!(body_asset("hover"), "creature-v1/hover");
+        assert_eq!(body_asset("settle"), "creature-v1/hover");
+        assert_eq!(body_asset("swim"), "creature-v1/swim");
+        assert_eq!(body_asset("turn"), "creature-v1/swim");
+        assert_eq!(body_asset("eat"), "creature-v1/eat-recoil");
+        assert_eq!(body_asset("recover"), "creature-v1/eat-recoil");
+        assert_eq!(body_asset("sleep"), "creature-v1/sleep");
+        assert_eq!(body_asset("play"), "creature-v1/play");
+        assert_eq!(body_asset("unknown"), "creature-v1/base");
+    }
+
+    #[test]
+    fn environment_props_come_only_from_authoritative_objects() {
+        let state = WorldState::new(7, "Mop");
+        let render = plan(&state, &ViewState::default()).0;
+        let expected_caves = state
+            .aquarium
+            .objects
+            .values()
+            .filter(|object| matches!(object, WorldObject::Cave { .. }))
+            .count();
+        let expected_plants = state
+            .aquarium
+            .objects
+            .values()
+            .filter(|object| matches!(object, WorldObject::Plant { .. }))
+            .count();
+        let expected_toys = state
+            .aquarium
+            .objects
+            .values()
+            .filter(|object| matches!(object, WorldObject::Toy { .. }))
+            .count();
+        assert_eq!(
+            render
+                .sprites
+                .iter()
+                .filter(|sprite| sprite.id == "aquarium/cave")
+                .count(),
+            expected_caves
+        );
+        assert_eq!(
+            render
+                .sprites
+                .iter()
+                .filter(|sprite| sprite.id == "aquarium/plants")
+                .count(),
+            expected_plants
+        );
+        assert_eq!(
+            render
+                .sprites
+                .iter()
+                .filter(|sprite| sprite.id == "aquarium/toys")
+                .count(),
+            expected_toys
+        );
+    }
+
+    #[test]
+    fn aquarium_full_rejection_is_queued_visible_and_audible() {
+        let state = WorldState::new(7, "Mop");
+        let mut view = ViewState::default();
+        view.observe_events(
+            &[GameEvent::FoodDropRejected(
+                FoodDropRejectionReason::AquariumFull,
+            )],
+            state.elapsed_ms,
+        );
+        assert_eq!(
+            view.active_cue(state.elapsed_ms),
+            Some(PresentationCueKind::AquariumFull)
+        );
+        let (render, audio) = plan(&state, &view);
+        assert!(audio.events.contains(&AudioCue::UiReject));
+        assert!(
+            render
+                .text
+                .iter()
+                .any(|text| { text.id == "status/message" && text.text.contains("Aquarium full") })
+        );
+    }
+
+    #[test]
+    fn controller_hints_replace_keyboard_hints() {
+        let state = WorldState::new(7, "Mop");
+        let keyboard = plan(&state, &ViewState::default()).0;
+        let controller = plan(
+            &state,
+            &ViewState {
+                controller_active: true,
+                ..ViewState::default()
+            },
+        )
+        .0;
+        let hint = |render: &RenderPlan| {
+            render
+                .text
+                .iter()
+                .find(|text| text.id == "compose/input-hints")
+                .expect("input hints")
+                .text
+                .clone()
+        };
+        assert!(hint(&keyboard).contains("Enter"));
+        assert!(hint(&controller).contains("[A]"));
+        assert!(!hint(&controller).contains("Enter"));
+    }
+
+    #[test]
+    fn persistent_bar_keeps_long_summary_input_and_both_hint_styles_disjoint() {
+        let state = WorldState::new(7, "TwentyFourCharacterName!");
+        let longest = CreatureSummary {
+            name: "TwentyFourCharacterName!".to_owned(),
+            mood: Mood::Resentful,
+            mood_label: "resentful".to_owned(),
+            behavior: "noticed something".to_owned(),
+            stage: "day 99".to_owned(),
+            discovered_fact: None,
+        };
+        for text_scale in [1, 2] {
+            for controller_active in [false, true] {
+                let view = ViewState {
+                    text_scale,
+                    controller_active,
+                    text_buffer: "a deliberately overlong compose buffer that keeps going"
+                        .to_owned(),
+                    ..ViewState::default()
+                };
+                let render = plan(&state, &view).0;
+                let summary = render
+                    .text
+                    .iter()
+                    .find(|command| command.id == "compose/summary")
+                    .expect("summary");
+                let hint = render
+                    .text
+                    .iter()
+                    .find(|command| command.id == "compose/input-hints")
+                    .expect("hint");
+                let input = render
+                    .text
+                    .iter()
+                    .find(|command| command.id == "compose/input-text")
+                    .expect("input");
+                let input_box = render
+                    .rects
+                    .iter()
+                    .find(|command| command.id == "compose/input-background")
+                    .expect("input background")
+                    .rect;
+                assert!(text_right(summary) < hint.x);
+                assert!(text_right(hint) <= LOGICAL_WIDTH - 5);
+                assert!(text_right(input) <= input_box.x + input_box.w - 5);
+                for action in ["food", "settings", "send"] {
+                    let label = render
+                        .text
                         .iter()
-                        .any(|sprite| sprite.id == "food/berry" && sprite.x == 282)
-                ),
-                NonverbalAct::TakeToyAway(_) => {
-                    let toys = render
-                        .sprites
+                        .find(|command| command.id == format!("compose/{action}-label"))
+                        .expect("action label");
+                    let background = render
+                        .rects
                         .iter()
-                        .filter(|sprite| sprite.id == "room/toy")
-                        .collect::<Vec<_>>();
-                    assert_eq!(toys.len(), 1);
-                    assert_ne!(toys[0].x, 95);
+                        .find(|command| command.id == format!("compose/{action}-background"))
+                        .expect("action background")
+                        .rect;
+                    assert!(label.x >= background.x);
+                    assert!(text_right(label) <= background.x + background.w);
+                    assert!(!rects_overlap(input_box, background));
                 }
-                NonverbalAct::UndoTidy => assert!(
-                    render
-                        .sprites
-                        .iter()
-                        .any(|sprite| sprite.id == "room/clutter" && sprite.x == 252)
-                ),
-                NonverbalAct::LeanAgainstPlayer => {}
-                NonverbalAct::RefuseToEat | NonverbalAct::RefuseAndStare => {
-                    unreachable!("not part of this cue table")
-                }
+
+                let hint_capacity = usize::try_from((hint.x - 11) / (6 * i32::from(text_scale)))
+                    .expect("positive capacity");
+                let fitted = compact_summary(&longest, hint_capacity);
+                assert!(fitted.contains('/'));
+                assert_eq!(fitted.split('/').count(), 3);
+                assert!(fitted.chars().count() <= hint_capacity);
             }
         }
     }
 
     #[test]
-    fn speech_and_nonverbal_cues_expire_on_authoritative_play_time() {
-        let mut view = ViewState::default();
-        view.show_speech("brief".to_owned(), 100);
-        view.observe_events(
-            &[GameEvent::NonverbalAct(NonverbalAct::RefuseAndStare)],
-            200,
-        );
-        view.expire(200 + NONVERBAL_LIFETIME_MS - 1);
-        assert!(view.nonverbal.is_some());
-        view.expire(200 + NONVERBAL_LIFETIME_MS);
-        assert!(view.nonverbal.is_none());
+    fn status_uses_the_summary_row_without_overlapping_modes_or_compose() {
+        let state = WorldState::new(7, "Mop");
+        for mode in [UiMode::Compose, UiMode::Settings, UiMode::FoodChoice] {
+            let render = plan(
+                &state,
+                &ViewState {
+                    mode,
+                    text_scale: 2,
+                    status_message: Some(
+                        "A very long recovery status that must remain inside its own row"
+                            .to_owned(),
+                    ),
+                    ..ViewState::default()
+                },
+            )
+            .0;
+            let status = render
+                .rects
+                .iter()
+                .find(|command| command.id == "status/background")
+                .expect("status background")
+                .rect;
+            let compose = render
+                .rects
+                .iter()
+                .find(|command| command.id == "compose/input-background")
+                .expect("compose background")
+                .rect;
+            assert!(!rects_overlap(status, compose));
+            for panel in render
+                .rects
+                .iter()
+                .filter(|command| command.id.starts_with("mode/") || command.id.ends_with("/panel"))
+            {
+                assert!(
+                    !rects_overlap(status, panel.rect),
+                    "{} overlaps status",
+                    panel.id
+                );
+            }
+            let message = render
+                .text
+                .iter()
+                .find(|command| command.id == "status/message")
+                .expect("status message");
+            assert!(text_right(message) <= status.x + status.w - 6);
+            assert!(
+                render.text.iter().all(|command| {
+                    command.id != "compose/summary" && command.id != "compose/input-hints"
+                }),
+                "status replaces, rather than overlaps, the summary row"
+            );
+        }
+    }
 
-        view.show_speech("brief".to_owned(), 1_000);
-        view.expire(1_000 + SPEECH_LIFETIME_MS - 1);
-        assert!(view.speech.is_some());
-        view.expire(1_000 + SPEECH_LIFETIME_MS);
-        assert!(view.speech.is_none());
+    fn text_right(command: &TextCommand) -> i32 {
+        command.x
+            + i32::try_from(command.text.chars().count()).unwrap_or(i32::MAX)
+                * 6
+                * i32::from(command.scale)
+    }
+
+    fn rects_overlap(left: Rect, right: Rect) -> bool {
+        left.x < right.x + right.w
+            && left.x + left.w > right.x
+            && left.y < right.y + right.h
+            && left.y + left.h > right.y
+    }
+
+    #[test]
+    fn protocol_mouth_phase_changes_visible_hard_pixel_geometry() {
+        let mut state = WorldState::new(7, "Mop");
+        state.elapsed_ms = 1_000;
+        let mouth = |phase| {
+            plan(
+                &state,
+                &ViewState {
+                    speaking: true,
+                    mouth_phase: phase,
+                    ..ViewState::default()
+                },
+            )
+            .0
+            .rects
+            .into_iter()
+            .find(|rect| rect.id == format!("face/speech-mouth-{phase}"))
+            .expect("speech mouth")
+            .rect
+        };
+        assert!(mouth(0).h < mouth(1).h);
+        assert!(mouth(1).h < mouth(2).h);
+    }
+
+    #[test]
+    fn save_and_transcript_controls_are_semantic_and_reset_is_confirmed() {
+        let state = WorldState::new(7, "Mop");
+        let data = plan(
+            &state,
+            &ViewState {
+                mode: UiMode::DataManagement,
+                transcript_enabled: true,
+                transcript_status: Some("Exported locally".to_owned()),
+                ..ViewState::default()
+            },
+        )
+        .0;
+        for action in [
+            UiAction::RecoverBackup,
+            UiAction::RequestReset,
+            UiAction::ToggleTranscript,
+            UiAction::ExportTranscript,
+        ] {
+            assert!(data.hit_regions.iter().any(|hit| hit.action == action));
+        }
+        assert!(
+            data.text
+                .iter()
+                .any(|text| { text.id == "status/message" && text.text == "Exported locally" })
+        );
+        let confirmation = plan(
+            &state,
+            &ViewState {
+                mode: UiMode::ConfirmReset,
+                ..ViewState::default()
+            },
+        )
+        .0;
+        assert!(
+            confirmation
+                .hit_regions
+                .iter()
+                .any(|hit| hit.action == UiAction::ConfirmReset)
+        );
+        assert!(
+            confirmation
+                .hit_regions
+                .iter()
+                .any(|hit| hit.action == UiAction::CancelMode)
+        );
+    }
+
+    #[test]
+    fn creature_rename_uses_compose_buffer_and_explicit_submit() {
+        assert!(contextual_actions(UiTarget::Creature).contains(&UiAction::Rename));
+        let state = WorldState::new(7, "Mop");
+        let rename = plan(
+            &state,
+            &ViewState {
+                mode: UiMode::Rename,
+                text_buffer: "Gob".to_owned(),
+                ..ViewState::default()
+            },
+        )
+        .0;
+        assert!(
+            rename
+                .hit_regions
+                .iter()
+                .any(|hit| hit.id == "compose/send" && hit.action == UiAction::SubmitName)
+        );
+        assert!(
+            rename
+                .text
+                .iter()
+                .any(|text| text.id == "compose/input-text" && text.text == "Gob")
+        );
+        assert!(rename.text.iter().any(|text| text.id == "rename/prompt"));
     }
 }

@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{ACTIVE_DAY_MS, RandomSource, SAVE_VERSION, SeededRandom};
+use crate::{
+    ACTIVE_DAY_MS, RandomDomain, RandomSource, SAVE_VERSION, SeededRandom, deterministic_unit,
+};
 
 fn splitmix64(mut value: u64) -> u64 {
     value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
@@ -126,12 +128,23 @@ impl InteractionCounters {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Development {
     pub active_days_reached: u32,
     pub language_stage: LanguageStage,
     pub interactions: InteractionCounters,
+    #[serde(default)]
+    pub milestones: BTreeSet<DevelopmentMilestone>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DevelopmentMilestone {
+    SettledRoutine,
+    FavoriteFound,
+    NameRecognized,
+    MatureExpression,
 }
 
 impl Default for Development {
@@ -140,37 +153,7 @@ impl Default for Development {
             active_days_reached: 1,
             language_stage: LanguageStage::Hatch,
             interactions: InteractionCounters::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RoomSpot {
-    Bed,
-    Bowl,
-    Toy,
-    Player,
-    #[default]
-    Center,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Movement {
-    pub from: RoomSpot,
-    pub to: RoomSpot,
-    pub elapsed_ms: u64,
-    pub duration_ms: u64,
-}
-
-impl Movement {
-    #[must_use]
-    pub fn progress(self) -> f32 {
-        if self.duration_ms == 0 {
-            1.0
-        } else {
-            (self.elapsed_ms as f32 / self.duration_ms as f32).clamp(0.0, 1.0)
+            milestones: BTreeSet::new(),
         }
     }
 }
@@ -373,7 +356,296 @@ pub struct Belief {
     pub id: BeliefId,
     pub kind: BeliefKind,
     pub supporting_memories: BTreeSet<MemoryId>,
+    #[serde(default)]
+    pub contradicting_memories: BTreeSet<MemoryId>,
     pub confidence: f32,
+}
+
+/// A normalized coordinate stored as fixed-point units. One unit is 1/10,000 of the
+/// aquarium width or height, so simulation results never depend on floating point rounding.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NormalizedPosition {
+    pub x: i32,
+    pub y: i32,
+}
+
+impl NormalizedPosition {
+    pub const SCALE: i32 = 10_000;
+    pub const MIN: Self = Self { x: 0, y: 0 };
+    pub const MAX: Self = Self {
+        x: Self::SCALE,
+        y: Self::SCALE,
+    };
+
+    #[must_use]
+    pub const fn new(x: i32, y: i32) -> Self {
+        Self { x, y }
+    }
+
+    #[must_use]
+    pub fn clamped(self) -> Self {
+        Self {
+            x: self.x.clamp(0, Self::SCALE),
+            y: self.y.clamp(0, Self::SCALE),
+        }
+    }
+}
+
+pub type AquariumPosition = NormalizedPosition;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NormalizedVelocity {
+    pub x: i32,
+    pub y: i32,
+}
+
+impl NormalizedVelocity {
+    pub const MAX_COMPONENT: i32 = 2_000;
+
+    #[must_use]
+    pub fn clamped(self) -> Self {
+        Self {
+            x: self.x.clamp(-Self::MAX_COMPONENT, Self::MAX_COMPONENT),
+            y: self.y.clamp(-Self::MAX_COMPONENT, Self::MAX_COMPONENT),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Facing {
+    Left,
+    #[default]
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DepthLane {
+    Foreground,
+    #[default]
+    Middle,
+    Background,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GazeTarget {
+    Cursor,
+    Player,
+    Food(u64),
+    Toy(ToyId),
+    Cave,
+    Plant,
+    #[default]
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SteeringMode {
+    #[default]
+    Hover,
+    Drift,
+    Approach,
+    Flee,
+    Orbit,
+    Inspect,
+    Settle,
+    Brake,
+    Turn,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticDestination {
+    Cave,
+    Plant,
+    Bottom,
+    Player,
+    Toy(ToyId),
+    Food(u64),
+    Position(NormalizedPosition),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionPhase {
+    Notice,
+    Brake,
+    Gaze,
+    Turn,
+    Approach,
+    Inspect,
+    Act,
+    Recover,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionTimeline {
+    pub phase: ActionPhase,
+    pub elapsed_ms: u64,
+    pub phase_duration_ms: u64,
+    pub destination: SemanticDestination,
+    pub food_id: Option<u64>,
+}
+
+impl ActionTimeline {
+    #[must_use]
+    pub fn progress(self) -> f32 {
+        (self.elapsed_ms as f32 / self.phase_duration_ms.max(1) as f32).clamp(0.0, 1.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FoodBuoyancy {
+    Float,
+    Drift,
+    Sink,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FoodDisposition {
+    Falling,
+    Floating,
+    Settled,
+    Consumed,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FoodDropRejectionReason {
+    AquariumFull,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FoodObject {
+    pub id: u64,
+    pub food: FoodId,
+    pub position: NormalizedPosition,
+    pub velocity: NormalizedVelocity,
+    pub buoyancy: FoodBuoyancy,
+    pub disposition: FoodDisposition,
+    pub age_ms: u64,
+    pub lifetime_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorldObject {
+    Food(FoodObject),
+    Toy {
+        toy: ToyId,
+        position: NormalizedPosition,
+    },
+    Plant {
+        position: NormalizedPosition,
+    },
+    Cave {
+        position: NormalizedPosition,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AquariumState {
+    pub objects: BTreeMap<u64, WorldObject>,
+    pub next_object_id: u64,
+    pub cursor: Option<NormalizedPosition>,
+    #[serde(default)]
+    pub object_names: BTreeMap<u64, String>,
+    pub player_present: bool,
+    pub max_food: u16,
+}
+
+impl Default for AquariumState {
+    fn default() -> Self {
+        let objects = BTreeMap::from([
+            (
+                1,
+                WorldObject::Cave {
+                    position: NormalizedPosition::new(1_500, 8_500),
+                },
+            ),
+            (
+                2,
+                WorldObject::Plant {
+                    position: NormalizedPosition::new(3_000, 8_800),
+                },
+            ),
+            (
+                3,
+                WorldObject::Toy {
+                    toy: ToyId::Ball,
+                    position: NormalizedPosition::new(5_000, 8_900),
+                },
+            ),
+            (
+                4,
+                WorldObject::Toy {
+                    toy: ToyId::Bell,
+                    position: NormalizedPosition::new(6_500, 8_900),
+                },
+            ),
+            (
+                5,
+                WorldObject::Toy {
+                    toy: ToyId::Sock,
+                    position: NormalizedPosition::new(8_000, 8_900),
+                },
+            ),
+        ]);
+        Self {
+            objects,
+            next_object_id: 6,
+            cursor: None,
+            object_names: BTreeMap::new(),
+            player_present: true,
+            max_food: 12,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Routine {
+    pub hour_start: u8,
+    pub destination: SemanticDestination,
+    pub strength: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InitiatedBehavior {
+    pub reason: InitiativeReason,
+    pub nonverbal: Option<NonverbalAct>,
+    pub requested_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InitiativeReason {
+    Hunger,
+    Loneliness,
+    Curiosity,
+    Ritual,
+    Request,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NamingTarget {
+    Creature,
+    Food(FoodId),
+    Toy(ToyId),
+    Object(u64),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -395,27 +667,43 @@ pub struct Creature {
     #[serde(default)]
     pub conversation: ConversationState,
     #[serde(default)]
-    pub position: RoomSpot,
-    #[serde(default)]
-    pub movement: Option<Movement>,
-    #[serde(default)]
     pub development: Development,
+    #[serde(default)]
+    pub aquarium: AquariumCreatureState,
+    #[serde(default)]
+    pub routines: Vec<Routine>,
+    #[serde(default)]
+    pub favorite_locations: BTreeMap<SemanticDestination, u32>,
+    #[serde(default)]
+    pub initiated_behavior: Option<InitiatedBehavior>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RoomState {
-    pub food_in_bowl: Option<FoodId>,
-    pub toy_available: bool,
-    #[serde(default)]
-    pub toy: ToyId,
-    pub tidy: bool,
-    pub player_present: bool,
-    pub last_nonverbal_act: Option<NonverbalAct>,
-    #[serde(default)]
-    pub play_requested: bool,
-    #[serde(default)]
-    pub comfort_requested: bool,
+pub struct AquariumCreatureState {
+    pub position: NormalizedPosition,
+    pub velocity: NormalizedVelocity,
+    pub facing: Facing,
+    pub gaze: GazeTarget,
+    pub depth_lane: DepthLane,
+    pub steering: SteeringMode,
+    pub destination: Option<SemanticDestination>,
+    pub action: Option<ActionTimeline>,
+}
+
+impl Default for AquariumCreatureState {
+    fn default() -> Self {
+        Self {
+            position: NormalizedPosition::new(5_000, 4_500),
+            velocity: NormalizedVelocity::default(),
+            facing: Facing::Right,
+            gaze: GazeTarget::None,
+            depth_lane: DepthLane::Middle,
+            steering: SteeringMode::Hover,
+            destination: None,
+            action: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -429,7 +717,12 @@ pub struct WorldState {
     pub next_memory_id: u64,
     pub next_belief_id: u64,
     pub creature: Creature,
-    pub room: RoomState,
+    #[serde(default)]
+    pub aquarium: AquariumState,
+    #[serde(default)]
+    pub random_domains: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub absence_days: u32,
 }
 
 impl WorldState {
@@ -497,20 +790,15 @@ impl WorldState {
                 current_intention: Intention::Idle,
                 last_social_act: None,
                 conversation: ConversationState::default(),
-                position: RoomSpot::Center,
-                movement: None,
                 development: Development::default(),
+                aquarium: AquariumCreatureState::default(),
+                routines: Vec::new(),
+                favorite_locations: BTreeMap::new(),
+                initiated_behavior: None,
             },
-            room: RoomState {
-                food_in_bowl: None,
-                toy_available: true,
-                toy: ToyId::Ball,
-                tidy: true,
-                player_present: true,
-                last_nonverbal_act: None,
-                play_requested: false,
-                comfort_requested: false,
-            },
+            aquarium: AquariumState::default(),
+            random_domains: BTreeMap::new(),
+            absence_days: 0,
         }
     }
 
@@ -526,7 +814,7 @@ impl WorldState {
     /// preserves the exact persisted trait values across a JSON round trip.
     #[must_use]
     pub fn idiolect(&self) -> Idiolect {
-        let development = self.creature.development;
+        let development = &self.creature.development;
         if development.language_stage < LanguageStage::Phrases
             || development.active_days_reached < 3
             || development.interactions.total() < 3
@@ -555,7 +843,7 @@ impl WorldState {
             Mood::Sleepy
         } else if creature.needs.hunger > 0.72 {
             Mood::Hungry
-        } else if !self.room.player_present && creature.relationship.bond > 0.3 {
+        } else if !self.aquarium.player_present && creature.relationship.bond > 0.3 {
             Mood::Lonely
         } else if creature.needs.curiosity > 0.7 {
             Mood::Curious
@@ -606,8 +894,82 @@ impl WorldState {
             id,
             kind,
             supporting_memories: BTreeSet::from([memory]),
+            contradicting_memories: BTreeSet::new(),
             confidence: confidence_delta.clamp(0.0, 1.0),
         });
+    }
+
+    /// Record evidence against a belief and revise its confidence without deleting its history.
+    pub(crate) fn contradict_belief(&mut self, kind: BeliefKind, memory: MemoryId, delta: f32) {
+        if let Some(belief) = self
+            .creature
+            .beliefs
+            .iter_mut()
+            .find(|belief| belief.kind == kind)
+        {
+            belief.contradicting_memories.insert(memory);
+            belief.confidence = (belief.confidence - delta.abs()).clamp(0.0, 1.0);
+        }
+    }
+
+    #[must_use]
+    pub fn favorite_destination(&self) -> Option<SemanticDestination> {
+        self.creature
+            .favorite_locations
+            .iter()
+            .max_by_key(|(_, count)| *count)
+            .map(|(destination, _)| *destination)
+    }
+
+    pub fn revise_belief(&mut self, kind: BeliefKind, memory: MemoryId, supports: bool) {
+        if supports {
+            self.reinforce_belief(kind, memory, 0.15);
+        } else {
+            self.contradict_belief(kind, memory, 0.15);
+        }
+    }
+
+    pub fn record_favorite(&mut self, destination: SemanticDestination) {
+        if !matches!(
+            destination,
+            SemanticDestination::Cave | SemanticDestination::Plant | SemanticDestination::Bottom
+        ) {
+            return;
+        }
+        let count = self
+            .creature
+            .favorite_locations
+            .entry(destination)
+            .or_default();
+        *count = count.saturating_add(1);
+    }
+
+    pub fn set_routine(&mut self, routine: Routine) {
+        if let Some(existing) = self
+            .creature
+            .routines
+            .iter_mut()
+            .find(|existing| existing.hour_start == routine.hour_start)
+        {
+            *existing = routine;
+        } else if self.creature.routines.len() < 8 {
+            self.creature.routines.push(routine);
+            self.creature
+                .routines
+                .sort_by_key(|routine| routine.hour_start);
+        }
+    }
+
+    /// Draw from a named persisted stream. Callers that need replay-stable randomness should use
+    /// this rather than sharing the simulation stream with presentation micro-motion.
+    pub fn domain_draw(&mut self, domain: RandomDomain) -> f32 {
+        let key = self
+            .random_domains
+            .entry(domain.name().to_owned())
+            .or_default();
+        let draw = deterministic_unit(self.seed, domain, *key);
+        *key = key.saturating_add(1);
+        draw
     }
 
     pub fn validate(&self) -> Result<(), StateValidationError> {
@@ -662,15 +1024,46 @@ impl WorldState {
         if self.simulation_remainder_ms >= crate::SIMULATION_TICK_MS {
             return Err(StateValidationError::SimulationRemainder);
         }
-        if let Some(movement) = self.creature.movement
-            && (movement.duration_ms == 0
-                || movement.elapsed_ms >= movement.duration_ms
-                || movement.from == movement.to
-                || movement.from != self.creature.position)
-        {
-            return Err(StateValidationError::Movement);
+        if self.aquarium.next_object_id == 0 || self.aquarium.max_food == 0 {
+            return Err(StateValidationError::Aquarium);
         }
-        let development = self.creature.development;
+        if self.creature.aquarium.position != self.creature.aquarium.position.clamped()
+            || self.creature.aquarium.velocity != self.creature.aquarium.velocity.clamped()
+            || self
+                .aquarium
+                .cursor
+                .is_some_and(|position| position != position.clamped())
+            || self.aquarium.objects.values().any(|object| match object {
+                WorldObject::Food(food) => {
+                    food.position != food.position.clamped()
+                        || food.velocity != food.velocity.clamped()
+                        || food.id == 0
+                }
+                WorldObject::Toy { position, .. }
+                | WorldObject::Plant { position }
+                | WorldObject::Cave { position } => *position != position.clamped(),
+            })
+        {
+            return Err(StateValidationError::Aquarium);
+        }
+        if self
+            .aquarium
+            .objects
+            .keys()
+            .any(|id| *id == 0 || *id >= self.aquarium.next_object_id)
+        {
+            return Err(StateValidationError::Aquarium);
+        }
+        if self.creature.beliefs.iter().any(|belief| {
+            belief
+                .supporting_memories
+                .intersection(&belief.contradicting_memories)
+                .next()
+                .is_some()
+        }) {
+            return Err(StateValidationError::Belief);
+        }
+        let development = &self.creature.development;
         if development.active_days_reached == 0
             || u64::from(development.active_days_reached) > self.active_day()
             || (development.language_stage >= LanguageStage::Words
@@ -763,8 +1156,6 @@ pub enum StateValidationError {
     Preference,
     #[error("simulation remainder must be below one simulation tick")]
     SimulationRemainder,
-    #[error("movement must be between distinct spots and strictly in progress")]
-    Movement,
     #[error("development stage, active day, or required concepts are inconsistent")]
     Development,
     #[error("memory IDs must be unique")]
@@ -777,4 +1168,6 @@ pub enum StateValidationError {
     BeliefId,
     #[error("belief confidence or supporting memory is invalid")]
     Belief,
+    #[error("aquarium state is invalid")]
+    Aquarium,
 }

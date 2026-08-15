@@ -29,4 +29,10 @@ pub struct Args {
     /// Ignore an existing save and start a new creature.
     #[arg(long)]
     pub new_game: bool,
+    /// Opt in to privacy-safe local playtest transcript recording. Player text is never stored.
+    #[arg(long)]
+    pub transcript: bool,
+    /// Export validated privacy-safe transcript records to this JSONL file.
+    #[arg(long)]
+    pub export_transcript: Option<PathBuf>,
 }

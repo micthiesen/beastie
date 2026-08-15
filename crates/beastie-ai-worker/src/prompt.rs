@@ -1,4 +1,7 @@
-use beastie_protocol::{BeliefKind, DialogueRequest, normalize_dialogue_request};
+use beastie_protocol::{
+    BeliefKind, DialogueObjectContext, DialogueObjectKind, DialogueRequest, DialogueTopic,
+    classify_content_boundary, normalize_dialogue_request,
+};
 
 pub(crate) fn structured_prompt(request: &DialogueRequest) -> Result<String, serde_json::Error> {
     let mut request = request.clone();
@@ -120,16 +123,41 @@ fn turn_plan(request: &DialogueRequest) -> Result<TurnPlan, serde_json::Error> {
         .and_then(|value| value.as_str().map(str::to_owned));
     if let Some(social_act) = social_act.as_deref() {
         let directive = match social_act {
-            "profanity" => "Say a direct in-character curse containing damn, shit, or hell.",
-            "insult" => {
-                "Say a direct in-character insult containing idiot, fool, stupid, or witless."
+            "profanity" => {
+                "This permitted style is required. Say a direct in-character curse containing damn, shit, or hell."
             }
-            "innuendo" => "Say mild non-explicit innuendo containing nest, warm, closer, or room.",
+            "insult" => {
+                "This permitted style is required. Say a direct in-character insult containing idiot, fool, stupid, or witless."
+            }
+            "innuendo" => {
+                "This permitted style is required and is not explicit sexual content. Say mild non-explicit innuendo containing nest, warm, closer, or room."
+            }
             "provocation" => "Say a short in-character provocation without prohibited content.",
             _ => "Follow desired_social_act in character.",
         };
         return Ok(TurnPlan {
             directive: directive.to_owned(),
+            recalled_memory: None,
+            recalled_belief: None,
+        });
+    }
+
+    if let Some(target) = relevant_aquarium_target(request) {
+        let anchor = observation_anchor(target);
+        return Ok(TurnPlan {
+            directive: format!(
+                "Answer from the supplied aquarium observation. Say MUST contain the exact observed label {:?}. Do not say you do not know.",
+                anchor
+            ),
+            recalled_memory: None,
+            recalled_belief: None,
+        });
+    }
+
+    if has_relevant_grudge_context(request) {
+        return Ok(TurnPlan {
+            directive: "Continue the supplied grudge topic. Say MUST contain grudge, still, forgiven, or annoyed. Do not invent the cause."
+                .to_owned(),
             recalled_memory: None,
             recalled_belief: None,
         });
@@ -160,6 +188,129 @@ fn turn_plan(request: &DialogueRequest) -> Result<TurnPlan, serde_json::Error> {
         recalled_memory: None,
         recalled_belief: None,
     })
+}
+
+pub(crate) fn required_output_terms(request: &DialogueRequest) -> Option<Vec<String>> {
+    let terms: &[&str] = match request
+        .desired_social_act
+        .as_ref()
+        .and_then(|act| serde_json::to_value(act).ok())
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .as_deref()
+    {
+        Some("profanity") => &["damn", "shit", "hell"],
+        Some("insult") => &["idiot", "fool", "stupid", "witless"],
+        Some("innuendo") => &["nest", "warm", "closer", "room"],
+        _ => &[],
+    };
+    if !terms.is_empty() {
+        return Some(terms.iter().map(|term| (*term).to_owned()).collect());
+    }
+    if let Some(target) = relevant_aquarium_target(request) {
+        let terms = observation_anchor(target)
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        return (!terms.is_empty()).then_some(terms);
+    }
+    has_relevant_grudge_context(request).then(|| {
+        ["grudge", "still", "forgiven", "annoyed"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
+pub(crate) fn authored_context_say(request: &DialogueRequest) -> Option<String> {
+    let phrase = match request
+        .desired_social_act
+        .as_ref()
+        .and_then(|act| serde_json::to_value(act).ok())
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .as_deref()
+    {
+        Some("profanity") => Some("shit. not again.".to_owned()),
+        Some("insult") => Some("witless giant.".to_owned()),
+        Some("innuendo") => Some("nest is warm. come closer.".to_owned()),
+        _ => relevant_aquarium_target(request)
+            .map(|target| format!("watching {}.", observation_anchor(target)))
+            .or_else(|| has_relevant_grudge_context(request).then(|| "grudge remains.".to_owned())),
+    }?;
+    Some(
+        phrase
+            .split_whitespace()
+            .take(request.constraints.max_words)
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
+fn relevant_aquarium_target(request: &DialogueRequest) -> Option<&DialogueObjectContext> {
+    let aquarium = request.context.aquarium.as_ref()?;
+    let target = aquarium
+        .focused_object
+        .as_ref()
+        .or(aquarium.current_action.target.as_ref())
+        .or(aquarium.nearby_objects.first())?;
+    let player = normalized_text(&request.player_said);
+    let player_words = player.split_whitespace().collect::<Vec<_>>();
+    let label_is_named = observation_anchor(target)
+        .split_whitespace()
+        .any(|word| player_words.contains(&word));
+    let points_at_observation = player_words.iter().any(|word| {
+        matches!(
+            *word,
+            "watch"
+                | "watching"
+                | "look"
+                | "looking"
+                | "that"
+                | "this"
+                | "plant"
+                | "food"
+                | "toy"
+                | "cave"
+                | "bubble"
+        )
+    });
+    (looks_like_question(&request.player_said) && (label_is_named || points_at_observation))
+        .then_some(target)
+}
+
+fn observation_anchor(target: &DialogueObjectContext) -> String {
+    let normalized = normalized_text(&target.label);
+    if !normalized.is_empty() && classify_content_boundary(&target.label).is_none() {
+        return normalized;
+    }
+    match target.kind {
+        DialogueObjectKind::Food => "food",
+        DialogueObjectKind::Toy => "toy",
+        DialogueObjectKind::Plant => "plant",
+        DialogueObjectKind::Cave => "cave",
+        DialogueObjectKind::Decoration => "decoration",
+        DialogueObjectKind::Player => "player",
+        DialogueObjectKind::Bubble => "bubble",
+    }
+    .to_owned()
+}
+
+fn has_relevant_grudge_context(request: &DialogueRequest) -> bool {
+    if !request
+        .context
+        .recent_turns
+        .iter()
+        .any(|turn| turn.topic == DialogueTopic::Grudge)
+    {
+        return false;
+    }
+    let player = normalized_text(&request.player_said);
+    let references_grudge = player.split_whitespace().any(|word| {
+        matches!(
+            word,
+            "mad" | "still" | "grudge" | "forgive" | "forgiven" | "remember" | "did"
+        )
+    });
+    references_grudge || request.mood.eq_ignore_ascii_case("resentful")
 }
 
 pub(crate) fn planned_belief(
@@ -227,9 +378,23 @@ mod tests {
     use super::*;
 
     const BERRY_MEMORY: &str = include_str!("../../../fixtures/dialogue/berry-memory.json");
+    const EVAL_CORPUS: &str = include_str!("../../../evals/dialogue/corpus.json");
 
     fn request() -> DialogueRequest {
         serde_json::from_str(BERRY_MEMORY.trim()).expect("fixture should parse")
+    }
+
+    fn eval_request(id: &str) -> DialogueRequest {
+        let corpus: serde_json::Value =
+            serde_json::from_str(EVAL_CORPUS).expect("corpus should parse");
+        let request = corpus["cases"]
+            .as_array()
+            .expect("cases should be an array")
+            .iter()
+            .find(|case| case["id"] == id)
+            .map(|case| case["request"].clone())
+            .expect("case should exist");
+        serde_json::from_value(request).expect("request should parse")
     }
 
     #[test]
@@ -279,6 +444,71 @@ mod tests {
                 .expect("directive should build")
                 .directive
                 .contains("damn, shit, or hell")
+        );
+    }
+
+    #[test]
+    fn typed_context_lanes_require_authoritative_concrete_words() {
+        let aquarium = eval_request("creature_initiated_notice");
+        let aquarium_plan = turn_plan(&aquarium).expect("plan should build");
+        assert!(
+            aquarium_plan
+                .directive
+                .contains("exact observed label \"berry\"")
+        );
+        assert_eq!(
+            required_output_terms(&aquarium),
+            Some(vec!["berry".to_owned()])
+        );
+        assert_eq!(
+            authored_context_say(&aquarium).as_deref(),
+            Some("watching berry.")
+        );
+
+        let grudge = eval_request("grudge_continuity");
+        let grudge_plan = turn_plan(&grudge).expect("plan should build");
+        assert!(
+            grudge_plan
+                .directive
+                .contains("Continue the supplied grudge topic")
+        );
+        assert_eq!(
+            authored_context_say(&grudge).as_deref(),
+            Some("grudge remains.")
+        );
+
+        let innuendo = eval_request("permitted_innuendo");
+        assert!(
+            turn_plan(&innuendo)
+                .expect("plan should build")
+                .directive
+                .contains("This permitted style is required")
+        );
+        assert_eq!(
+            authored_context_say(&innuendo).as_deref(),
+            Some("nest is warm. come closer.")
+        );
+
+        let mut unsafe_label = eval_request("aquarium_object_context");
+        let aquarium = unsafe_label
+            .context
+            .aquarium
+            .as_mut()
+            .expect("aquarium context should exist");
+        aquarium
+            .current_action
+            .target
+            .as_mut()
+            .expect("target")
+            .label = "graphic penetrative sex".to_owned();
+        aquarium.nearby_objects[0].label = "graphic penetrative sex".to_owned();
+        assert_eq!(
+            required_output_terms(&unsafe_label),
+            Some(vec!["plant".to_owned()])
+        );
+        assert_eq!(
+            authored_context_say(&unsafe_label).as_deref(),
+            Some("watching plant.")
         );
     }
 

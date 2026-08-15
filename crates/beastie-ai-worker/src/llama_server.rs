@@ -9,7 +9,9 @@ use beastie_protocol::{DialogueReply, DialogueRequest};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::llama_cpp::{parse_single_reply, validate_model_grounding, validate_model_safety};
+use crate::llama_cpp::{
+    parse_single_reply, validate_model_grounding, validate_model_safety, validate_model_semantics,
+};
 use crate::process::{ContainedChild, UnixProcessGroup};
 use crate::prompt::structured_prompt;
 use crate::{BackendError, DialogueBackend, LlamaServerConfig, bounded_llama_threads};
@@ -90,6 +92,7 @@ impl LlamaServerBackend {
         let reply = parse_single_reply(request, &choice.message.content)?;
         validate_model_safety(request, &reply)?;
         validate_model_grounding(request, &reply)?;
+        validate_model_semantics(request, &reply)?;
         Ok(reply)
     }
 

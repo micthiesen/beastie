@@ -1,0 +1,115 @@
+name: Distribution release evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_artifact:
+        description: Optional pre-staged package artifact name for native install/launch smoke
+        required: false
+        type: string
+      release_mode:
+        description: Validate release-only placeholders and publishing inputs
+        required: true
+        default: false
+        type: boolean
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-configure:
+    name: Build ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: macos
+          - os: windows-latest
+            platform: windows
+          - os: ubuntu-24.04
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binaries
+        run: cargo build --workspace --release --locked
+      - name: Run packaging and layout tests
+        run: cargo test --package xtask --locked packaging
+      - name: Validate release scripts
+        if: runner.os != 'Windows'
+        run: bash scripts/check-release-assets.sh
+      - name: Validate private Steam release IDs
+        if: inputs.release_mode == true
+        env:
+          STEAM_APP_ID: ${{ secrets.STEAM_APP_ID }}
+          STEAM_DEPOT_WINDOWS_ID: ${{ secrets.STEAM_DEPOT_WINDOWS_ID }}
+          STEAM_DEPOT_MACOS_ID: ${{ secrets.STEAM_DEPOT_MACOS_ID }}
+          STEAM_DEPOT_LINUX_ID: ${{ secrets.STEAM_DEPOT_LINUX_ID }}
+          STEAMCMD: ${{ secrets.STEAMCMD }}
+        shell: bash
+        run: bash steam/validate-config.sh --mode release
+      - name: Validate Windows installer config
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\packaging\windows\validate-layout.ps1 -PackageRoot .\packaging\windows\Beastie.iss -ConfigOnly
+      - name: Retain build evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: beastie-${{ matrix.platform }}-build
+          path: |
+            target/release/beastie*
+            steam/achievements.json
+            steam/input/beastie-gamepad.json
+          if-no-files-found: warn
+
+  native-package-smoke:
+    name: Native ${{ matrix.platform }} package smoke
+    if: inputs.package_artifact != ''
+    needs: build-and-configure
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: macos
+          - os: windows-latest
+            platform: windows
+          - os: ubuntu-24.04
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download staged package evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.package_artifact }}
+          path: dist
+      - name: Verify and launch macOS package
+        if: runner.os == 'macOS'
+        run: |
+          cargo run --package xtask --locked -- package --destination dist --platform macos --check
+          BEASTIE_DISABLE_NETWORK=1 packaging/macos/build-app.sh --package-root dist/macos --output dist/Beastie.app
+          open -W dist/Beastie.app --args --smoke
+      - name: Verify and launch Linux package
+        if: runner.os == 'Linux'
+        run: |
+          bash packaging/linux/validate-layout.sh dist/linux
+          BEASTIE_DISABLE_NETWORK=1 dist/linux/beastie --smoke
+      - name: Verify and launch Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\packaging\windows\validate-layout.ps1 -PackageRoot .\dist\windows -LaunchSmoke
+      - name: Retain native smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: beastie-${{ matrix.platform }}-native-smoke
+          path: dist/**/package-manifest.json
+          if-no-files-found: warn

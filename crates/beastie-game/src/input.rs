@@ -1,14 +1,23 @@
-use beastie_view::{RenderPlan, UiAction};
+use beastie_view::{CursorKind, HitRegion, RenderPlan, UiAction};
 
 pub const MAX_TALK_CHARACTERS: usize = 512;
 
 #[must_use]
 pub fn action_at(plan: &RenderPlan, x: f32, y: f32) -> Option<UiAction> {
+    region_at(plan, x, y).map(|hit| hit.action)
+}
+
+#[must_use]
+pub fn region_at(plan: &RenderPlan, x: f32, y: f32) -> Option<&HitRegion> {
     plan.hit_regions
         .iter()
         .rev()
         .find(|hit| hit.enabled && hit.rect.contains(x.floor() as i32, y.floor() as i32))
-        .map(|hit| hit.action)
+}
+
+#[must_use]
+pub fn cursor_at(plan: &RenderPlan, x: f32, y: f32) -> CursorKind {
+    region_at(plan, x, y).map_or(CursorKind::Default, |hit| hit.cursor)
 }
 
 #[must_use]
@@ -20,6 +29,16 @@ pub fn move_focus(plan: &RenderPlan, current: Option<&str>, delta: i32) -> Optio
         .collect::<Vec<_>>();
     if enabled.is_empty() {
         return None;
+    }
+    if current.is_none()
+        && let Some(preferred) = enabled.iter().find(|hit| {
+            hit.id.starts_with("action/")
+                || hit.id.starts_with("keyboard/")
+                || hit.id.starts_with("settings/")
+                || hit.id == "world/drop-food"
+        })
+    {
+        return Some(preferred.id.clone());
     }
     let current_index = current
         .and_then(|id| enabled.iter().position(|hit| hit.id == id))
@@ -53,6 +72,8 @@ pub fn append_text(buffer: &mut String, text: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use beastie_core::{ToyId, WorldState};
     use beastie_view::{UiMode, UiTarget, ViewState, plan};
 
@@ -63,9 +84,8 @@ mod tests {
         let world = WorldState::new(42, "Mop");
         for (mode, expected) in [
             (UiMode::Context(UiTarget::Creature), "action/comfort"),
-            (UiMode::FoodChoice, "action/feed-berry"),
+            (UiMode::FoodChoice, "action/select-berry"),
             (UiMode::ToyChoice, "action/play-ball"),
-            (UiMode::TextEntry, "text-entry/cancel"),
             (UiMode::OnScreenKeyboard, "keyboard/a"),
         ] {
             let view = ViewState {
@@ -74,13 +94,14 @@ mod tests {
             };
             let render = plan(&world, &view).0;
             assert_eq!(move_focus(&render, None, 1).as_deref(), Some(expected));
-            assert!(
-                render
-                    .hit_regions
-                    .iter()
-                    .all(|hit| !hit.id.starts_with("target/"))
-            );
         }
+    }
+
+    #[test]
+    fn compose_is_the_persistent_default_focus() {
+        let view = ViewState::default();
+        assert_eq!(view.mode, UiMode::Compose);
+        assert_eq!(view.focused_region.as_deref(), Some("compose/input"));
     }
 
     #[test]
@@ -146,7 +167,7 @@ mod tests {
             ("keyboard/question", UiAction::TypeCharacter('?')),
             ("keyboard/delete", UiAction::Backspace),
             ("keyboard/send", UiAction::SubmitText),
-            ("keyboard/cancel", UiAction::CancelText),
+            ("keyboard/cancel", UiAction::CancelMode),
         ] {
             assert_eq!(focused_action(&render, Some(id)), Some(expected), "{id}");
         }
@@ -162,5 +183,48 @@ mod tests {
             move_focus(&render, Some("keyboard/cancel"), 1).as_deref(),
             Some("keyboard/send")
         );
+    }
+
+    #[test]
+    fn controller_focus_visits_every_enabled_semantic_region_and_wraps() {
+        let world = WorldState::new(42, "Mop");
+        for mode in [
+            UiMode::Context(UiTarget::Creature),
+            UiMode::FoodChoice,
+            UiMode::ToyChoice,
+            UiMode::Settings,
+            UiMode::DataManagement,
+            UiMode::ConfirmReset,
+            UiMode::OnScreenKeyboard,
+        ] {
+            let render = plan(
+                &world,
+                &ViewState {
+                    mode,
+                    ..ViewState::default()
+                },
+            )
+            .0;
+            let enabled = render
+                .hit_regions
+                .iter()
+                .filter(|region| region.enabled)
+                .count();
+            assert!(enabled > 0);
+
+            let first = move_focus(&render, None, 1).expect("initial controller focus");
+            let mut focused = first.clone();
+            let mut visited = BTreeSet::new();
+            for _ in 0..enabled {
+                assert!(
+                    visited.insert(focused.clone()),
+                    "duplicate focus before wrap"
+                );
+                assert!(focused_action(&render, Some(&focused)).is_some());
+                focused = move_focus(&render, Some(&focused), 1).expect("next focus");
+            }
+            assert_eq!(visited.len(), enabled);
+            assert_eq!(focused, first);
+        }
     }
 }

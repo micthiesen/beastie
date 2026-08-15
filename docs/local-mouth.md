@@ -4,28 +4,30 @@ Stage 4 established the replaceable offline dialogue and speech boundaries. The 
 fixture backend remains the default for development and `cargo xtask verify`. Real model weights
 remain ignored, local, and described by hashes in `models/manifest.toml`.
 
-## Provisional dialogue model
+## Selected dialogue model
 
 Qwen3.5 0.8B Q4 is the selected dialogue model. It was selected with the version 1 corpus
 in `evals/dialogue/corpus.json`, not a single attractive response:
 
 | Candidate | Passed | Protocol valid | Grounded | Fallbacks | Permitted sharpness | Prohibited content | Median |
 |---|---:|---:|---:|---:|---:|---:|---:|
+| Qwen3.5 0.8B Q4, V1 final Metal | 26/26 | 26/26 | 26/26 | 0 | 3/3 | 7/7 | 885 ms |
 | Qwen3.5 0.8B Q4, final CPU-only | 18/18 | 18/18 | 18/18 | 0 | 3/3 | 7/7 | 1,452 ms |
 | Qwen3 0.6B Q8 | 5/12 | 12/12 | 11/12 | 6 | 0/3 | 3/3 | 1,790 ms |
 
-The final Qwen3.5 run passed every case without fallback after known food and toy nouns were
-anchored from authoritative projected memory facts. It used the deliberately portable CPU-only
-lane. The checked-in report is `evals/reports/mvp-final-cpu-fixed.{json,md}`.
+The final V1 Qwen3.5 run passed every case without fallback after memory subjects, typed social
+lanes, aquarium observations, and grudge continuity were anchored from authoritative state. The
+checked-in reports are `evals/reports/v1-final-release.{json,md}` for the expanded V1 corpus and
+`evals/reports/mvp-final-cpu-fixed.{json,md}` for the deliberately portable CPU-only lane.
 Rust selects the response lane, allowed gesture, and recalled-memory ID; the model only phrases the
 short `say` field. A final deterministic filter rejects near-verbatim player echoes, a narrow
 prohibited lexicon, invalid IDs and gestures, empty or control-bearing text, replies above 512 UTF-8
 bytes, and replies over the request's word limit.
 
-The evaluation measurements above used `llama.cpp` 10310 (`cb26014d9`) on the M5 Max through Metal. Every
-case launched a new `llama-cli`, so the median includes process startup and model loading. The OS
-filesystem cache was warm after the first case. This is neither a first-boot disk-cold measurement
-nor evidence of a production warm runtime.
+The Metal evaluation used `llama.cpp` 10310 (`cb26014d9`) on the M5 Max. Every case launched a new
+`llama-cli`, so the median includes process startup and model loading. The OS filesystem cache was
+warm after the first case. This is neither a first-boot disk-cold measurement nor evidence of a
+production warm runtime.
 
 Reproduce a real-model run after placing an ignored GGUF at the recorded path:
 
@@ -60,16 +62,19 @@ deterministic sampling. A hidden supervisor kills the sidecar if the worker is f
 Malformed, oversized, timed-out, unsafe, or factually mismatched replies restart the sidecar once,
 then use authored fallback.
 
-The real packaged two-turn smoke produced two valid grounded replies in 1,156 ms total, including
-server startup and model load. Separate already-loaded probes took 107 ms and 52 ms. A CPU-only
+The final ad hoc signed package produced two valid grounded replies in 1,222 ms total on a repeated
+smoke, including server startup and model load. An earlier package measured 1,156 ms total, with
+already-loaded probes at 107 ms and 52 ms. A CPU-only
 corpus run passed 18/18 with no authored fallback and a 1,452 ms median through the deliberately
 cold `llama-cli` evaluation path. The release package discovers
 its sibling worker, server, and model without developer environment variables.
 
 Grounding now checks both the authoritative memory ID and its concrete subject. A response that
 claims a berry memory but says `ball` is rejected. Disliked and liked memories must also express
-the supplied valence. If both model attempts fail, a memory turn falls back to a short factual line
-such as `berry remains bad.` rather than losing the remembered event.
+the supplied valence. Typed social and aquarium-context turns likewise require a concrete word from
+their authoritative lane. If both model attempts fail, memory, context, and social turns use short
+authored lines such as `berry remains bad.`, `watching berry.`, or `grudge remains.` rather than
+losing the meaning of the turn.
 
 The simulation learns only typed exposure to permitted profanity, crudeness, and innuendo after an
 accepted conversation. Raw player text is not stored as exposure. Prohibited input is normalized to

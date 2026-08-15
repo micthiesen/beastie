@@ -47,9 +47,33 @@ struct Asset {
     frames: u32,
     transparent: bool,
     palette: String,
+    /// Maximum number of distinct opaque RGB colors allowed in each candidate.
+    #[serde(default = "default_max_colors")]
+    max_colors: u32,
+    /// Maximum per-channel distance from the nearest declared palette color.
+    #[serde(default)]
+    palette_tolerance: u8,
+    /// Pixel art uses binary alpha. `any` is retained only for legacy references.
+    #[serde(default, alias = "alpha")]
+    alpha_policy: AlphaPolicy,
+    /// Number of source pixels represented by one logical pixel, when known.
+    #[serde(default, alias = "pixel_density")]
+    native_pixel_density: Option<u32>,
     status: Status,
     path: Option<String>,
     provenance: Option<Provenance>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum AlphaPolicy {
+    #[default]
+    Hard,
+    Any,
+}
+
+const fn default_max_colors() -> u32 {
+    32
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -278,8 +302,8 @@ fn generate_with_client(
     };
     let response = client.create_image(token, &request)?;
     let bytes = decode_response_image(&response.image)?;
-    validate_png_bytes(asset, &bytes)?;
-    publish_png(asset, asset_root, &bytes, force)?;
+    validate_png_bytes(asset, &bytes, &palette)?;
+    publish_png(asset, asset_root, &bytes, force, &palette)?;
 
     Ok(GenerationReport {
         destination,
@@ -432,13 +456,19 @@ fn decode_response_image(image: &EncodedImage) -> Result<Vec<u8>> {
         .context("PixelLab returned invalid base64 image data")
 }
 
-fn validate_png_bytes(asset: &Asset, bytes: &[u8]) -> Result<()> {
+fn validate_png_bytes(asset: &Asset, bytes: &[u8], palette: &[[u8; 3]]) -> Result<()> {
     let image = image::load_from_memory_with_format(bytes, ImageFormat::Png)
         .context("PixelLab response is not a valid PNG")?;
-    validate_decoded_png(asset, &image, "PixelLab response")
+    validate_decoded_png(asset, &image, "PixelLab response", palette).map(|_| ())
 }
 
-fn publish_png(asset: &Asset, asset_root: &Path, bytes: &[u8], force: bool) -> Result<PathBuf> {
+fn publish_png(
+    asset: &Asset,
+    asset_root: &Path,
+    bytes: &[u8],
+    force: bool,
+    palette: &[[u8; 3]],
+) -> Result<PathBuf> {
     let destination = candidate_path(asset_root, Source::Generated, &asset.id, 1, 0);
     if destination.exists() && !force {
         bail!(
@@ -470,7 +500,7 @@ fn publish_png(asset: &Asset, asset_root: &Path, bytes: &[u8], force: bool) -> R
             .with_context(|| format!("failed to write temporary asset {}", temporary.display()))?;
         file.sync_all()
             .with_context(|| format!("failed to sync temporary asset {}", temporary.display()))?;
-        validate_png(asset, &temporary, "generated temporary")?;
+        validate_png(asset, &temporary, "generated temporary", palette)?;
         if destination.exists() && !force {
             bail!(
                 "destination appeared during generation: {}",
@@ -653,7 +683,8 @@ fn validate_asset(
         bail!("{label} dimensions and frame count must be greater than zero");
     }
 
-    validate_palette(asset, asset_root)?;
+    let palette = read_palette(asset, asset_root)?;
+    validate_asset_policy(asset)?;
     validate_provenance(asset, asset_root)?;
 
     if asset.status == Status::Reference {
@@ -662,7 +693,8 @@ fn validate_asset(
             .as_deref()
             .context(format!("{label} with status reference must declare path"))?;
         let path = checked_relative_path(asset_root, relative, "reference asset", &asset.id)?;
-        validate_png(asset, &path, "reference")?;
+        let diagnostics = validate_png(asset, &path, "reference", &palette)?;
+        print_asset_diagnostics(asset, "reference", &diagnostics);
         return Ok(());
     }
     if asset.path.is_some() {
@@ -688,10 +720,14 @@ fn validate_asset(
         // Validate every candidate, even though final wins at runtime. A stale malformed
         // generated source should not silently remain in the asset history.
         if generated_exists {
-            validate_png(asset, &generated, Source::Generated.directory())?;
+            let diagnostics =
+                validate_png(asset, &generated, Source::Generated.directory(), &palette)?;
+            print_asset_diagnostics(asset, Source::Generated.directory(), &diagnostics);
         }
         if final_exists {
-            validate_png(asset, &final_path, Source::Final.directory())?;
+            let diagnostics =
+                validate_png(asset, &final_path, Source::Final.directory(), &palette)?;
+            print_asset_diagnostics(asset, Source::Final.directory(), &diagnostics);
         }
 
         match resolve_source(final_exists, generated_exists) {
@@ -738,6 +774,21 @@ fn validate_asset(
     Ok(())
 }
 
+fn print_asset_diagnostics(asset: &Asset, source: &str, diagnostics: &AssetDiagnostics) {
+    println!(
+        "    {} [{}]: colors={}, palette_distance={}, alpha_partial={}, interpolation_pixels={}, density={}",
+        asset.id,
+        source,
+        diagnostics.unique_opaque_colors,
+        diagnostics.max_palette_distance,
+        diagnostics.partial_alpha_pixels,
+        diagnostics.isolated_interpolation_pixels,
+        diagnostics
+            .native_pixel_density
+            .map_or_else(|| "unspecified".to_owned(), |density| density.to_string())
+    );
+}
+
 fn validate_id(id: &str, label: &str) -> Result<()> {
     if id.is_empty()
         || id.split('/').any(|segment| {
@@ -750,11 +801,6 @@ fn validate_id(id: &str, label: &str) -> Result<()> {
     {
         bail!("{label} has an invalid id; use safe slash-separated path segments");
     }
-    Ok(())
-}
-
-fn validate_palette(asset: &Asset, asset_root: &Path) -> Result<()> {
-    read_palette(asset, asset_root)?;
     Ok(())
 }
 
@@ -922,7 +968,12 @@ fn validate_wav(audio: &Audio, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_png(asset: &Asset, path: &Path, source: &str) -> Result<()> {
+fn validate_png(
+    asset: &Asset,
+    path: &Path,
+    source: &str,
+    palette: &[[u8; 3]],
+) -> Result<AssetDiagnostics> {
     let reader = ImageReader::open(path)
         .with_context(|| format!("failed to open {source} candidate {}", path.display()))?
         .with_guessed_format()
@@ -941,10 +992,41 @@ fn validate_png(asset: &Asset, path: &Path, source: &str) -> Result<()> {
             path.display()
         )
     })?;
-    validate_decoded_png(asset, &image, &path.display().to_string())
+    validate_decoded_png(asset, &image, &path.display().to_string(), palette)
 }
 
-fn validate_decoded_png(asset: &Asset, image: &DynamicImage, candidate: &str) -> Result<()> {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct AssetDiagnostics {
+    pub width: u32,
+    pub height: u32,
+    pub opaque_pixels: u64,
+    pub transparent_pixels: u64,
+    pub partial_alpha_pixels: u64,
+    pub unique_opaque_colors: usize,
+    pub max_palette_distance: u8,
+    pub isolated_interpolation_pixels: u64,
+    pub native_pixel_density: Option<u32>,
+}
+
+fn validate_asset_policy(asset: &Asset) -> Result<()> {
+    if asset.max_colors == 0 {
+        bail!("asset {} max_colors must be greater than zero", asset.id);
+    }
+    if asset.native_pixel_density == Some(0) {
+        bail!(
+            "asset {} native_pixel_density must be greater than zero",
+            asset.id
+        );
+    }
+    Ok(())
+}
+
+fn validate_decoded_png(
+    asset: &Asset,
+    image: &DynamicImage,
+    candidate: &str,
+    palette: &[[u8; 3]],
+) -> Result<AssetDiagnostics> {
     if image.dimensions() != (asset.width, asset.height) {
         bail!(
             "asset {} candidate {} is {}x{}, expected {}x{}",
@@ -956,7 +1038,25 @@ fn validate_decoded_png(asset: &Asset, image: &DynamicImage, candidate: &str) ->
             asset.height
         );
     }
-    let has_transparency = image.to_rgba8().pixels().any(|pixel| pixel.0[3] < u8::MAX);
+    let rgba = image.to_rgba8();
+    let mut opaque_colors = HashSet::new();
+    let mut transparent_pixels = 0_u64;
+    let mut partial_alpha_pixels = 0_u64;
+    let mut max_palette_distance = 0_u8;
+    for pixel in rgba.pixels() {
+        let alpha = pixel.0[3];
+        if alpha == u8::MAX {
+            let rgb = [pixel.0[0], pixel.0[1], pixel.0[2]];
+            opaque_colors.insert(rgb);
+            max_palette_distance = max_palette_distance.max(palette_distance(rgb, palette));
+        } else {
+            transparent_pixels += 1;
+            if alpha != 0 {
+                partial_alpha_pixels += 1;
+            }
+        }
+    }
+    let has_transparency = transparent_pixels > 0;
     if asset.transparent && !has_transparency {
         bail!(
             "asset {} candidate {} must contain transparent pixels",
@@ -971,7 +1071,117 @@ fn validate_decoded_png(asset: &Asset, image: &DynamicImage, candidate: &str) ->
             candidate
         );
     }
-    Ok(())
+    if asset.alpha_policy == AlphaPolicy::Hard
+        && partial_alpha_pixels > 0
+        && asset.status != Status::Reference
+    {
+        bail!(
+            "asset {} candidate {} violates hard alpha policy [0,255]: {} partial-alpha pixel(s)",
+            asset.id,
+            candidate,
+            partial_alpha_pixels
+        );
+    }
+    if asset.status != Status::Reference && opaque_colors.len() > asset.max_colors as usize {
+        bail!(
+            "asset {} candidate {} has {} unique opaque colors, exceeds max_colors {}",
+            asset.id,
+            candidate,
+            opaque_colors.len(),
+            asset.max_colors
+        );
+    }
+    let isolated = count_isolated_interpolation_pixels(&rgba, palette, asset.palette_tolerance);
+    if asset.status != Status::Reference && isolated > 0 {
+        bail!(
+            "asset {} candidate {} contains {} isolated interpolation/resampling color pixel(s)",
+            asset.id,
+            candidate,
+            isolated
+        );
+    }
+    if asset.status != Status::Reference && max_palette_distance > asset.palette_tolerance {
+        bail!(
+            "asset {} candidate {} has opaque RGB pixels up to palette distance {}, exceeds palette_tolerance {}",
+            asset.id,
+            candidate,
+            max_palette_distance,
+            asset.palette_tolerance
+        );
+    }
+    Ok(AssetDiagnostics {
+        width: image.width(),
+        height: image.height(),
+        opaque_pixels: u64::from(image.width()) * u64::from(image.height()) - transparent_pixels,
+        transparent_pixels,
+        partial_alpha_pixels,
+        unique_opaque_colors: opaque_colors.len(),
+        max_palette_distance,
+        isolated_interpolation_pixels: isolated,
+        native_pixel_density: asset.native_pixel_density,
+    })
+}
+
+fn palette_distance(rgb: [u8; 3], palette: &[[u8; 3]]) -> u8 {
+    palette
+        .iter()
+        .map(|color| {
+            rgb.into_iter()
+                .zip(color)
+                .map(|(left, right)| left.abs_diff(*right))
+                .max()
+                .unwrap_or(0)
+        })
+        .min()
+        .unwrap_or(u8::MAX)
+}
+
+fn count_isolated_interpolation_pixels(
+    image: &image::RgbaImage,
+    palette: &[[u8; 3]],
+    tolerance: u8,
+) -> u64 {
+    let (width, height) = image.dimensions();
+    let mut counts = std::collections::HashMap::<[u8; 3], u32>::new();
+    for pixel in image.pixels().filter(|pixel| pixel.0[3] == u8::MAX) {
+        let rgb = [pixel.0[0], pixel.0[1], pixel.0[2]];
+        *counts.entry(rgb).or_default() += 1;
+    }
+    let mut isolated = 0_u64;
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = image.get_pixel(x, y);
+            if pixel.0[3] != u8::MAX {
+                continue;
+            }
+            let rgb = [pixel.0[0], pixel.0[1], pixel.0[2]];
+            if palette_distance(rgb, palette) <= tolerance || counts[&rgb] > 2 {
+                continue;
+            }
+            let mut neighbors = HashSet::new();
+            for (nx, ny) in [
+                (x.checked_sub(1), Some(y)),
+                (x.checked_add(1), Some(y)),
+                (Some(x), y.checked_sub(1)),
+                (Some(x), y.checked_add(1)),
+            ] {
+                let (Some(nx), Some(ny)) = (nx, ny) else {
+                    continue;
+                };
+                if nx >= width || ny >= height {
+                    continue;
+                }
+                let neighbor = image.get_pixel(nx, ny);
+                if neighbor.0[3] == u8::MAX {
+                    neighbors.insert([neighbor.0[0], neighbor.0[1], neighbor.0[2]]);
+                }
+            }
+            if neighbors.len() >= 2 {
+                isolated += 1;
+            }
+        }
+    }
+    isolated
 }
 
 const fn one() -> u32 {
@@ -1033,6 +1243,9 @@ width = 2
 height = 2
 transparent = true
 palette = "style/main.hex"
+max_colors = 32
+palette_tolerance = 0
+alpha_policy = "hard"
 status = "{status}"
 
 [asset.provenance]
@@ -1099,6 +1312,9 @@ height = 16
 frames = {frames}
 transparent = true
 palette = "style/main.hex"
+max_colors = 32
+palette_tolerance = 0
+alpha_policy = "hard"
 status = "{status}"
 
 [asset.provenance]
@@ -1228,6 +1444,180 @@ provenance = "docs/audio.md"
         assert!(error.contains("must contain transparent pixels"), "{error}");
     }
 
+    fn strict_asset(width: u32, height: u32, max_colors: u32, tolerance: u8) -> Asset {
+        toml::from_str(&format!(
+            r#"
+id = "fixture/pixel"
+kind = "sprite"
+width = {width}
+height = {height}
+transparent = true
+palette = "style/main.hex"
+max_colors = {max_colors}
+palette_tolerance = {tolerance}
+alpha_policy = "hard"
+status = "planned"
+"#
+        ))
+        .expect("strict asset")
+    }
+
+    fn fixture_image(width: u32, height: u32, pixels: Vec<Rgba<u8>>) -> DynamicImage {
+        DynamicImage::ImageRgba8(
+            ImageBuffer::from_raw(
+                width,
+                height,
+                pixels.into_iter().flat_map(|pixel| pixel.0).collect(),
+            )
+            .expect("fixture pixels match image dimensions"),
+        )
+    }
+
+    #[test]
+    fn rejects_bilinear_resampling_color() {
+        let assets = TestAssets::new();
+        let asset = strict_asset(3, 3, 3, 0);
+        let red = Rgba([17, 34, 51, 255]);
+        let blue = Rgba([171, 205, 239, 255]);
+        let blended = Rgba([94, 119, 145, 255]);
+        let mut pixels = vec![red; 9];
+        pixels[1] = blue;
+        pixels[3] = blue;
+        pixels[4] = blended;
+        pixels[8] = Rgba([17, 34, 51, 0]);
+        let error = validate_decoded_png(
+            &asset,
+            &fixture_image(3, 3, pixels),
+            "bilinear fixture",
+            &read_palette(&asset, &assets.root).expect("palette"),
+        )
+        .expect_err("interpolation color should fail")
+        .to_string();
+        assert!(
+            error.contains("isolated interpolation/resampling"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_partial_alpha_fringe_under_hard_policy() {
+        let assets = TestAssets::new();
+        let asset = strict_asset(2, 2, 4, 0);
+        let pixels = vec![
+            Rgba([17, 34, 51, 255]),
+            Rgba([17, 34, 51, 128]),
+            Rgba([171, 205, 239, 0]),
+            Rgba([171, 205, 239, 255]),
+        ];
+        let error = validate_decoded_png(
+            &asset,
+            &fixture_image(2, 2, pixels),
+            "alpha fringe fixture",
+            &read_palette(&asset, &assets.root).expect("palette"),
+        )
+        .expect_err("partial alpha should fail")
+        .to_string();
+        assert!(error.contains("hard alpha policy [0,255]"), "{error}");
+    }
+
+    #[test]
+    fn rejects_palette_explosion() {
+        let assets = TestAssets::new();
+        let asset = strict_asset(2, 2, 2, 255);
+        let pixels = vec![
+            Rgba([17, 34, 51, 255]),
+            Rgba([171, 205, 239, 255]),
+            Rgba([18, 35, 52, 255]),
+            Rgba([19, 36, 53, 0]),
+        ];
+        let error = validate_decoded_png(
+            &asset,
+            &fixture_image(2, 2, pixels),
+            "palette explosion fixture",
+            &read_palette(&asset, &assets.root).expect("palette"),
+        )
+        .expect_err("too many colors should fail")
+        .to_string();
+        assert!(
+            error.contains("unique opaque colors") && error.contains("max_colors"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_off_palette_pixels_beyond_tolerance() {
+        let assets = TestAssets::new();
+        let asset = strict_asset(2, 2, 4, 2);
+        let pixels = vec![
+            Rgba([17, 34, 51, 255]),
+            Rgba([90, 90, 90, 255]),
+            Rgba([90, 90, 90, 255]),
+            Rgba([171, 205, 239, 0]),
+        ];
+        let error = validate_decoded_png(
+            &asset,
+            &fixture_image(2, 2, pixels),
+            "off-palette fixture",
+            &read_palette(&asset, &assets.root).expect("palette"),
+        )
+        .expect_err("off-palette pixel should fail")
+        .to_string();
+        assert!(
+            error.contains("palette distance") && error.contains("palette_tolerance"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn clean_hard_edge_fixture_reports_diagnostics() {
+        let assets = TestAssets::new();
+        let mut asset = strict_asset(2, 2, 2, 0);
+        asset.native_pixel_density = Some(1);
+        let pixels = vec![
+            Rgba([17, 34, 51, 255]),
+            Rgba([171, 205, 239, 255]),
+            Rgba([171, 205, 239, 0]),
+            Rgba([17, 34, 51, 255]),
+        ];
+        let diagnostics = validate_decoded_png(
+            &asset,
+            &fixture_image(2, 2, pixels),
+            "clean hard-edge fixture",
+            &read_palette(&asset, &assets.root).expect("palette"),
+        )
+        .expect("clean hard-edge image should pass");
+        assert_eq!(diagnostics.unique_opaque_colors, 2);
+        assert_eq!(diagnostics.partial_alpha_pixels, 0);
+        assert_eq!(diagnostics.native_pixel_density, Some(1));
+    }
+
+    #[test]
+    fn rejects_inconsistent_animation_frame_dimensions() {
+        let assets = TestAssets::new();
+        let manifest_path = assets.generation_manifest(2, "planned");
+        let manifest: Manifest =
+            toml::from_str(&fs::read_to_string(&manifest_path).expect("manifest source"))
+                .expect("manifest");
+        let asset = &manifest.asset[0];
+        let palette = read_palette(asset, &assets.root).expect("palette");
+        let frame0 = candidate_path(&assets.root, Source::Generated, &asset.id, 2, 0);
+        let frame1 = candidate_path(&assets.root, Source::Generated, &asset.id, 2, 1);
+        fs::create_dir_all(frame0.parent().expect("frame parent")).expect("frame directory");
+        ImageBuffer::from_pixel(16, 16, Rgba([17_u8, 34, 51, 0]))
+            .save_with_format(frame0, ImageFormat::Png)
+            .expect("frame 0");
+        ImageBuffer::from_pixel(17, 16, Rgba([17_u8, 34, 51, 0]))
+            .save_with_format(frame1, ImageFormat::Png)
+            .expect("frame 1");
+        let error = validate_asset(&manifest.asset[0], &assets.root, false, &mut HashSet::new())
+            .expect_err("mixed animation frame dimensions should fail")
+            .to_string();
+        assert!(
+            error.contains("17x16, expected 16x16"),
+            "{error}; palette={palette:?}"
+        );
+    }
+
     #[test]
     fn runtime_gate_rejects_non_runtime_assets() {
         let assets = TestAssets::new();
@@ -1326,11 +1716,18 @@ provenance = "docs/audio.md"
             assets.root.join("generated/creature/test.png")
         );
         validate_png(
-            &toml::from_str::<Manifest>(&fs::read_to_string(manifest_path).expect("manifest"))
+            &toml::from_str::<Manifest>(&fs::read_to_string(&manifest_path).expect("manifest"))
                 .expect("parse manifest")
                 .asset[0],
             &report.destination,
             "test generated",
+            &read_palette(
+                &toml::from_str::<Manifest>(&fs::read_to_string(&manifest_path).expect("manifest"))
+                    .expect("parse manifest")
+                    .asset[0],
+                &assets.root,
+            )
+            .expect("palette"),
         )
         .expect("published PNG contract");
         assert_eq!(client.token.borrow().as_deref(), Some("token"));

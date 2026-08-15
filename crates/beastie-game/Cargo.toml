@@ -17,6 +17,7 @@ beastie-session = { path = "../beastie-session" }
 beastie-view = { path = "../beastie-view" }
 clap.workspace = true
 ggez.workspace = true
+font8x8 = "0.3"
 image.workspace = true
 rodio.workspace = true
 serde.workspace = true

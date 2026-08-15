@@ -1,20 +1,30 @@
+use crate::{
+    ActionPhase, ActionTimeline, BeliefKind, Concept, DevelopmentMilestone, FoodBuoyancy,
+    FoodDisposition, FoodDropRejectionReason, FoodId, FoodObject, GazeTarget, InitiativeReason,
+    Intention, LanguageExposure, LanguageStage, MemoryId, MemoryKind, NamingTarget, NonverbalAct,
+    NormalizedPosition, NormalizedVelocity, RandomDomain, RandomSource, Reaction,
+    SemanticDestination, SocialAct, SteeringMode, ToyId, WorldObject, WorldState,
+    deterministic_unit,
+};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ACTIVE_DAY_MS, BeliefKind, Concept, FoodId, Intention, LanguageExposure, LanguageStage,
-    MemoryId, MemoryKind, Movement, NonverbalAct, RandomSource, Reaction, RoomSpot, SocialAct,
-    ToyId, WorldState,
-};
-
 pub const SIMULATION_TICK_MS: u64 = 1_000;
-pub const MOVEMENT_DURATION_MS: u64 = 3_000;
-pub const MAX_OFFLINE_MS: u64 = ACTIVE_DAY_MS * 8;
+pub const MAX_OFFLINE_MS: u64 = crate::ACTIVE_DAY_MS * 8;
 pub const TALK_COOLDOWN_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum PlayerEvent {
     Feed(FoodId),
+    DropFood {
+        food: FoodId,
+        position: NormalizedPosition,
+    },
+    Cursor(Option<NormalizedPosition>),
+    Name {
+        target: NamingTarget,
+        name: String,
+    },
     Play(ToyId),
     Comfort,
     Tidy,
@@ -36,15 +46,36 @@ pub enum GameEvent {
     SleepStarted,
     SleepEnded,
     SocialActExpressed(SocialAct),
-    TalkAccepted { contextual_follow_up: bool },
+    TalkAccepted {
+        contextual_follow_up: bool,
+    },
     TalkIgnored,
     LanguageExposureRegistered(LanguageExposure),
     NonverbalAct(NonverbalAct),
-    MovementStarted { from: RoomSpot, to: RoomSpot },
-    Arrived(RoomSpot),
     ConceptLearned(Concept),
     LanguageAdvanced(LanguageStage),
-    IntentionChanged { from: Intention, to: Intention },
+    IntentionChanged {
+        from: crate::Intention,
+        to: crate::Intention,
+    },
+    FoodDropped {
+        id: u64,
+        food: FoodId,
+        position: NormalizedPosition,
+    },
+    FoodDropRejected(FoodDropRejectionReason),
+    FoodSettled(u64),
+    FoodExpired(u64),
+    ActionPhaseChanged {
+        from: Option<ActionPhase>,
+        to: ActionPhase,
+    },
+    InitiatedTalk(InitiativeReason),
+    NonverbalRequest(InitiativeReason),
+    NameAssigned {
+        target: NamingTarget,
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,32 +93,27 @@ pub fn step(
 ) -> Vec<GameEvent> {
     let mut events = Vec::new();
     for event in input {
-        let previous_memory_count = state.creature.memories.len();
+        let before = state.creature.memories.len();
         apply_player_event(state, event, &mut events);
-        append_created_memories(state, previous_memory_count, &mut events);
+        events.extend(
+            state.creature.memories[before..]
+                .iter()
+                .map(|memory| GameEvent::MemoryCreated(memory.id)),
+        );
     }
-
     let accumulated = state.simulation_remainder_ms.saturating_add(dt_ms);
-    let tick_count = accumulated / SIMULATION_TICK_MS;
+    let ticks = accumulated / SIMULATION_TICK_MS;
     state.simulation_remainder_ms = accumulated % SIMULATION_TICK_MS;
-    for _ in 0..tick_count {
-        let previous_memory_count = state.creature.memories.len();
+    for _ in 0..ticks {
+        let before = state.creature.memories.len();
         fixed_tick(state, rng, &mut events);
-        append_created_memories(state, previous_memory_count, &mut events);
+        events.extend(
+            state.creature.memories[before..]
+                .iter()
+                .map(|memory| GameEvent::MemoryCreated(memory.id)),
+        );
     }
     events
-}
-
-fn append_created_memories(
-    state: &WorldState,
-    previous_memory_count: usize,
-    events: &mut Vec<GameEvent>,
-) {
-    events.extend(
-        state.creature.memories[previous_memory_count..]
-            .iter()
-            .map(|memory| GameEvent::MemoryCreated(memory.id)),
-    );
 }
 
 pub fn advance_offline(
@@ -103,21 +129,29 @@ pub fn advance_offline(
             events: Vec::new(),
         };
     }
-    state.room.player_present = false;
+    state.aquarium.player_present = false;
+    state.absence_days = state
+        .absence_days
+        .saturating_add((applied_ms / crate::ACTIVE_DAY_MS) as u32)
+        .min(8);
     let minutes = applied_ms as f32 / 60_000.0;
-    state.creature.needs.hunger += 0.025 * minutes;
-    state.creature.needs.energy += 0.03 * minutes;
-    state.creature.needs.comfort -= 0.004 * minutes;
-    state.creature.needs.curiosity += 0.006 * minutes;
-    state.creature.needs.clamp();
+    state.creature.needs.hunger = (state.creature.needs.hunger + 0.025 * minutes).clamp(0.0, 1.0);
+    state.creature.needs.energy = (state.creature.needs.energy + 0.03 * minutes).clamp(0.2, 1.0);
+    state.creature.needs.comfort = (state.creature.needs.comfort - 0.004 * minutes).clamp(0.2, 1.0);
+    let mut expired = Vec::new();
+    for (id, object) in &mut state.aquarium.objects {
+        if let WorldObject::Food(food) = object {
+            food.age_ms = food.age_ms.saturating_add(applied_ms);
+            if food.age_ms >= food.lifetime_ms {
+                expired.push(*id);
+            }
+        }
+    }
+    for id in expired {
+        state.aquarium.objects.remove(&id);
+        state.aquarium.object_names.remove(&id);
+    }
     let mut events = vec![GameEvent::NeedChanged];
-
-    // Offline time changes needs without advancing the active-play development clock.
-    // Absence can make the creature needy, but never permanently ruins a save.
-    state.creature.needs.energy = state.creature.needs.energy.max(0.2);
-    state.creature.needs.comfort = state.creature.needs.comfort.max(0.2);
-    state.creature.relationship.trust = state.creature.relationship.trust.max(0.05);
-    state.creature.relationship.bond = state.creature.relationship.bond.max(0.05);
     events.extend(step(state, &[PlayerEvent::ReturnedAfterAbsence], 0, rng));
     OfflineProgress {
         requested_ms,
@@ -126,102 +160,117 @@ pub fn advance_offline(
     }
 }
 
-fn fixed_tick(state: &mut WorldState, rng: &mut impl RandomSource, events: &mut Vec<GameEvent>) {
+fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut Vec<GameEvent>) {
     state.elapsed_ms = state.elapsed_ms.saturating_add(SIMULATION_TICK_MS);
     let minutes = SIMULATION_TICK_MS as f32 / 60_000.0;
     state.creature.needs.hunger += 0.025 * minutes;
     state.creature.needs.energy -= 0.018 * minutes;
     state.creature.needs.comfort -= 0.008 * minutes;
     state.creature.needs.curiosity += 0.012 * minutes;
-
-    if state.creature.needs.energy < 0.1 && state.creature.current_intention != Intention::Sleep {
-        state.creature.movement = None;
-    }
-    let arrived = advance_movement(state, events);
-    if state.creature.movement.is_none() && (arrived || at_intention_target(state)) {
-        enact_current_intention(state, minutes, rng, events);
-    }
-
+    advance_aquarium(state, events);
+    maybe_initiate(state, events);
     state.creature.needs.clamp();
     state.creature.relationship.clamp();
     state.creature.social_habits.clamp();
     events.push(GameEvent::NeedChanged);
     update_development(state, events);
-
-    if state.creature.movement.is_none() {
-        change_intention(state, choose_intention(state, rng), events);
+    if state.creature.needs.energy < 0.1
+        && state.creature.current_intention != crate::Intention::Sleep
+    {
+        let previous = state.creature.current_intention;
+        state.creature.current_intention = crate::Intention::Sleep;
+        events.push(GameEvent::SleepStarted);
+        events.push(GameEvent::IntentionChanged {
+            from: previous,
+            to: crate::Intention::Sleep,
+        });
     }
 }
 
 fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut Vec<GameEvent>) {
     match event {
-        PlayerEvent::Feed(food) => {
-            state.creature.movement = None;
-            state.room.last_nonverbal_act = None;
-            state.room.food_in_bowl = Some(*food);
-            state.creature.development.interactions.feeds = state
-                .creature
-                .development
-                .interactions
-                .feeds
-                .saturating_add(1);
-            if state
-                .creature
-                .preferences
-                .get(food)
-                .is_some_and(|preference| *preference < -0.35)
-            {
-                state.creature.relationship.resentment += 0.025;
+        PlayerEvent::DropFood { food, position } => {
+            if drop_food(state, *food, *position, events) {
+                state.creature.development.interactions.feeds = state
+                    .creature
+                    .development
+                    .interactions
+                    .feeds
+                    .saturating_add(1);
             }
         }
+        PlayerEvent::Cursor(position) => {
+            state.aquarium.cursor = position.map(NormalizedPosition::clamped);
+            state.creature.aquarium.gaze = if position.is_some() {
+                GazeTarget::Cursor
+            } else {
+                GazeTarget::None
+            };
+            if let Some(cursor) = state.aquarium.cursor {
+                if state.creature.relationship.resentment > 0.65 {
+                    state.creature.aquarium.steering = SteeringMode::Flee;
+                    state.creature.aquarium.destination = None;
+                } else if state.creature.relationship.trust > 0.5
+                    && state.creature.traits.sociability > 0.4
+                {
+                    state.creature.aquarium.steering = SteeringMode::Approach;
+                    state.creature.aquarium.destination =
+                        Some(SemanticDestination::Position(cursor));
+                } else {
+                    state.creature.aquarium.steering = SteeringMode::Hover;
+                }
+            } else {
+                state.creature.aquarium.destination = None;
+            }
+        }
+        PlayerEvent::Name { target, name } => assign_name(state, *target, name, events),
+        PlayerEvent::Feed(food) => {
+            let _ = drop_food(state, *food, NormalizedPosition::new(5_000, 3_000), events);
+        }
         PlayerEvent::Play(toy) => {
-            state.creature.movement = None;
-            state.room.toy = *toy;
-            state.room.toy_available = true;
-            state.room.play_requested = true;
-            state.room.last_nonverbal_act = None;
             state.creature.development.interactions.plays = state
                 .creature
                 .development
                 .interactions
                 .plays
                 .saturating_add(1);
+            play_with_toy(state, *toy, events);
         }
         PlayerEvent::Comfort => {
-            state.creature.movement = None;
-            state.room.comfort_requested = true;
-            state.room.last_nonverbal_act = None;
+            state.creature.needs.comfort += 0.2;
             state.creature.development.interactions.comforts = state
                 .creature
                 .development
                 .interactions
                 .comforts
                 .saturating_add(1);
+            events.push(GameEvent::Comforted);
         }
-        PlayerEvent::Tidy => {
-            state.room.tidy = true;
-            state.room.last_nonverbal_act = None;
-        }
+        PlayerEvent::Tidy => tidy_aquarium(state, events),
         PlayerEvent::ReturnedAfterAbsence => {
-            state.room.player_present = true;
+            state.aquarium.player_present = true;
             state.creature.development.interactions.returns = state
                 .creature
                 .development
                 .interactions
                 .returns
                 .saturating_add(1);
-            state.remember(
+            let memory = state.remember(
                 MemoryKind::PlayerReturnedAfterAbsence,
                 &[Concept::You, Concept::Again],
                 state.creature.relationship.bond,
                 0.8,
             );
+            state.revise_belief(BeliefKind::PlayerReturnsAfterSleep, memory, true);
+            set_intention(state, Intention::ApproachPlayer, events);
+            state.creature.aquarium.gaze = GazeTarget::Player;
+            state.creature.aquarium.destination = Some(SemanticDestination::Player);
+            state.creature.aquarium.steering = SteeringMode::Approach;
+            events.push(GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer));
         }
         PlayerEvent::Talk => {
-            let contextual_follow_up = state.creature.conversation.contextual_follow_up_available;
-            if state.elapsed_ms < state.creature.conversation.next_talk_at_ms
-                && !contextual_follow_up
-            {
+            let follow_up = state.creature.conversation.contextual_follow_up_available;
+            if state.elapsed_ms < state.creature.conversation.next_talk_at_ms && !follow_up {
                 events.push(GameEvent::TalkIgnored);
                 return;
             }
@@ -234,11 +283,11 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
             state.creature.conversation.next_talk_at_ms =
                 state.elapsed_ms.saturating_add(TALK_COOLDOWN_MS);
             state.creature.conversation.contextual_follow_up_available = false;
-            state.creature.conversation.contextual_follow_up_used = contextual_follow_up;
+            state.creature.conversation.contextual_follow_up_used = follow_up;
             let act = choose_social_act(state);
             state.creature.last_social_act = Some(act);
             events.push(GameEvent::TalkAccepted {
-                contextual_follow_up,
+                contextual_follow_up: follow_up,
             });
             events.push(GameEvent::SocialActExpressed(act));
         }
@@ -247,9 +296,7 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
             match exposure {
                 LanguageExposure::Profanity => state.creature.social_habits.profanity += 0.08,
                 LanguageExposure::Crudeness => state.creature.social_habits.crudeness += 0.07,
-                LanguageExposure::Innuendo => {
-                    state.creature.social_habits.sexual_innuendo += 0.06;
-                }
+                LanguageExposure::Innuendo => state.creature.social_habits.sexual_innuendo += 0.06,
             }
             state.creature.social_habits.clamp();
             events.push(GameEvent::LanguageExposureRegistered(*exposure));
@@ -257,242 +304,602 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
     }
 }
 
-fn advance_movement(state: &mut WorldState, events: &mut Vec<GameEvent>) -> bool {
-    let Some(mut movement) = state.creature.movement else {
+fn drop_food(
+    state: &mut WorldState,
+    food: FoodId,
+    position: NormalizedPosition,
+    events: &mut Vec<GameEvent>,
+) -> bool {
+    let count = state.aquarium.objects.values().filter(|object| matches!(object, WorldObject::Food(food) if !matches!(food.disposition, FoodDisposition::Consumed))).count();
+    if count >= usize::from(state.aquarium.max_food) {
+        events.push(GameEvent::FoodDropRejected(
+            FoodDropRejectionReason::AquariumFull,
+        ));
+        return false;
+    }
+    let id = state.aquarium.next_object_id;
+    state.aquarium.next_object_id = id.saturating_add(1);
+    let buoyancy = match food {
+        FoodId::Berry => FoodBuoyancy::Sink,
+        FoodId::Mushroom => FoodBuoyancy::Float,
+        FoodId::Pellet => FoodBuoyancy::Drift,
+    };
+    let velocity = match buoyancy {
+        FoodBuoyancy::Float => NormalizedVelocity { x: 0, y: -20 },
+        FoodBuoyancy::Sink => NormalizedVelocity { x: 0, y: 35 },
+        FoodBuoyancy::Drift => NormalizedVelocity { x: 8, y: 8 },
+    };
+    let position = position.clamped();
+    state.aquarium.objects.insert(
+        id,
+        WorldObject::Food(FoodObject {
+            id,
+            food,
+            position,
+            velocity,
+            buoyancy,
+            disposition: FoodDisposition::Falling,
+            age_ms: 0,
+            lifetime_ms: 120_000,
+        }),
+    );
+    state.creature.aquarium.gaze = GazeTarget::Food(id);
+    state.creature.aquarium.steering = SteeringMode::Brake;
+    state.creature.aquarium.action = Some(ActionTimeline {
+        phase: ActionPhase::Notice,
+        elapsed_ms: 0,
+        phase_duration_ms: 1_000,
+        destination: SemanticDestination::Food(id),
+        food_id: Some(id),
+    });
+    events.push(GameEvent::FoodDropped { id, food, position });
+    events.push(GameEvent::ActionPhaseChanged {
+        from: None,
+        to: ActionPhase::Notice,
+    });
+    true
+}
+
+fn assign_name(
+    state: &mut WorldState,
+    target: NamingTarget,
+    name: &str,
+    events: &mut Vec<GameEvent>,
+) {
+    let normalized = name.trim().chars().take(32).collect::<String>();
+    if normalized.is_empty() {
+        return;
+    }
+    if let NamingTarget::Creature = target {
+        state.creature.name = normalized.clone();
+    }
+    if let NamingTarget::Object(id) = target
+        && state.aquarium.objects.contains_key(&id)
+    {
+        state.aquarium.object_names.insert(id, normalized.clone());
+    }
+    events.push(GameEvent::NameAssigned {
+        target,
+        name: normalized,
+    });
+}
+
+fn advance_aquarium(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    advance_creature_motion(state);
+    let mut settled = Vec::new();
+    let mut expired = Vec::new();
+    for (id, object) in &mut state.aquarium.objects {
+        let WorldObject::Food(food) = object else {
+            continue;
+        };
+        food.age_ms = food.age_ms.saturating_add(SIMULATION_TICK_MS);
+        if matches!(
+            food.disposition,
+            FoodDisposition::Falling | FoodDisposition::Floating
+        ) {
+            food.position = NormalizedPosition::new(
+                food.position.x.saturating_add(food.velocity.x),
+                food.position.y.saturating_add(food.velocity.y),
+            )
+            .clamped();
+            if food.position.y >= 9_500 && food.buoyancy != FoodBuoyancy::Float {
+                food.position.y = 9_500;
+                food.velocity = NormalizedVelocity::default();
+                food.disposition = FoodDisposition::Settled;
+                settled.push(*id);
+            }
+            if food.buoyancy == FoodBuoyancy::Float && food.position.y <= 500 {
+                food.position.y = 500;
+                food.velocity = NormalizedVelocity::default();
+                food.disposition = FoodDisposition::Floating;
+            }
+        }
+        if food.age_ms >= food.lifetime_ms {
+            expired.push(*id);
+        }
+    }
+    for id in settled {
+        state.record_favorite(SemanticDestination::Bottom);
+        events.push(GameEvent::FoodSettled(id));
+    }
+    for id in expired {
+        state.aquarium.objects.remove(&id);
+        state.aquarium.object_names.remove(&id);
+        events.push(GameEvent::FoodExpired(id));
+    }
+    let Some(mut timeline) = state.creature.aquarium.action else {
+        choose_idle_behavior(state, events);
+        return;
+    };
+    timeline.elapsed_ms = timeline.elapsed_ms.saturating_add(SIMULATION_TICK_MS);
+    if timeline.elapsed_ms < timeline.phase_duration_ms
+        || (timeline.phase == ActionPhase::Approach
+            && !food_arrived_and_braked(state, timeline.food_id))
+    {
+        state.creature.aquarium.action = Some(timeline);
+        return;
+    }
+    let old = timeline.phase;
+    if old == ActionPhase::Act {
+        resolve_food(state, timeline.food_id, events);
+    }
+    let next = match old {
+        ActionPhase::Notice => ActionPhase::Brake,
+        ActionPhase::Brake => ActionPhase::Gaze,
+        ActionPhase::Gaze => ActionPhase::Turn,
+        ActionPhase::Turn => ActionPhase::Approach,
+        ActionPhase::Approach => ActionPhase::Inspect,
+        ActionPhase::Inspect => ActionPhase::Act,
+        ActionPhase::Act => ActionPhase::Recover,
+        ActionPhase::Recover => {
+            state.creature.aquarium.action = None;
+            state.creature.aquarium.steering = SteeringMode::Hover;
+            return;
+        }
+    };
+    timeline.phase = next;
+    timeline.elapsed_ms = 0;
+    state.creature.aquarium.action = Some(timeline);
+    state.creature.aquarium.steering = match next {
+        ActionPhase::Notice | ActionPhase::Brake => SteeringMode::Brake,
+        ActionPhase::Gaze => SteeringMode::Hover,
+        ActionPhase::Turn => SteeringMode::Turn,
+        ActionPhase::Approach => SteeringMode::Approach,
+        ActionPhase::Inspect => SteeringMode::Inspect,
+        ActionPhase::Act | ActionPhase::Recover => SteeringMode::Settle,
+    };
+    events.push(GameEvent::ActionPhaseChanged {
+        from: Some(old),
+        to: next,
+    });
+}
+
+fn advance_creature_motion(state: &mut WorldState) {
+    let action_target =
+        state
+            .creature
+            .aquarium
+            .action
+            .and_then(|action| match action.destination {
+                SemanticDestination::Food(id) if action.phase == ActionPhase::Approach => state
+                    .aquarium
+                    .objects
+                    .get(&id)
+                    .and_then(|object| match object {
+                        WorldObject::Food(food) => Some(food.position),
+                        _ => None,
+                    }),
+                _ => None,
+            });
+    let target = action_target.or_else(|| steering_target(state));
+    if let Some(target) = target {
+        steer_toward(state, target);
+    } else if state.creature.aquarium.action.is_none() {
+        drift_with_cause(state);
+    }
+}
+
+const ARRIVAL_DISTANCE: i32 = 220;
+const APPROACH_SPEED: i32 = 650;
+const FLEE_DISTANCE: i32 = 2_000;
+
+fn food_arrived_and_braked(state: &WorldState, food_id: Option<u64>) -> bool {
+    let Some(id) = food_id else { return false };
+    let Some(WorldObject::Food(food)) = state.aquarium.objects.get(&id) else {
         return false;
     };
-    movement.elapsed_ms = movement.elapsed_ms.saturating_add(SIMULATION_TICK_MS);
-    if movement.elapsed_ms >= movement.duration_ms {
-        state.creature.position = movement.to;
-        state.creature.movement = None;
-        events.push(GameEvent::Arrived(movement.to));
-        true
-    } else {
-        state.creature.movement = Some(movement);
-        false
-    }
+    let position = state.creature.aquarium.position;
+    let distance = manhattan_distance(position, food.position);
+    distance <= ARRIVAL_DISTANCE
+        && state.creature.aquarium.velocity.x.abs() <= ARRIVAL_DISTANCE
+        && state.creature.aquarium.velocity.y.abs() <= ARRIVAL_DISTANCE
 }
 
-fn change_intention(state: &mut WorldState, next: Intention, events: &mut Vec<GameEvent>) {
-    let previous = state.creature.current_intention;
-    if next != previous {
-        state.creature.current_intention = next;
-        if previous == Intention::Sleep {
-            events.push(GameEvent::SleepEnded);
-        }
-        if next == Intention::Sleep {
-            events.push(GameEvent::SleepStarted);
-        }
-        events.push(GameEvent::IntentionChanged {
-            from: previous,
-            to: next,
-        });
+fn steering_target(state: &mut WorldState) -> Option<NormalizedPosition> {
+    if state.creature.aquarium.action.is_some() {
+        return None;
     }
-    let target = intention_target(next);
-    if state.creature.position != target {
-        state.creature.movement = Some(Movement {
-            from: state.creature.position,
-            to: target,
-            elapsed_ms: 0,
-            duration_ms: MOVEMENT_DURATION_MS,
-        });
-        events.push(GameEvent::MovementStarted {
-            from: state.creature.position,
-            to: target,
-        });
-    }
-}
-
-#[must_use]
-pub fn intention_target(intention: Intention) -> RoomSpot {
-    match intention {
-        Intention::Eat | Intention::WaitAtBowl | Intention::RejectFood => RoomSpot::Bowl,
-        Intention::Sleep => RoomSpot::Bed,
-        Intention::Play => RoomSpot::Toy,
-        Intention::ApproachPlayer
-        | Intention::SeekComfort
-        | Intention::RefuseAndStare
-        | Intention::ShowAffection => RoomSpot::Player,
-        Intention::UndoTidy => RoomSpot::Center,
-        Intention::Idle => RoomSpot::Center,
-    }
-}
-
-fn at_intention_target(state: &WorldState) -> bool {
-    state.creature.position == intention_target(state.creature.current_intention)
-}
-
-fn enact_current_intention(
-    state: &mut WorldState,
-    minutes: f32,
-    rng: &mut impl RandomSource,
-    events: &mut Vec<GameEvent>,
-) {
-    match state.creature.current_intention {
-        Intention::Eat => eat(state, rng, events),
-        Intention::WaitAtBowl => {}
-        Intention::RejectFood => reject_food(state, events),
-        Intention::Sleep => state.creature.needs.energy += 0.12 * minutes,
-        Intention::Play => play(state, rng, minutes, events),
-        Intention::ApproachPlayer | Intention::SeekComfort => comfort(state, events),
-        Intention::UndoTidy => undo_tidy(state, events),
-        Intention::RefuseAndStare => {
-            express_nonverbal_once(state, NonverbalAct::RefuseAndStare, events)
-        }
-        Intention::ShowAffection => {
-            express_nonverbal_once(state, NonverbalAct::LeanAgainstPlayer, events)
-        }
-        Intention::Idle => {}
-    }
-}
-
-fn express_nonverbal_once(state: &mut WorldState, act: NonverbalAct, events: &mut Vec<GameEvent>) {
-    if state.room.last_nonverbal_act != Some(act) {
-        state.room.last_nonverbal_act = Some(act);
-        events.push(GameEvent::NonverbalAct(act));
-    }
-}
-
-fn undo_tidy(state: &mut WorldState, events: &mut Vec<GameEvent>) {
-    if state.room.tidy {
-        state.room.tidy = false;
-        express_nonverbal_once(state, NonverbalAct::UndoTidy, events);
-    }
-}
-
-fn eat(state: &mut WorldState, rng: &mut impl RandomSource, events: &mut Vec<GameEvent>) {
-    let Some(food) = state.room.food_in_bowl else {
-        return;
-    };
-    if state
-        .creature
-        .preferences
-        .get(&food)
-        .is_some_and(|preference| *preference < -0.35)
+    if state.creature.aquarium.steering == SteeringMode::Flee
+        && let Some(cursor) = state.aquarium.cursor
     {
-        return;
-    }
-    state.room.food_in_bowl = None;
-    let inherited = rng.next_unit() * 2.0 - 1.0;
-    let preference = *state.creature.preferences.entry(food).or_insert(inherited);
-    state.creature.needs.hunger -= 0.45;
-    state.remember(
-        MemoryKind::WasFed { food },
-        &[Concept::Food, Concept::You],
-        preference,
-        0.75,
-    );
-    if preference < -0.35 {
-        let dislike_memory = state.remember(
-            MemoryKind::DislikedFood { food },
-            &[Concept::Food, Concept::Bad],
-            preference,
-            0.95,
+        let position = state.creature.aquarium.position;
+        if manhattan_distance(position, cursor) >= FLEE_DISTANCE {
+            state.creature.aquarium.steering = SteeringMode::Hover;
+            state.creature.aquarium.destination = None;
+            state.creature.aquarium.velocity = NormalizedVelocity::default();
+            return None;
+        }
+        return Some(
+            NormalizedPosition::new(
+                position
+                    .x
+                    .saturating_add((position.x - cursor.x).signum() * APPROACH_SPEED * 2),
+                position
+                    .y
+                    .saturating_add((position.y - cursor.y).signum() * APPROACH_SPEED),
+            )
+            .clamped(),
         );
-        state.creature.relationship.resentment += 0.08;
-        state.creature.social_habits.spite += 0.03;
-        state.creature.social_habits.provocation += 0.02;
-        if food == FoodId::Berry {
-            state.reinforce_belief(
-                BeliefKind::RedFoodIsATrick,
-                dislike_memory,
-                0.45 + state.creature.traits.stubbornness * 0.25,
-            );
-        }
-    } else {
-        state.creature.relationship.trust += 0.025;
-        recover_resentment(state, 0.006);
     }
-    events.push(GameEvent::FoodConsumed(food));
+    let destination = state.creature.aquarium.destination?;
+    let target = destination_position(state, destination)?;
+    if manhattan_distance(state.creature.aquarium.position, target) <= ARRIVAL_DISTANCE {
+        state.creature.aquarium.velocity = NormalizedVelocity::default();
+        if !matches!(
+            destination,
+            SemanticDestination::Player | SemanticDestination::Position(_)
+        ) {
+            state.record_favorite(destination);
+        }
+        state.creature.aquarium.destination = None;
+        state.creature.aquarium.steering = SteeringMode::Hover;
+        return None;
+    }
+    Some(target)
 }
 
-fn reject_food(state: &mut WorldState, events: &mut Vec<GameEvent>) {
-    let Some(food) = state.room.food_in_bowl else {
-        return;
+fn destination_position(
+    state: &WorldState,
+    destination: SemanticDestination,
+) -> Option<NormalizedPosition> {
+    match destination {
+        SemanticDestination::Position(position) => Some(position),
+        SemanticDestination::Player => Some(
+            state
+                .aquarium
+                .cursor
+                .unwrap_or(NormalizedPosition::new(5_000, 3_000)),
+        ),
+        SemanticDestination::Bottom => Some(NormalizedPosition::new(5_000, 9_200)),
+        SemanticDestination::Food(id) => {
+            state
+                .aquarium
+                .objects
+                .get(&id)
+                .and_then(|object| match object {
+                    WorldObject::Food(food) => Some(food.position),
+                    _ => None,
+                })
+        }
+        SemanticDestination::Toy(toy) => {
+            state
+                .aquarium
+                .objects
+                .values()
+                .find_map(|object| match object {
+                    WorldObject::Toy {
+                        toy: candidate,
+                        position,
+                    } if *candidate == toy => Some(*position),
+                    _ => None,
+                })
+        }
+        SemanticDestination::Cave | SemanticDestination::Plant => state
+            .aquarium
+            .objects
+            .values()
+            .find_map(|object| match (destination, object) {
+                (SemanticDestination::Cave, WorldObject::Cave { position })
+                | (SemanticDestination::Plant, WorldObject::Plant { position }) => Some(*position),
+                _ => None,
+            }),
+    }
+}
+
+fn steer_toward(state: &mut WorldState, target: NormalizedPosition) {
+    let position = state.creature.aquarium.position;
+    let dx = target.x - position.x;
+    let dy = target.y - position.y;
+    let speed = if state.creature.aquarium.steering == SteeringMode::Flee {
+        APPROACH_SPEED.saturating_mul(2)
+    } else {
+        APPROACH_SPEED
     };
-    if !state
-        .creature
-        .preferences
-        .get(&food)
-        .is_some_and(|preference| *preference < -0.35)
+    let movement = NormalizedVelocity {
+        x: dx.clamp(-speed, speed),
+        y: dy.clamp(-speed, speed),
+    };
+    state.creature.aquarium.position = NormalizedPosition::new(
+        position.x.saturating_add(movement.x),
+        position.y.saturating_add(movement.y),
+    )
+    .clamped();
+    state.creature.aquarium.velocity = movement;
+    if movement.x != 0 {
+        state.creature.aquarium.facing = if movement.x < 0 {
+            crate::Facing::Left
+        } else {
+            crate::Facing::Right
+        };
+    }
+}
+
+fn drift_with_cause(state: &mut WorldState) {
+    let key = state.elapsed_ms / SIMULATION_TICK_MS;
+    let vigor = if state.creature.needs.energy < 0.25 {
+        20
+    } else {
+        80
+    };
+    let curiosity = if state.creature.needs.curiosity > 0.7 {
+        90
+    } else {
+        35
+    };
+    let trait_bias = (state.creature.traits.boldness * 45.0) as i32;
+    let dx = ((deterministic_unit(state.seed, RandomDomain::Motion, key) * vigor as f32) as i32
+        - vigor / 2)
+        + trait_bias / 4;
+    let dy = (deterministic_unit(state.seed, RandomDomain::Motion, key + 1) * curiosity as f32)
+        as i32
+        - curiosity / 2;
+    let position = state.creature.aquarium.position;
+    state.creature.aquarium.position =
+        NormalizedPosition::new(position.x.saturating_add(dx), position.y.saturating_add(dy))
+            .clamped();
+    state.creature.aquarium.velocity = NormalizedVelocity { x: dx, y: dy }.clamped();
+}
+
+fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    if state.creature.aquarium.action.is_some()
+        || matches!(state.creature.aquarium.steering, SteeringMode::Flee)
     {
         return;
     }
-    state.room.food_in_bowl = None;
-    let act = NonverbalAct::PushFoodAway(food);
-    state.room.last_nonverbal_act = Some(act);
-    state.creature.relationship.resentment += 0.035;
-    state.creature.social_habits.spite += 0.02;
-    state.remember(
-        MemoryKind::RejectedFood { food },
-        &[Concept::Food, Concept::Bad, Concept::Again],
-        -0.75,
-        0.85,
-    );
-    events.push(GameEvent::FoodRejected(food));
-    events.push(GameEvent::NonverbalAct(act));
-}
-
-fn play(
-    state: &mut WorldState,
-    rng: &mut impl RandomSource,
-    minutes: f32,
-    events: &mut Vec<GameEvent>,
-) {
-    if !state.room.play_requested {
-        state.creature.needs.curiosity -= 0.06 * minutes;
+    if state.aquarium.cursor.is_some()
+        && state.creature.relationship.trust > 0.5
+        && state.creature.traits.sociability > 0.4
+    {
+        set_intention(state, Intention::ApproachPlayer, events);
         return;
     }
-    state.room.play_requested = false;
-    let toy = state.room.toy;
-    let inherited = rng.next_unit() * 2.0 - 1.0;
+    if state.creature.aquarium.destination.is_some() {
+        return;
+    }
+    let hour = ((state.elapsed_ms / 3_600_000) % 24) as u8;
+    let routine = state
+        .creature
+        .routines
+        .iter()
+        .filter(|routine| routine.hour_start == hour)
+        .max_by_key(|routine| routine.strength)
+        .map(|routine| routine.destination);
+    let favorite = state.favorite_destination();
+    let destination = if state.creature.needs.energy < 0.2 {
+        Some(SemanticDestination::Cave)
+    } else if state.creature.needs.hunger > 0.78 {
+        Some(SemanticDestination::Bottom)
+    } else if let Some(routine) = routine {
+        Some(routine)
+    } else if let Some(favorite) = favorite.filter(|_| {
+        state.creature.current_intention == Intention::Idle
+            && (state.elapsed_ms / SIMULATION_TICK_MS).is_multiple_of(8)
+    }) {
+        Some(favorite)
+    } else if state.creature.needs.curiosity > 0.65 {
+        Some(if state.creature.traits.fussiness > 0.6 {
+            SemanticDestination::Plant
+        } else {
+            SemanticDestination::Toy(preferred_toy(state))
+        })
+    } else {
+        Some(if state.creature.traits.boldness > 0.55 {
+            SemanticDestination::Plant
+        } else {
+            SemanticDestination::Cave
+        })
+    };
+    if let Some(destination) = destination {
+        state.creature.aquarium.destination = Some(destination);
+        state.creature.aquarium.steering = SteeringMode::Approach;
+        state.creature.aquarium.gaze = match destination {
+            SemanticDestination::Toy(toy) => GazeTarget::Toy(toy),
+            SemanticDestination::Cave => GazeTarget::Cave,
+            SemanticDestination::Plant => GazeTarget::Plant,
+            _ => GazeTarget::None,
+        };
+        let intention = match destination {
+            SemanticDestination::Bottom => Intention::WaitAtBowl,
+            SemanticDestination::Toy(_) => Intention::Play,
+            _ => Intention::Idle,
+        };
+        set_intention(state, intention, events);
+    }
+}
+
+fn play_with_toy(state: &mut WorldState, toy: ToyId, events: &mut Vec<GameEvent>) {
+    if destination_position(state, SemanticDestination::Toy(toy)).is_none() {
+        return;
+    }
     let preference = *state
         .creature
         .toy_preferences
         .entry(toy)
-        .or_insert(inherited);
+        .or_insert_with(|| {
+            deterministic_unit(state.seed, RandomDomain::Preferences, toy_key(toy))
+                .mul_add(2.0, -1.0)
+        });
+    state.creature.aquarium.gaze = GazeTarget::Toy(toy);
+    state.creature.aquarium.destination = Some(SemanticDestination::Toy(toy));
+    state.creature.aquarium.steering = SteeringMode::Approach;
     if preference < -0.35 {
-        let act = NonverbalAct::TakeToyAway(toy);
-        state.room.last_nonverbal_act = Some(act);
-        state.creature.relationship.resentment += 0.04;
-        state.remember(
-            MemoryKind::DislikedToy { toy },
-            &[Concept::Toy, Concept::Bad, Concept::You],
-            preference,
-            0.85,
-        );
+        set_intention(state, Intention::RefuseAndStare, events);
+        let memory = state.remember(MemoryKind::DislikedToy { toy }, &[Concept::Bad], -0.5, 0.7);
+        state.revise_belief(BeliefKind::ToyIsJealous, memory, true);
         events.push(GameEvent::ToyRejected(toy));
-        events.push(GameEvent::NonverbalAct(act));
+        events.push(GameEvent::NonverbalAct(NonverbalAct::TakeToyAway(toy)));
     } else {
-        state.creature.needs.curiosity -= 0.5;
-        state.creature.relationship.bond += 0.06;
-        state.creature.relationship.trust += 0.03;
-        recover_resentment(state, 0.008);
+        set_intention(state, Intention::Play, events);
+        state.creature.needs.curiosity = (state.creature.needs.curiosity - 0.18).max(0.0);
+        state.record_favorite(SemanticDestination::Toy(toy));
         state.remember(
             MemoryKind::PlayedWith { toy },
-            &[Concept::Toy, Concept::You, Concept::Good],
-            preference.max(0.2),
-            0.7,
+            &[Concept::Good],
+            preference,
+            0.6,
         );
     }
 }
 
-fn comfort(state: &mut WorldState, events: &mut Vec<GameEvent>) {
-    if !state.room.comfort_requested {
+fn tidy_aquarium(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    let removed = state
+        .aquarium
+        .objects
+        .iter()
+        .filter_map(|(id, object)| match object {
+            WorldObject::Food(food)
+                if matches!(
+                    food.disposition,
+                    FoodDisposition::Settled | FoodDisposition::Rejected
+                ) =>
+            {
+                Some(*id)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for id in &removed {
+        state.aquarium.objects.remove(id);
+        state.aquarium.object_names.remove(id);
+    }
+    if !removed.is_empty() {
+        state.creature.needs.comfort = (state.creature.needs.comfort + 0.04).min(1.0);
+        if state.creature.relationship.resentment > 0.7 {
+            set_intention(state, Intention::UndoTidy, events);
+            events.push(GameEvent::NonverbalAct(NonverbalAct::UndoTidy));
+        } else {
+            set_intention(state, Intention::Idle, events);
+        }
+    }
+}
+
+fn preferred_toy(state: &WorldState) -> ToyId {
+    [ToyId::Ball, ToyId::Bell, ToyId::Sock]
+        .into_iter()
+        .max_by(|left, right| {
+            state
+                .creature
+                .toy_preferences
+                .get(left)
+                .unwrap_or(&0.0)
+                .total_cmp(state.creature.toy_preferences.get(right).unwrap_or(&0.0))
+        })
+        .unwrap_or(ToyId::Ball)
+}
+
+fn toy_key(toy: ToyId) -> u64 {
+    match toy {
+        ToyId::Ball => 1,
+        ToyId::Bell => 2,
+        ToyId::Sock => 3,
+    }
+}
+
+fn set_intention(state: &mut WorldState, intention: Intention, events: &mut Vec<GameEvent>) {
+    if state.creature.current_intention != intention {
+        let from = state.creature.current_intention;
+        state.creature.current_intention = intention;
+        events.push(GameEvent::IntentionChanged {
+            from,
+            to: intention,
+        });
+    }
+}
+
+fn manhattan_distance(left: NormalizedPosition, right: NormalizedPosition) -> i32 {
+    (left.x - right.x)
+        .abs()
+        .saturating_add((left.y - right.y).abs())
+}
+
+fn resolve_food(state: &mut WorldState, food_id: Option<u64>, events: &mut Vec<GameEvent>) {
+    let Some(id) = food_id else { return };
+    let Some(WorldObject::Food(object)) = state.aquarium.objects.get(&id).cloned() else {
+        return;
+    };
+    let food = object.food;
+    let seed = state.seed;
+    let preference = *state.creature.preferences.entry(food).or_insert_with(|| {
+        deterministic_unit(seed, RandomDomain::Preferences, id).mul_add(2.0, -1.0)
+    });
+    if preference < -0.35 {
+        if let Some(WorldObject::Food(object)) = state.aquarium.objects.get_mut(&id) {
+            object.disposition = FoodDisposition::Rejected;
+        }
+        let memory = state.remember(
+            MemoryKind::RejectedFood { food },
+            &[Concept::Food, Concept::Bad, Concept::Again],
+            -0.75,
+            0.85,
+        );
+        state.revise_belief(BeliefKind::RedFoodIsATrick, memory, true);
+        events.push(GameEvent::FoodRejected(food));
+        events.push(GameEvent::NonverbalAct(NonverbalAct::PushFoodAway(food)));
+    } else {
+        state.aquarium.objects.remove(&id);
+        state.aquarium.object_names.remove(&id);
+        state.creature.needs.hunger -= 0.45;
+        let memory = state.remember(
+            MemoryKind::WasFed { food },
+            &[Concept::Food, Concept::You],
+            preference,
+            0.75,
+        );
+        state.revise_belief(BeliefKind::RedFoodIsATrick, memory, false);
+        events.push(GameEvent::FoodConsumed(food));
+    }
+}
+
+fn maybe_initiate(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    if state.creature.initiated_behavior.is_some() {
         return;
     }
-    state.room.comfort_requested = false;
-    state.creature.needs.comfort += 0.35;
-    state.creature.relationship.bond += 0.08;
-    state.creature.relationship.trust += 0.05;
-    recover_resentment(state, 0.012);
-    state.remember(
-        MemoryKind::WasComforted,
-        &[Concept::You, Concept::Good, Concept::Trust],
-        0.8,
-        0.8,
-    );
-    events.push(GameEvent::Comforted);
+    let candidate = if state.creature.needs.hunger > 0.82 {
+        Some((InitiativeReason::Hunger, None))
+    } else if state.aquarium.player_present
+        && state.creature.needs.comfort < 0.2
+        && state.creature.traits.sociability > 0.45
+    {
+        Some((
+            InitiativeReason::Loneliness,
+            Some(NonverbalAct::LeanAgainstPlayer),
+        ))
+    } else {
+        None
+    };
+    let Some((reason, nonverbal)) = candidate else {
+        return;
+    };
+    state.creature.initiated_behavior = Some(crate::InitiatedBehavior {
+        reason,
+        nonverbal,
+        requested_at_ms: state.elapsed_ms,
+    });
+    if nonverbal.is_some() {
+        events.push(GameEvent::NonverbalRequest(reason));
+    } else {
+        events.push(GameEvent::InitiatedTalk(reason));
+    }
 }
 
 fn apply_reaction(state: &mut WorldState, reaction: Reaction) {
@@ -502,221 +909,84 @@ fn apply_reaction(state: &mut WorldState, reaction: Reaction) {
     if !state.creature.conversation.contextual_follow_up_used {
         state.creature.conversation.contextual_follow_up_available = true;
     }
-    let stubborn = state.creature.traits.stubbornness > 0.75;
     match reaction {
         Reaction::Laugh => {
             reinforce_act(state, act, 0.12);
             state.creature.social_habits.provocation += 0.1;
-            state.creature.relationship.respect -= 0.025;
         }
-        Reaction::Disapprove if stubborn => {
-            reinforce_act(state, act, 0.035);
-            state.creature.social_habits.provocation += 0.025;
-        }
-        Reaction::Disapprove => {
-            reinforce_act(state, act, -0.08);
-            state.creature.relationship.respect += 0.035;
-        }
-        Reaction::Comfort => {
-            state.creature.relationship.bond += 0.04;
-            state.creature.social_habits.provocation += 0.05;
-        }
+        Reaction::Disapprove => reinforce_act(state, act, -0.08),
+        Reaction::Comfort => state.creature.relationship.bond += 0.04,
     }
     state.remember(
         MemoryKind::PlayerReacted { reaction, to: act },
         &[Concept::You, Concept::Again],
-        match reaction {
-            Reaction::Laugh | Reaction::Comfort => 0.55,
-            Reaction::Disapprove => -0.3,
-        },
+        0.3,
         0.75,
     );
 }
 
-fn recover_resentment(state: &mut WorldState, amount: f32) {
-    state.creature.relationship.resentment =
-        (state.creature.relationship.resentment - amount).max(0.0);
-}
-
 fn reinforce_act(state: &mut WorldState, act: SocialAct, delta: f32) {
-    let habits = &mut state.creature.social_habits;
     match act {
-        SocialAct::Profanity => habits.profanity += delta,
-        SocialAct::Crudeness => habits.crudeness += delta,
-        SocialAct::Insult => habits.spite += delta,
-        SocialAct::Provocation => habits.provocation += delta,
-        SocialAct::Innuendo => habits.sexual_innuendo += delta,
+        SocialAct::Profanity => state.creature.social_habits.profanity += delta,
+        SocialAct::Crudeness => state.creature.social_habits.crudeness += delta,
+        SocialAct::Insult => state.creature.social_habits.spite += delta,
+        SocialAct::Provocation => state.creature.social_habits.provocation += delta,
+        SocialAct::Innuendo => state.creature.social_habits.sexual_innuendo += delta,
         SocialAct::Neutral => {}
     }
 }
-
 fn choose_social_act(state: &WorldState) -> SocialAct {
-    let creature = &state.creature;
-    let habits = creature.social_habits;
-    if habits.provocation >= 0.1 {
+    let h = state.creature.social_habits;
+    if h.provocation >= 0.1 {
         SocialAct::Provocation
-    } else if creature.relationship.resentment + habits.spite >= 0.1 {
+    } else if state.creature.relationship.resentment + h.spite >= 0.1 {
         SocialAct::Insult
-    } else if creature.development.language_stage >= LanguageStage::Words
-        && habits.profanity >= 0.25
-    {
+    } else if h.profanity >= 0.25 {
         SocialAct::Profanity
-    } else if creature.development.language_stage >= LanguageStage::Phrases
-        && habits.crudeness >= 0.25
-    {
+    } else if h.crudeness >= 0.25 {
         SocialAct::Crudeness
-    } else if creature.development.language_stage >= LanguageStage::Phrases
-        && habits.sexual_innuendo >= 0.25
-    {
+    } else if h.sexual_innuendo >= 0.25 {
         SocialAct::Innuendo
     } else {
         SocialAct::Neutral
     }
 }
-
 fn update_development(state: &mut WorldState, events: &mut Vec<GameEvent>) {
-    let active_days = u32::try_from(state.active_day()).unwrap_or(u32::MAX);
-    state.creature.development.active_days_reached = state
-        .creature
-        .development
-        .active_days_reached
-        .max(active_days);
+    let days = state.active_day() as u32;
+    state.creature.development.active_days_reached =
+        state.creature.development.active_days_reached.max(days);
+    if days >= 4 {
+        state
+            .creature
+            .development
+            .milestones
+            .insert(DevelopmentMilestone::SettledRoutine);
+    }
+    if !state.creature.favorite_locations.is_empty() {
+        state
+            .creature
+            .development
+            .milestones
+            .insert(DevelopmentMilestone::FavoriteFound);
+    }
     let interactions = state.creature.development.interactions;
-
-    if active_days >= 2 && interactions.total() > 0 {
+    if days >= 2 && interactions.total() > 0 {
         learn(state, Concept::Again, events);
-        if interactions.feeds > 0 {
-            learn(state, Concept::Give, events);
-        }
-        if interactions.plays > 0 {
-            learn(state, Concept::Toy, events);
-        }
         advance_language(state, LanguageStage::Words, events);
     }
-    if active_days >= 3 && interactions.total() >= 3 {
+    if days >= 3 && interactions.total() >= 3 {
         learn(state, Concept::Yesterday, events);
-        if interactions.comforts > 0 {
-            learn(state, Concept::Trust, events);
-        }
-        if interactions.returns > 0 || interactions.talks > 0 {
-            learn(state, Concept::Friend, events);
-        }
-        if interactions.talks > 0 {
-            learn(state, Concept::Why, events);
-        }
         advance_language(state, LanguageStage::Phrases, events);
     }
 }
-
 fn learn(state: &mut WorldState, concept: Concept, events: &mut Vec<GameEvent>) {
     if state.creature.known_concepts.insert(concept) {
         events.push(GameEvent::ConceptLearned(concept));
     }
 }
-
-fn advance_language(
-    state: &mut WorldState,
-    language_stage: LanguageStage,
-    events: &mut Vec<GameEvent>,
-) {
-    if language_stage > state.creature.development.language_stage {
-        state.creature.development.language_stage = language_stage;
-        events.push(GameEvent::LanguageAdvanced(language_stage));
+fn advance_language(state: &mut WorldState, stage: LanguageStage, events: &mut Vec<GameEvent>) {
+    if stage > state.creature.development.language_stage {
+        state.creature.development.language_stage = stage;
+        events.push(GameEvent::LanguageAdvanced(stage));
     }
-}
-
-fn choose_intention(state: &WorldState, rng: &mut impl RandomSource) -> Intention {
-    let creature = &state.creature;
-    let food_available = state.room.food_in_bowl.is_some();
-    let known_preference = state
-        .room
-        .food_in_bowl
-        .and_then(|food| creature.preferences.get(&food).copied());
-    let food_preference = known_preference.map_or(1.0, |value| (value + 1.0) / 2.0);
-    let rejection = known_preference.map_or(0.0, |value| {
-        (-value).max(0.0) * (0.65 + creature.traits.stubbornness * 0.35)
-    });
-    let toy_preference = creature
-        .toy_preferences
-        .get(&state.room.toy)
-        .copied()
-        .map_or(0.5, |value| (value + 1.0) / 2.0);
-    let candidates = [
-        (Intention::RejectFood, f32::from(food_available) * rejection),
-        (
-            Intention::Eat,
-            (0.4 + creature.needs.hunger * 0.6) * f32::from(food_available) * food_preference,
-        ),
-        (Intention::Sleep, (1.0 - creature.needs.energy) * 0.9),
-        (
-            Intention::Play,
-            if state.room.play_requested {
-                1.5
-            } else {
-                creature.needs.curiosity
-                    * f32::from(state.room.toy_available)
-                    * toy_preference
-                    * (0.6 + creature.traits.sociability * 0.4)
-            },
-        ),
-        (Intention::ApproachPlayer, 0.0),
-        (Intention::Idle, 0.12),
-        (
-            Intention::WaitAtBowl,
-            creature.needs.hunger * 0.72 * f32::from(!food_available),
-        ),
-        (
-            Intention::SeekComfort,
-            if state.room.comfort_requested {
-                1.6
-            } else {
-                f32::from(state.room.player_present)
-                    * (1.0 - creature.needs.comfort)
-                    * (0.75 + creature.traits.sociability * 0.25)
-            },
-        ),
-        (
-            Intention::UndoTidy,
-            f32::from(state.room.tidy)
-                * (creature.relationship.resentment + creature.social_habits.spite)
-                * (0.25 + creature.traits.stubbornness * 0.55),
-        ),
-        (
-            Intention::RefuseAndStare,
-            f32::from(state.room.player_present)
-                * (creature.relationship.resentment + creature.social_habits.spite)
-                * (0.25 + creature.traits.stubbornness * 0.5),
-        ),
-        (
-            Intention::ShowAffection,
-            f32::from(state.room.player_present)
-                * creature.relationship.bond
-                * (1.0 - creature.relationship.resentment)
-                * (0.35 + creature.traits.sociability * 0.35),
-        ),
-    ];
-    let current = creature.current_intention;
-    candidates
-        .into_iter()
-        .map(|(intention, score)| {
-            let hysteresis = if intention == current { 0.08 } else { 0.0 };
-            // Keep the random stream compatible with saves created before the extra explicit
-            // intentions existed. New candidates are deterministic projections of state.
-            let noise = match intention {
-                Intention::RejectFood
-                | Intention::Eat
-                | Intention::Sleep
-                | Intention::Play
-                | Intention::ApproachPlayer
-                | Intention::Idle => rng.next_unit() * 0.025,
-                Intention::WaitAtBowl
-                | Intention::SeekComfort
-                | Intention::UndoTidy
-                | Intention::RefuseAndStare
-                | Intention::ShowAffection => 0.0,
-            };
-            (intention, score + hysteresis + noise)
-        })
-        .max_by(|left, right| left.1.total_cmp(&right.1))
-        .map_or(Intention::Idle, |(intention, _)| intention)
 }

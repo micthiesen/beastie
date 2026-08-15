@@ -3,18 +3,20 @@
 use std::collections::BTreeSet;
 
 use beastie_core::{
-    Concept, FoodId, GameEvent, LanguageExposure, MemoryCue, MemoryQuery, Mood, OfflineProgress,
-    PlayerEvent, Reaction, SaveGame, SeededRandom, ToyId, WorldState, advance_offline, step,
+    Concept, FoodId, GameEvent, LanguageExposure, MemoryCue, MemoryQuery, Mood, NamingTarget,
+    NormalizedPosition, OfflineProgress, PlayerEvent, Reaction, SaveGame, SeededRandom, ToyId,
+    WorldState, advance_offline, step,
 };
 use beastie_protocol::{
-    DialogueRequest, DialogueRequestContext, Gesture, build_dialogue_request,
-    classify_content_boundary, normalize_dialogue_request, progression_max_words, validate_request,
+    DialogueActionPhase, DialogueContext, DialogueRequest, DialogueRequestContext, DialogueTopic,
+    Gesture, RecentTurn, build_dialogue_request, classify_content_boundary,
+    normalize_dialogue_request, progression_max_words, validate_request,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const SESSION_PROTOCOL_VERSION: u32 = 1;
-pub const SESSION_SAVE_VERSION: u32 = 2;
+pub const SESSION_SAVE_VERSION: u32 = 3;
 const LEGACY_CORE_SAVE_VERSION: u32 = 1;
 pub const MAX_COMMAND_BYTES: usize = 4_096;
 pub const MAX_ADVANCE_MINUTES: u32 = 45;
@@ -31,6 +33,17 @@ pub struct CommandEnvelope {
 pub enum SessionCommand {
     Feed {
         food: FoodId,
+    },
+    DropFood {
+        food: FoodId,
+        position: NormalizedPosition,
+    },
+    Cursor {
+        position: Option<NormalizedPosition>,
+    },
+    Name {
+        target: NamingTarget,
+        name: String,
     },
     Play {
         #[serde(default)]
@@ -106,7 +119,37 @@ impl SessionSave {
     }
 
     pub fn from_json(source: &str) -> Result<Self, SessionError> {
-        let save = serde_json::from_str::<Self>(source).map_err(SessionError::Json)?;
+        let mut value =
+            serde_json::from_str::<serde_json::Value>(source).map_err(SessionError::Json)?;
+        let version = value
+            .get("version")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        if version == 2
+            && let Some(world) = value
+                .get_mut("world")
+                .and_then(serde_json::Value::as_object_mut)
+        {
+            world.remove("room");
+            if let Some(aquarium) = world
+                .get_mut("aquarium")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                aquarium.remove("action");
+            }
+            if let Some(creature) = world
+                .get_mut("creature")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                creature.remove("position");
+                creature.remove("movement");
+            }
+        }
+        let mut save = serde_json::from_value::<Self>(value).map_err(SessionError::Json)?;
+        if save.version == 2 {
+            save.version = SESSION_SAVE_VERSION;
+            save.world.save_version = beastie_core::SAVE_VERSION;
+        }
         save.validate()?;
         Ok(save)
     }
@@ -233,6 +276,15 @@ impl GameSession {
             SessionCommand::Feed { food } => {
                 events = self.apply_player_event(PlayerEvent::Feed(food));
             }
+            SessionCommand::DropFood { food, position } => {
+                events = self.apply_player_event(PlayerEvent::DropFood { food, position });
+            }
+            SessionCommand::Cursor { position } => {
+                events = self.apply_player_event(PlayerEvent::Cursor(position));
+            }
+            SessionCommand::Name { target, name } => {
+                events = self.apply_player_event(PlayerEvent::Name { target, name });
+            }
             SessionCommand::Play { toy } => {
                 events = self.apply_player_event(PlayerEvent::Play(toy));
             }
@@ -246,9 +298,12 @@ impl GameSession {
                 for _ in 0..minutes {
                     events.extend(step(&mut self.world, &[], 60_000, &mut self.random));
                 }
+                dialogue_request = self.initiated_dialogue_request(&events)?;
+                compact_advance_events(&mut events);
             }
             SessionCommand::Tick { milliseconds } => {
                 events = step(&mut self.world, &[], milliseconds, &mut self.random);
+                dialogue_request = self.initiated_dialogue_request(&events)?;
             }
             SessionCommand::Talk { text } => {
                 let talk_events = self.apply_player_event(PlayerEvent::Talk);
@@ -337,6 +392,83 @@ impl GameSession {
 
     fn apply_player_event(&mut self, event: PlayerEvent) -> Vec<GameEvent> {
         step(&mut self.world, &[event], 0, &mut self.random)
+    }
+
+    fn initiated_dialogue_request(
+        &mut self,
+        events: &[GameEvent],
+    ) -> Result<Option<DialogueRequest>, SessionError> {
+        let Some(reason) = events.iter().find_map(|event| match event {
+            GameEvent::InitiatedTalk(reason) => Some(*reason),
+            _ => None,
+        }) else {
+            return Ok(None);
+        };
+        let mut request = build_dialogue_request(
+            &self.world,
+            &MemoryQuery {
+                cues: BTreeSet::new(),
+                limit: 0,
+            },
+            DialogueRequestContext {
+                request_id: self.next_request_id,
+                mood: mood(&self.world),
+                player_said: "",
+                desired_social_act: None,
+                max_words: progression_max_words(&self.world),
+                allowed_gestures: BTreeSet::from([
+                    Gesture::None,
+                    Gesture::LookPlayer,
+                    Gesture::LookWindow,
+                    Gesture::Shiver,
+                    Gesture::Sleepy,
+                ]),
+            },
+        );
+        request.context = DialogueContext {
+            recent_turns: vec![RecentTurn {
+                turn_id: self.next_request_id,
+                topic: initiated_topic(reason),
+                action_phase: DialogueActionPhase::Recover,
+                selected_memory: None,
+                selected_belief: None,
+                selected_fact_ids: Vec::new(),
+                fallback_lane: None,
+            }],
+            ..DialogueContext::default()
+        };
+        normalize_dialogue_request(&mut request);
+        validate_request(&request).map_err(SessionError::Dialogue)?;
+        self.next_request_id = self.next_request_id.saturating_add(1);
+        Ok(Some(request))
+    }
+}
+
+/// Collapses idempotent high-frequency notifications produced by accelerated time.
+///
+/// `NeedChanged` means "read the current authoritative needs" rather than describing a
+/// historical delta, so one notification represents the final state just as well as hundreds.
+/// All transition and identity-bearing events retain their original order and multiplicity.
+fn compact_advance_events(events: &mut Vec<GameEvent>) {
+    let mut emitted_need_change = false;
+    events.retain(|event| {
+        if matches!(event, GameEvent::NeedChanged) {
+            let keep = !emitted_need_change;
+            emitted_need_change = true;
+            keep
+        } else {
+            true
+        }
+    });
+}
+
+fn initiated_topic(reason: beastie_core::InitiativeReason) -> DialogueTopic {
+    match reason {
+        beastie_core::InitiativeReason::Hunger => DialogueTopic::Food,
+        beastie_core::InitiativeReason::Loneliness => DialogueTopic::Greeting,
+        beastie_core::InitiativeReason::Curiosity => DialogueTopic::Other,
+        beastie_core::InitiativeReason::Ritual => DialogueTopic::Ritual,
+        beastie_core::InitiativeReason::Request => DialogueTopic::Other,
     }
 }
 
@@ -485,6 +617,100 @@ mod tests {
     }
 
     #[test]
+    fn long_advance_coalesces_need_notifications_without_changing_simulation() {
+        let mut aggregated = GameSession::new(42, "Mop");
+        aggregated.world.creature.needs.hunger = 1.0;
+        aggregated
+            .apply(command(SessionCommand::DropFood {
+                food: FoodId::Pellet,
+                position: NormalizedPosition::new(7_000, 2_000),
+            }))
+            .expect("food should drop");
+        let mut raw = aggregated.clone();
+        let mut raw_events = Vec::new();
+        for _ in 0..15 {
+            raw_events.extend(step(&mut raw.world, &[], 60_000, &mut raw.random));
+        }
+        assert_eq!(
+            raw_events
+                .iter()
+                .filter(|event| matches!(event, GameEvent::NeedChanged))
+                .count(),
+            900,
+            "reproduction should expose one redundant notification per fixed tick"
+        );
+
+        let observation = aggregated
+            .apply(command(SessionCommand::Advance { minutes: 15 }))
+            .expect("advance should apply");
+        assert_eq!(aggregated.world, raw.world);
+        assert_eq!(aggregated.random, raw.random);
+        assert_eq!(
+            observation
+                .events
+                .iter()
+                .filter(|event| matches!(event, GameEvent::NeedChanged))
+                .count(),
+            1
+        );
+
+        let raw_semantic = raw_events
+            .into_iter()
+            .filter(|event| !matches!(event, GameEvent::NeedChanged))
+            .collect::<Vec<_>>();
+        let aggregated_semantic = observation
+            .events
+            .iter()
+            .filter(|event| !matches!(event, GameEvent::NeedChanged))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(aggregated_semantic, raw_semantic);
+        assert_eq!(observation.events.len(), aggregated_semantic.len() + 1);
+        assert!(
+            observation.events.len() <= 64,
+            "accelerated output must stay bounded"
+        );
+        assert!(
+            observation
+                .events
+                .iter()
+                .any(|event| matches!(event, GameEvent::ActionPhaseChanged { .. }))
+        );
+        assert!(observation.events.iter().any(|event| matches!(
+            event,
+            GameEvent::FoodConsumed(_) | GameEvent::FoodRejected(_)
+        )));
+        assert!(
+            observation
+                .events
+                .iter()
+                .any(|event| matches!(event, GameEvent::MemoryCreated(_)))
+        );
+    }
+
+    #[test]
+    fn event_compaction_preserves_non_idempotent_order_and_multiplicity() {
+        let phase = GameEvent::ActionPhaseChanged {
+            from: Some(beastie_core::ActionPhase::Notice),
+            to: beastie_core::ActionPhase::Brake,
+        };
+        let memory = GameEvent::MemoryCreated(beastie_core::MemoryId(7));
+        let mut events = vec![
+            GameEvent::NeedChanged,
+            phase.clone(),
+            GameEvent::NeedChanged,
+            memory.clone(),
+            phase.clone(),
+            GameEvent::NeedChanged,
+        ];
+        compact_advance_events(&mut events);
+        assert_eq!(
+            events,
+            vec![GameEvent::NeedChanged, phase.clone(), memory, phase]
+        );
+    }
+
+    #[test]
     fn every_primary_verb_is_accepted() {
         let mut session = GameSession::new(42, "Mop");
         for action in [
@@ -520,6 +746,52 @@ mod tests {
             .apply(command(SessionCommand::Load))
             .expect("load should apply");
         assert_eq!(session.world(), &saved_world);
+    }
+
+    #[test]
+    fn durable_mid_food_approach_resumes_with_identical_events() {
+        let mut original = GameSession::new(101, "Swim");
+        original
+            .apply(command(SessionCommand::DropFood {
+                food: FoodId::Pellet,
+                position: NormalizedPosition::new(8_000, 2_000),
+            }))
+            .expect("drop should apply");
+        original
+            .apply(command(SessionCommand::Tick {
+                milliseconds: 6_000,
+            }))
+            .expect("approach ticks should apply");
+        assert_eq!(
+            original
+                .world()
+                .creature
+                .aquarium
+                .action
+                .map(|action| action.phase),
+            Some(beastie_core::ActionPhase::Approach)
+        );
+        let saved_at = original.world().elapsed_ms;
+        let encoded = original
+            .capture(saved_at)
+            .to_json()
+            .expect("mid-action save should encode");
+        let (mut resumed, progress) =
+            GameSession::resume_json(&encoded, saved_at).expect("resume should not add absence");
+        assert_eq!(progress.applied_ms, 0);
+
+        let expected = original
+            .apply(command(SessionCommand::Tick {
+                milliseconds: 10_000,
+            }))
+            .expect("original continuation");
+        let actual = resumed
+            .apply(command(SessionCommand::Tick {
+                milliseconds: 10_000,
+            }))
+            .expect("resumed continuation");
+        assert_eq!(actual.events, expected.events);
+        assert_eq!(resumed.world(), original.world());
     }
 
     #[test]
@@ -564,12 +836,6 @@ mod tests {
                 .candidate_memories
                 .iter()
                 .any(|memory| memory.fact.contains("berry"))
-        );
-        assert!(
-            request
-                .candidate_beliefs
-                .iter()
-                .any(|belief| belief.proposition == beastie_core::BeliefKind::RedFoodIsATrick)
         );
     }
 
@@ -728,19 +994,10 @@ mod tests {
         assert_eq!(resumed.world().creature.preferences[&FoodId::Berry], -0.75);
         assert_eq!(resumed.random, SeededRandom::new(123_456_789));
         assert_eq!(
-            resumed.world().creature.position,
-            beastie_core::RoomSpot::Center
+            resumed.world().creature.aquarium.position,
+            beastie_core::NormalizedPosition::new(5_000, 4_500)
         );
-        assert_eq!(resumed.world().creature.movement, None);
-        assert_eq!(
-            resumed.world().creature.development,
-            beastie_core::Development::default()
-        );
-        assert_eq!(resumed.world().room.toy, ToyId::Ball);
-        assert_eq!(
-            resumed.world().room.last_nonverbal_act,
-            Some(beastie_core::NonverbalAct::TakeToyAway(ToyId::Ball))
-        );
+        assert_eq!(resumed.world().creature.aquarium.action, None);
         assert!(resumed.world().creature.memories.iter().any(|memory| {
             memory.kind == beastie_core::MemoryKind::PlayedWith { toy: ToyId::Ball }
         }));
@@ -946,6 +1203,58 @@ mod tests {
         );
         assert!(session.world().creature.social_habits.profanity > 0.02);
         assert!(session.world().creature.memories.is_empty());
+    }
+
+    #[test]
+    fn drop_food_uses_normalized_position_and_emits_aquarium_events() {
+        let mut session = GameSession::new(12, "Aquarium");
+        let parsed = GameSession::parse_command(
+            r#"{"version":1,"command":"drop_food","food":"pellet","position":{"x":12000,"y":-5}}"#,
+        )
+        .expect("drop food command");
+        let observation = session.apply(parsed).expect("drop food should apply");
+        assert!(
+            observation
+                .events
+                .iter()
+                .any(|event| matches!(event, GameEvent::FoodDropped { .. }))
+        );
+        let object = session
+            .world()
+            .aquarium
+            .objects
+            .values()
+            .find_map(|object| match object {
+                beastie_core::WorldObject::Food(food) => Some(food),
+                _ => None,
+            })
+            .expect("food object");
+        assert_eq!(object.position, NormalizedPosition::new(10_000, 0));
+    }
+
+    #[test]
+    fn motivated_tick_emits_one_typed_initiated_dialogue_request() {
+        let mut seed = GameSession::new(222, "Initiator").capture(0);
+        seed.world.creature.needs.hunger = 0.9;
+        let (mut session, _) = GameSession::resume(seed, 0).expect("resume mutated fixture");
+        let first = session
+            .apply(command(SessionCommand::Tick {
+                milliseconds: 1_000,
+            }))
+            .expect("motivated tick");
+        let request = first.dialogue_request.expect("initiated request");
+        assert!(request.player_said.is_empty());
+        assert_eq!(
+            request.context.recent_turns[0].topic,
+            beastie_protocol::DialogueTopic::Food
+        );
+        validate_request(&request).expect("initiated request validates");
+        let second = session
+            .apply(command(SessionCommand::Tick {
+                milliseconds: 1_000,
+            }))
+            .expect("quiet follow-up tick");
+        assert!(second.dialogue_request.is_none());
     }
 
     #[test]

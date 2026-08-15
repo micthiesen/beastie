@@ -1,80 +1,75 @@
-# MVP build plan
+# V1 build plan
 
-The next autonomous build targets the full MVP described in [mvp-spec.md](mvp-spec.md), not a throwaway
-prototype or only the deterministic core. Work in vertical, testable slices and keep the game
-playable with fixture AI throughout.
+The MVP established the deterministic creature, offline mouth, save boundary, room-era shell, and
+Mac-led package proof. V1 replaces that presentation and interaction model with the aquarium in
+[v1-plan.md](v1-plan.md). The MVP specification remains historical context, not the current scene.
 
-## Preconditions already satisfied
+## Preconditions and constraints
 
-- macOS is a first-class target and the current development host is known.
-- `llama.cpp` can run local sub-billion-parameter candidates on the development Mac.
-- KittenTTS can synthesize suitable local speech substantially faster than real time.
-- PixelLab MCP authentication and asynchronous transparent-PNG generation work.
-- The workspace, pure-core boundary, JSONL AI protocol, fixture worker, `RenderPlan`, save format,
-  verification gate, and `/next`/`/wrap` continuity system exist.
+- The simulation is authoritative; model, TTS, and presentation cannot establish facts.
+- Runtime play is offline and remains playable when AI, speech, audio, or optional art fails.
+- Core tests and semantic scenarios are portable and display-free.
+- macOS, Windows, and Linux remain release targets. macOS-led implementation does not count as
+  native Windows/Linux acceptance.
+- Codex is the only required coding-agent environment. Do not add Claude/rulesync compatibility.
 
-Exact measurements and local-mouth decisions are in
-[local-mouth.md](local-mouth.md). The preflight deliberately did not perform native
-Windows or Linux verification. Portable architecture and headless tests remain mandatory, but the
-initial full build is allowed to progress on macOS before the later native-platform acceptance runs.
+## Implemented V1 slices
 
-Codex is the only coding-agent environment the MVP needs to support. Do not spend MVP time adding
-Claude Code compatibility, rulesync plumbing, or duplicated agent instructions.
+### 1. Aquarium truth and interaction
 
-## Ordered build flow
+Complete. Room anchors were replaced by fixed-point two-dimensional position and velocity, facing,
+gaze, depth, steering, semantic destinations, action phases, and authoritative aquarium objects.
+Food is dropped at a real water coordinate, moves by typed buoyancy, has bounded population and
+lifetime, and can be noticed, approached, consumed, rejected, or settled. Historical saves migrate
+without keeping room runtime fields.
 
-### 0. Use the proven host feedback loop
+### 2. Expression and movement
 
-Native launch, window discovery, screenshot capture, pointer movement, and clicking are already
-proven on the development Mac. Begin product work immediately. Add semantic commands, structured
-traces, and direct framebuffer capture incrementally when each real interaction makes them useful;
-do not build a broad harness upfront.
+Complete. The selected 80x80 creature animation sets render at exact 2x nearest scale. Hover,
+swim, and eat/recoil animation combine with whole-pixel bob, wake, sand, bubbles, gaze, blink, six
+mood faces, protocol-driven mouth phases, and queued code-native feedback. Optional PNG overlays are
+not required for readable expression.
 
-### 1. Complete the authoritative berry-memory spine (complete)
+### 3. Persistent interaction and accessibility
 
-Build the acceptance scenario through pure logic first: preference formation, concrete event
-memory, candidate selection, sleep, save/reload, later recall, reaction-driven provocation, and a
-nonverbal expression of dislike. Add multi-day invariants and deterministic replay. Add only the
-smallest headless controls needed to replay this slice.
+Complete. Text entry remains visible and focused outside modal choices. Pointer, keyboard, and
+controller operate stable semantic regions. Food-drop, creature context, naming, settings, input
+bindings, on-screen keyboard, broad creature summary, save recovery/reset confirmation, and local
+transcript controls are declarative and display-free testable. Reduced motion, flashes, shake, text
+size/speed, window scale, fullscreen, effect/speech volume, voice, and pixel-grid controls exist.
 
-### 2. Make the enclosure playable with fixture AI (complete)
+### 4. Creature depth and local expression
 
-Complete the fixed dollhouse room, creature movement/intention projection, five contextual verbs,
-mouse and keyboard/controller focus, dialogue UI, contextual reactions, save/continue, and the
-three-day progression arc. Keep fixture AI as a permanent backend.
+Complete for the V1 target. Development, routines, favorite locations, belief contradiction,
+object naming, absence/reunion, initiated behavior, bounded recent-turn context, idiolect, authored
+fallback variety, authoritative voice settings, and transcript records extend the MVP creature.
+Qwen3.5 0.8B Q4 remains the selected warm local model; eSpeak NG remains the separate release voice.
 
-### 3. Establish canonical art and sound presentation (complete)
+### 5. Content and release tooling
 
-Create a tiny art bible before bulk generation: palette plus creature, furniture, and UI anchors.
-Use PixelLab references for later assets, validate dimensions/alpha/provenance, and promote only
-deliberately selected results. Add restrained animation, room lighting/window variation, UI sounds,
-and authored nonverbal creature noises.
+Implemented, pending final gate and commit. Aquarium art and audio have checked provenance and stricter
+pixel/WAV validation. Platform staging, macOS app/DMG, Windows installer configuration, Linux
+AppImage/tar wrapper, CI matrix, Steam depot/input/achievement files, and store-asset tooling exist.
+They consume an offline package and do not download runtime dependencies.
 
-### 4. Integrate the replaceable local mouth (complete)
+## Final acceptance
 
-The checked-in corpus selects Qwen3.5 0.8B Q4 behind the bounded worker interface. The release path
-keeps both the worker and an authenticated loopback `llama-server` sidecar alive. Native eSpeak NG
-speech runs as a separate offline process through the persistent cache and game playback path.
-Kitten nano remains a non-default experiment because its current sherpa-onnx adapter statically
-combines GPLv3 code into the Rust worker. See
-[local-mouth.md](local-mouth.md).
+The integrated tree has passed the visible aquarium, real Qwen, real eSpeak, final staged macOS
+package integrity and worker checks, plus a packaged GUI smoke of the immediately preceding game
+bundle. Three independent review lenses and the final integrated diff review are complete, all
+surviving findings were fixed, and `cargo xtask verify` passes on the final tree. Performed native
+and release evidence is recorded in the dated acceptance material.
 
-### 5. Harden and finish the full vertical slice (Mac-led complete)
-
-The complete three-day acceptance arc runs through headless, visible-fixture, and packaged
-full-local loops. The slice now includes warm model reuse, a portable process voice, graceful
-failure, content boundaries, v1 save migration, offline non-lethal progression, asset/model
-provenance, CPU-only inference, and an integrity-checked release layout. Per the initial build
-instruction, native Windows/Linux and physical-controller verification remain a later acceptance
-pass rather than a blocker for this Mac-led implementation.
+Native Windows/Linux install and launch, physical-controller input, Apple signing/notarization,
+Windows signing, Steam credentials/publication, final native screenshots, and trailer require the
+corresponding host hardware or private release account. CI definitions and artifacts are not a
+substitute for those checks.
 
 ## Working rules
 
-- `cargo xtask verify` stays green and independent of display, models, audio, network, and PixelLab.
-- For visible shell changes, also run `cargo xtask dev --fake-ai` and capture reviewable evidence.
-- Do not let model output establish facts or directly mutate the simulation.
-- Do not select models, voices, or generated art from a single attractive smoke result.
-- Commit durable prompts, scenarios, traces, reports, provenance, and gotchas to the repository.
-
-If a fresh session needs one instruction, it is: read `docs/STATE.md`, execute its **Next** item,
-and use this flow to continue toward the complete MVP.
+- Keep `cargo xtask verify` independent of display, model, GPU, audio, network, and generation
+  credentials.
+- For visible shell changes, run the aquarium visible fixture with fake AI before real-runtime work.
+- Select models, voices, and generated art from repeatable evaluation, not one attractive sample.
+- Commit prompts, scenarios, traces, reports, provenance, licensing, and platform gotchas.
+- Use [STATE.md](STATE.md) for the current next step and this document for the durable V1 sequence.

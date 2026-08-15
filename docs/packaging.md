@@ -96,11 +96,71 @@ The resulting manifest is suitable for release evidence: it records the platform
 SHA-256. It does not embed or fetch model weights. A missing model or runtime is a hard failure,
 not a fallback to a package that cannot run locally.
 
+## Installer and release artifacts
+
+The staging directory is the only input to platform packaging. No installer script downloads a
+model or runtime. Build the platform package first, run `--check`, then invoke the matching wrapper:
+The first-run discovery and user-data boundary is recorded in [`packaging/README.md`](../packaging/README.md).
+
+```sh
+packaging/macos/build-app.sh --package-root dist/macos --output dist/Beastie.app
+packaging/macos/build-dmg.sh --app dist/Beastie.app --output dist/Beastie-macos.dmg
+packaging/linux/build-appimage.sh --package-root dist/linux --output dist/Beastie-linux.tar.gz
+# On Windows, compile packaging/windows/Beastie.iss with Inno Setup 6.
+```
+
+Without `--sign`, the macOS app receives an ad hoc hardened-runtime signature so its bundle
+resources and nested executables can be checked as one internally consistent artifact. Passing
+`--sign <Developer ID identity>` replaces that with the timestamped release signature required for
+notarization. A real Developer ID certificate, Apple team, notarization credentials, and a
+notarization submission are external release prerequisites. The Windows Inno
+configuration and Linux AppImage wrapper are checked in and consume the same sibling layout. Linux
+falls back to a `.tar.gz` equivalent when `appimagetool` is not installed.
+
+`packaging/windows/validate-layout.ps1` and `packaging/linux/validate-layout.sh` validate extracted
+artifacts. Their optional launch smoke is only a native-runner proof. CI config is not evidence of
+Windows or Linux runtime behavior from a Mac.
+
+All wrapper outputs refuse to replace an existing caller-selected artifact unless `--force` is
+passed explicitly. The macOS wrapper ad hoc signs local builds, verifies the complete bundle before
+DMG creation, and verifies the resulting disk image. Developer ID signing changes executable bytes,
+so the staged package manifest remains pre-sign provenance; final distribution identity comes from
+the bundle signature plus the retained DMG SHA-256.
+
+## Steam
+
+Steam configuration deliberately uses placeholders. `steam/config.example.env` has zero IDs and
+must never be used to publish. `steam/validate-config.sh --mode release --config <private-env>`
+rejects placeholders and requires all three depot IDs plus an executable `steamcmd`. The checked-in
+`steam/achievements.json` and `steam/input/beastie-gamepad.json` are deterministic design inputs;
+the renderer script sorts and validates achievement IDs before a build. `steam/build.sh` prepares
+preview VDF/depot files from already staged platform packages and only invokes SteamCMD in release
+mode.
+
+Steam App IDs, depot IDs, branch names, account credentials, and signing identities are intentionally
+not present in this repository. A release operator must supply them through a private environment.
+The store page should use the screenshot/trailer plan in `docs/acceptance/distribution-checklist.md`:
+capture the aquarium idle, feeding/rejection, expression, and reunion beats at native integer scale;
+the trailer must show deterministic interaction and disclose that dialogue and speech run locally.
+
+## CI and acceptance evidence
+
+`.github/workflows/release.yml` builds all three targets, validates the checked-in wrapper/config
+files, and retains package/layout evidence. Native launch jobs must use a real staged package supplied
+by protected release inputs. The workflow never fabricates a model or claims a cross-platform launch
+from macOS. Follow [the dated checklist](acceptance/distribution-checklist.md) and attach manifests,
+installer hashes, launch logs, save-path checks, and child-process cleanup evidence to the release.
+
 The macOS proof used the official llama.cpp `b10310` ARM64 archive, 10,982,134 bytes with SHA-256
 `fdec9afcb2ee389dee74cc7c5f86c7f270b0f88fb248f0a7d1e5956fa61f100b`. The final acceptance bundle
 contains release Beastie binaries, the real 563 MB Qwen model, all authored assets, the minimal
 llama.cpp runtime closure, eSpeak NG, compiled voice data, licenses, and the exact eSpeak source
-archive. It checks at 408 files and 633,013,119 bytes. Launched with no AI or TTS environment
-variables, it produced the complete five-capture three-day scenario and four validated speech cache
-entries, then reaped every child process. This proves the staged bundle does not depend on Homebrew
-paths or an installed model.
+archive. The final V1 stage checks at 473 files and 666,289,145 bytes. Its ad hoc signed DMG has
+SHA-256 `418698f2c905bd360ff7033fc593246e94d05e5a05b383244bcc6cc982152271` and passes
+`hdiutil verify`. With no AI or TTS environment variables, the staged worker served two grounded
+requests through one packaged warm server and packaged eSpeak generated a validated cache entry;
+every child exited afterward. The immediately preceding bundle of the same game shell completed
+its three-frame GUI smoke. The final GUI retry was stopped after the shared remote daemon again
+failed to grant the window a drawable, so it is not recorded as a second GUI pass. This proves the
+final staged runtime does not depend on Homebrew paths or an installed model while keeping the GUI
+evidence boundary honest.

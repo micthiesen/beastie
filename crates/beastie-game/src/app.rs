@@ -2,30 +2,42 @@ use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use beastie_core::ToyId;
+use beastie_core::{NamingTarget, NormalizedPosition, ToyId};
+use beastie_protocol::{MouthTiming, TranscriptRecord, identity_tts_voice_settings};
 use beastie_session::{
     CommandEnvelope, GameSession, SESSION_PROTOCOL_VERSION, SessionCommand, SessionError,
 };
-use beastie_view::{RenderPlan, UiAction, UiMode, ViewState, plan};
+use beastie_view::{
+    BindableAction, BindingLabels, CursorKind, RenderPlan, UiAction, UiMode, ViewState,
+    logical_to_world, plan,
+};
 use ggez::event::{Button, EventHandler, GamepadId};
 use ggez::graphics::{Canvas, Color, DrawParam, Image, Sampler};
 use ggez::input::keyboard::KeyInput;
 use ggez::input::mouse::MouseButton;
 use ggez::winit::keyboard::{Key, NamedKey};
+use ggez::winit::window::{CursorIcon, Fullscreen};
 use ggez::{Context, GameError, GameResult};
 
 use crate::args::Args;
-use crate::audio::{AudioBank, UI_CONFIRM, UI_SELECT, sound_for_event};
+use crate::audio::{AmbientBubbleSchedule, AudioBank, UI_CONFIRM, UI_SELECT, sound_for_event};
 use crate::dialogue::{DialogueManager, WorkerConfig};
-use crate::input::{action_at, append_text, focused_action, move_focus};
+use crate::input::{action_at, append_text, cursor_at, focused_action, move_focus, region_at};
 use crate::renderer::{AssetCatalog, Viewport, execute_plan, save_logical_png};
-use crate::save_store::SaveStore;
+use crate::save_store::{LoadedSave, SaveStore};
 use crate::scenario::{ScenarioRunner, ScenarioStep};
+use crate::settings::{BindingKey, KeyBindings, SettingsStore, TextScale, TextSpeed, UserSettings};
+use crate::transcript::TranscriptStore;
 use crate::tts::{TtsManager, TtsWorkerConfig};
 
-struct CaptureRequest {
-    name: String,
-    ready_to_read: bool,
+struct SpeechReveal {
+    full_text: String,
+    started_at_ms: u64,
+}
+
+struct SpeechAnimation {
+    started_at_ms: u64,
+    timing: MouthTiming,
 }
 
 pub struct Game {
@@ -39,23 +51,54 @@ pub struct Game {
     dialogue: DialogueManager,
     tts: TtsManager,
     save_store: SaveStore,
+    settings_store: SettingsStore,
+    settings: UserSettings,
+    transcripts: TranscriptStore,
     save_enabled: bool,
     scenario: Option<ScenarioRunner>,
-    capture: Option<CaptureRequest>,
+    capture: Option<CaptureState>,
     smoke_frames: Option<u8>,
     finished_frames: u8,
     stay_open: bool,
+    pointer_logical: Option<(i32, i32)>,
+    cursor_world: Option<NormalizedPosition>,
+    window_settings_dirty: bool,
+    speech_reveal: Option<SpeechReveal>,
+    bubble_schedule: AmbientBubbleSchedule,
+    pending_mouth_timing: Option<MouthTiming>,
+    speech_animation: Option<SpeechAnimation>,
+    transcript_export_path: PathBuf,
+    renaming_with_osk: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CaptureState {
+    RenderPending(String),
+    ReadbackReady(String),
 }
 
 impl Game {
     pub fn new(ctx: &mut Context, args: &Args) -> GameResult<Self> {
         let assets_root = assets_root();
         let save_store = SaveStore::new(ctx.fs.user_config_dir().join("saves").join("main.json"));
+        let settings_store = SettingsStore::new(ctx.fs.user_config_dir().join("settings.json"));
+        let (settings, settings_message) = match settings_store.load() {
+            Ok(settings) => (settings, None),
+            Err(_) => (
+                UserSettings::default(),
+                Some("settings were unreadable. using safe defaults.".to_owned()),
+            ),
+        };
+        if args.new_game {
+            save_store
+                .reset()
+                .map_err(|error| GameError::FilesystemError(error.to_string()))?;
+        }
         let tts = TtsManager::new(TtsWorkerConfig::discover(
-            args.tts,
+            args.tts && settings.voice_enabled,
             ctx.fs.user_config_dir().join("tts-cache"),
         ));
-        let (session, load_message, resumed, save_enabled) = if args.script.is_some() {
+        let (session, load_message, _resumed, save_enabled) = if args.script.is_some() {
             (GameSession::new(42, "Mop"), None, false, false)
         } else if args.new_game {
             (GameSession::new(42, "Mop"), None, false, true)
@@ -69,13 +112,29 @@ impl Game {
                 let capture_dir = args
                     .capture_dir
                     .clone()
-                    .unwrap_or_else(|| PathBuf::from("target/captures/room-shell"));
+                    .unwrap_or_else(|| PathBuf::from("target/captures/aquarium-shell"));
                 ScenarioRunner::load(path, capture_dir)
             })
             .transpose()
             .map_err(|error| GameError::ConfigError(error.to_string()))?;
-        let mut view = ViewState::default();
-        if let Some(message) = load_message {
+        let mut view = ViewState {
+            pixel_grid: settings.pixel_grid,
+            text_scale: u8::from(matches!(settings.text_scale, TextScale::Large)) + 1,
+            reduced_motion: settings.reduced_motion,
+            reduced_flashes: settings.reduced_flashes,
+            reduced_shake: settings.reduced_shake,
+            window_scale: settings.window_scale,
+            fullscreen: settings.fullscreen,
+            effects_volume: settings.effects_volume,
+            speech_volume: settings.speech_volume,
+            voice_enabled: settings.voice_enabled,
+            subtitles: settings.subtitles,
+            text_speed: text_speed_value(settings.text_speed),
+            binding_labels: binding_labels(&settings.bindings),
+            transcript_enabled: args.transcript || settings.transcript_enabled,
+            ..ViewState::default()
+        };
+        if let Some(message) = settings_message.or(load_message) {
             view.show_speech(message, session.world().elapsed_ms);
         }
         ctx.gfx
@@ -83,12 +142,24 @@ impl Game {
             .set_cursor_hittest(true)
             .map_err(|error| GameError::WindowError(error.to_string()))?;
         let (width, height) = ctx.gfx.drawable_size();
-        let mut game = Self {
+        let mut audio = AudioBank::load(&assets_root);
+        audio.set_gains(settings.effects_gain(), settings.speech_gain());
+        let transcripts = TranscriptStore::new(
+            ctx.fs.user_config_dir().join("transcripts/playtest.jsonl"),
+            args.transcript || settings.transcript_enabled,
+        );
+        let transcript_export_path = ctx
+            .fs
+            .user_config_dir()
+            .join("transcripts/beastie-playtest-export.jsonl");
+        let bubble_schedule =
+            AmbientBubbleSchedule::new(session.world().seed, session.world().elapsed_ms);
+        let game = Self {
             session,
             view,
             logical_frame: Image::new_canvas_image(ctx, 320, 180, 1),
             assets: AssetCatalog::load(ctx, &assets_root),
-            audio: AudioBank::load(&assets_root),
+            audio,
             queued_audio: Vec::new(),
             viewport: Viewport::for_drawable(width, height),
             dialogue: DialogueManager::new(WorkerConfig::from_environment(
@@ -100,21 +171,75 @@ impl Game {
             )),
             tts,
             save_store,
+            settings_store,
+            settings,
+            transcripts,
             save_enabled,
             scenario,
             capture: None,
             smoke_frames: args.smoke.then_some(3),
             finished_frames: 0,
             stay_open: args.stay_open,
+            pointer_logical: None,
+            cursor_world: None,
+            window_settings_dirty: false,
+            speech_reveal: None,
+            bubble_schedule,
+            pending_mouth_timing: None,
+            speech_animation: None,
+            transcript_export_path,
+            renaming_with_osk: false,
         };
-        if resumed {
-            game.persist()?;
+        game.apply_window_settings(ctx);
+        if let Some(destination) = &args.export_transcript {
+            game.transcripts
+                .export(destination)
+                .map_err(|error| GameError::FilesystemError(error.to_string()))?;
         }
         Ok(game)
     }
 
     fn render_plan(&self) -> RenderPlan {
         plan(self.session.world(), &self.view).0
+    }
+
+    fn apply_window_settings(&self, ctx: &mut Context) {
+        let window = ctx.gfx.window();
+        if self.settings.fullscreen {
+            window.set_fullscreen(Some(Fullscreen::Borderless(window.current_monitor())));
+        } else {
+            window.set_fullscreen(None);
+            let (width, height) = Viewport::window_dimensions(self.settings.window_scale);
+            let _ = window.request_inner_size(ggez::winit::dpi::PhysicalSize::new(
+                width as u32,
+                height as u32,
+            ));
+        }
+    }
+
+    fn persist_settings(&self) -> GameResult {
+        self.settings_store
+            .store(&self.settings)
+            .map_err(|error| GameError::FilesystemError(error.to_string()))
+    }
+
+    fn toggle_fullscreen(&mut self, ctx: &mut Context) -> GameResult {
+        self.settings.fullscreen = !self.settings.fullscreen;
+        self.view.fullscreen = self.settings.fullscreen;
+        self.apply_window_settings(ctx);
+        self.persist_settings()
+    }
+
+    fn change_window_scale(&mut self, ctx: &mut Context, delta: i8) -> GameResult {
+        if self.settings.fullscreen {
+            return Ok(());
+        }
+        self.settings.window_scale = i16::from(self.settings.window_scale)
+            .saturating_add(i16::from(delta))
+            .clamp(1, 6) as u8;
+        self.view.window_scale = self.settings.window_scale;
+        self.apply_window_settings(ctx);
+        self.persist_settings()
     }
 
     fn apply_command(&mut self, command: SessionCommand, persist: bool) -> GameResult {
@@ -137,7 +262,7 @@ impl Game {
         {
             self.view.pending = true;
             self.view.speech = None;
-            self.view.mode = UiMode::Idle;
+            self.view.mode = UiMode::Compose;
         }
         if persist {
             self.persist()?;
@@ -159,29 +284,64 @@ impl Game {
             .map_err(|error| GameError::FilesystemError(error.to_string()))
     }
 
-    fn poll_dialogue(&mut self) {
+    fn poll_dialogue(&mut self) -> GameResult {
         if !self.dialogue.is_pending() {
-            return;
+            return Ok(());
         }
-        match self.dialogue.try_recv() {
-            Ok(reply) => {
+        match self.dialogue.try_recv_turn() {
+            Ok(turn) => {
                 self.view.pending = false;
                 self.audio.stop_speech();
-                let _ = self.tts.request(reply.say.clone(), self.session.world());
-                self.view
-                    .show_speech(reply.say, self.session.world().elapsed_ms);
-                self.view.mode = UiMode::Idle;
+                let voice = identity_tts_voice_settings(self.session.world());
+                let text_speed = effective_dialogue_text_speed(
+                    self.settings.text_speed,
+                    self.scenario.is_some(),
+                );
+                if self.settings.voice_enabled {
+                    self.pending_mouth_timing = Some(voice.mouth_timing);
+                    let _ = self
+                        .tts
+                        .request(turn.reply.say.clone(), self.session.world());
+                }
+                self.speech_reveal = show_dialogue_caption(
+                    &mut self.view,
+                    &turn.reply.say,
+                    self.session.world().elapsed_ms,
+                    self.settings.subtitles,
+                    text_speed,
+                );
+                self.transcripts
+                    .append(&TranscriptRecord::from_turn(
+                        self.session.world().elapsed_ms,
+                        &turn.request,
+                        Some(&turn.reply),
+                        turn.backend,
+                        turn.latency_ms,
+                        turn.fallback,
+                        false,
+                        Some(voice),
+                    ))
+                    .map_err(|error| GameError::FilesystemError(error.to_string()))?;
+                self.view.mode = UiMode::Compose;
                 self.view.focused_region = Some("reaction/laugh".to_owned());
             }
             Err(TryRecvError::Disconnected) => {
                 self.view.pending = false;
-                self.view.show_speech(
-                    "too many thought.".to_owned(),
+                let text_speed = effective_dialogue_text_speed(
+                    self.settings.text_speed,
+                    self.scenario.is_some(),
+                );
+                self.speech_reveal = show_dialogue_caption(
+                    &mut self.view,
+                    "too many thought.",
                     self.session.world().elapsed_ms,
+                    self.settings.subtitles,
+                    text_speed,
                 );
             }
             Err(TryRecvError::Empty) => {}
         }
+        Ok(())
     }
 
     fn poll_tts(&mut self) {
@@ -190,6 +350,12 @@ impl Game {
                 let _ = completion.request_id;
                 if let Some(wav) = completion.wav {
                     self.audio.play_speech(wav);
+                    if let Some(timing) = self.pending_mouth_timing.take() {
+                        self.speech_animation = Some(SpeechAnimation {
+                            started_at_ms: self.session.world().elapsed_ms,
+                            timing,
+                        });
+                    }
                 }
             }
             Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
@@ -202,10 +368,11 @@ impl Game {
             UiAction::OpenContext(_)
                 | UiAction::OpenFoodChoice
                 | UiAction::OpenToyChoice
-                | UiAction::Feed(_)
+                | UiAction::SelectFood(_)
+                | UiAction::DropFood(_)
                 | UiAction::Play(_)
-                | UiAction::Tidy
                 | UiAction::Comfort
+                | UiAction::Inspect
                 | UiAction::Talk
         ) {
             self.clear_speech();
@@ -216,7 +383,7 @@ impl Game {
                 self.reset_focus();
             }
             UiAction::CloseContext => {
-                self.view.mode = UiMode::Idle;
+                self.view.mode = UiMode::Compose;
                 self.reset_focus();
             }
             UiAction::OpenFoodChoice => {
@@ -227,16 +394,23 @@ impl Game {
                 self.view.mode = UiMode::ToyChoice;
                 self.reset_focus();
             }
-            UiAction::Feed(food) => {
-                self.apply_command(SessionCommand::Feed { food }, true)?;
+            UiAction::SelectFood(food) => {
+                self.view.mode = UiMode::FoodDrop(food);
+                self.view.focused_region = None;
+            }
+            UiAction::DropFood(food) => {
+                let position = self
+                    .cursor_world
+                    .unwrap_or_else(|| NormalizedPosition::new(5_000, 2_500));
+                self.apply_command(SessionCommand::DropFood { food, position }, true)?;
                 self.close_menu();
             }
             UiAction::Play(toy) => {
                 self.apply_command(play_command(toy), true)?;
                 self.close_menu();
             }
-            UiAction::Tidy => {
-                self.apply_command(SessionCommand::Tidy, true)?;
+            UiAction::Inspect => {
+                self.apply_command(SessionCommand::Inspect, false)?;
                 self.close_menu();
             }
             UiAction::Comfort => {
@@ -247,10 +421,15 @@ impl Game {
                 self.view.mode = if controller {
                     UiMode::OnScreenKeyboard
                 } else {
-                    UiMode::TextEntry
+                    UiMode::Compose
                 };
-                self.view.text_buffer.clear();
                 self.reset_focus();
+            }
+            UiAction::FocusCompose => {
+                if !matches!(self.view.mode, UiMode::Rename) {
+                    self.view.mode = UiMode::Compose;
+                }
+                self.view.focused_region = Some("compose/input".to_owned());
             }
             UiAction::React(reaction) => {
                 self.apply_command(SessionCommand::React { reaction }, true)?;
@@ -263,10 +442,159 @@ impl Game {
             UiAction::Backspace => {
                 self.view.text_buffer.pop();
             }
-            UiAction::SubmitText => self.submit_text()?,
-            UiAction::CancelText => {
+            UiAction::SubmitText => {
+                if self.renaming_with_osk {
+                    self.submit_name()?;
+                } else {
+                    self.submit_text()?;
+                }
+            }
+            UiAction::ClearText => {
                 self.view.text_buffer.clear();
+            }
+            UiAction::CancelMode => {
                 self.close_menu();
+            }
+            UiAction::OpenSettings => {
+                self.view.mode = UiMode::Settings;
+                self.reset_focus();
+            }
+            UiAction::SetTextScale(scale) => {
+                self.view.text_scale = scale.clamp(1, 2);
+                self.settings.text_scale = if self.view.text_scale >= 2 {
+                    TextScale::Large
+                } else {
+                    TextScale::Medium
+                };
+                self.persist_settings()?;
+            }
+            UiAction::ToggleReducedMotion => {
+                self.settings.reduced_motion = !self.settings.reduced_motion;
+                self.view.reduced_motion = self.settings.reduced_motion;
+                self.persist_settings()?;
+            }
+            UiAction::ToggleReducedFlashes => {
+                self.settings.reduced_flashes = !self.settings.reduced_flashes;
+                self.view.reduced_flashes = self.settings.reduced_flashes;
+                self.persist_settings()?;
+            }
+            UiAction::ToggleReducedShake => {
+                self.settings.reduced_shake = !self.settings.reduced_shake;
+                self.view.reduced_shake = self.settings.reduced_shake;
+                self.persist_settings()?;
+            }
+            UiAction::TogglePixelGrid => {
+                self.settings.pixel_grid = !self.settings.pixel_grid;
+                self.view.pixel_grid = self.settings.pixel_grid;
+                self.persist_settings()?;
+            }
+            UiAction::CycleWindowScale => {
+                self.settings.window_scale = self.settings.window_scale % 6 + 1;
+                self.view.window_scale = self.settings.window_scale;
+                self.window_settings_dirty = true;
+                self.persist_settings()?;
+            }
+            UiAction::ToggleFullscreen => {
+                self.settings.fullscreen = !self.settings.fullscreen;
+                self.view.fullscreen = self.settings.fullscreen;
+                self.window_settings_dirty = true;
+                self.persist_settings()?;
+            }
+            UiAction::CycleEffectsVolume => {
+                self.settings.effects_volume = cycle_volume(self.settings.effects_volume);
+                self.view.effects_volume = self.settings.effects_volume;
+                self.audio
+                    .set_gains(self.settings.effects_gain(), self.settings.speech_gain());
+                self.persist_settings()?;
+            }
+            UiAction::CycleSpeechVolume => {
+                self.settings.speech_volume = cycle_volume(self.settings.speech_volume);
+                self.view.speech_volume = self.settings.speech_volume;
+                self.audio
+                    .set_gains(self.settings.effects_gain(), self.settings.speech_gain());
+                self.persist_settings()?;
+            }
+            UiAction::ToggleVoice => {
+                self.settings.voice_enabled = !self.settings.voice_enabled;
+                self.view.voice_enabled = self.settings.voice_enabled;
+                if !self.settings.voice_enabled {
+                    self.audio.stop_speech();
+                }
+                self.persist_settings()?;
+            }
+            UiAction::ToggleSubtitles => {
+                self.settings.subtitles = !self.settings.subtitles;
+                self.view.subtitles = self.settings.subtitles;
+                if !self.settings.subtitles {
+                    self.view.speech = None;
+                    self.view.speech_expires_at_ms = None;
+                    self.speech_reveal = None;
+                }
+                self.persist_settings()?;
+            }
+            UiAction::CycleTextSpeed => {
+                self.settings.text_speed = cycle_text_speed(self.settings.text_speed);
+                self.view.text_speed = text_speed_value(self.settings.text_speed);
+                self.persist_settings()?;
+            }
+            UiAction::OpenBindings => {
+                self.view.mode = UiMode::Bindings;
+                self.reset_focus();
+            }
+            UiAction::BeginRebind(action) => {
+                self.view.mode = UiMode::Rebinding(action);
+                self.view.focused_region = None;
+            }
+            UiAction::ResetBindings => {
+                self.settings.bindings = KeyBindings::default();
+                self.view.binding_labels = binding_labels(&self.settings.bindings);
+                self.persist_settings()?;
+            }
+            UiAction::Rename => {
+                self.view.text_buffer.clear();
+                self.renaming_with_osk = controller;
+                self.view.mode = if controller {
+                    UiMode::OnScreenKeyboard
+                } else {
+                    UiMode::Rename
+                };
+                self.reset_focus();
+            }
+            UiAction::SubmitName => self.submit_name()?,
+            UiAction::OpenDataManagement => {
+                self.view.mode = UiMode::DataManagement;
+                self.reset_focus();
+            }
+            UiAction::RecoverBackup => self.recover_backup(),
+            UiAction::RequestReset => {
+                self.view.mode = UiMode::ConfirmReset;
+                self.reset_focus();
+            }
+            UiAction::ConfirmReset => self.reset_save(),
+            UiAction::ToggleTranscript => {
+                self.settings.transcript_enabled = !self.view.transcript_enabled;
+                self.view.transcript_enabled = self.settings.transcript_enabled;
+                self.transcripts
+                    .set_enabled(self.settings.transcript_enabled);
+                self.view.transcript_status = Some(if self.settings.transcript_enabled {
+                    "Recording safe local turns".to_owned()
+                } else {
+                    "Transcript recording off".to_owned()
+                });
+                self.persist_settings()?;
+            }
+            UiAction::ExportTranscript => {
+                match self.transcripts.export(&self.transcript_export_path) {
+                    Ok(turns) => {
+                        self.view.transcript_status = Some(format!(
+                            "Exported {turns} turns to {}",
+                            self.transcript_export_path.display()
+                        ));
+                    }
+                    Err(error) => {
+                        self.view.transcript_status = Some(format!("Export failed: {error}"));
+                    }
+                }
             }
         }
         Ok(())
@@ -281,6 +609,83 @@ impl Game {
         self.apply_command(SessionCommand::Talk { text }, true)
     }
 
+    fn submit_name(&mut self) -> GameResult {
+        let name = self.view.text_buffer.trim().to_owned();
+        if name.is_empty() || name.chars().count() > 24 || name.chars().any(char::is_control) {
+            self.view.status_message = Some("Name must be 1 to 24 visible characters".to_owned());
+            return Ok(());
+        }
+        match self.apply_command(
+            SessionCommand::Name {
+                target: NamingTarget::Creature,
+                name: name.clone(),
+            },
+            true,
+        ) {
+            Ok(()) => {
+                self.view.text_buffer.clear();
+                self.view.status_message = Some(format!("Name set to {name}"));
+                self.close_menu();
+            }
+            Err(error) => {
+                self.view.status_message = Some(format!("Couldn't use that name: {error}"));
+            }
+        }
+        Ok(())
+    }
+
+    fn recover_backup(&mut self) {
+        let result = self
+            .save_store
+            .load_backup()
+            .and_then(|source| {
+                source.ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "no backup exists")
+                })
+            })
+            .and_then(|source| {
+                GameSession::resume_json(&source, unix_time_ms())
+                    .map(|(session, _)| session)
+                    .map_err(std::io::Error::other)
+            })
+            .and_then(|session| {
+                self.save_store.promote_backup().and_then(|promoted| {
+                    promoted
+                        .then_some(session)
+                        .ok_or_else(|| std::io::Error::other("backup disappeared"))
+                })
+            });
+        match result {
+            Ok(session) => {
+                self.session = session;
+                self.save_enabled = true;
+                self.view.status_message = Some("Recovered the last-good save".to_owned());
+            }
+            Err(error) => {
+                self.view.status_message = Some(format!("Recovery failed: {error}"));
+            }
+        }
+        self.view.mode = UiMode::DataManagement;
+        self.reset_focus();
+    }
+
+    fn reset_save(&mut self) {
+        match self.save_store.reset() {
+            Ok(_) => {
+                self.session = GameSession::new(42, "Mop");
+                self.save_enabled = true;
+                self.view.status_message =
+                    Some("Save reset. Previous creature kept in the reset backup".to_owned());
+                self.view.text_buffer.clear();
+            }
+            Err(error) => {
+                self.view.status_message = Some(format!("Reset failed: {error}"));
+            }
+        }
+        self.view.mode = UiMode::DataManagement;
+        self.reset_focus();
+    }
+
     fn apply_confirmed_ui_action(&mut self, action: UiAction, controller: bool) -> GameResult {
         self.apply_ui_action(action, controller)?;
         self.queued_audio.push(UI_CONFIRM);
@@ -288,14 +693,57 @@ impl Game {
     }
 
     fn close_menu(&mut self) {
-        self.view.mode = UiMode::Idle;
-        self.view.focused_region = None;
+        self.renaming_with_osk = false;
+        self.view.mode = UiMode::Compose;
+        self.view.focused_region = Some("compose/input".to_owned());
     }
 
     fn clear_speech(&mut self) {
         self.view.speech = None;
         self.view.speech_expires_at_ms = None;
         self.audio.stop_speech();
+        self.pending_mouth_timing = None;
+        self.speech_animation = None;
+        self.speech_reveal = None;
+    }
+
+    fn update_speech_reveal(&mut self) {
+        let Some(reveal) = &self.speech_reveal else {
+            return;
+        };
+        let elapsed = self
+            .session
+            .world()
+            .elapsed_ms
+            .saturating_sub(reveal.started_at_ms);
+        let (text, complete) = revealed_text(&reveal.full_text, elapsed, self.settings.text_speed);
+        self.view.speech = Some(text);
+        if complete {
+            self.speech_reveal = None;
+        }
+    }
+
+    fn activate_binding(&mut self, action: BindableAction) -> GameResult {
+        match action {
+            BindableAction::Food => self.apply_confirmed_ui_action(UiAction::OpenFoodChoice, false),
+            BindableAction::Play => self.apply_confirmed_ui_action(UiAction::OpenToyChoice, false),
+            BindableAction::Comfort => self.apply_confirmed_ui_action(UiAction::Comfort, false),
+            BindableAction::Settings => {
+                self.apply_confirmed_ui_action(UiAction::OpenSettings, false)
+            }
+            BindableAction::Cancel => {
+                self.close_menu();
+                Ok(())
+            }
+        }
+    }
+
+    fn rebind(&mut self, action: BindableAction, key: BindingKey) -> GameResult {
+        self.settings.bindings.rebind_swapping(action, key);
+        self.view.binding_labels = binding_labels(&self.settings.bindings);
+        self.view.mode = UiMode::Bindings;
+        self.reset_focus();
+        self.persist_settings()
     }
 
     fn reset_focus(&mut self) {
@@ -323,6 +771,9 @@ impl Game {
 
     fn drive_scenario(&mut self, ctx: &mut Context) -> GameResult {
         if self.dialogue.is_pending() || self.capture.is_some() {
+            if self.capture.is_some() {
+                ctx.gfx.window().request_redraw();
+            }
             return Ok(());
         }
         let Some(scenario) = &mut self.scenario else {
@@ -346,6 +797,8 @@ impl Game {
                 let persist = matches!(
                     &envelope.command,
                     SessionCommand::Feed { .. }
+                        | SessionCommand::DropFood { .. }
+                        | SessionCommand::Name { .. }
                         | SessionCommand::Play { .. }
                         | SessionCommand::Comfort
                         | SessionCommand::Tidy
@@ -368,10 +821,8 @@ impl Game {
                 }
             }
             ScenarioStep::Capture(name) => {
-                self.capture = Some(CaptureRequest {
-                    name,
-                    ready_to_read: false,
-                });
+                self.capture = Some(CaptureState::RenderPending(name));
+                ctx.gfx.window().request_redraw();
             }
         }
         Ok(())
@@ -380,8 +831,12 @@ impl Game {
 
 impl EventHandler for Game {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
+        if self.window_settings_dirty {
+            self.apply_window_settings(ctx);
+            self.window_settings_dirty = false;
+        }
         let speech_was_visible = self.view.speech.is_some();
-        self.poll_dialogue();
+        self.poll_dialogue()?;
         self.poll_tts();
         if self.scenario.is_some() {
             self.drive_scenario(ctx)?;
@@ -409,17 +864,38 @@ impl EventHandler for Game {
             }
         }
         self.view.expire(self.session.world().elapsed_ms);
+        self.update_speech_reveal();
         if speech_was_visible && self.view.speech.is_none() {
             self.audio.stop_speech();
         }
+        let had_one_shot = !self.queued_audio.is_empty();
+        if let Some(bubble) = self
+            .bubble_schedule
+            .poll(self.session.world().elapsed_ms, had_one_shot)
+        {
+            self.queued_audio.push(bubble);
+        }
+        self.audio.ensure_ambience();
+        self.audio.update_ducking(!self.queued_audio.is_empty());
         self.audio.play_queued(&mut self.queued_audio);
+        if !self.audio.speech_active() {
+            self.speech_animation = None;
+        }
+        self.view.speaking = self.audio.speech_active();
+        self.view.mouth_phase = self.speech_animation.as_ref().map_or(0, |animation| {
+            mouth_phase(
+                animation.timing,
+                self.session
+                    .world()
+                    .elapsed_ms
+                    .saturating_sub(animation.started_at_ms),
+            )
+        });
         Ok(())
     }
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
-        if let Some(capture) = &self.capture
-            && capture.ready_to_read
-        {
+        if let Some(name) = take_capture_for_readback(&mut self.capture) {
             let directory = self
                 .scenario
                 .as_ref()
@@ -428,9 +904,8 @@ impl EventHandler for Game {
             save_logical_png(
                 ctx,
                 &self.logical_frame,
-                &directory.join(format!("{}.png", capture.name)),
+                &directory.join(format!("{name}.png")),
             )?;
-            self.capture = None;
         }
 
         let render = self.render_plan();
@@ -438,6 +913,10 @@ impl EventHandler for Game {
             Canvas::from_image(ctx, self.logical_frame.clone(), Color::from_rgb(20, 18, 24));
         execute_plan(ctx, &mut logical, &render, &self.assets)?;
         logical.finish(ctx)?;
+
+        if mark_capture_rendered(&mut self.capture) {
+            ctx.gfx.window().request_redraw();
+        }
 
         let (width, height) = ctx.gfx.drawable_size();
         self.viewport = Viewport::for_drawable(width, height);
@@ -450,9 +929,6 @@ impl EventHandler for Game {
                 .scale([self.viewport.scale, self.viewport.scale]),
         );
         frame.finish(ctx)?;
-        if let Some(capture) = &mut self.capture {
-            capture.ready_to_read = true;
-        }
         Ok(())
     }
 
@@ -463,6 +939,7 @@ impl EventHandler for Game {
         x: f32,
         y: f32,
     ) -> GameResult {
+        self.view.controller_active = false;
         if button != MouseButton::Left || self.view.pending {
             return Ok(());
         }
@@ -471,22 +948,165 @@ impl EventHandler for Game {
         };
         let render = self.render_plan();
         if let Some(action) = action_at(&render, x, y) {
-            self.apply_confirmed_ui_action(action, false)?;
+            if let UiAction::DropFood(food) = action {
+                let position = logical_to_world(x.floor() as i32, y.floor() as i32);
+                self.cursor_world = Some(position);
+                self.apply_command(SessionCommand::DropFood { food, position }, true)?;
+                self.close_menu();
+                self.queued_audio.push(UI_CONFIRM);
+            } else {
+                self.apply_confirmed_ui_action(action, false)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn mouse_motion_event(
+        &mut self,
+        ctx: &mut Context,
+        x: f32,
+        y: f32,
+        _dx: f32,
+        _dy: f32,
+    ) -> GameResult {
+        self.view.controller_active = false;
+        let logical = self
+            .viewport
+            .logical_point(x, y)
+            .map(|(x, y)| (x.floor() as i32, y.floor() as i32));
+        self.pointer_logical = logical;
+        let render = self.render_plan();
+        self.view.hovered_region = logical.and_then(|(x, y)| {
+            region_at(&render, x as f32, y as f32).map(|region| region.id.clone())
+        });
+        let cursor = logical.map_or(CursorKind::Default, |(x, y)| {
+            cursor_at(&render, x as f32, y as f32)
+        });
+        ctx.gfx.window().set_cursor(match cursor {
+            CursorKind::Default => CursorIcon::Default,
+            CursorKind::Pointer => CursorIcon::Pointer,
+            CursorKind::FoodDrop => CursorIcon::Crosshair,
+        });
+        let cursor_world = logical
+            .filter(|(_, y)| *y < beastie_view::COMPOSE_BAR_TOP)
+            .map(|(x, y)| logical_to_world(x, y));
+        if cursor_world != self.cursor_world {
+            self.cursor_world = cursor_world;
+            self.apply_command(
+                SessionCommand::Cursor {
+                    position: cursor_world,
+                },
+                false,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn mouse_enter_or_leave(&mut self, _ctx: &mut Context, entered: bool) -> GameResult {
+        if !entered {
+            self.pointer_logical = None;
+            self.cursor_world = None;
+            self.view.hovered_region = None;
+            self.apply_command(SessionCommand::Cursor { position: None }, false)?;
         }
         Ok(())
     }
 
     fn key_down_event(&mut self, ctx: &mut Context, input: KeyInput, repeated: bool) -> GameResult {
-        if self.view.pending {
+        self.view.controller_active = false;
+        let key = &input.event.logical_key;
+        if let UiMode::Rebinding(action) = self.view.mode {
+            if matches!(key, Key::Named(NamedKey::Escape)) {
+                self.view.mode = UiMode::Bindings;
+                self.reset_focus();
+                return Ok(());
+            }
+            if !repeated && let Some(binding) = binding_key(key) {
+                self.rebind(action, binding)?;
+            }
             return Ok(());
         }
-        let key = &input.event.logical_key;
-        if matches!(self.view.mode, UiMode::TextEntry) {
+        if matches!(self.view.mode, UiMode::Rename) {
+            match key {
+                Key::Named(NamedKey::Escape) => self.close_menu(),
+                Key::Named(NamedKey::Enter) => self.submit_name()?,
+                Key::Named(NamedKey::Backspace) => {
+                    self.view.text_buffer.pop();
+                }
+                _ if !input.mods.control_key() && !input.mods.super_key() => {
+                    if let Some(text) = input.event.text.as_deref() {
+                        append_text(&mut self.view.text_buffer, text);
+                    }
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+        if input.mods.control_key() || input.mods.super_key() {
+            match key {
+                Key::Character(character) if character.eq_ignore_ascii_case("q") => {
+                    self.persist()?;
+                    ctx.request_quit();
+                    return Ok(());
+                }
+                Key::Character(character) if character == "+" || character == "=" => {
+                    return self.change_window_scale(ctx, 1);
+                }
+                Key::Character(character) if character == "-" => {
+                    return self.change_window_scale(ctx, -1);
+                }
+                _ => {}
+            }
+        }
+        if !repeated
+            && let Some(binding) = binding_key(key)
+            && let Some(action) = self.settings.bindings.action_for(binding)
+        {
+            self.activate_binding(action)?;
+            return Ok(());
+        }
+        if matches!(key, Key::Named(NamedKey::F11)) {
+            return self.toggle_fullscreen(ctx);
+        }
+        if matches!(key, Key::Named(NamedKey::F8)) {
+            self.settings.pixel_grid = !self.settings.pixel_grid;
+            self.view.pixel_grid = self.settings.pixel_grid;
+            return self.persist_settings();
+        }
+        if matches!(key, Key::Named(NamedKey::F6)) {
+            self.settings.voice_enabled = !self.settings.voice_enabled;
+            self.view.voice_enabled = self.settings.voice_enabled;
+            if !self.settings.voice_enabled {
+                self.audio.stop_speech();
+            }
+            return self.persist_settings();
+        }
+        if matches!(key, Key::Named(NamedKey::F7)) {
+            self.settings.reduced_motion = !self.settings.reduced_motion;
+            self.view.reduced_motion = self.settings.reduced_motion;
+            return self.persist_settings();
+        }
+        if matches!(key, Key::Named(NamedKey::F9)) {
+            self.settings.reduced_flashes = !self.settings.reduced_flashes;
+            self.view.reduced_flashes = self.settings.reduced_flashes;
+            return self.persist_settings();
+        }
+        if matches!(key, Key::Named(NamedKey::F10)) {
+            self.settings.reduced_shake = !self.settings.reduced_shake;
+            self.view.reduced_shake = self.settings.reduced_shake;
+            return self.persist_settings();
+        }
+        if matches!(key, Key::Named(NamedKey::F12)) {
+            self.settings.text_speed = cycle_text_speed(self.settings.text_speed);
+            self.view.text_speed = text_speed_value(self.settings.text_speed);
+            return self.persist_settings();
+        }
+        if matches!(self.view.mode, UiMode::Compose) {
             match key {
                 Key::Named(NamedKey::Escape) => {
-                    self.apply_ui_action(UiAction::CancelText, false)?;
+                    self.apply_ui_action(UiAction::ClearText, false)?;
                 }
-                Key::Named(NamedKey::Enter) => self.submit_text()?,
+                Key::Named(NamedKey::Enter) if !self.view.pending => self.submit_text()?,
                 Key::Named(NamedKey::Backspace) => {
                     self.view.text_buffer.pop();
                 }
@@ -504,23 +1124,13 @@ impl EventHandler for Game {
         }
         match key {
             Key::Named(NamedKey::Escape) => {
-                if self.view.mode == UiMode::Idle {
-                    self.persist()?;
-                    ctx.request_quit();
-                } else {
-                    self.close_menu();
-                }
+                self.close_menu();
             }
             Key::Named(NamedKey::Tab | NamedKey::ArrowRight | NamedKey::ArrowDown) => {
                 self.navigate(1)
             }
             Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) => self.navigate(-1),
             Key::Named(NamedKey::Enter | NamedKey::Space) => self.activate_focus(false)?,
-            Key::Character(character) => {
-                if let Some(action) = idle_shortcut(self.view.mode, character) {
-                    self.apply_confirmed_ui_action(action, false)?;
-                }
-            }
             _ => {}
         }
         Ok(())
@@ -532,8 +1142,12 @@ impl EventHandler for Game {
         button: Button,
         _id: GamepadId,
     ) -> GameResult {
+        self.view.controller_active = true;
         if self.view.pending {
             return Ok(());
+        }
+        if self.view.focused_region.is_none() {
+            self.reset_focus();
         }
         match button {
             Button::DPadRight | Button::DPadDown => self.navigate(1),
@@ -557,32 +1171,36 @@ impl EventHandler for Game {
         Ok(false)
     }
 
-    fn resize_event(&mut self, _ctx: &mut Context, width: f32, height: f32) -> GameResult {
+    fn resize_event(&mut self, ctx: &mut Context, width: f32, height: f32) -> GameResult {
         self.viewport = Viewport::for_drawable(width, height);
+        if !self.settings.fullscreen {
+            let scale = ((width / 320.0).min(height / 180.0))
+                .round()
+                .clamp(1.0, 6.0) as u8;
+            let (snapped_width, snapped_height) = Viewport::window_dimensions(scale);
+            let scale_changed = self.settings.window_scale != scale;
+            self.settings.window_scale = scale;
+            self.view.window_scale = scale;
+            if scale_changed {
+                self.persist_settings()?;
+            }
+            if (width - snapped_width).abs() > 0.5 || (height - snapped_height).abs() > 0.5 {
+                let _ = ctx
+                    .gfx
+                    .window()
+                    .request_inner_size(ggez::winit::dpi::PhysicalSize::new(
+                        snapped_width as u32,
+                        snapped_height as u32,
+                    ));
+            }
+        }
         Ok(())
     }
 }
 
-fn idle_shortcut(mode: UiMode, character: &str) -> Option<UiAction> {
-    if mode != UiMode::Idle {
-        return None;
-    }
-    if character.eq_ignore_ascii_case("f") {
-        Some(UiAction::OpenFoodChoice)
-    } else if character.eq_ignore_ascii_case("p") {
-        Some(UiAction::OpenToyChoice)
-    } else if character.eq_ignore_ascii_case("c") {
-        Some(UiAction::Comfort)
-    } else if character.eq_ignore_ascii_case("t") {
-        Some(UiAction::Talk)
-    } else {
-        None
-    }
-}
-
 fn load_session(store: &SaveStore) -> (GameSession, Option<String>, bool, bool) {
-    let source = match store.load() {
-        Ok(Some(source)) => source,
+    let loaded = match store.load_recoverable() {
+        Ok(Some(loaded)) => loaded,
         Ok(None) => return (GameSession::new(42, "Mop"), None, false, true),
         Err(_) => {
             return (
@@ -593,14 +1211,181 @@ fn load_session(store: &SaveStore) -> (GameSession, Option<String>, bool, bool) 
             );
         }
     };
+    let (source, recovered) = match loaded {
+        LoadedSave::Primary(source) => (source, false),
+        LoadedSave::Backup(source) => (source, true),
+    };
     match GameSession::resume_json(&source, unix_time_ms()) {
+        Ok((session, _)) if recovered => match store.promote_backup() {
+            Ok(true) => (
+                session,
+                Some("found the spare save. we're okay.".to_owned()),
+                true,
+                true,
+            ),
+            _ => (
+                session,
+                Some("found the spare, but couldn't repair the save box.".to_owned()),
+                true,
+                false,
+            ),
+        },
         Ok((session, _)) => (session, Some("you came back.".to_owned()), true, true),
-        Err(_) => (
-            GameSession::new(42, "Mop"),
-            Some("old save smelled wrong. left it alone.".to_owned()),
-            false,
-            false,
-        ),
+        Err(_) => {
+            if !recovered
+                && let Ok(Some(backup)) = store.load_backup()
+                && let Ok((session, _)) = GameSession::resume_json(&backup, unix_time_ms())
+            {
+                return match store.promote_backup() {
+                    Ok(true) => (
+                        session,
+                        Some("main save was weird. used the spare.".to_owned()),
+                        true,
+                        true,
+                    ),
+                    _ => (
+                        session,
+                        Some("spare opened, but the save box couldn't be repaired.".to_owned()),
+                        true,
+                        false,
+                    ),
+                };
+            }
+            (
+                GameSession::new(42, "Mop"),
+                Some("old save smelled wrong. left it alone.".to_owned()),
+                false,
+                false,
+            )
+        }
+    }
+}
+
+fn cycle_volume(volume: u8) -> u8 {
+    match volume {
+        0..=24 => 25,
+        25..=49 => 50,
+        50..=74 => 75,
+        75..=99 => 100,
+        _ => 0,
+    }
+}
+
+fn cycle_text_speed(speed: TextSpeed) -> TextSpeed {
+    match speed {
+        TextSpeed::Instant => TextSpeed::Normal,
+        TextSpeed::Normal => TextSpeed::Slow,
+        TextSpeed::Slow => TextSpeed::Instant,
+    }
+}
+
+const fn effective_dialogue_text_speed(configured: TextSpeed, scripted: bool) -> TextSpeed {
+    if scripted {
+        TextSpeed::Instant
+    } else {
+        configured
+    }
+}
+
+fn revealed_text(full_text: &str, elapsed_ms: u64, speed: TextSpeed) -> (String, bool) {
+    let milliseconds_per_character = match speed {
+        TextSpeed::Instant => 0,
+        TextSpeed::Normal => 30,
+        TextSpeed::Slow => 70,
+    };
+    if milliseconds_per_character == 0 {
+        return (full_text.to_owned(), true);
+    }
+    let visible = usize::try_from(elapsed_ms / milliseconds_per_character)
+        .unwrap_or(usize::MAX)
+        .saturating_add(1);
+    let text = full_text.chars().take(visible).collect::<String>();
+    (text, visible >= full_text.chars().count())
+}
+
+fn show_dialogue_caption(
+    view: &mut ViewState,
+    text: &str,
+    elapsed_ms: u64,
+    subtitles: bool,
+    text_speed: TextSpeed,
+) -> Option<SpeechReveal> {
+    if !subtitles {
+        view.speech = None;
+        view.speech_expires_at_ms = None;
+        return None;
+    }
+    view.show_speech(text.to_owned(), elapsed_ms);
+    (text_speed != TextSpeed::Instant).then(|| SpeechReveal {
+        full_text: text.to_owned(),
+        started_at_ms: elapsed_ms,
+    })
+}
+
+fn mouth_phase(timing: MouthTiming, elapsed_ms: u64) -> u8 {
+    let syllable_ms = u64::from(timing.syllable_ms.max(1));
+    let within = elapsed_ms % syllable_ms;
+    if within < u64::from(timing.open_ms) {
+        2
+    } else if within < u64::from(timing.open_ms.saturating_add(timing.close_ms)) {
+        0
+    } else {
+        1
+    }
+}
+
+fn mark_capture_rendered(capture: &mut Option<CaptureState>) -> bool {
+    let Some(CaptureState::RenderPending(name)) = capture.take() else {
+        return false;
+    };
+    *capture = Some(CaptureState::ReadbackReady(name));
+    true
+}
+
+fn take_capture_for_readback(capture: &mut Option<CaptureState>) -> Option<String> {
+    match capture.take() {
+        Some(CaptureState::ReadbackReady(name)) => Some(name),
+        pending => {
+            *capture = pending;
+            None
+        }
+    }
+}
+
+const fn text_speed_value(speed: TextSpeed) -> u8 {
+    match speed {
+        TextSpeed::Instant => 0,
+        TextSpeed::Normal => 1,
+        TextSpeed::Slow => 2,
+    }
+}
+
+fn binding_labels(bindings: &KeyBindings) -> BindingLabels {
+    BindingLabels {
+        food: bindings.food.label().to_owned(),
+        play: bindings.play.label().to_owned(),
+        comfort: bindings.comfort.label().to_owned(),
+        settings: bindings.settings.label().to_owned(),
+        cancel: bindings.cancel.label().to_owned(),
+    }
+}
+
+fn binding_key(key: &Key) -> Option<BindingKey> {
+    match key {
+        Key::Named(NamedKey::Escape) => Some(BindingKey::Escape),
+        Key::Named(NamedKey::F1) => Some(BindingKey::F1),
+        Key::Named(NamedKey::F2) => Some(BindingKey::F2),
+        Key::Named(NamedKey::F3) => Some(BindingKey::F3),
+        Key::Named(NamedKey::F4) => Some(BindingKey::F4),
+        Key::Named(NamedKey::F5) => Some(BindingKey::F5),
+        Key::Named(NamedKey::F6) => Some(BindingKey::F6),
+        Key::Named(NamedKey::F7) => Some(BindingKey::F7),
+        Key::Named(NamedKey::F8) => Some(BindingKey::F8),
+        Key::Named(NamedKey::F9) => Some(BindingKey::F9),
+        Key::Named(NamedKey::F10) => Some(BindingKey::F10),
+        Key::Named(NamedKey::F11) => Some(BindingKey::F11),
+        Key::Named(NamedKey::F12) => Some(BindingKey::F12),
+        _ => None,
     }
 }
 
@@ -639,6 +1424,7 @@ fn clears_speech(command: &SessionCommand) -> bool {
     matches!(
         command,
         SessionCommand::Feed { .. }
+            | SessionCommand::DropFood { .. }
             | SessionCommand::Play { .. }
             | SessionCommand::Comfort
             | SessionCommand::Tidy
@@ -649,10 +1435,16 @@ fn clears_speech(command: &SessionCommand) -> bool {
 #[cfg(test)]
 mod tests {
     use beastie_core::{Reaction, ToyId};
-    use beastie_session::SessionCommand;
-    use beastie_view::{UiAction, UiMode};
+    use beastie_session::{SESSION_PROTOCOL_VERSION, SESSION_SAVE_VERSION, SessionCommand};
+    use beastie_view::{UiAction, ViewState};
 
-    use super::{clears_speech, idle_shortcut, play_command};
+    use super::{
+        CaptureState, clears_speech, effective_dialogue_text_speed, load_session,
+        mark_capture_rendered, mouth_phase, play_command, revealed_text, show_dialogue_caption,
+        take_capture_for_readback,
+    };
+    use crate::save_store::SaveStore;
+    use crate::settings::TextSpeed;
 
     #[test]
     fn toy_ui_actions_map_to_typed_play_commands() {
@@ -676,7 +1468,7 @@ mod tests {
             UiAction::Play(ToyId::Ball),
             UiAction::Play(ToyId::Bell),
             UiAction::Play(ToyId::Sock),
-            UiAction::Tidy,
+            UiAction::Inspect,
             UiAction::Comfort,
             UiAction::Talk,
             UiAction::React(Reaction::Laugh),
@@ -688,6 +1480,10 @@ mod tests {
     fn unrelated_player_commands_clear_visible_speech_but_ticks_do_not() {
         assert!(clears_speech(&SessionCommand::Feed {
             food: beastie_core::FoodId::Berry,
+        }));
+        assert!(clears_speech(&SessionCommand::DropFood {
+            food: beastie_core::FoodId::Berry,
+            position: beastie_core::NormalizedPosition::new(1_000, 2_000),
         }));
         assert!(clears_speech(&SessionCommand::Play { toy: ToyId::Ball }));
         assert!(clears_speech(&SessionCommand::Comfort));
@@ -704,19 +1500,113 @@ mod tests {
     }
 
     #[test]
-    fn direct_shortcuts_do_not_bypass_open_modals() {
+    fn text_reveal_is_unicode_safe_and_instant_is_an_accessibility_override() {
         assert_eq!(
-            idle_shortcut(UiMode::Idle, "F"),
-            Some(UiAction::OpenFoodChoice)
+            revealed_text("héy", 30, TextSpeed::Normal),
+            ("hé".to_owned(), false)
         );
-        for mode in [
-            UiMode::Context(beastie_view::UiTarget::Bowl),
-            UiMode::FoodChoice,
-            UiMode::ToyChoice,
-            UiMode::OnScreenKeyboard,
-        ] {
-            assert_eq!(idle_shortcut(mode, "f"), None);
-            assert_eq!(idle_shortcut(mode, "t"), None);
-        }
+        assert_eq!(
+            revealed_text("héy", 0, TextSpeed::Instant),
+            ("héy".to_owned(), true)
+        );
+    }
+
+    #[test]
+    fn scripted_dialogue_is_fully_visible_at_capture_time() {
+        assert_eq!(
+            effective_dialogue_text_speed(TextSpeed::Slow, true),
+            TextSpeed::Instant
+        );
+        assert_eq!(
+            effective_dialogue_text_speed(TextSpeed::Slow, false),
+            TextSpeed::Slow
+        );
+    }
+
+    #[test]
+    fn subtitles_suppress_only_the_visible_dialogue_caption() {
+        let mut view = ViewState::default();
+        let reveal =
+            show_dialogue_caption(&mut view, "audible rude fish", 42, false, TextSpeed::Normal);
+        assert!(reveal.is_none());
+        assert!(view.speech.is_none());
+        assert!(view.speech_expires_at_ms.is_none());
+
+        let reveal =
+            show_dialogue_caption(&mut view, "visible rude fish", 43, true, TextSpeed::Normal);
+        assert!(reveal.is_some());
+        assert_eq!(view.speech.as_deref(), Some("visible rude fish"));
+    }
+
+    #[test]
+    fn genuine_v2_game_save_loads_continues_and_is_rewritten_as_v3() {
+        let directory =
+            std::env::temp_dir().join(format!("beastie-v2-game-migration-{}", std::process::id()));
+        let path = directory.join("main.json");
+        let store = SaveStore::new(path.clone());
+        store
+            .store(include_str!("../../../fixtures/saves/v2-mvp-session.json"))
+            .expect("store historical V2 fixture");
+
+        let (mut session, message, resumed, save_enabled) = load_session(&store);
+        assert!(resumed);
+        assert!(save_enabled);
+        assert_eq!(message.as_deref(), Some("you came back."));
+        assert_eq!(session.world().creature.name, "Mop");
+        assert_eq!(session.world().creature.memories.len(), 5);
+        assert!(!session.world().aquarium.objects.is_empty());
+
+        let before = session.world().elapsed_ms;
+        session
+            .apply(beastie_session::CommandEnvelope {
+                version: SESSION_PROTOCOL_VERSION,
+                command: SessionCommand::Tick {
+                    milliseconds: 1_000,
+                },
+            })
+            .expect("continue migrated game");
+        assert_eq!(session.world().elapsed_ms, before + 1_000);
+
+        let current = session
+            .capture(super::unix_time_ms())
+            .to_json()
+            .expect("serialize current session save");
+        store.store(&current).expect("write migrated V3 save");
+        let value = serde_json::from_str::<serde_json::Value>(&current).expect("current JSON");
+        assert_eq!(value["version"], SESSION_SAVE_VERSION);
+        assert_eq!(value["world"]["save_version"], beastie_core::SAVE_VERSION);
+        assert!(value["world"].get("room").is_none());
+        assert!(value["world"].get("aquarium").is_some());
+
+        let (reloaded, _, reloaded_from_disk, writable) = load_session(&store);
+        assert!(reloaded_from_disk);
+        assert!(writable);
+        assert_eq!(reloaded.world().creature.name, "Mop");
+        std::fs::remove_dir_all(directory).expect("clean migration fixture directory");
+    }
+
+    #[test]
+    fn protocol_mouth_timing_drives_repeatable_open_close_rest_phases() {
+        let timing = beastie_protocol::MouthTiming {
+            open_ms: 60,
+            close_ms: 40,
+            syllable_ms: 160,
+        };
+        assert_eq!(mouth_phase(timing, 0), 2);
+        assert_eq!(mouth_phase(timing, 70), 0);
+        assert_eq!(mouth_phase(timing, 120), 1);
+        assert_eq!(mouth_phase(timing, 160), 2);
+    }
+
+    #[test]
+    fn scripted_capture_waits_for_submitted_render_before_readback() {
+        let mut capture = Some(CaptureState::RenderPending("aquarium".to_owned()));
+        assert_eq!(take_capture_for_readback(&mut capture), None);
+        assert!(mark_capture_rendered(&mut capture));
+        assert_eq!(
+            take_capture_for_readback(&mut capture).as_deref(),
+            Some("aquarium")
+        );
+        assert_eq!(capture, None);
     }
 }

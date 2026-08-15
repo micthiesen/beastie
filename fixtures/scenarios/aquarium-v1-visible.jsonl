@@ -1,0 +1,22 @@
+{"version":1,"command":"inspect"}
+{"version":1,"command":"capture","name":"01-aquarium-hatch"}
+{"version":1,"command":"cursor","position":{"x":7600,"y":3200}}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":7200,"y":1800}}
+{"version":1,"command":"capture","name":"02-food-dropped"}
+{"version":1,"command":"tick","milliseconds":1000}
+{"version":1,"command":"capture","name":"03-food-noticed"}
+{"version":1,"command":"tick","milliseconds":3000}
+{"version":1,"command":"capture","name":"04-approach"}
+{"version":1,"command":"tick","milliseconds":8000}
+{"version":1,"command":"capture","name":"05-food-resolution"}
+{"version":1,"command":"name","target":"creature","name":"Muck"}
+{"version":1,"command":"talk","text":"Do you remember the berry?"}
+{"version":1,"command":"capture","name":"06-expression-and-talk"}
+{"version":1,"command":"play","toy":"bell"}
+{"version":1,"command":"comfort"}
+{"version":1,"command":"capture","name":"07-affection"}
+{"version":1,"command":"save"}
+{"version":1,"command":"advance","minutes":15}
+{"version":1,"command":"load"}
+{"version":1,"command":"inspect"}
+{"version":1,"command":"capture","name":"08-restored"}

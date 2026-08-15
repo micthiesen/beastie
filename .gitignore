@@ -1,6 +1,8 @@
 /target
 /.env
 /.DS_Store
+__pycache__/
+*.pyc
 /dist
 /models/*.gguf
 /models/*.onnx

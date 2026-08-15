@@ -7,6 +7,8 @@ mod process;
 mod renderer;
 mod save_store;
 mod scenario;
+mod settings;
+mod transcript;
 mod tts;
 
 use app::Game;

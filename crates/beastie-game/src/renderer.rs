@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use beastie_view::{RectCommand, RenderPlan, SpriteCommand, TextCommand};
+use beastie_view::{RectCommand, RenderPlan, SpriteCommand, SpriteFlip, TextCommand};
+use font8x8::{BASIC_FONTS, UnicodeFonts};
 use ggez::graphics::{
-    Canvas, Color, DrawMode, DrawParam, Image, ImageFormat, Mesh, Rect, Sampler, Text,
+    Canvas, Color, DrawMode, DrawParam, Image, ImageFormat, Mesh, MeshBuilder, Rect, Sampler,
 };
 use ggez::{Context, GameError, GameResult};
 use image::{ColorType, ImageFormat as EncodingFormat};
@@ -37,6 +38,14 @@ impl AssetCatalog {
         self.images
             .get(&asset_key(&command.id, Some(command.frame)))
             .or_else(|| self.images.get(&asset_key(&command.id, None)))
+            .or_else(|| {
+                matches!(
+                    command.id.as_str(),
+                    "creature-v1/hover" | "creature-v1/swim" | "creature-v1/eat-recoil"
+                )
+                .then(|| self.images.get(&asset_key("creature-v1/base", None)))
+                .flatten()
+            })
     }
 
     fn has_base(&self, id: &str) -> bool {
@@ -87,6 +96,15 @@ pub struct Viewport {
 impl Viewport {
     #[must_use]
     pub fn for_drawable(width: f32, height: f32) -> Self {
+        if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+            return Self {
+                x: 0.0,
+                y: 0.0,
+                scale: 1.0,
+                width: LOGICAL_WIDTH,
+                height: LOGICAL_HEIGHT,
+            };
+        }
         let scale = ((width / LOGICAL_WIDTH).min(height / LOGICAL_HEIGHT))
             .floor()
             .max(1.0);
@@ -99,6 +117,12 @@ impl Viewport {
             width: viewport_width,
             height: viewport_height,
         }
+    }
+
+    #[must_use]
+    pub fn window_dimensions(scale: u8) -> (f32, f32) {
+        let scale = f32::from(scale.clamp(1, 6));
+        (LOGICAL_WIDTH * scale, LOGICAL_HEIGHT * scale)
     }
 
     #[must_use]
@@ -178,7 +202,7 @@ pub fn execute_plan(
             draw_sprite(ctx, canvas, command, assets)?;
         }
         for command in plan.text.iter().filter(|command| command.layer == layer) {
-            draw_text(canvas, command);
+            draw_text(ctx, canvas, command)?;
         }
     }
     Ok(())
@@ -197,7 +221,7 @@ fn draw_rect(ctx: &mut Context, canvas: &mut Canvas, command: &RectCommand) -> G
         command.color[2],
         command.color[3],
     );
-    let mode = if command.id == "ui/focus" {
+    let mode = if command.outline {
         DrawMode::stroke(1.0)
     } else {
         DrawMode::fill()
@@ -218,7 +242,29 @@ fn draw_sprite(
     let x = command.x as f32;
     let y = command.y as f32;
     if let Some(image) = assets.image(command) {
-        canvas.draw(image, DrawParam::default().dest([x, y]));
+        let integer_scale = f32::from(command.scale.max(1));
+        let source = command.source_rect.map(|source| {
+            Rect::new(
+                source.x as f32 / image.width() as f32,
+                source.y as f32 / image.height() as f32,
+                source.w as f32 / image.width() as f32,
+                source.h as f32 / image.height() as f32,
+            )
+        });
+        let source_width = command
+            .source_rect
+            .map_or(image.width() as f32, |source| source.w as f32);
+        let (destination_x, scale_x) = match command.flip {
+            SpriteFlip::None => (x, integer_scale),
+            SpriteFlip::Horizontal => (x + source_width * integer_scale, -integer_scale),
+        };
+        let mut parameters = DrawParam::default()
+            .dest([destination_x, y])
+            .scale([scale_x, integer_scale]);
+        if let Some(source) = source {
+            parameters = parameters.src(source);
+        }
+        canvas.draw(image, parameters);
         return Ok(());
     }
     // The canonical room background already includes these fixtures. Their
@@ -229,6 +275,67 @@ fn draw_sprite(
         return Ok(());
     }
     match command.id.as_str() {
+        "aquarium/background" => {
+            rectangle(ctx, canvas, x, y, 320.0, 148.0, [20, 63, 83, 255])?;
+            rectangle(ctx, canvas, x, y + 82.0, 320.0, 66.0, [27, 82, 91, 255])?;
+        }
+        "aquarium/cave" => {
+            ellipse(
+                ctx,
+                canvas,
+                x + 31.0,
+                y + 35.0,
+                29.0,
+                26.0,
+                [34, 40, 52, 255],
+            )?;
+            ellipse(
+                ctx,
+                canvas,
+                x + 34.0,
+                y + 40.0,
+                18.0,
+                17.0,
+                [11, 24, 34, 255],
+            )?;
+        }
+        "aquarium/plants" => {
+            for offset in [8.0, 25.0, 44.0, 66.0, 84.0] {
+                rectangle(
+                    ctx,
+                    canvas,
+                    x + offset,
+                    y + 15.0,
+                    3.0,
+                    49.0,
+                    [48, 118, 85, 255],
+                )?;
+            }
+        }
+        "aquarium/toys" => {
+            circle(ctx, canvas, x + 16.0, y + 17.0, 10.0, [191, 105, 76, 255])?;
+            rectangle(
+                ctx,
+                canvas,
+                x + 46.0,
+                y + 8.0,
+                20.0,
+                18.0,
+                [182, 151, 78, 255],
+            )?;
+        }
+        "creature-v1/base"
+        | "creature-v1/hover"
+        | "creature-v1/swim"
+        | "creature-v1/eat-recoil" => draw_aquatic_creature(ctx, canvas, x, y)?,
+        id if id.starts_with("creature-v1/face/") => {
+            draw_expression(ctx, canvas, id, x, y)?;
+        }
+        id if id.starts_with("creature-v1/gaze/") => draw_gaze(ctx, canvas, id, x, y)?,
+        id if id.starts_with("creature-v1/effect/") => {
+            circle(ctx, canvas, x + 112.0, y + 35.0, 3.0, [181, 228, 224, 220])?;
+            circle(ctx, canvas, x + 122.0, y + 22.0, 2.0, [181, 228, 224, 180])?;
+        }
         "room/background" => {
             rectangle(ctx, canvas, x, y, 320.0, 180.0, [73, 55, 65, 255])?;
             rectangle(ctx, canvas, 0.0, 105.0, 320.0, 75.0, [104, 73, 61, 255])?;
@@ -287,6 +394,81 @@ fn draw_sprite(
     Ok(())
 }
 
+fn draw_aquatic_creature(ctx: &mut Context, canvas: &mut Canvas, x: f32, y: f32) -> GameResult {
+    ellipse(
+        ctx,
+        canvas,
+        x + 82.0,
+        y + 84.0,
+        35.0,
+        44.0,
+        [177, 199, 130, 255],
+    )?;
+    let tail = [
+        [x + 47.0, y + 79.0],
+        [x + 20.0, y + 61.0],
+        [x + 25.0, y + 98.0],
+    ];
+    canvas.draw(
+        &Mesh::new_polygon(ctx, DrawMode::fill(), &tail, rgba([151, 183, 124, 255]))?,
+        DrawParam::default(),
+    );
+    circle(ctx, canvas, x + 70.0, y + 76.0, 7.0, [230, 224, 180, 255])?;
+    circle(ctx, canvas, x + 95.0, y + 76.0, 7.0, [230, 224, 180, 255])?;
+    circle(ctx, canvas, x + 70.0, y + 77.0, 3.0, [28, 31, 36, 255])?;
+    circle(ctx, canvas, x + 95.0, y + 77.0, 3.0, [28, 31, 36, 255])?;
+    Ok(())
+}
+
+fn draw_expression(ctx: &mut Context, canvas: &mut Canvas, id: &str, x: f32, y: f32) -> GameResult {
+    let color = [28, 31, 36, 255];
+    if id.ends_with("sleepy") || id.ends_with("blink") {
+        rectangle(ctx, canvas, x + 63.0, y + 76.0, 14.0, 2.0, color)?;
+        rectangle(ctx, canvas, x + 88.0, y + 76.0, 14.0, 2.0, color)?;
+    }
+    if id.ends_with("angry") || id.ends_with("suspicious") {
+        rectangle(ctx, canvas, x + 62.0, y + 65.0, 15.0, 2.0, color)?;
+        rectangle(ctx, canvas, x + 89.0, y + 65.0, 15.0, 2.0, color)?;
+    }
+    if id.ends_with("delighted") || id.ends_with("smug") {
+        rectangle(ctx, canvas, x + 77.0, y + 94.0, 14.0, 3.0, color)?;
+    } else if id.ends_with("lonely") || id.ends_with("wary") {
+        rectangle(ctx, canvas, x + 78.0, y + 98.0, 12.0, 2.0, color)?;
+    }
+    Ok(())
+}
+
+fn draw_gaze(ctx: &mut Context, canvas: &mut Canvas, id: &str, x: f32, y: f32) -> GameResult {
+    let (dx, dy) = if id.ends_with("left") {
+        (-2.0, 0.0)
+    } else if id.ends_with("right") || id.ends_with("player") {
+        (2.0, 0.0)
+    } else if id.ends_with("up") {
+        (0.0, -2.0)
+    } else if id.ends_with("down") {
+        (0.0, 2.0)
+    } else {
+        (0.0, 0.0)
+    };
+    circle(
+        ctx,
+        canvas,
+        x + 70.0 + dx,
+        y + 77.0 + dy,
+        2.0,
+        [8, 13, 19, 255],
+    )?;
+    circle(
+        ctx,
+        canvas,
+        x + 95.0 + dx,
+        y + 77.0 + dy,
+        2.0,
+        [8, 13, 19, 255],
+    )?;
+    Ok(())
+}
+
 fn draw_creature(ctx: &mut Context, canvas: &mut Canvas, pose: &str, x: f32, y: f32) -> GameResult {
     let body = if pose == "creature/annoyed" {
         [176, 154, 100, 255]
@@ -319,22 +501,54 @@ fn draw_creature(ctx: &mut Context, canvas: &mut Canvas, pose: &str, x: f32, y: 
     Ok(())
 }
 
-fn draw_text(canvas: &mut Canvas, command: &TextCommand) {
-    let mut text = Text::new(command.text.as_str());
-    text.set_scale(if command.id == "speech/text" {
-        9.0
+fn draw_text(ctx: &mut Context, canvas: &mut Canvas, command: &TextCommand) -> GameResult {
+    let pixel_scale = i32::from(command.scale.clamp(1, 2));
+    let glyph_advance = 6 * pixel_scale;
+    let line_advance = 8 * pixel_scale;
+    let maximum_width = if command.id == "speech/text" {
+        150
     } else {
-        8.0
-    });
-    if command.id == "speech/text" {
-        text.set_bounds([150.0, 36.0]);
+        315 - command.x
+    };
+    let mut cursor_x = 0;
+    let mut cursor_y = 0;
+    let mut builder = MeshBuilder::new();
+    for character in command.text.chars() {
+        if character == '\n' || cursor_x + glyph_advance > maximum_width {
+            cursor_x = 0;
+            cursor_y += line_advance;
+            if character == '\n' {
+                continue;
+            }
+        }
+        let glyph = BASIC_FONTS.get(character).unwrap_or_else(|| {
+            BASIC_FONTS
+                .get('?')
+                .expect("the built-in bitmap font contains a fallback glyph")
+        });
+        for (row, bits) in glyph.into_iter().enumerate() {
+            for column in 0_u8..5 {
+                if bits & (1 << column) != 0 {
+                    builder.rectangle(
+                        DrawMode::fill(),
+                        Rect::new(
+                            (command.x + cursor_x + i32::from(column) * pixel_scale) as f32,
+                            (command.y
+                                + cursor_y
+                                + i32::try_from(row).unwrap_or_default() * pixel_scale)
+                                as f32,
+                            pixel_scale as f32,
+                            pixel_scale as f32,
+                        ),
+                        Color::from_rgb(238, 224, 194),
+                    )?;
+                }
+            }
+        }
+        cursor_x += glyph_advance;
     }
-    canvas.draw(
-        &text,
-        DrawParam::default()
-            .dest([command.x as f32, command.y as f32])
-            .color(Color::from_rgb(238, 224, 194)),
-    );
+    canvas.draw(&Mesh::from_data(ctx, builder.build()), DrawParam::default());
+    Ok(())
 }
 
 fn rectangle(
@@ -449,5 +663,22 @@ mod tests {
             asset_relative_path("creature/walk", Some(1)),
             std::path::PathBuf::from("creature/walk-1.png")
         );
+    }
+
+    #[test]
+    fn supported_window_sizes_are_exact_integer_multiples() {
+        for scale in 1..=6 {
+            let (width, height) = Viewport::window_dimensions(scale);
+            let viewport = Viewport::for_drawable(width, height);
+            assert_eq!(viewport.scale, f32::from(scale));
+            assert_eq!((viewport.x, viewport.y), (0.0, 0.0));
+        }
+    }
+
+    #[test]
+    fn invalid_transient_drawable_sizes_are_safe() {
+        for (width, height) in [(0.0, 0.0), (f32::NAN, 100.0), (100.0, f32::INFINITY)] {
+            assert_eq!(Viewport::for_drawable(width, height).scale, 1.0);
+        }
     }
 }

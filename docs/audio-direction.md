@@ -1,66 +1,103 @@
 # Audio direction
 
-The MVP cue set is deliberately tiny, dry, and synthetic. UI sounds should feel crisp without
-resembling a phone notification. Creature noises should sound like a peculiar electronic animal,
-not speech and not a human performing an animal voice. TTS remains a separate replaceable layer.
+Beastie's aquarium sounds intimate, submerged, slightly grotty, and alive. The mix is deliberately
+small and dry enough that dialogue remains the focus. UI sounds stay crisp without resembling a
+phone notification. Creature noises sound like a peculiar electronic animal, not speech and not a
+human performing an animal voice. TTS is a separate replaceable layer.
 
-## Authored cues
+All authored files are mono, 44.1 kHz, signed 16-bit PCM WAV. One-shots include their own short
+fades. `environment/underwater-loop` is exactly 12 seconds and phase-locked at its boundary.
 
-All files are mono, 44.1 kHz, signed 16-bit PCM WAV. Their short fades make them safe to trigger
-without added runtime envelopes.
+## V1 event map
 
-| Audio event | Generated asset | Duration | Peak | RMS | Intended trigger |
-|---|---|---:|---:|---:|---|
-| `ui/select` | `generated/audio/ui/select.wav` | 0.105 s | -10.03 dBFS | -15.23 dBFS | Focus moves to a new enabled hit region |
-| `ui/confirm` | `generated/audio/ui/confirm.wav` | 0.180 s | -8.76 dBFS | -14.50 dBFS | A semantic player command is accepted |
-| `creature/mrr` | `generated/audio/creature/mrr.wav` | 0.440 s | -4.59 dBFS | -13.01 dBFS | Contented acknowledgment, comfort, or nonverbal dialogue fallback |
-| `creature/annoyed` | `generated/audio/creature/annoyed.wav` | 0.460 s | -4.33 dBFS | -11.69 dBFS | `FoodRejected`, `ToyRejected`, or an annoyed nonverbal act |
-| `creature/sleep` | `generated/audio/creature/sleep.wav` | 1.100 s | -7.12 dBFS | -16.37 dBFS | `SleepStarted`, once rather than looped every tick |
+| Audio ID | Duration | Peak | RMS | Authoritative trigger |
+|---|---:|---:|---:|---|
+| `environment/underwater-loop` | 12.000 s | -17.00 dBFS | -25.92 dBFS | Continuous aquarium bed while the habitat is visible |
+| `environment/bubbles-1` | 0.820 s | -10.50 dBFS | -20.27 dBFS | Ambient bubble emitter, variant chosen deterministically |
+| `environment/bubbles-2` | 1.080 s | -11.00 dBFS | -21.70 dBFS | Ambient bubble emitter, variant chosen deterministically |
+| `movement/swim-wake` | 0.720 s | -12.50 dBFS | -21.24 dBFS | A new purposeful swim or dash begins, never every movement tick |
+| `food/drop-sink` | 0.620 s | -7.50 dBFS | -18.46 dBFS | A physical food object is accepted into the aquarium |
+| `food/eat` | 0.480 s | -6.50 dBFS | -16.68 dBFS | The simulation resolves food as eaten |
+| `food/spit-reject` | 0.560 s | -6.80 dBFS | -15.35 dBFS | The simulation resolves food as tasted then rejected |
+| `environment/sand-disturb` | 0.780 s | -13.00 dBFS | -24.55 dBFS | Creature or object makes meaningful contact with the substrate |
+| `environment/cave-settle` | 0.680 s | -10.00 dBFS | -21.39 dBFS | Creature completes a retreat/rest action in the cave |
+| `object/toy-impact` | 0.340 s | -8.50 dBFS | -18.37 dBFS | An authoritative toy collision or play action resolves |
+| `creature/affection` | 0.640 s | -7.50 dBFS | -16.98 dBFS | Positive touch, comfort, or attachment response |
+| `creature/surprise` | 0.420 s | -7.20 dBFS | -15.79 dBFS | Startle or high-salience unexpected event |
+| `creature/curious` | 0.580 s | -8.50 dBFS | -15.38 dBFS | Investigation begins or a novel object earns attention |
+| `creature/sad` | 0.860 s | -10.00 dBFS | -14.75 dBFS | Brief low-valence nonverbal response, not a neglect alarm |
+| `creature/wake` | 0.460 s | -9.00 dBFS | -17.55 dBFS | Sleep ends and the creature becomes responsive |
+| `creature/mrr` | 0.440 s | -4.59 dBFS | -13.01 dBFS | Contented acknowledgment or neutral nonverbal dialogue fallback |
+| `creature/annoyed` | 0.460 s | -4.33 dBFS | -11.69 dBFS | Annoyance event or direct rejection without a spit action |
+| `creature/sleep` | 1.100 s | -7.12 dBFS | -16.37 dBFS | Sleep starts, once rather than looped every tick |
+| `ui/select` | 0.105 s | -10.03 dBFS | -15.23 dBFS | Focus moves to a new enabled hit region |
+| `ui/confirm` | 0.180 s | -8.76 dBFS | -14.50 dBFS | A semantic player command is accepted |
 
-Do not emit selection audio from render planning every frame. Emit it only when the focused region
-changes. Confirm belongs to accepted input, not pointer-down. Creature cues belong to authoritative
-game events. If speech and a creature cue coincide, let the cue finish or duck it before TTS rather
-than stacking both at full volume.
+The simulation or session layer chooses semantic events. Rendering may place or attenuate them,
+but must not infer that an interaction succeeded. Ambient bubble variants should be selected from a
+seeded presentation stream, with 4 to 13 seconds between bursts, so captures and scripted runs can
+be reproduced.
 
-## Provenance
+## Mix and layering
 
-These sounds were authored for Beastie on 2026-08-15 with a deterministic local PCM synthesizer
-using sine harmonics, envelopes, and seeded pseudo-random noise. No third-party samples, model
-output, online service, or restricted source material was used. The generator was a temporary
-development tool and is not a runtime dependency.
+- Treat `environment/underwater-loop` as the reference bed at 0.35 linear gain. Loop it gaplessly,
+  without re-decoding or creating a fresh player at each boundary.
+- Play ordinary aquarium one-shots at 0.40 to 0.55. Keep `movement/swim-wake` at or below 0.38 and
+  rate-limit it to one start cue per 700 ms so continuous motion does not become noise.
+- Let no more than two bubble one-shots overlap. If a third starts, discard the oldest or quietest.
+- On creature vocalization, duck the ambience by 4 dB with a 35 ms attack and 180 ms release. On
+  TTS, duck ambience by 7 dB and other creature cues by 5 dB, with a 45 ms attack and 260 ms release.
+- Do not stack `food/spit-reject` with `creature/annoyed` at full level. Prefer the physical cue,
+  then optionally play annoyance after 180 ms at half gain. Dialogue owns the loudness ceiling.
 
-| File | SHA-256 |
+Missing assets, invalid decodes, an unavailable output device, and a failed loop must remain
+non-fatal. The game stays fully playable in silence.
+
+## Provenance and synthesis
+
+Every file was authored for Beastie on 2026-08-15 by a deterministic local Python PCM synthesizer.
+The V1 batch uses additive sine harmonics, sample-integrated chirps, shaped envelopes, and seeded
+pseudo-random noise. The ambience uses only phase-locked integer-cycle oscillators, including its
+bubble glints, so it repeats without a crossfade or copyrighted sample. The generator was a
+temporary development tool and is not a runtime dependency. Existing MVP cues use the same local
+synthesis approach. No third-party samples, model output, online service, or restricted source
+material was used.
+
+| File below `assets/generated/audio/` | SHA-256 |
 |---|---|
+| `creature/affection.wav` | `e0cf426b84346681ec7b2bc7ef716f6b6a0e4eb570fbcd901b147bc6478eff79` |
 | `creature/annoyed.wav` | `3f7ce97ef33a9e168bb6500016bc80cd07ecd84428484c3cb0e3b0fdadadfa6e` |
+| `creature/curious.wav` | `200dbbeba0bb09ecd73d97a08738e142f6d38849a8e1ebbd3fa29a24438be43a` |
 | `creature/mrr.wav` | `da92b76f9684db6e0afa0efa721d7f957d2a738aa82cdb58ef366ae4cc0124a1` |
+| `creature/sad.wav` | `32ffc0531c6673e778e6855bc01652822708dea22710c2295ef92f1565b9f079` |
 | `creature/sleep.wav` | `b76720fac4545a0e45bf3257e10a668ae92fb40f15dbef4c6c2f0e471f9deeea` |
+| `creature/surprise.wav` | `edbc5eb64916d38121ea47340c263647d327c624b10be0578609c6fd685ca69c` |
+| `creature/wake.wav` | `e80856be26b1a646b657527fc103c9feb30377277765f1d4a63698eb6ed83c59` |
+| `environment/bubbles-1.wav` | `b8942a78cce5b559e17a9ca51c43a18ecfce4e5cf7323ee5745d5d70f2ba0039` |
+| `environment/bubbles-2.wav` | `56eb6bbff01bde5b581acb1bbea30806922182ee651cdc128ddf5c0b56b7f0f1` |
+| `environment/cave-settle.wav` | `f7b6ab7a4a449455e1b3e6798ee49d113b71565ada8bcf7eaa57d502ef80f77a` |
+| `environment/sand-disturb.wav` | `376d198de6423d85dd9185e630abfdbc728de6e6d52131040a501e5b973e5194` |
+| `environment/underwater-loop.wav` | `05a5d3ebdddfa97d9173cbb6cff64fb65edea27d5602fb909bc42a58fb16c053` |
+| `food/drop-sink.wav` | `ddde1ebc9140bdf4457c993c023eb46e72da3fee0699ee45a682d3148d046667` |
+| `food/eat.wav` | `c30519619fd2fe437f69a177a22f2aa961d34698a83a2b10d2f07b97e2dcd40a` |
+| `food/spit-reject.wav` | `fb512e71ab8d6403fa866dd87fea98dadc0e976f51f7621dba2a28aab38b535c` |
+| `movement/swim-wake.wav` | `0f0ed6e2b4c41a8ae13df0cf2985f9a27cd10509703dc6e8d8e773aa46451de8` |
+| `object/toy-impact.wav` | `1a6ac2f71c72bde130149ee02e64b04116332ebab6244d08fcd96ec50119a649` |
 | `ui/confirm.wav` | `92a6d1e8504be4a2c38757f4f893235689bc771a5955d0f130685b26ff369c1a` |
 | `ui/select.wav` | `2c57986e0d9988304fd4abb96976db265d084dd33cff24d158b117136dad66aa` |
 
-Validation decoded every file with FFmpeg and independently checked headers and PCM samples. All
-five files have one channel, 44,100 Hz sample rate, 16-bit sample width, finite duration, no clipped
-samples, and absolute DC offset below 0.002.
+## Validation
+
+FFmpeg decoded all 20 files without error. An independent PCM pass confirmed one channel, 44,100
+Hz sample rate, 16-bit sample width, finite non-empty duration, no clipped samples, and absolute DC
+offset below 0.002 for every cue. Peaks range from -17.00 to -4.33 dBFS, leaving mix headroom. The
+ambience loop's last-to-first sample delta is 0.000061 full scale and its boundary slope mismatch is
+below 0.000001 full scale, both safely below audibility.
 
 ## Runtime integration
 
 The game disables ggez's compile-time audio feature because ggez treats failure to open the default
 output device as a fatal context error. It uses rodio directly instead, opening the default output
-sink opportunistically. If no sink exists, the rest of the game still starts and queued cues are
-discarded.
-
-Resolve each event through `assets/final/audio/<id>.wav`, then
-`assets/generated/audio/<id>.wav`. Decode and cache valid bytes once at startup. Each trigger creates
-a detached one-shot player on the retained mixer so short cues may overlap:
-
-```rust
-use std::io::Cursor;
-use rodio::{DeviceSinkBuilder, play};
-
-let output = DeviceSinkBuilder::open_default_sink()?;
-let player = play(output.mixer(), Cursor::new(wav_bytes))?;
-player.set_volume(0.32);
-player.detach();
-```
-
-The output sink must outlive every player. Missing or invalid assets, decode errors, playback errors,
-and an unavailable output device are all non-fatal, consistent with the game's fallback invariant.
+sink opportunistically. Resolve each event through `assets/final/audio/<id>.wav`, then
+`assets/generated/audio/<id>.wav`, and decode/cache valid bytes once at startup. Each one-shot may
+use a detached player on the retained mixer. The output sink must outlive every player.

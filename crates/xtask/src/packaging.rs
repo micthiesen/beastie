@@ -45,6 +45,15 @@ impl Platform {
         }
     }
 
+    /// Stable human-facing artifact name used by release automation.
+    pub const fn artifact_name(self) -> &'static str {
+        match self {
+            Self::Macos => "Beastie-macos.dmg",
+            Self::Windows => "Beastie-windows-setup.exe",
+            Self::Linux => "Beastie-linux.AppImage",
+        }
+    }
+
     fn game_name(self) -> &'static str {
         match self {
             Self::Macos => "beastie",
@@ -361,10 +370,11 @@ pub fn build(options: PackageOptions<'_>) -> Result<PackageReport> {
     fs::write(&manifest_path, format!("{json}\n"))
         .with_context(|| format!("failed to write {}", manifest_path.display()))?;
     println!(
-        "package {} staged: {} files, {} bytes, network disabled",
+        "package {} staged: {} files, {} bytes, artifact {}, network disabled",
         options.platform.as_str(),
         report.files.len(),
-        report.total_bytes
+        report.total_bytes,
+        options.platform.artifact_name()
     );
     staging.commit();
     Ok(report)
@@ -955,9 +965,15 @@ fn inventory_directory(
     {
         let entry = entry.context("failed to read package directory entry")?;
         let path = entry.path();
-        if path.is_dir() {
+        let file_type = entry
+            .file_type()
+            .context("failed to inspect package directory entry")?;
+        if file_type.is_symlink() {
+            bail!("package contains unsupported symlink: {}", path.display());
+        }
+        if file_type.is_dir() {
             inventory_directory(root, &path, files)?;
-        } else if path.is_file() {
+        } else if file_type.is_file() {
             let relative = path
                 .strip_prefix(root)
                 .context("package path escaped destination")?
@@ -1293,6 +1309,16 @@ tracked = false
     }
 
     #[test]
+    fn platform_artifact_names_are_stable() {
+        assert_eq!(Platform::Macos.artifact_name(), "Beastie-macos.dmg");
+        assert_eq!(
+            Platform::Windows.artifact_name(),
+            "Beastie-windows-setup.exe"
+        );
+        assert_eq!(Platform::Linux.artifact_name(), "Beastie-linux.AppImage");
+    }
+
+    #[test]
     fn missing_runtime_is_a_clear_failure() {
         let options = PackageOptions {
             destination: Path::new("target/package-test"),
@@ -1557,6 +1583,33 @@ tracked = false
         let error = check(&package.destination, Platform::Macos, true)
             .expect_err("eSpeak package without corresponding source must fail");
         assert!(error.to_string().contains("packaged TTS is incomplete"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_check_rejects_symlinked_files_and_directories() {
+        use std::os::unix::fs::symlink;
+
+        let package = test_package("symlinked-package-entry");
+        build(options(&package, &package.runtime)).expect("test package should stage");
+        let root = package.destination.join("macos");
+        let outside = package.root.join("outside");
+        write_file(&outside, b"must not be followed");
+
+        fs::remove_file(root.join("LICENSE")).expect("license should be removable");
+        symlink(&outside, root.join("LICENSE")).expect("file symlink should be created");
+        let error = inventory(&root).expect_err("package inventory must reject symlinked files");
+        assert!(error.to_string().contains("unsupported symlink"));
+
+        fs::remove_file(root.join("LICENSE")).expect("file symlink should be removable");
+        write_file(&root.join("LICENSE"), b"MIT license\n");
+        let outside_dir = package.root.join("outside-dir");
+        write_file(&outside_dir.join("escape.txt"), b"must not be followed");
+        fs::remove_dir_all(root.join("assets")).expect("assets should be removable");
+        symlink(&outside_dir, root.join("assets")).expect("directory symlink should be created");
+        let error =
+            inventory(&root).expect_err("package inventory must reject symlinked directories");
+        assert!(error.to_string().contains("unsupported symlink"));
     }
 
     #[test]

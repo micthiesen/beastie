@@ -211,7 +211,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "beastie-ai-worker"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "beastie-protocol",
  "clap",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "beastie-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -235,13 +235,14 @@ dependencies = [
 
 [[package]]
 name = "beastie-game"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "beastie-core",
  "beastie-protocol",
  "beastie-session",
  "beastie-view",
  "clap",
+ "font8x8",
  "ggez",
  "image",
  "libc",
@@ -256,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "beastie-protocol"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "beastie-core",
  "serde",
@@ -266,7 +267,7 @@ dependencies = [
 
 [[package]]
 name = "beastie-session"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "beastie-core",
  "beastie-protocol",
@@ -277,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "beastie-view"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "beastie-core",
  "serde",
@@ -933,6 +934,12 @@ name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
+name = "font8x8"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "875488b8711a968268c7cf5d139578713097ca4635a76044e8fe8eedf831d07e"
 
 [[package]]
 name = "foreign-types"
@@ -4140,7 +4147,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64",

@@ -28,6 +28,11 @@ Always run `cargo xtask verify` after changes. It must stay independent of a dis
 GPU, audio device, network connection, or PixelLab credential. For visible game-shell changes,
 also run `cargo xtask dev --fake-ai` on the host platform.
 
+For macOS visible validation, stop yabai once if it interferes with Metal drawable acquisition or
+window focus, and leave it stopped for the rest of the session or until the next restart. Do not
+cycle background desktop tools off and on around every smoke run. The user prefers a temporarily
+disabled convenience service over repeated automation busy work.
+
 ## Rust conventions
 
 - Stable Rust, edition 2024, pinned by `rust-toolchain.toml`.

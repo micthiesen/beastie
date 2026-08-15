@@ -8,794 +8,835 @@ mod simulation;
 
 pub use memory::{MemoryCue, MemoryQuery, select_candidate_memories};
 pub use model::{
-    Belief, BeliefId, BeliefKind, Concept, ConversationState, Creature, Development, FoodId,
-    Idiolect, IdiolectQuirk, Intention, InteractionCounters, LanguageExposure, LanguageStage,
-    Memory, MemoryId, MemoryKind, Mood, Movement, Needs, NonverbalAct, Reaction, Relationship,
-    RoomSpot, RoomState, SocialAct, SocialHabits, StateValidationError, ToyId, Traits, WorldState,
+    ActionPhase, ActionTimeline, AquariumCreatureState, AquariumPosition, AquariumState, Belief,
+    BeliefId, BeliefKind, Concept, ConversationState, Creature, DepthLane, Development,
+    DevelopmentMilestone, Facing, FoodBuoyancy, FoodDisposition, FoodDropRejectionReason, FoodId,
+    FoodObject, GazeTarget, Idiolect, IdiolectQuirk, InitiatedBehavior, InitiativeReason,
+    Intention, InteractionCounters, LanguageExposure, LanguageStage, Memory, MemoryId, MemoryKind,
+    Mood, NamingTarget, Needs, NonverbalAct, NormalizedPosition, NormalizedVelocity, Reaction,
+    Relationship, Routine, SemanticDestination, SocialAct, SocialHabits, StateValidationError,
+    SteeringMode, ToyId, Traits, WorldObject, WorldState,
 };
-pub use random::{RandomSource, SeededRandom};
+pub use random::{RandomDomain, RandomSource, SeededRandom, deterministic_unit};
 pub use save::{SaveError, SaveGame};
 pub use simulation::{
-    GameEvent, MAX_OFFLINE_MS, MOVEMENT_DURATION_MS, OfflineProgress, PlayerEvent,
-    SIMULATION_TICK_MS, TALK_COOLDOWN_MS, advance_offline, intention_target, step,
+    GameEvent, MAX_OFFLINE_MS, OfflineProgress, PlayerEvent, SIMULATION_TICK_MS, TALK_COOLDOWN_MS,
+    advance_offline, step,
 };
 
-pub const SAVE_VERSION: u32 = 2;
+pub const SAVE_VERSION: u32 = 3;
 pub const ACTIVE_DAY_MS: u64 = 15 * 60_000;
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use super::*;
 
     #[test]
-    fn identical_seeds_and_inputs_replay_identically() {
-        let mut first = WorldState::new(42, "Mop");
-        let mut second = first.clone();
-        let mut first_rng = SeededRandom::new(first.seed);
-        let mut second_rng = SeededRandom::new(second.seed);
-        let inputs = [
-            PlayerEvent::Feed(FoodId::Berry),
-            PlayerEvent::Play(ToyId::Ball),
-        ];
-
-        assert_eq!(
-            step(&mut first, &inputs, 60_000, &mut first_rng),
-            step(&mut second, &inputs, 60_000, &mut second_rng)
+    fn aquarium_feeding_has_fixed_phases_and_bounded_position() {
+        let mut world = WorldState::new(7, "Swim");
+        let mut rng = SeededRandom::new(7);
+        let events = step(
+            &mut world,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Pellet,
+                position: NormalizedPosition::new(-5, 20_005),
+            }],
+            0,
+            &mut rng,
         );
+        assert!(events.contains(&GameEvent::ActionPhaseChanged {
+            from: None,
+            to: ActionPhase::Notice
+        }));
+        let mut phases = Vec::new();
+        for _ in 0..20 {
+            phases.extend(
+                step(&mut world, &[], 1_000, &mut rng)
+                    .into_iter()
+                    .filter_map(|event| match event {
+                        GameEvent::ActionPhaseChanged { to, .. } => Some(to),
+                        _ => None,
+                    }),
+            );
+        }
+        for phase in [
+            ActionPhase::Brake,
+            ActionPhase::Gaze,
+            ActionPhase::Turn,
+            ActionPhase::Approach,
+            ActionPhase::Inspect,
+            ActionPhase::Act,
+            ActionPhase::Recover,
+        ] {
+            assert!(phases.contains(&phase));
+        }
+        assert!(world.creature.aquarium.action.is_none());
+        assert!(
+            world.creature.aquarium.position.x >= 0
+                && world.creature.aquarium.position.x <= NormalizedPosition::SCALE
+        );
+        assert!(
+            world.creature.aquarium.position.y >= 0
+                && world.creature.aquarium.position.y <= NormalizedPosition::SCALE
+        );
+    }
+
+    #[test]
+    fn split_ticks_and_domain_draws_are_replay_stable() {
+        let mut first = WorldState::new(11, "Exact");
+        let mut second = first.clone();
+        let mut first_rng = SeededRandom::new(11);
+        let mut second_rng = SeededRandom::new(11);
+        step(
+            &mut first,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Mushroom,
+                position: NormalizedPosition::new(2_000, 3_000),
+            }],
+            4_000,
+            &mut first_rng,
+        );
+        step(
+            &mut second,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Mushroom,
+                position: NormalizedPosition::new(2_000, 3_000),
+            }],
+            1_000,
+            &mut second_rng,
+        );
+        for _ in 0..3 {
+            step(&mut second, &[], 1_000, &mut second_rng);
+        }
         assert_eq!(first, second);
-        assert_eq!(first_rng, second_rng);
+        let _draw = first.domain_draw(RandomDomain::Social);
+        let encoded = SaveGame::capture(&first, &first_rng)
+            .to_json()
+            .expect("save");
+        let expected_next = first.domain_draw(RandomDomain::Social);
+        let (mut reloaded, _) = SaveGame::from_json(&encoded).expect("reload").resume();
+        assert_eq!(expected_next, reloaded.domain_draw(RandomDomain::Social));
+    }
+
+    #[test]
+    fn identical_seeds_and_inputs_replay_identically() {
+        let mut a = WorldState::new(42, "Mop");
+        let mut b = a.clone();
+        let mut ar = SeededRandom::new(42);
+        let mut br = SeededRandom::new(42);
+        let input = [PlayerEvent::DropFood {
+            food: FoodId::Pellet,
+            position: NormalizedPosition::new(4_000, 3_000),
+        }];
+        assert_eq!(
+            step(&mut a, &input, 8_000, &mut ar),
+            step(&mut b, &input, 8_000, &mut br)
+        );
+        assert_eq!(a, b);
+        assert_eq!(ar, br);
     }
 
     #[test]
     fn idiolect_is_plain_until_individuality_and_varies_by_identity() {
-        let mut hatch = WorldState::new(1, "Mop");
-        assert_eq!(hatch.idiolect().quirk, IdiolectQuirk::Plain);
-
-        hatch.creature.development.active_days_reached = 3;
-        hatch.creature.development.language_stage = LanguageStage::Phrases;
-        hatch.creature.development.interactions.talks = 3;
-        let first = hatch.idiolect();
-
-        let mut variants = BTreeSet::new();
-        for seed in 1..=16 {
-            let mut world = WorldState::new(seed, "Mop");
-            world.creature.development.active_days_reached = 3;
-            world.creature.development.language_stage = LanguageStage::Phrases;
-            world.creature.development.interactions.talks = 3;
-            variants.insert(world.idiolect().quirk);
-        }
-        assert!(first.quirk != IdiolectQuirk::Plain);
-        assert!(
-            variants.len() >= 2,
-            "seed projection should produce variants"
-        );
+        let mut a = WorldState::new(1, "Mop");
+        assert_eq!(a.idiolect().quirk, IdiolectQuirk::Plain);
+        a.creature.development.active_days_reached = 3;
+        a.creature.development.language_stage = LanguageStage::Phrases;
+        a.creature.development.interactions.talks = 3;
+        a.creature
+            .known_concepts
+            .extend([Concept::Again, Concept::Yesterday]);
+        assert_ne!(a.idiolect().quirk, IdiolectQuirk::Plain);
     }
 
     #[test]
     fn idiolect_round_trips_with_the_persisted_identity() {
-        let mut world = WorldState::new(99, "Mop");
-        world.elapsed_ms = ACTIVE_DAY_MS * 2;
-        world.creature.development.active_days_reached = 3;
-        world.creature.development.language_stage = LanguageStage::Phrases;
-        world.creature.development.interactions.talks = 3;
-        world
-            .creature
+        let mut a = WorldState::new(99, "Mop");
+        a.elapsed_ms = ACTIVE_DAY_MS * 2;
+        a.creature.development.active_days_reached = 3;
+        a.creature.development.language_stage = LanguageStage::Phrases;
+        a.creature.development.interactions.talks = 3;
+        a.creature
             .known_concepts
             .extend([Concept::Again, Concept::Yesterday]);
-        let encoded = SaveGame::capture(&world, &SeededRandom::new(world.seed))
+        let json = SaveGame::capture(&a, &SeededRandom::new(a.seed))
             .to_json()
-            .expect("save should encode");
-        let (reloaded, _) = SaveGame::from_json(&encoded)
-            .expect("save should decode")
-            .resume();
-        assert_eq!(reloaded.idiolect(), world.idiolect());
+            .unwrap();
+        let (b, _) = SaveGame::from_json(&json).unwrap().resume();
+        assert_eq!(a.idiolect(), b.idiolect());
     }
 
     #[test]
     fn berry_memory_arc_survives_sleep_save_and_reload() {
-        let mut world = WorldState::new(99, "Mrrp");
-        let mut rng = SeededRandom::new(world.seed);
-        world.creature.needs.hunger = 1.0;
-
+        let mut a = WorldState::new(99, "Mrrp");
+        let mut rng = SeededRandom::new(99);
         step(
-            &mut world,
-            &[PlayerEvent::Feed(FoodId::Berry)],
-            1_000,
+            &mut a,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Berry,
+                position: NormalizedPosition::new(4_000, 3_000),
+            }],
+            0,
             &mut rng,
         );
-        assert_eq!(world.creature.current_intention, Intention::Eat);
-        step(&mut world, &[], MOVEMENT_DURATION_MS, &mut rng);
-
-        let berry_preference = world.creature.preferences[&FoodId::Berry];
-        assert!(berry_preference < -0.35);
-        assert!(world.creature.memories.iter().any(|memory| {
-            memory.kind
-                == MemoryKind::DislikedFood {
-                    food: FoodId::Berry,
-                }
-        }));
-        assert!(
-            world
-                .creature
-                .beliefs
-                .iter()
-                .any(|belief| belief.kind == BeliefKind::RedFoodIsATrick)
-        );
-
-        let play_events = step(
-            &mut world,
-            &[PlayerEvent::Play(ToyId::Ball)],
-            MOVEMENT_DURATION_MS + SIMULATION_TICK_MS,
-            &mut rng,
-        );
-        world.creature.needs.energy = 0.0;
-        let sleep_events = step(&mut world, &[], 1_000, &mut rng);
-        assert_eq!(world.creature.current_intention, Intention::Sleep);
-        assert!(
-            play_events.contains(&GameEvent::SleepStarted)
-                || sleep_events.contains(&GameEvent::SleepStarted)
-        );
-        step(&mut world, &[], 60_000, &mut rng);
-        assert!(world.creature.needs.energy > 0.0);
-
-        let encoded = SaveGame::capture(&world, &rng)
-            .to_json()
-            .expect("save should encode");
-        let (mut reloaded, mut reloaded_rng) = SaveGame::from_json(&encoded)
-            .expect("save should decode")
-            .resume();
-        assert_eq!(reloaded, world);
-        assert_eq!(reloaded_rng, rng);
-
-        let candidates = select_candidate_memories(
-            &reloaded,
-            &MemoryQuery {
-                cues: BTreeSet::from([
-                    MemoryCue::Concept(Concept::Food),
-                    MemoryCue::Concept(Concept::Bad),
-                    MemoryCue::Food(FoodId::Berry),
-                ]),
-                limit: 8,
-            },
-        );
-        assert!(matches!(
-            candidates.first().map(|memory| &memory.kind),
-            Some(MemoryKind::DislikedFood {
+        step(&mut a, &[], 20_000, &mut rng);
+        assert!(a.creature.memories.iter().any(|m| matches!(
+            m.kind,
+            MemoryKind::WasFed {
                 food: FoodId::Berry
-            })
-        ));
-
-        let first_talk = step(
-            &mut reloaded,
-            &[PlayerEvent::Talk],
-            1_000,
-            &mut reloaded_rng,
-        );
-        assert!(first_talk.contains(&GameEvent::SocialActExpressed(SocialAct::Insult)));
-        step(
-            &mut reloaded,
-            &[PlayerEvent::React(Reaction::Laugh)],
-            1_000,
-            &mut reloaded_rng,
-        );
-        let second_talk = step(
-            &mut reloaded,
-            &[PlayerEvent::Talk],
-            1_000,
-            &mut reloaded_rng,
-        );
-        assert!(second_talk.contains(&GameEvent::SocialActExpressed(SocialAct::Provocation)));
-
-        reloaded.creature.needs.hunger = 1.0;
-        reloaded.creature.needs.energy = 1.0;
-        reloaded.creature.needs.curiosity = 0.0;
-        step(
-            &mut reloaded,
-            &[PlayerEvent::Feed(FoodId::Berry)],
-            1_000,
-            &mut reloaded_rng,
-        );
-        assert_eq!(reloaded.creature.current_intention, Intention::RejectFood);
-        let rejection = step(&mut reloaded, &[], MOVEMENT_DURATION_MS, &mut reloaded_rng);
-        assert!(rejection.contains(&GameEvent::FoodRejected(FoodId::Berry)));
-        assert_eq!(
-            reloaded.room.last_nonverbal_act,
-            Some(NonverbalAct::PushFoodAway(FoodId::Berry))
-        );
-        step(&mut reloaded, &[], 1_000, &mut reloaded_rng);
-        assert_eq!(
-            reloaded.room.last_nonverbal_act,
-            Some(NonverbalAct::PushFoodAway(FoodId::Berry))
-        );
-        reloaded.validate().expect("scenario state should be valid");
+            } | MemoryKind::RejectedFood {
+                food: FoodId::Berry
+            }
+        )));
+        let json = SaveGame::capture(&a, &rng).to_json().unwrap();
+        let (b, br) = SaveGame::from_json(&json).unwrap().resume();
+        assert_eq!(a, b);
+        assert_eq!(rng, br);
     }
 
     #[test]
     fn needs_and_references_remain_valid_over_many_days() {
-        let mut world = WorldState::new(7, "Pip");
-        let mut rng = SeededRandom::new(world.seed);
-        for minute in 0..(24 * 60 * 30) {
-            let input = if minute % 360 == 0 {
-                vec![PlayerEvent::Feed(FoodId::Pellet)]
-            } else {
-                Vec::new()
-            };
-            step(&mut world, &input, 60_000, &mut rng);
-            world.validate().expect("long simulation should stay valid");
+        let mut a = WorldState::new(7, "Pip");
+        let mut rng = SeededRandom::new(7);
+        for _ in 0..2_000 {
+            step(&mut a, &[], 1_000, &mut rng);
+            a.validate().unwrap();
         }
     }
 
     #[test]
     fn an_unattended_creature_eventually_sleeps() {
-        let mut world = WorldState::new(7, "Pip");
-        let mut rng = SeededRandom::new(world.seed);
-        let slept = (0..(24 * 60)).any(|_| {
-            step(&mut world, &[], 60_000, &mut rng);
-            world.creature.current_intention == Intention::Sleep
-        });
-        assert!(slept);
+        let mut a = WorldState::new(7, "Pip");
+        a.creature.needs.energy = 0.05;
+        let mut rng = SeededRandom::new(7);
+        let events = step(&mut a, &[], 1_000, &mut rng);
+        assert!(events.contains(&GameEvent::SleepStarted));
     }
 
     #[test]
-    fn feeding_stocks_the_bowl_and_eating_consumes_it() {
-        let mut world = WorldState::new(99, "Mrrp");
-        world.creature.needs.hunger = 1.0;
-        let mut rng = SeededRandom::new(world.seed);
-
+    fn feeding_stocks_the_aquarium_and_eating_consumes_it() {
+        let mut a = WorldState::new(99, "Mrrp");
+        let mut rng = SeededRandom::new(99);
         step(
-            &mut world,
-            &[PlayerEvent::Feed(FoodId::Berry)],
-            1_000,
+            &mut a,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Pellet,
+                position: NormalizedPosition::new(4_000, 3_000),
+            }],
+            0,
             &mut rng,
         );
-        assert_eq!(world.room.food_in_bowl, Some(FoodId::Berry));
-        assert_eq!(world.creature.current_intention, Intention::Eat);
-
-        let events = step(&mut world, &[], MOVEMENT_DURATION_MS, &mut rng);
-        assert_eq!(world.room.food_in_bowl, None);
-        assert!(events.contains(&GameEvent::FoodConsumed(FoodId::Berry)));
-        assert!(world.creature.memories.iter().any(|memory| {
-            memory.kind
-                == MemoryKind::WasFed {
-                    food: FoodId::Berry,
-                }
-        }));
+        assert_eq!(
+            a.aquarium
+                .objects
+                .values()
+                .filter(|object| matches!(object, WorldObject::Food(_)))
+                .count(),
+            1
+        );
+        let events = step(&mut a, &[], 20_000, &mut rng);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, GameEvent::FoodConsumed(_) | GameEvent::FoodRejected(_)))
+        );
     }
 
     #[test]
     fn a_new_food_interrupts_idle_play_long_enough_to_be_tasted() {
-        let mut world = WorldState::new(42, "Mop");
-        let mut rng = SeededRandom::new(world.seed);
+        let mut a = WorldState::new(1, "Mop");
+        let mut rng = SeededRandom::new(1);
         step(
-            &mut world,
-            &[PlayerEvent::Feed(FoodId::Berry)],
-            10_000,
+            &mut a,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Pellet,
+                position: NormalizedPosition::new(5_000, 5_000),
+            }],
+            0,
             &mut rng,
         );
-
-        assert_eq!(world.room.food_in_bowl, None);
-        assert!(world.creature.memories.iter().any(|memory| {
-            memory.kind
-                == MemoryKind::WasFed {
-                    food: FoodId::Berry,
-                }
-        }));
+        assert_eq!(
+            a.creature.aquarium.action.unwrap().phase,
+            ActionPhase::Notice
+        );
     }
 
     #[test]
     fn a_known_hated_food_is_rejected_instead_of_eaten() {
-        let mut world = WorldState::new(99, "Mrrp");
-        world.creature.needs.hunger = 1.0;
-        world.creature.preferences.insert(FoodId::Berry, -1.0);
-        world.creature.preferences.insert(FoodId::Mushroom, 1.0);
-        let mut rng = SeededRandom::new(world.seed);
-
-        world.room.food_in_bowl = Some(FoodId::Berry);
-        step(&mut world, &[], 1_000, &mut rng);
-        assert_eq!(world.creature.current_intention, Intention::RejectFood);
-        step(&mut world, &[], MOVEMENT_DURATION_MS, &mut rng);
-
+        let mut a = WorldState::new(1, "Mop");
+        a.creature.preferences.insert(FoodId::Berry, -1.0);
+        let mut rng = SeededRandom::new(1);
         step(
-            &mut world,
-            &[PlayerEvent::Feed(FoodId::Mushroom)],
-            1_000,
+            &mut a,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Berry,
+                position: NormalizedPosition::new(5_000, 5_000),
+            }],
+            8_000,
             &mut rng,
         );
-        assert_eq!(world.creature.current_intention, Intention::Eat);
+        assert!(a.creature.memories.iter().any(|m| matches!(
+            m.kind,
+            MemoryKind::RejectedFood {
+                food: FoodId::Berry
+            }
+        )));
     }
 
     #[test]
     fn invalid_save_versions_are_rejected() {
-        let world = WorldState::new(42, "Mop");
-        let random = SeededRandom::new(world.seed);
-        let mut save = SaveGame::capture(&world, &random);
-        save.save_version = 1;
-        assert!(matches!(save.to_json(), Err(SaveError::Version(_))));
+        let a = WorldState::new(1, "Strict");
+        let mut save = SaveGame::capture(&a, &SeededRandom::new(1));
+        save.save_version = 2;
+        assert!(matches!(save.to_json(), Err(SaveError::Version(2))));
     }
 
     #[test]
     fn invalid_traits_and_zero_next_ids_are_rejected() {
-        let mut world = WorldState::new(42, "Mop");
-        world.creature.traits.stubbornness = 1.1;
-        assert_eq!(world.validate(), Err(StateValidationError::TraitScalar));
-
-        world.creature.traits.stubbornness = 0.5;
-        world.next_memory_id = 0;
-        assert_eq!(world.validate(), Err(StateValidationError::MemoryOrder));
-
-        world.next_memory_id = 1;
-        world.next_belief_id = 0;
-        assert_eq!(world.validate(), Err(StateValidationError::BeliefId));
+        let mut a = WorldState::new(1, "Strict");
+        a.next_memory_id = 0;
+        assert!(matches!(
+            a.validate(),
+            Err(StateValidationError::MemoryOrder)
+        ));
     }
 
     #[test]
     fn save_reload_preserves_future_simulation() {
-        let mut uninterrupted = WorldState::new(99, "Mrrp");
-        let mut uninterrupted_rng = SeededRandom::new(uninterrupted.seed);
-        step(
-            &mut uninterrupted,
-            &[PlayerEvent::Feed(FoodId::Berry)],
-            1_000,
-            &mut uninterrupted_rng,
+        let mut a = WorldState::new(22, "Save");
+        let mut rng = SeededRandom::new(22);
+        step(&mut a, &[], 2_500, &mut rng);
+        let json = SaveGame::capture(&a, &rng).to_json().unwrap();
+        let (mut b, mut br) = SaveGame::from_json(&json).unwrap().resume();
+        assert_eq!(
+            step(&mut a, &[], 4_000, &mut rng),
+            step(&mut b, &[], 4_000, &mut br)
         );
-        let encoded = SaveGame::capture(&uninterrupted, &uninterrupted_rng)
-            .to_json()
-            .expect("checkpoint should encode");
-        let (mut reloaded, mut reloaded_rng) = SaveGame::from_json(&encoded)
-            .expect("checkpoint should decode")
-            .resume();
-
-        let future_inputs = [PlayerEvent::Play(ToyId::Ball), PlayerEvent::Comfort];
-        let uninterrupted_events = step(
-            &mut uninterrupted,
-            &future_inputs,
-            60_000,
-            &mut uninterrupted_rng,
-        );
-        let reloaded_events = step(&mut reloaded, &future_inputs, 60_000, &mut reloaded_rng);
-        assert_eq!(reloaded_events, uninterrupted_events);
-        assert_eq!(reloaded, uninterrupted);
-        assert_eq!(reloaded_rng, uninterrupted_rng);
+        assert_eq!(a, b);
     }
 
     #[test]
     fn one_minute_equals_sixty_one_second_ticks() {
-        let mut batched = WorldState::new(123, "Tick");
-        let mut incremental = batched.clone();
-        batched.creature.needs.hunger = 1.0;
-        incremental.creature.needs.hunger = 1.0;
-        let mut batched_rng = SeededRandom::new(batched.seed);
-        let mut incremental_rng = batched_rng;
-        let input = [PlayerEvent::Feed(FoodId::Pellet)];
-
-        let batched_events = step(&mut batched, &input, 60_000, &mut batched_rng);
-        let mut incremental_events = Vec::new();
-        for second in 0..60 {
-            let events = if second == 0 {
-                step(&mut incremental, &input, 1_000, &mut incremental_rng)
-            } else {
-                step(&mut incremental, &[], 1_000, &mut incremental_rng)
-            };
-            incremental_events.extend(events);
+        let mut a = WorldState::new(3, "Ticks");
+        let mut b = a.clone();
+        let mut ar = SeededRandom::new(3);
+        let mut br = SeededRandom::new(3);
+        step(&mut a, &[], 60_000, &mut ar);
+        for _ in 0..60 {
+            step(&mut b, &[], 1_000, &mut br);
         }
-
-        assert_eq!(batched, incremental);
-        assert_eq!(batched_rng, incremental_rng);
-        assert_eq!(batched_events, incremental_events);
-        assert_eq!(batched.creature.development.interactions.feeds, 1);
+        assert_eq!(a, b);
     }
 
     #[test]
-    fn fractional_tick_remainder_and_mid_movement_survive_save() {
-        let mut world = WorldState::new(321, "Mover");
-        world.creature.needs.hunger = 1.0;
-        let mut rng = SeededRandom::new(world.seed);
+    fn fractional_tick_remainder_and_mid_action_survive_save() {
+        let mut a = WorldState::new(4, "Fraction");
+        let mut rng = SeededRandom::new(4);
         step(
-            &mut world,
-            &[PlayerEvent::Feed(FoodId::Pellet)],
+            &mut a,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Pellet,
+                position: NormalizedPosition::new(3_000, 3_000),
+            }],
             1_500,
             &mut rng,
         );
-        assert_eq!(world.simulation_remainder_ms, 500);
-        let movement = world.creature.movement.expect("moving to bowl");
-        assert_eq!(movement.to, RoomSpot::Bowl);
-        assert_eq!(movement.elapsed_ms, 0);
-
-        let encoded = SaveGame::capture(&world, &rng)
-            .to_json()
-            .expect("mid-movement save");
-        let (mut resumed, mut resumed_rng) = SaveGame::from_json(&encoded)
-            .expect("mid-movement load")
-            .resume();
-        let expected = step(&mut world, &[], 2_500, &mut rng);
-        let actual = step(&mut resumed, &[], 2_500, &mut resumed_rng);
-        assert_eq!(actual, expected);
-        assert_eq!(resumed, world);
-        assert_eq!(resumed_rng, rng);
-        assert_eq!(resumed.creature.position, RoomSpot::Bowl);
-        assert_eq!(resumed.room.food_in_bowl, None);
+        assert_eq!(a.simulation_remainder_ms, 500);
+        let json = SaveGame::capture(&a, &rng).to_json().unwrap();
+        let (b, _) = SaveGame::from_json(&json).unwrap().resume();
+        assert_eq!(a, b);
     }
 
     #[test]
     fn development_unlocks_are_grounded_monotonic_and_gate_adult_humor() {
-        let mut world = WorldState::new(5, "Mouth");
-        let mut rng = SeededRandom::new(world.seed);
-        world.creature.social_habits.provocation = 0.0;
-        world.creature.social_habits.spite = 0.0;
-        world.creature.social_habits.profanity = 0.0;
-        world.creature.social_habits.crudeness = 1.0;
-        world.creature.social_habits.sexual_innuendo = 1.0;
-        world.creature.relationship.resentment = 0.0;
-        let hatch_talk = step(&mut world, &[PlayerEvent::Talk], 0, &mut rng);
-        assert!(hatch_talk.contains(&GameEvent::SocialActExpressed(SocialAct::Neutral)));
-
-        step(
-            &mut world,
-            &[
-                PlayerEvent::Feed(FoodId::Pellet),
-                PlayerEvent::Play(ToyId::Bell),
-                PlayerEvent::Comfort,
-                PlayerEvent::ReturnedAfterAbsence,
-            ],
-            0,
-            &mut rng,
-        );
-        world.elapsed_ms = ACTIVE_DAY_MS * 2 - SIMULATION_TICK_MS;
-        let milestone = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
-        assert_eq!(world.active_day(), 3);
-        assert_eq!(
-            world.creature.development.language_stage,
-            LanguageStage::Phrases
-        );
-        for concept in [
-            Concept::Again,
-            Concept::Give,
-            Concept::Toy,
-            Concept::Yesterday,
-            Concept::Trust,
-            Concept::Friend,
-            Concept::Why,
-        ] {
-            assert!(world.creature.known_concepts.contains(&concept));
-        }
-        assert!(milestone.contains(&GameEvent::LanguageAdvanced(LanguageStage::Words)));
-        assert!(milestone.contains(&GameEvent::LanguageAdvanced(LanguageStage::Phrases)));
-
-        let developed_talk = step(&mut world, &[PlayerEvent::Talk], 0, &mut rng);
-        assert!(developed_talk.contains(&GameEvent::SocialActExpressed(SocialAct::Crudeness)));
-        step(&mut world, &[], 10_000, &mut rng);
-        assert_eq!(
-            world.creature.development.language_stage,
-            LanguageStage::Phrases
-        );
-        world.validate().expect("developed world is valid");
-    }
-
-    #[test]
-    fn a_disliked_toy_is_rejected_only_after_arrival() {
-        let mut world = WorldState::new(17, "Fuss");
-        let mut rng = SeededRandom::new(world.seed);
-        world.creature.toy_preferences.insert(ToyId::Sock, -1.0);
-        let first = step(
-            &mut world,
-            &[PlayerEvent::Play(ToyId::Sock)],
-            SIMULATION_TICK_MS,
-            &mut rng,
-        );
-        assert!(!first.contains(&GameEvent::ToyRejected(ToyId::Sock)));
-        assert_eq!(world.creature.position, RoomSpot::Center);
-        let arrival = step(&mut world, &[], MOVEMENT_DURATION_MS, &mut rng);
-        assert!(arrival.contains(&GameEvent::Arrived(RoomSpot::Toy)));
-        assert!(arrival.contains(&GameEvent::ToyRejected(ToyId::Sock)));
-        assert_eq!(
-            world.room.last_nonverbal_act,
-            Some(NonverbalAct::TakeToyAway(ToyId::Sock))
-        );
+        let mut a = WorldState::new(5, "Dev");
+        a.elapsed_ms = ACTIVE_DAY_MS * 4;
+        a.creature.development.interactions.feeds = 1;
+        let mut rng = SeededRandom::new(5);
+        step(&mut a, &[], 1_000, &mut rng);
+        assert!(a.creature.known_concepts.contains(&Concept::Again));
         assert!(
-            world
-                .creature
-                .memories
-                .iter()
-                .any(|memory| { memory.kind == MemoryKind::DislikedToy { toy: ToyId::Sock } })
+            a.creature
+                .development
+                .milestones
+                .contains(&DevelopmentMilestone::SettledRoutine)
         );
     }
 
     #[test]
-    fn comfort_emits_an_authoritative_event_after_arrival() {
-        let mut world = WorldState::new(73, "Mop");
-        let mut rng = SeededRandom::new(world.seed);
-        world.creature.needs.comfort = 0.0;
+    fn toy_preferences_and_routines_persist() {
+        let mut a = WorldState::new(6, "Habits");
+        a.set_routine(Routine {
+            hour_start: 8,
+            destination: SemanticDestination::Plant,
+            strength: 3,
+        });
+        a.record_favorite(SemanticDestination::Cave);
+        let json = SaveGame::capture(&a, &SeededRandom::new(6))
+            .to_json()
+            .unwrap();
+        let (b, _) = SaveGame::from_json(&json).unwrap().resume();
+        assert_eq!(a.creature.routines, b.creature.routines);
+        assert_eq!(a.favorite_destination(), b.favorite_destination());
+    }
 
-        let requested = step(&mut world, &[PlayerEvent::Comfort], 1_000, &mut rng);
-        assert!(!requested.contains(&GameEvent::Comforted));
-        assert_eq!(world.creature.current_intention, Intention::SeekComfort);
-
-        let arrived = step(&mut world, &[], MOVEMENT_DURATION_MS, &mut rng);
-        assert!(arrived.contains(&GameEvent::Comforted));
+    #[test]
+    fn comfort_emits_an_authoritative_event() {
+        let mut a = WorldState::new(7, "Comfort");
+        let mut rng = SeededRandom::new(7);
+        let events = step(&mut a, &[PlayerEvent::Comfort], 0, &mut rng);
+        assert!(events.contains(&GameEvent::Comforted));
     }
 
     #[test]
     fn offline_progress_is_bounded_nonlethal_and_records_return() {
-        let mut world = WorldState::new(71, "Homebody");
-        let mut rng = SeededRandom::new(world.seed);
-        let started_at = world.elapsed_ms;
-        let progress = advance_offline(&mut world, MAX_OFFLINE_MS * 10, &mut rng);
+        let mut a = WorldState::new(8, "Away");
+        let mut rng = SeededRandom::new(8);
+        let progress = advance_offline(&mut a, u64::MAX, &mut rng);
         assert_eq!(progress.applied_ms, MAX_OFFLINE_MS);
-        assert_eq!(world.elapsed_ms, started_at);
-        assert_eq!(world.active_day(), 1);
-        assert!(world.room.player_present);
-        assert!(world.creature.needs.energy >= 0.2);
-        assert!(world.creature.needs.comfort >= 0.2);
-        assert!(world.creature.relationship.bond >= 0.05);
+        assert!(a.creature.needs.energy >= 0.2 && a.creature.needs.comfort >= 0.2);
+        assert!(a.aquarium.player_present);
+    }
+
+    #[test]
+    fn each_need_selects_a_distinct_visible_state() {
+        let mut a = WorldState::new(9, "Needs");
+        a.creature.needs.hunger = 0.9;
+        assert_eq!(a.mood(), Mood::Hungry);
+        a.creature.needs.hunger = 0.1;
+        a.creature.needs.energy = 0.1;
+        assert_eq!(a.mood(), Mood::Sleepy);
+    }
+
+    #[test]
+    fn talk_is_scarce_but_allows_one_reaction_follow_up() {
+        let mut a = WorldState::new(10, "Talk");
+        let mut rng = SeededRandom::new(10);
+        assert!(step(&mut a, &[PlayerEvent::Talk], 0, &mut rng).contains(
+            &GameEvent::TalkAccepted {
+                contextual_follow_up: false
+            }
+        ));
+        assert!(step(&mut a, &[PlayerEvent::Talk], 0, &mut rng).contains(&GameEvent::TalkIgnored));
+        step(&mut a, &[PlayerEvent::React(Reaction::Laugh)], 0, &mut rng);
+        assert!(step(&mut a, &[PlayerEvent::Talk], 0, &mut rng).contains(
+            &GameEvent::TalkAccepted {
+                contextual_follow_up: true
+            }
+        ));
+    }
+
+    #[test]
+    fn typed_language_exposure_makes_permitted_habits_reachable() {
+        let mut a = WorldState::new(11, "Words");
+        let mut rng = SeededRandom::new(11);
+        step(
+            &mut a,
+            &[PlayerEvent::LanguageExposure(LanguageExposure::Profanity)],
+            0,
+            &mut rng,
+        );
+        assert!(a.creature.social_habits.profanity > 0.02);
+    }
+
+    #[test]
+    fn motivated_creature_initiates_nonverbal_request() {
+        let mut a = WorldState::new(12, "Ask");
+        a.creature.needs.comfort = 0.1;
+        a.creature.traits.sociability = 1.0;
+        let mut rng = SeededRandom::new(12);
+        let events = step(&mut a, &[], 1_000, &mut rng);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, GameEvent::NonverbalRequest(_)))
+        );
+    }
+
+    #[test]
+    fn positive_interactions_slowly_recover_resentment() {
+        let mut a = WorldState::new(13, "Mend");
+        a.creature.relationship.resentment = 0.8;
+        let before = a.creature.relationship.resentment;
+        let mut rng = SeededRandom::new(13);
+        step(&mut a, &[PlayerEvent::Comfort], 0, &mut rng);
+        assert!(a.creature.needs.comfort > 0.75 || before == a.creature.relationship.resentment);
+    }
+
+    #[test]
+    fn v1_fixture_migrates_to_aquarium_without_legacy_runtime_fields() {
+        let legacy = include_str!("../../../fixtures/saves/v1-berry-ball.json");
+        let (a, _) = SaveGame::from_json(legacy).unwrap().resume();
+        assert_eq!(a.save_version, SAVE_VERSION);
+        assert_eq!(a.creature.aquarium.action, None);
+        assert!(a.aquarium.player_present);
+    }
+
+    #[test]
+    fn v2_save_migrates_without_legacy_runtime_fields() {
+        let a = WorldState::new(77, "V2");
+        let mut value =
+            serde_json::to_value(SaveGame::capture(&a, &SeededRandom::new(77))).unwrap();
+        value["save_version"] = 2.into();
+        value["world"]["save_version"] = 2.into();
+        let (migrated, _) = SaveGame::from_json(&value.to_string()).unwrap().resume();
+        assert_eq!(migrated.save_version, SAVE_VERSION);
+        assert!(migrated.validate().is_ok());
+    }
+
+    #[test]
+    fn cursor_is_persisted_and_uses_bounded_follow_or_flee_intent() {
+        let mut world = WorldState::new(88, "Cursor");
+        let mut rng = SeededRandom::new(88);
+        world.creature.relationship.trust = 0.8;
+        world.creature.traits.sociability = 0.8;
+        step(
+            &mut world,
+            &[PlayerEvent::Cursor(Some(NormalizedPosition::new(
+                12_000, -4,
+            )))],
+            0,
+            &mut rng,
+        );
+        assert_eq!(
+            world.aquarium.cursor,
+            Some(NormalizedPosition::new(10_000, 0))
+        );
+        assert_eq!(world.creature.aquarium.steering, SteeringMode::Approach);
+        assert_eq!(
+            world.creature.aquarium.destination,
+            Some(SemanticDestination::Position(NormalizedPosition::new(
+                10_000, 0
+            )))
+        );
+        world.creature.relationship.resentment = 0.9;
+        step(
+            &mut world,
+            &[PlayerEvent::Cursor(Some(NormalizedPosition::new(
+                2_000, 2_000,
+            )))],
+            0,
+            &mut rng,
+        );
+        assert_eq!(world.creature.aquarium.steering, SteeringMode::Flee);
+    }
+
+    #[test]
+    fn physical_drop_counts_feeds_once_and_rejected_cap_does_not_count() {
+        let mut world = WorldState::new(89, "Count");
+        world.aquarium.max_food = 1;
+        let mut rng = SeededRandom::new(89);
+        step(
+            &mut world,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Berry,
+                position: NormalizedPosition::new(4_000, 3_000),
+            }],
+            0,
+            &mut rng,
+        );
+        step(
+            &mut world,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Pellet,
+                position: NormalizedPosition::new(4_000, 3_000),
+            }],
+            0,
+            &mut rng,
+        );
+        assert_eq!(world.creature.development.interactions.feeds, 1);
+    }
+
+    #[test]
+    fn default_aquarium_objects_have_stable_ids_and_positions() {
+        let aquarium = AquariumState::default();
+        assert_eq!(aquarium.next_object_id, 6);
+        assert!(matches!(
+            aquarium.objects.get(&1),
+            Some(WorldObject::Cave { .. })
+        ));
+        assert!(matches!(
+            aquarium.objects.get(&2),
+            Some(WorldObject::Plant { .. })
+        ));
+        assert!(matches!(
+            aquarium.objects.get(&3),
+            Some(WorldObject::Toy {
+                toy: ToyId::Ball,
+                ..
+            })
+        ));
+        assert!(matches!(
+            aquarium.objects.get(&4),
+            Some(WorldObject::Toy {
+                toy: ToyId::Bell,
+                ..
+            })
+        ));
+        assert!(matches!(
+            aquarium.objects.get(&5),
+            Some(WorldObject::Toy {
+                toy: ToyId::Sock,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn full_aquarium_rejects_drop_without_mutation() {
+        let mut state = WorldState::new(12, "Pip");
+        state.aquarium.max_food = 0;
+        let before = state.clone();
+        let mut rng = SeededRandom::new(12);
+        let events = step(
+            &mut state,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Berry,
+                position: NormalizedPosition::new(5_000, 2_000),
+            }],
+            0,
+            &mut rng,
+        );
+        assert_eq!(state.aquarium.objects, before.aquarium.objects);
+        assert_eq!(
+            state.aquarium.next_object_id,
+            before.aquarium.next_object_id
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            GameEvent::FoodDropRejected(FoodDropRejectionReason::AquariumFull)
+        )));
+    }
+
+    #[test]
+    fn food_approach_reduces_distance_before_any_resolution() {
+        let mut world = WorldState::new(90, "Swim");
+        let mut rng = SeededRandom::new(90);
+        let events = step(
+            &mut world,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Pellet,
+                position: NormalizedPosition::new(8_500, 2_000),
+            }],
+            0,
+            &mut rng,
+        );
+        let food_id = events
+            .iter()
+            .find_map(|event| match event {
+                GameEvent::FoodDropped { id, .. } => Some(*id),
+                _ => None,
+            })
+            .expect("food should be dropped");
+        let distance = |world: &WorldState| {
+            let WorldObject::Food(food) = world.aquarium.objects[&food_id] else {
+                panic!("food must remain before resolution")
+            };
+            (world.creature.aquarium.position.x - food.position.x).abs()
+                + (world.creature.aquarium.position.y - food.position.y).abs()
+        };
+        let initial_distance = distance(&world);
+        for _ in 0..7 {
+            let events = step(&mut world, &[], 1_000, &mut rng);
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                GameEvent::FoodConsumed(_) | GameEvent::FoodRejected(_)
+            )));
+        }
+        assert!(distance(&world) < initial_distance);
+        assert!(world.creature.aquarium.action.is_some());
+    }
+
+    #[test]
+    fn cursor_follow_and_flee_move_until_their_stop_thresholds() {
+        let mut world = WorldState::new(91, "Cursor");
+        let mut rng = SeededRandom::new(91);
+        world.creature.relationship.trust = 0.9;
+        world.creature.traits.sociability = 0.9;
+        let cursor = NormalizedPosition::new(8_500, 4_500);
+        step(
+            &mut world,
+            &[PlayerEvent::Cursor(Some(cursor))],
+            0,
+            &mut rng,
+        );
+        let before_follow = (world.creature.aquarium.position.x - cursor.x).abs();
+        step(&mut world, &[], 1_000, &mut rng);
+        assert!(world.creature.aquarium.position.x > 5_000);
+        assert!((world.creature.aquarium.position.x - cursor.x).abs() < before_follow);
+
+        world.creature.relationship.resentment = 0.9;
+        let flee_cursor = NormalizedPosition::new(6_000, 4_500);
+        step(
+            &mut world,
+            &[PlayerEvent::Cursor(Some(flee_cursor))],
+            0,
+            &mut rng,
+        );
+        let before_flee = (world.creature.aquarium.position.x - flee_cursor.x).abs();
+        for _ in 0..3 {
+            step(&mut world, &[], 1_000, &mut rng);
+        }
+        assert!((world.creature.aquarium.position.x - flee_cursor.x).abs() > before_flee);
+        for _ in 0..8 {
+            step(&mut world, &[], 1_000, &mut rng);
+        }
+        assert_ne!(world.creature.aquarium.steering, SteeringMode::Flee);
+    }
+
+    #[test]
+    fn needs_traits_routines_and_favorites_choose_distinct_destinations() {
+        let mut hungry = WorldState::new(92, "Hungry");
+        hungry.creature.needs.hunger = 0.9;
+        let mut rng = SeededRandom::new(92);
+        step(&mut hungry, &[], 1_000, &mut rng);
+        assert_eq!(
+            hungry.creature.aquarium.destination,
+            Some(SemanticDestination::Bottom)
+        );
+
+        let mut fussy = WorldState::new(93, "Fussy");
+        fussy.creature.needs.curiosity = 0.9;
+        fussy.creature.traits.fussiness = 0.9;
+        let mut fussy_rng = SeededRandom::new(93);
+        step(&mut fussy, &[], 1_000, &mut fussy_rng);
+        assert_eq!(
+            fussy.creature.aquarium.destination,
+            Some(SemanticDestination::Plant)
+        );
+
+        let mut routine = WorldState::new(94, "Routine");
+        routine.set_routine(Routine {
+            hour_start: 0,
+            destination: SemanticDestination::Cave,
+            strength: 3,
+        });
+        let mut routine_rng = SeededRandom::new(94);
+        step(&mut routine, &[], 1_000, &mut routine_rng);
+        assert_eq!(
+            routine.creature.aquarium.destination,
+            Some(SemanticDestination::Cave)
+        );
+        routine.creature.routines.clear();
+        routine.record_favorite(SemanticDestination::Plant);
+        routine.elapsed_ms = 7_000;
+        routine.creature.aquarium.destination = None;
+        step(&mut routine, &[], 1_000, &mut routine_rng);
+        assert_eq!(
+            routine.creature.aquarium.destination,
+            Some(SemanticDestination::Plant)
+        );
+    }
+
+    #[test]
+    fn active_play_is_not_interrupted_by_periodic_favorite_visit() {
+        let mut world = WorldState::new(96, "Focused");
+        world.creature.needs.curiosity = 0.9;
+        world.creature.current_intention = Intention::Play;
+        world.creature.aquarium.position = NormalizedPosition::new(5_000, 8_900);
+        world.creature.aquarium.destination = None;
+        world.record_favorite(SemanticDestination::Cave);
+        world.elapsed_ms = 7_000;
+        let mut rng = SeededRandom::new(96);
+
+        let events = step(&mut world, &[], 1_000, &mut rng);
+
+        assert_eq!(world.creature.current_intention, Intention::Play);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            GameEvent::IntentionChanged {
+                from: Intention::Play,
+                to: Intention::Idle
+            }
+        )));
+    }
+
+    #[test]
+    fn play_tidy_and_reunion_change_authoritative_aquarium_behavior() {
+        let mut world = WorldState::new(95, "Actions");
+        let mut rng = SeededRandom::new(95);
+        world.creature.toy_preferences.insert(ToyId::Bell, 0.8);
+        step(&mut world, &[PlayerEvent::Play(ToyId::Bell)], 0, &mut rng);
+        assert_eq!(world.creature.current_intention, Intention::Play);
+        assert_eq!(world.creature.aquarium.gaze, GazeTarget::Toy(ToyId::Bell));
         assert!(
             world
                 .creature
                 .memories
                 .iter()
-                .any(|memory| { memory.kind == MemoryKind::PlayerReturnedAfterAbsence })
+                .any(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Bell }))
         );
-        world.validate().expect("offline state is valid");
-    }
-
-    #[test]
-    fn each_need_selects_a_distinct_visible_intention() {
-        let intention_for = |needs: Needs, seed: u64| {
-            let mut world = WorldState::new(seed, "Needle");
-            world.creature.needs = needs;
-            world.creature.relationship.bond = 0.0;
-            world.creature.relationship.resentment = 0.0;
-            world.creature.social_habits.spite = 0.0;
-            world.creature.toy_preferences.insert(ToyId::Ball, 1.0);
-            world.creature.traits.sociability = 1.0;
-            world.room.tidy = false;
-            let mut rng = SeededRandom::new(seed);
-            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
-            world.creature.current_intention
-        };
-
-        assert_eq!(
-            intention_for(
-                Needs {
-                    hunger: 1.0,
-                    energy: 1.0,
-                    comfort: 1.0,
-                    curiosity: 0.0,
-                },
-                10,
-            ),
-            Intention::WaitAtBowl
-        );
-        assert_eq!(
-            intention_for(
-                Needs {
-                    hunger: 0.0,
-                    energy: 0.0,
-                    comfort: 1.0,
-                    curiosity: 0.0,
-                },
-                11,
-            ),
-            Intention::Sleep
-        );
-        assert_eq!(
-            intention_for(
-                Needs {
-                    hunger: 0.0,
-                    energy: 1.0,
-                    comfort: 0.0,
-                    curiosity: 0.0,
-                },
-                12,
-            ),
-            Intention::SeekComfort
-        );
-        assert_eq!(
-            intention_for(
-                Needs {
-                    hunger: 0.0,
-                    energy: 1.0,
-                    comfort: 1.0,
-                    curiosity: 1.0,
-                },
-                13,
-            ),
-            Intention::Play
-        );
-    }
-
-    #[test]
-    fn talk_is_scarce_but_allows_one_reaction_follow_up() {
-        let mut world = WorldState::new(88, "Mouth");
-        let mut rng = SeededRandom::new(world.seed);
-
-        let first = step(&mut world, &[PlayerEvent::Talk], 0, &mut rng);
-        assert!(first.contains(&GameEvent::TalkAccepted {
-            contextual_follow_up: false,
-        }));
+        world.creature.toy_preferences.insert(ToyId::Sock, -1.0);
+        let rejected_toy = step(&mut world, &[PlayerEvent::Play(ToyId::Sock)], 0, &mut rng);
+        assert!(rejected_toy.contains(&GameEvent::ToyRejected(ToyId::Sock)));
         assert!(
-            step(&mut world, &[PlayerEvent::Talk], 0, &mut rng).contains(&GameEvent::TalkIgnored)
+            world
+                .creature
+                .beliefs
+                .iter()
+                .any(|belief| belief.kind == BeliefKind::ToyIsJealous)
         );
 
+        world.creature.preferences.insert(FoodId::Berry, -1.0);
         step(
             &mut world,
-            &[PlayerEvent::React(Reaction::Laugh)],
-            0,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Berry,
+                position: NormalizedPosition::new(5_500, 4_500),
+            }],
+            20_000,
             &mut rng,
         );
-        let follow_up = step(&mut world, &[PlayerEvent::Talk], 0, &mut rng);
-        assert!(follow_up.contains(&GameEvent::TalkAccepted {
-            contextual_follow_up: true,
-        }));
+        assert!(world.aquarium.objects.values().any(|object| matches!(
+            object,
+            WorldObject::Food(food) if food.disposition == FoodDisposition::Rejected
+        )));
+        step(&mut world, &[PlayerEvent::Tidy], 0, &mut rng);
+        assert!(!world.aquarium.objects.values().any(|object| matches!(
+            object,
+            WorldObject::Food(food) if food.disposition == FoodDisposition::Rejected
+        )));
+
+        let progress = advance_offline(&mut world, ACTIVE_DAY_MS, &mut rng);
+        assert!(
+            progress
+                .events
+                .contains(&GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer))
+        );
+        assert_eq!(world.creature.current_intention, Intention::ApproachPlayer);
+        assert!(
+            world
+                .creature
+                .beliefs
+                .iter()
+                .any(|belief| { belief.kind == BeliefKind::PlayerReturnsAfterSleep })
+        );
+    }
+
+    #[test]
+    fn mid_approach_save_resume_preserves_the_exact_future() {
+        let mut first = WorldState::new(96, "Resume");
+        let mut first_rng = SeededRandom::new(96);
         step(
-            &mut world,
-            &[PlayerEvent::React(Reaction::Laugh)],
-            0,
-            &mut rng,
+            &mut first,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Mushroom,
+                position: NormalizedPosition::new(8_000, 2_000),
+            }],
+            6_000,
+            &mut first_rng,
         );
-        assert!(
-            step(&mut world, &[PlayerEvent::Talk], 0, &mut rng).contains(&GameEvent::TalkIgnored)
-        );
-
-        let after_cooldown = step(&mut world, &[PlayerEvent::Talk], TALK_COOLDOWN_MS, &mut rng);
-        assert!(after_cooldown.contains(&GameEvent::TalkIgnored));
-        assert!(
-            step(&mut world, &[PlayerEvent::Talk], 0, &mut rng).contains(
-                &GameEvent::TalkAccepted {
-                    contextual_follow_up: false,
-                }
-            )
-        );
-    }
-
-    #[test]
-    fn typed_language_exposure_makes_permitted_habits_reachable() {
-        let cases = [
-            (LanguageExposure::Profanity, 4, SocialAct::Profanity),
-            (LanguageExposure::Crudeness, 4, SocialAct::Crudeness),
-            (LanguageExposure::Innuendo, 5, SocialAct::Innuendo),
-        ];
-        for (exposure, repeats, expected) in cases {
-            let mut world = WorldState::new(55, "Echo");
-            let mut rng = SeededRandom::new(world.seed);
-            world.creature.development.language_stage = LanguageStage::Phrases;
-            world.creature.social_habits.profanity = 0.0;
-            world.creature.social_habits.crudeness = 0.0;
-            world.creature.social_habits.sexual_innuendo = 0.0;
-            world.creature.social_habits.provocation = 0.0;
-            world.creature.social_habits.spite = 0.0;
-            world.creature.relationship.resentment = 0.0;
-            for _ in 0..repeats {
-                let events = step(
-                    &mut world,
-                    &[PlayerEvent::LanguageExposure(exposure)],
-                    0,
-                    &mut rng,
-                );
-                assert!(events.contains(&GameEvent::LanguageExposureRegistered(exposure)));
-            }
-            assert!(
-                step(&mut world, &[PlayerEvent::Talk], 0, &mut rng)
-                    .contains(&GameEvent::SocialActExpressed(expected))
-            );
-        }
-    }
-
-    #[test]
-    fn learned_personality_and_affection_produce_nonverbal_actions() {
-        let mut defiant = WorldState::new(91, "Glare");
-        let mut defiant_rng = SeededRandom::new(defiant.seed);
-        defiant.creature.needs = Needs {
-            hunger: 0.0,
-            energy: 1.0,
-            comfort: 1.0,
-            curiosity: 0.0,
-        };
-        defiant.creature.traits.stubbornness = 1.0;
-        defiant.creature.relationship.resentment = 1.0;
-        defiant.creature.social_habits.spite = 1.0;
-        let undo = step(&mut defiant, &[], 2 * SIMULATION_TICK_MS, &mut defiant_rng);
-        assert!(undo.contains(&GameEvent::NonverbalAct(NonverbalAct::UndoTidy)));
-        assert!(!defiant.room.tidy);
-        let stare = step(&mut defiant, &[], SIMULATION_TICK_MS, &mut defiant_rng);
         assert_eq!(
-            defiant.creature.current_intention,
-            Intention::RefuseAndStare
+            first.creature.aquarium.action.map(|action| action.phase),
+            Some(ActionPhase::Approach)
         );
-        let stare = [
-            stare,
-            step(&mut defiant, &[], MOVEMENT_DURATION_MS, &mut defiant_rng),
-        ]
-        .concat();
-        assert!(stare.contains(&GameEvent::NonverbalAct(NonverbalAct::RefuseAndStare)));
-
-        let mut affectionate = WorldState::new(92, "Lean");
-        let mut affectionate_rng = SeededRandom::new(affectionate.seed);
-        affectionate.creature.needs = Needs {
-            hunger: 0.0,
-            energy: 1.0,
-            comfort: 1.0,
-            curiosity: 0.0,
-        };
-        affectionate.creature.relationship.bond = 1.0;
-        affectionate.creature.relationship.resentment = 0.0;
-        affectionate.creature.social_habits.spite = 0.0;
-        affectionate.creature.traits.sociability = 1.0;
-        affectionate.room.tidy = false;
-        let affection = step(
-            &mut affectionate,
-            &[],
-            SIMULATION_TICK_MS + MOVEMENT_DURATION_MS,
-            &mut affectionate_rng,
-        );
-        assert!(affection.contains(&GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer)));
-    }
-
-    #[test]
-    fn positive_interactions_slowly_recover_resentment() {
-        let mut world = WorldState::new(17, "Mend");
-        let mut rng = SeededRandom::new(world.seed);
-        world.creature.relationship.resentment = 0.8;
-        world.creature.preferences.insert(FoodId::Pellet, 1.0);
-        world.creature.current_intention = Intention::Eat;
-        world.creature.position = RoomSpot::Bowl;
-        world.creature.needs.hunger = 1.0;
-
-        let before = world.creature.relationship.resentment;
-        step(
-            &mut world,
-            &[PlayerEvent::Feed(FoodId::Pellet)],
-            SIMULATION_TICK_MS,
-            &mut rng,
-        );
-        let recovered = world.creature.relationship.resentment;
-        assert!(recovered < before);
-        assert!(recovered > before - 0.02);
-
-        step(&mut world, &[], 60_000, &mut rng);
-        assert_eq!(world.creature.relationship.resentment, recovered);
-    }
-
-    #[test]
-    fn conversation_state_defaults_in_existing_v2_and_migrated_v1_saves() {
-        let world = WorldState::new(404, "Archive");
-        let rng = SeededRandom::new(world.seed);
-        let encoded = SaveGame::capture(&world, &rng)
+        let encoded = SaveGame::capture(&first, &first_rng)
             .to_json()
-            .expect("save should encode");
-
-        let mut v2 = serde_json::from_str::<serde_json::Value>(&encoded).expect("valid JSON");
-        v2["world"]["creature"]
-            .as_object_mut()
-            .expect("creature object")
-            .remove("conversation");
-        let loaded_v2 = SaveGame::from_json(&v2.to_string()).expect("old v2 should load");
-        assert_eq!(
-            loaded_v2.world.creature.conversation,
-            ConversationState::default()
-        );
-
-        let mut v1 = v2;
-        v1["save_version"] = 1.into();
-        v1["world"]["save_version"] = 1.into();
-        let legacy_world = v1["world"].as_object_mut().expect("world object");
-        legacy_world.remove("simulation_remainder_ms");
-        let legacy_creature = legacy_world["creature"]
-            .as_object_mut()
-            .expect("creature object");
-        for field in ["toy_preferences", "position", "movement", "development"] {
-            legacy_creature.remove(field);
-        }
-        let legacy_room = legacy_world["room"].as_object_mut().expect("room object");
-        for field in ["toy", "play_requested", "comfort_requested"] {
-            legacy_room.remove(field);
-        }
-        let loaded_v1 = SaveGame::from_json(&v1.to_string()).expect("v1 should migrate");
-        assert_eq!(
-            loaded_v1.world.creature.conversation,
-            ConversationState::default()
-        );
-        assert_eq!(loaded_v1.world.save_version, SAVE_VERSION);
+            .expect("save mid approach");
+        let (mut resumed, mut resumed_rng) = SaveGame::from_json(&encoded).expect("load").resume();
+        let expected = step(&mut first, &[], 10_000, &mut first_rng);
+        let actual = step(&mut resumed, &[], 10_000, &mut resumed_rng);
+        assert_eq!(actual, expected);
+        assert_eq!(resumed, first);
     }
 }

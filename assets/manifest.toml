@@ -10,6 +10,10 @@ width = 320
 height = 180
 transparent = false
 palette = "style/main.hex"
+max_colors = 52
+palette_tolerance = 110
+alpha_policy = "hard"
+native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
@@ -30,6 +34,10 @@ height = 48
 frames = 4
 transparent = true
 palette = "style/main.hex"
+max_colors = 43
+palette_tolerance = 99
+alpha_policy = "hard"
+native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
@@ -50,6 +58,10 @@ height = 48
 frames = 4
 transparent = true
 palette = "style/main.hex"
+max_colors = 42
+palette_tolerance = 99
+alpha_policy = "hard"
+native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
@@ -69,6 +81,10 @@ width = 48
 height = 48
 transparent = true
 palette = "style/main.hex"
+max_colors = 31
+palette_tolerance = 64
+alpha_policy = "hard"
+native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
@@ -88,6 +104,10 @@ width = 48
 height = 48
 transparent = true
 palette = "style/main.hex"
+max_colors = 14
+palette_tolerance = 71
+alpha_policy = "hard"
+native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
@@ -107,6 +127,10 @@ width = 48
 height = 48
 transparent = true
 palette = "style/main.hex"
+max_colors = 39
+palette_tolerance = 68
+alpha_policy = "hard"
+native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
@@ -126,6 +150,10 @@ width = 48
 height = 48
 transparent = true
 palette = "style/main.hex"
+max_colors = 33
+palette_tolerance = 66
+alpha_policy = "hard"
+native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
@@ -236,6 +264,259 @@ terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["style/furniture-anchor.png"]
 human_modifications = "selected south-facing rotation as the pose-generation identity anchor"
 
+[[asset]]
+id = "style/aquarium-concept"
+kind = "reference"
+width = 1672
+height = 941
+transparent = false
+palette = "style/main.hex"
+status = "reference"
+path = "style/aquarium-concept.png"
+
+[asset.provenance]
+generator = "openai-imagegen"
+generated_at = "2026-08-15"
+prompt = "open-water aquarium concept with no visible tank edges, deep blue water, sandy planted bottom, cave and toys, centered expressive ugly-cute pear fish, cozy-grotty pixel-art direction"
+seed = "provider-managed"
+terms = "OpenAI service terms, accessed 2026-08-15"
+human_modifications = "none"
+
+[[asset]]
+id = "aquarium/background"
+kind = "background"
+width = 320
+height = 180
+transparent = false
+palette = "style/aquarium.hex"
+max_colors = 34
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "49bf35be-f40e-4eca-b201-d2a6acd61191"
+generated_at = "2026-08-15"
+prompt = "empty full-screen underwater environment, deep blue open water, sandy bottom, sparse rocks and plants, crisp pixel art, no creature, fish, UI, text, or tank frame"
+seed = "5912303"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["style/aquarium-concept.png"]
+human_modifications = "selected as the initial V1 runtime background; no pixel edits"
+
+[[asset]]
+id = "aquarium/cave"
+kind = "sprite"
+width = 64
+height = 64
+transparent = true
+palette = "style/aquarium.hex"
+max_colors = 12
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "578f4cc7-ef56-41f1-a914-f2a02eee18e8"
+generated_at = "2026-08-15"
+prompt = "small crooked aquarium cave hideout, dark blue-purple stone, algae and sand, cozy-grotty crisp pixel-art sprite, transparent background"
+seed = "5912310"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/aquarium/background.png"]
+human_modifications = "none"
+
+[[asset]]
+id = "aquarium/plants"
+kind = "sprite-sheet"
+width = 96
+height = 64
+transparent = true
+palette = "style/aquarium.hex"
+max_colors = 15
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "ad47bd87-1d44-4bbb-98d9-faedb08faad0"
+generated_at = "2026-08-15"
+prompt = "three separate scraggly aquarium plants, deep teal and sickly green, cozy-grotty crisp pixel-art sprite sheet, transparent background"
+seed = "5912311"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/aquarium/background.png"]
+human_modifications = "none"
+
+[[asset]]
+id = "aquarium/toys"
+kind = "sprite-sheet"
+width = 96
+height = 32
+transparent = true
+palette = "style/aquarium.hex"
+max_colors = 10
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "dc081389-3b3a-4e13-b4bf-9f116226c043"
+generated_at = "2026-08-15"
+prompt = "three separate shabby aquarium toys, ball, rag mouse and strange trinket, cozy-grotty crisp pixel-art sprite sheet, transparent background"
+seed = "5912312"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/aquarium/background.png"]
+human_modifications = "none"
+
+[[asset]]
+id = "creature-v1/base"
+kind = "sprite"
+width = 80
+height = 80
+transparent = true
+palette = "style/creature-v1.hex"
+max_colors = 32
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "ca3291de-9e2c-437d-a518-caa0fb627a76"
+generated_at = "2026-08-15"
+prompt = "preserve the large sad ugly-cute pear-shaped aquatic creature with huge dark eyes, worried mouth, tiny fins and tail, pale dirty yellow-green asymmetrical body, transparent background, eight-direction V3 reference rotation"
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["style/aquarium-concept.png"]
+human_modifications = "selected east-facing rotation as the V1 base sprite; no pixel edits"
+
+[[asset]]
+id = "creature-v1/hover"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-animation.hex"
+max_colors = 40
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "68e4807d-b552-4da8-9d97-e647f619844a"
+generated_at = "2026-08-15"
+prompt = "subtle underwater hover loop, centered pear fish, one-pixel rise and settle, tiny tail and fins wave, head filament drifts, no translation, four frames"
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected four generated animation frames after the reference frame; no pixel edits"
+
+[[asset]]
+id = "creature-v1/swim"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-animation.hex"
+max_colors = 38
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "e63443c3-658d-460c-a5ba-3c0b4c58e334"
+generated_at = "2026-08-15"
+prompt = "purposeful underwater swimming loop, pear fish leans forward, tail sweeps and fins paddle, eyes lead, centered for locomotion, four frames"
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected four generated animation frames after the reference frame; no pixel edits"
+
+[[asset]]
+id = "creature-v1/eat-recoil"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-animation.hex"
+max_colors = 39
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "a476c2e8-8cbd-4fe3-b231-62b20075c2e5"
+generated_at = "2026-08-15"
+prompt = "food interaction loop, pear fish anticipates, opens mouth and bites, recoils with suspicious disgust, then recovers, centered, four frames"
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected four generated animation frames after the reference frame; no pixel edits"
+
+[[asset]]
+id = "creature-v1/sleep"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-animation.hex"
+max_colors = 34
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "254c125b-b35b-433e-ae58-bf171a2fa2d6"
+generated_at = "2026-08-15"
+prompt = "looping aquatic sleep animation, pear fish settles lower, eyelids close, fins relax, tail twitches, subtle breathing bob, east side view, transparent background, four frames"
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected all four generated animation frames; no pixel edits"
+
+[[asset]]
+id = "creature-v1/play"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-animation.hex"
+max_colors = 42
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "f6fd2606-4ebf-4814-bb6d-01b2b080e429"
+generated_at = "2026-08-15"
+prompt = "looping playful aquatic action, eyes focus, body anticipates, quick dart and nudge toward an unseen toy, fins flare at contact, delighted recoil and recovery, east side view, transparent background, four frames"
+seed = "service-generated"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected all four generated animation frames; no pixel edits"
+
 [[audio]]
 id = "audio/ui/select"
 sample_rate = 44100
@@ -270,6 +551,126 @@ provenance = "docs/audio-direction.md"
 
 [[audio]]
 id = "audio/creature/sleep"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/environment/underwater-loop"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/environment/bubbles-1"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/environment/bubbles-2"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/environment/cave-settle"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/environment/sand-disturb"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/movement/swim-wake"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/food/drop-sink"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/food/eat"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/food/spit-reject"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/object/toy-impact"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/creature/affection"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/creature/surprise"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/creature/curious"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/creature/sad"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/creature/wake"
 sample_rate = 44100
 channels = 1
 bits_per_sample = 16

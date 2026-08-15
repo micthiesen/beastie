@@ -102,7 +102,7 @@ pub enum ScenarioError {
 
 #[cfg(test)]
 mod tests {
-    use beastie_core::ToyId;
+    use beastie_core::{FoodId, NormalizedPosition, ToyId};
     use beastie_session::{CommandEnvelope, SessionCommand};
 
     use super::*;
@@ -133,6 +133,31 @@ mod tests {
             parse_step(r#"{"version":1,"command":"play","toy":"sock"}"#),
             Ok(ScenarioStep::Session(CommandEnvelope {
                 command: SessionCommand::Play { toy: ToyId::Sock },
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn parses_pointer_tracking_and_physical_food_drop() {
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"cursor","position":{"x":7000,"y":1000}}"#),
+            Ok(ScenarioStep::Session(CommandEnvelope {
+                command: SessionCommand::Cursor {
+                    position: Some(NormalizedPosition { x: 7000, y: 1000 })
+                },
+                ..
+            }))
+        ));
+        assert!(matches!(
+            parse_step(
+                r#"{"version":1,"command":"drop_food","food":"berry","position":{"x":7000,"y":1000}}"#
+            ),
+            Ok(ScenarioStep::Session(CommandEnvelope {
+                command: SessionCommand::DropFood {
+                    food: FoodId::Berry,
+                    position: NormalizedPosition { x: 7000, y: 1000 }
+                },
                 ..
             }))
         ));

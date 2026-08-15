@@ -1,0 +1,164 @@
+{
+  "version": 2,
+  "saved_at_ms": 120000,
+  "world": {
+    "save_version": 2,
+    "seed": 42,
+    "elapsed_ms": 120000,
+    "simulation_remainder_ms": 0,
+    "next_memory_id": 5,
+    "next_belief_id": 2,
+    "creature": {
+      "name": "Mop",
+      "needs": {
+        "hunger": 0.0483333,
+        "energy": 0.8140012,
+        "comfort": 0.7339997,
+        "curiosity": 0.51999754
+      },
+      "traits": {
+        "sociability": 0.839338,
+        "boldness": 0.0248878,
+        "fussiness": 0.1108706,
+        "stubbornness": 0.4612134,
+        "literalness": 0.42866004,
+        "repetitiveness": 0.16530323,
+        "sentence_complexity": 0.35440618,
+        "question_tendency": 0.832881
+      },
+      "relationship": {
+        "bond": 0.1,
+        "trust": 0.15,
+        "respect": 0.075,
+        "resentment": 0.13999999
+      },
+      "preferences": {
+        "berry": -0.8569671
+      },
+      "toy_preferences": {
+        "ball": -0.6214584
+      },
+      "known_concepts": [
+        "self_identity",
+        "you",
+        "food",
+        "good",
+        "bad",
+        "here",
+        "sleep"
+      ],
+      "memories": [
+        {
+          "id": 1,
+          "happened_at_ms": 4000,
+          "kind": {
+            "kind": "was_fed",
+            "food": "berry"
+          },
+          "concepts": [
+            "you",
+            "food"
+          ],
+          "valence": -0.8569671,
+          "salience": 0.75
+        },
+        {
+          "id": 2,
+          "happened_at_ms": 4000,
+          "kind": {
+            "kind": "disliked_food",
+            "food": "berry"
+          },
+          "concepts": [
+            "food",
+            "bad"
+          ],
+          "valence": -0.8569671,
+          "salience": 0.95
+        },
+        {
+          "id": 3,
+          "happened_at_ms": 61000,
+          "kind": {
+            "kind": "disliked_toy",
+            "toy": "ball"
+          },
+          "concepts": [
+            "you",
+            "bad",
+            "toy"
+          ],
+          "valence": -0.6214584,
+          "salience": 0.85
+        },
+        {
+          "id": 4,
+          "happened_at_ms": 120000,
+          "kind": {
+            "kind": "player_reacted",
+            "reaction": "laugh",
+            "to": "insult"
+          },
+          "concepts": [
+            "you",
+            "again"
+          ],
+          "valence": 0.55,
+          "salience": 0.75
+        }
+      ],
+      "beliefs": [
+        {
+          "id": 1,
+          "kind": "red_food_is_a_trick",
+          "supporting_memories": [
+            2
+          ],
+          "confidence": 0.5653033
+        }
+      ],
+      "social_habits": {
+        "profanity": 0.02,
+        "crudeness": 0.02,
+        "spite": 0.17999999,
+        "provocation": 0.15,
+        "sexual_innuendo": 0.0
+      },
+      "current_intention": "seek_comfort",
+      "last_social_act": "provocation",
+      "conversation": {
+        "next_talk_at_ms": 150000,
+        "contextual_follow_up_available": false,
+        "contextual_follow_up_used": true
+      },
+      "position": "player",
+      "movement": null,
+      "development": {
+        "active_days_reached": 1,
+        "language_stage": "hatch",
+        "interactions": {
+          "feeds": 1,
+          "plays": 1,
+          "comforts": 0,
+          "returns": 0,
+          "talks": 2
+        }
+      }
+    },
+    "room": {
+      "food_in_bowl": null,
+      "toy_available": true,
+      "toy": "ball",
+      "tidy": true,
+      "player_present": true,
+      "last_nonverbal_act": {
+        "take_toy_away": "ball"
+      },
+      "play_requested": false,
+      "comfort_requested": false
+    }
+  },
+  "random": 15635996942056200748,
+  "sequence": 8,
+  "next_request_id": 3
+}

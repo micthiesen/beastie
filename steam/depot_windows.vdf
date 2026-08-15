@@ -1,0 +1,6 @@
+"DepotBuildConfig"
+{
+    "DepotID" "${STEAM_DEPOT_WINDOWS_ID}"
+    "ContentRoot" "${STEAM_CONTENT_ROOT}/windows"
+    "FileMapping" { "LocalPath" "*" "DepotPath" "." "recursive" "1" }
+}

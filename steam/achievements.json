@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "achievements": [
+    {
+      "id": "BEASTIE_FIRST_MEMORY",
+      "name": "First Memory",
+      "description": "Create a durable memory with Beastie."
+    },
+    {
+      "id": "BEASTIE_LEARNED_PREFERENCE",
+      "name": "Learned Preference",
+      "description": "Discover a food preference."
+    },
+    {
+      "id": "BEASTIE_REUNION",
+      "name": "Welcome Back",
+      "description": "Return after an absence and be recognized."
+    },
+    {
+      "id": "BEASTIE_THREE_DAYS",
+      "name": "Three Days",
+      "description": "Reach the third active day."
+    }
+  ]
+}

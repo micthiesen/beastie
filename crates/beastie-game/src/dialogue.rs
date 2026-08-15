@@ -7,10 +7,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use beastie_protocol::{
-    DialogueReply, DialogueRequest, constrained_fallback_reply, validate_reply, validate_request,
+    DialogueReply, DialogueRequest, TranscriptBackend, constrained_fallback_reply, validate_reply,
+    validate_request,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -51,6 +52,7 @@ pub struct WorkerConfig {
     executable: PathBuf,
     arguments: Vec<OsString>,
     reply_timeout: Duration,
+    backend: TranscriptBackend,
 }
 
 impl WorkerConfig {
@@ -82,6 +84,11 @@ impl WorkerConfig {
                 executable,
                 arguments,
                 reply_timeout,
+                backend: if fake_ai {
+                    TranscriptBackend::Fixture
+                } else {
+                    TranscriptBackend::Unknown
+                },
             });
         }
         if fake_ai {
@@ -128,6 +135,7 @@ impl WorkerConfig {
                 server.into_os_string(),
             ],
             reply_timeout,
+            backend: TranscriptBackend::LlamaServer,
         }))
     }
 
@@ -137,6 +145,7 @@ impl WorkerConfig {
             executable,
             arguments,
             reply_timeout,
+            backend: TranscriptBackend::Unknown,
         }
     }
 }
@@ -306,7 +315,7 @@ fn verify_model(
 }
 
 enum ManagerCommand {
-    Request(DialogueRequest),
+    Request(Box<DialogueRequest>),
     Shutdown,
 }
 
@@ -319,6 +328,10 @@ pub struct DialogueManager {
     commands: SyncSender<ManagerCommand>,
     replies: Receiver<DialogueReply>,
     pending: bool,
+    pending_request: Option<DialogueRequest>,
+    pending_since: Option<Instant>,
+    backend: TranscriptBackend,
+    last_fallback: Arc<AtomicBool>,
     cancelled: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
@@ -330,13 +343,28 @@ impl DialogueManager {
         let (reply_sender, replies) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let manager_cancelled = Arc::clone(&cancelled);
+        let last_fallback = Arc::new(AtomicBool::new(false));
+        let manager_fallback = Arc::clone(&last_fallback);
+        let backend = config
+            .as_ref()
+            .map_or(TranscriptBackend::Unknown, |config| config.backend);
         let thread = thread::spawn(move || {
-            run_manager(config, command_receiver, reply_sender, &manager_cancelled);
+            run_manager(
+                config,
+                command_receiver,
+                reply_sender,
+                &manager_cancelled,
+                &manager_fallback,
+            );
         });
         Self {
             commands,
             replies,
             pending: false,
+            pending_request: None,
+            pending_since: None,
+            backend,
+            last_fallback,
             cancelled,
             thread: Some(thread),
         }
@@ -349,13 +377,33 @@ impl DialogueManager {
         }
         if self
             .commands
-            .send(ManagerCommand::Request(request))
+            .send(ManagerCommand::Request(Box::new(request.clone())))
             .is_err()
         {
             return false;
         }
         self.pending = true;
+        self.pending_request = Some(request);
+        self.pending_since = Some(Instant::now());
         true
+    }
+
+    pub fn try_recv_turn(&mut self) -> Result<DialogueTurn, TryRecvError> {
+        let reply = self.try_recv()?;
+        let request = self
+            .pending_request
+            .take()
+            .expect("a reply is only produced for a pending request");
+        let latency_ms = self.pending_since.take().map_or(0, |started| {
+            started.elapsed().as_millis().try_into().unwrap_or(u32::MAX)
+        });
+        Ok(DialogueTurn {
+            request,
+            reply,
+            backend: self.backend,
+            latency_ms,
+            fallback: self.last_fallback.load(Ordering::Acquire),
+        })
     }
 
     pub fn try_recv(&mut self) -> Result<DialogueReply, TryRecvError> {
@@ -366,6 +414,8 @@ impl DialogueManager {
             }
             Err(TryRecvError::Disconnected) => {
                 self.pending = false;
+                self.pending_request = None;
+                self.pending_since = None;
                 Err(TryRecvError::Disconnected)
             }
             Err(TryRecvError::Empty) => Err(TryRecvError::Empty),
@@ -396,6 +446,15 @@ impl DialogueManager {
     }
 }
 
+#[derive(Debug)]
+pub struct DialogueTurn {
+    pub request: DialogueRequest,
+    pub reply: DialogueReply,
+    pub backend: TranscriptBackend,
+    pub latency_ms: u32,
+    pub fallback: bool,
+}
+
 impl Drop for DialogueManager {
     fn drop(&mut self) {
         self.cancelled.store(true, Ordering::Release);
@@ -411,17 +470,17 @@ fn run_manager(
     commands: Receiver<ManagerCommand>,
     replies: Sender<DialogueReply>,
     cancelled: &AtomicBool,
+    last_fallback: &AtomicBool,
 ) {
     let mut worker = None;
     while let Ok(command) = commands.recv() {
         match command {
             ManagerCommand::Request(request) => {
-                let reply = config
-                    .as_ref()
-                    .and_then(|config| {
-                        exchange_with_recovery(config, &mut worker, &request, cancelled)
-                    })
-                    .unwrap_or_else(|| constrained_fallback_reply(&request));
+                let generated = config.as_ref().and_then(|config| {
+                    exchange_with_recovery(config, &mut worker, &request, cancelled)
+                });
+                last_fallback.store(generated.is_none(), Ordering::Release);
+                let reply = generated.unwrap_or_else(|| constrained_fallback_reply(&request));
                 if cancelled.load(Ordering::Acquire) {
                     break;
                 }
@@ -665,6 +724,7 @@ mod tests {
             idiolect: Idiolect::default(),
             desired_social_act: None,
             input_rejection: None,
+            context: beastie_protocol::DialogueContext::default(),
             player_said: "hello".to_owned(),
             constraints: DialogueConstraints {
                 max_words: 3,

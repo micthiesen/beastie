@@ -5,11 +5,12 @@ use thiserror::Error;
 
 use crate::{
     Belief, Concept, ConversationState, Creature, Development, FoodId, Intention, Memory, MemoryId,
-    MemoryKind, Needs, NonverbalAct, Reaction, Relationship, RoomSpot, RoomState, SAVE_VERSION,
-    SeededRandom, SocialAct, SocialHabits, StateValidationError, ToyId, Traits, WorldState,
+    MemoryKind, Needs, Reaction, Relationship, SAVE_VERSION, SeededRandom, SocialAct, SocialHabits,
+    StateValidationError, ToyId, Traits, WorldState,
 };
 
 const LEGACY_SAVE_VERSION: u32 = 1;
+const PREVIOUS_SAVE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -38,6 +39,9 @@ impl SaveGame {
         let header = serde_json::from_str::<SaveVersionHeader>(source).map_err(SaveError::Json)?;
         if header.save_version == LEGACY_SAVE_VERSION {
             return LegacySaveGame::from_json(source);
+        }
+        if header.save_version == PREVIOUS_SAVE_VERSION {
+            return PreviousSaveGame::from_json(source);
         }
         if header.save_version != SAVE_VERSION {
             return Err(SaveError::Version(header.save_version));
@@ -70,6 +74,61 @@ struct SaveVersionHeader {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PreviousSaveGame {
+    save_version: u32,
+    world: WorldState,
+    random: SeededRandom,
+}
+
+impl PreviousSaveGame {
+    fn from_json(source: &str) -> Result<SaveGame, SaveError> {
+        let mut value =
+            serde_json::from_str::<serde_json::Value>(source).map_err(SaveError::Json)?;
+        if let Some(world) = value
+            .get_mut("world")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            world.remove("room");
+            if let Some(aquarium) = world
+                .get_mut("aquarium")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                aquarium.remove("action");
+                aquarium.remove("creature_position");
+                aquarium.remove("creature_velocity");
+                aquarium.remove("facing");
+                aquarium.remove("gaze");
+                aquarium.remove("depth_lane");
+                aquarium.remove("steering");
+                aquarium.remove("destination");
+            }
+            if let Some(creature) = world
+                .get_mut("creature")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                creature.remove("position");
+                creature.remove("movement");
+            }
+        }
+        let mut previous = serde_json::from_value::<Self>(value).map_err(SaveError::Json)?;
+        if previous.save_version != PREVIOUS_SAVE_VERSION
+            || previous.world.save_version != PREVIOUS_SAVE_VERSION
+        {
+            return Err(SaveError::Version(previous.save_version));
+        }
+        previous.save_version = SAVE_VERSION;
+        previous.world.save_version = SAVE_VERSION;
+        let save = SaveGame {
+            save_version: SAVE_VERSION,
+            world: previous.world,
+            random: previous.random,
+        };
+        save.validate()?;
+        Ok(save)
+    }
+}
+
+#[derive(Deserialize)]
 struct LegacySaveGame {
     save_version: u32,
     world: LegacyWorldState,
@@ -96,7 +155,6 @@ impl LegacySaveGame {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct LegacyWorldState {
     save_version: u32,
     seed: u64,
@@ -117,13 +175,17 @@ impl LegacyWorldState {
             next_memory_id: self.next_memory_id,
             next_belief_id: self.next_belief_id,
             creature: self.creature.migrate(),
-            room: self.room.migrate(),
+            aquarium: crate::AquariumState {
+                player_present: self.room.player_present(),
+                ..crate::AquariumState::default()
+            },
+            random_domains: BTreeMap::new(),
+            absence_days: 0,
         }
     }
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct LegacyCreature {
     name: String,
     needs: Needs,
@@ -162,35 +224,23 @@ impl LegacyCreature {
             current_intention: self.current_intention,
             last_social_act: self.last_social_act,
             conversation: ConversationState::default(),
-            position: RoomSpot::Center,
-            movement: None,
             development: Development::default(),
+            aquarium: crate::AquariumCreatureState::default(),
+            routines: Vec::new(),
+            favorite_locations: BTreeMap::new(),
+            initiated_behavior: None,
         }
     }
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct LegacyRoomState {
-    food_in_bowl: Option<FoodId>,
-    toy_available: bool,
-    tidy: bool,
     player_present: bool,
-    last_nonverbal_act: Option<LegacyNonverbalAct>,
 }
 
 impl LegacyRoomState {
-    fn migrate(self) -> RoomState {
-        RoomState {
-            food_in_bowl: self.food_in_bowl,
-            toy_available: self.toy_available,
-            toy: ToyId::Ball,
-            tidy: self.tidy,
-            player_present: self.player_present,
-            last_nonverbal_act: self.last_nonverbal_act.map(LegacyNonverbalAct::migrate),
-            play_requested: false,
-            comfort_requested: false,
-        }
+    fn player_present(&self) -> bool {
+        self.player_present
     }
 }
 
@@ -278,26 +328,6 @@ impl LegacyMemoryKind {
             Self::WasComforted => MemoryKind::WasComforted,
             Self::PlayerReturnedAfterAbsence => MemoryKind::PlayerReturnedAfterAbsence,
             Self::PlayerReacted { reaction, to } => MemoryKind::PlayerReacted { reaction, to },
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum LegacyNonverbalAct {
-    PushFoodAway(FoodId),
-    TakeToyAway,
-    RefuseToEat,
-    UndoTidy,
-}
-
-impl LegacyNonverbalAct {
-    fn migrate(self) -> NonverbalAct {
-        match self {
-            Self::PushFoodAway(food) => NonverbalAct::PushFoodAway(food),
-            Self::TakeToyAway => NonverbalAct::TakeToyAway(ToyId::Ball),
-            Self::RefuseToEat => NonverbalAct::RefuseToEat,
-            Self::UndoTidy => NonverbalAct::UndoTidy,
         }
     }
 }

@@ -1667,19 +1667,30 @@ mod tests {
 
     #[test]
     fn builds_a_grounded_request_from_real_world_memory() {
-        use beastie_core::{FoodId, MemoryCue, PlayerEvent, SeededRandom, step};
+        use beastie_core::{FoodId, MemoryCue, MemoryKind, PlayerEvent, SeededRandom, step};
 
         let mut world = WorldState::new(99, "Mrrp");
         let mut random = SeededRandom::new(world.seed);
+        world.creature.preferences.insert(FoodId::Berry, -0.9);
         world.creature.needs.hunger = 1.0;
         step(
             &mut world,
             &[PlayerEvent::Feed(FoodId::Berry)],
-            1_000,
+            0,
             &mut random,
         );
-        for _ in 0..4 {
+        for _ in 0..60 {
             step(&mut world, &[], 1_000, &mut random);
+            if world.creature.memories.iter().any(|memory| {
+                matches!(
+                    memory.kind,
+                    MemoryKind::RejectedFood {
+                        food: FoodId::Berry
+                    }
+                )
+            }) {
+                break;
+            }
         }
         world.elapsed_ms = ACTIVE_DAY_MS;
 
@@ -1701,7 +1712,7 @@ mod tests {
 
         validate_request(&request).expect("projected request should be valid");
         assert!(request.candidate_memories.iter().any(|memory| {
-            memory.fact == "Yesterday you discovered that you dislike berry."
+            memory.fact == "Yesterday you pushed away the berry."
                 && memory.feeling == "strong dislike"
         }));
         let recalled_memory = request

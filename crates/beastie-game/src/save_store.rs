@@ -1,13 +1,16 @@
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-
-#[cfg(unix)]
-use std::fs::File;
 
 #[derive(Debug, Clone)]
 pub struct SaveStore {
     path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadedSave {
+    Primary(String),
+    Backup(String),
 }
 
 impl SaveStore {
@@ -16,19 +19,79 @@ impl SaveStore {
         Self { path }
     }
 
-    pub fn load(&self) -> io::Result<Option<String>> {
+    pub fn load_recoverable(&self) -> io::Result<Option<LoadedSave>> {
         match fs::read_to_string(&self.path) {
-            Ok(save) => Ok(Some(save)),
+            Ok(save) => Ok(Some(LoadedSave::Primary(save))),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 let backup = self.path.with_extension("json.bak");
                 match fs::read_to_string(backup) {
-                    Ok(save) => Ok(Some(save)),
+                    Ok(save) => Ok(Some(LoadedSave::Backup(save))),
                     Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
                     Err(error) => Err(error),
                 }
             }
             Err(error) => Err(error),
         }
+    }
+
+    pub fn load_backup(&self) -> io::Result<Option<String>> {
+        match fs::read_to_string(self.path.with_extension("json.bak")) {
+            Ok(save) => Ok(Some(save)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Promotes the last-good backup while preserving the displaced primary as
+    /// a visible `.corrupt` generation for support or manual recovery.
+    pub fn promote_backup(&self) -> io::Result<bool> {
+        let backup = self.path.with_extension("json.bak");
+        if !backup.is_file() {
+            return Ok(false);
+        }
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        let displaced = self.path.with_extension("json.corrupt");
+        let temporary = self.path.with_extension("json.recovery.tmp");
+        remove_if_present(&displaced)?;
+        remove_if_present(&temporary)?;
+        let had_primary = self.path.exists();
+        if had_primary {
+            fs::rename(&self.path, &displaced)?;
+        }
+        if let Err(error) = fs::copy(&backup, &temporary)
+            .and_then(|_| File::open(&temporary)?.sync_all())
+            .and_then(|_| fs::rename(&temporary, &self.path))
+        {
+            remove_if_present(&temporary)?;
+            if had_primary {
+                let _ = fs::rename(&displaced, &self.path);
+            }
+            return Err(error);
+        }
+        sync_directory(parent)?;
+        Ok(true)
+    }
+
+    /// Moves all save generations aside rather than deleting them. The reset
+    /// can therefore be undone manually until a later reset replaces it.
+    pub fn reset(&self) -> io::Result<bool> {
+        let reset = self.path.with_extension("json.reset");
+        remove_if_present(&reset)?;
+        let mut moved = false;
+        if self.path.exists() {
+            fs::rename(&self.path, &reset)?;
+            moved = true;
+        }
+        remove_if_present(&self.path.with_extension("json.tmp"))?;
+        if self.path.with_extension("json.bak").exists() {
+            if !moved {
+                fs::rename(self.path.with_extension("json.bak"), reset)?;
+            } else {
+                remove_if_present(&self.path.with_extension("json.bak"))?;
+            }
+            moved = true;
+        }
+        Ok(moved)
     }
 
     pub fn store(&self, save: &str) -> io::Result<()> {
@@ -57,7 +120,7 @@ impl SaveStore {
             }
             return Err(error);
         }
-        remove_if_present(&backup)?;
+        // Keep one last-good generation visible for recovery and support.
         sync_directory(parent)
     }
 }
@@ -112,11 +175,14 @@ mod tests {
         store.store("second").expect("replacement should succeed");
 
         assert_eq!(
-            store.load().expect("load should succeed").as_deref(),
-            Some("second")
+            store.load_recoverable().expect("load should succeed"),
+            Some(LoadedSave::Primary("second".to_owned()))
         );
         assert!(!path.with_extension("json.tmp").exists());
-        assert!(!path.with_extension("json.bak").exists());
+        assert_eq!(
+            fs::read_to_string(path.with_extension("json.bak")).expect("backup"),
+            "first"
+        );
         fs::remove_dir_all(directory).expect("test directory should be removable");
     }
 
@@ -132,9 +198,49 @@ mod tests {
 
         let store = SaveStore::new(path);
         assert_eq!(
-            store.load().expect("backup load should succeed").as_deref(),
-            Some("last-good")
+            store
+                .load_recoverable()
+                .expect("backup load should succeed"),
+            Some(LoadedSave::Backup("last-good".to_owned()))
         );
         fs::remove_dir_all(directory).expect("test directory should be removable");
+    }
+
+    #[test]
+    fn reset_is_recoverable_and_removes_incomplete_generations() {
+        let path = test_path();
+        let directory = path.parent().expect("test path has a parent").to_owned();
+        let store = SaveStore::new(path.clone());
+        store.store("current").expect("store");
+        fs::write(path.with_extension("json.tmp"), "partial").expect("temporary");
+        assert!(store.reset().expect("reset"));
+        assert!(!path.exists());
+        assert!(!path.with_extension("json.tmp").exists());
+        assert_eq!(
+            fs::read_to_string(path.with_extension("json.reset")).expect("reset generation"),
+            "current"
+        );
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn backup_promotion_preserves_both_recovered_and_displaced_generations() {
+        let path = test_path();
+        let directory = path.parent().expect("test path has a parent").to_owned();
+        fs::create_dir_all(&directory).expect("directory");
+        fs::write(&path, "broken-current").expect("primary");
+        fs::write(path.with_extension("json.bak"), "last-good").expect("backup");
+        let store = SaveStore::new(path.clone());
+        assert!(store.promote_backup().expect("promote"));
+        assert_eq!(fs::read_to_string(&path).expect("primary"), "last-good");
+        assert_eq!(
+            fs::read_to_string(path.with_extension("json.corrupt")).expect("displaced"),
+            "broken-current"
+        );
+        assert_eq!(
+            fs::read_to_string(path.with_extension("json.bak")).expect("backup retained"),
+            "last-good"
+        );
+        fs::remove_dir_all(directory).expect("cleanup");
     }
 }

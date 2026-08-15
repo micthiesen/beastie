@@ -5,3 +5,13 @@ creature/eat
 creature/sleep
 creature/play
 creature/annoyed
+aquarium/background
+aquarium/cave
+aquarium/plants
+aquarium/toys
+creature-v1/base
+creature-v1/hover
+creature-v1/swim
+creature-v1/eat-recoil
+creature-v1/sleep
+creature-v1/play

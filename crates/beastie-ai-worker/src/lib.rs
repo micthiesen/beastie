@@ -126,6 +126,9 @@ pub fn process_line(line: &str, backend: &mut dyn DialogueBackend) -> DialogueRe
     if crate::llama_cpp::validate_model_safety(&request, &reply).is_err() {
         return grounded_fallback_reply(&request);
     }
+    if crate::llama_cpp::validate_model_semantics(&request, &reply).is_err() {
+        return grounded_fallback_reply(&request);
+    }
     validate_reply(&request, reply).unwrap_or_else(|_| grounded_fallback_reply(&request))
 }
 
@@ -152,6 +155,11 @@ fn grounded_fallback_reply(request: &DialogueRequest) -> DialogueReply {
             .collect::<Vec<_>>()
             .join(" ");
             reply.recalled_belief = Some(belief.id);
+            return reply;
+        }
+        if let Some(say) = prompt::authored_context_say(request) {
+            let mut reply = constrained_fallback_reply(request);
+            reply.say = say;
             return reply;
         }
         return constrained_fallback_reply(request);
@@ -221,6 +229,28 @@ mod tests {
     use super::*;
 
     const BERRY_MEMORY: &str = include_str!("../../../fixtures/dialogue/berry-memory.json");
+    const EVAL_CORPUS: &str = include_str!("../../../evals/dialogue/corpus.json");
+
+    struct BrokenBackend;
+
+    impl DialogueBackend for BrokenBackend {
+        fn generate(&mut self, _request: &DialogueRequest) -> Result<DialogueReply, BackendError> {
+            Err(BackendError::MalformedReply)
+        }
+    }
+
+    fn eval_request(id: &str) -> DialogueRequest {
+        let corpus: serde_json::Value =
+            serde_json::from_str(EVAL_CORPUS).expect("corpus should parse");
+        let request = corpus["cases"]
+            .as_array()
+            .expect("cases should be an array")
+            .iter()
+            .find(|case| case["id"] == id)
+            .map(|case| case["request"].clone())
+            .expect("case should exist");
+        serde_json::from_value(request).expect("request should parse")
+    }
 
     #[test]
     fn jsonl_fixture_produces_a_valid_reply() {
@@ -232,16 +262,6 @@ mod tests {
 
     #[test]
     fn model_failure_falls_back_to_the_authoritative_memory_anchor() {
-        struct BrokenBackend;
-        impl DialogueBackend for BrokenBackend {
-            fn generate(
-                &mut self,
-                _request: &DialogueRequest,
-            ) -> Result<DialogueReply, BackendError> {
-                Err(BackendError::MalformedReply)
-            }
-        }
-
         let request: DialogueRequest =
             serde_json::from_str(BERRY_MEMORY.trim()).expect("fixture request should parse");
         let memory_id = request.candidate_memories[0].id;
@@ -250,6 +270,21 @@ mod tests {
         assert!(reply.say.contains("bad"));
         assert_eq!(reply.recalled_memory, Some(memory_id));
         assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
+    }
+
+    #[test]
+    fn model_failure_preserves_typed_social_and_context_lanes() {
+        for (id, required) in [
+            ("permitted_innuendo", "nest"),
+            ("creature_initiated_notice", "berry"),
+            ("grudge_continuity", "grudge"),
+        ] {
+            let request = eval_request(id);
+            let line = serde_json::to_string(&request).expect("request should serialize");
+            let reply = process_line(&line, &mut BrokenBackend);
+            assert!(reply.say.contains(required), "{id}: {}", reply.say);
+            assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
+        }
     }
 
     #[test]

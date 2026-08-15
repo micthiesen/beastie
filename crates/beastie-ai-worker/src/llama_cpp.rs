@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use beastie_protocol::{DialogueReply, DialogueRequest, classify_content_boundary, validate_reply};
 
 use crate::process::{ContainedChild, UnixProcessGroup};
-use crate::prompt::{memory_anchor, structured_prompt};
+use crate::prompt::{memory_anchor, required_output_terms, structured_prompt};
 use crate::{BackendError, DialogueBackend, LlamaCppConfig, bounded_llama_threads};
 
 #[derive(Debug)]
@@ -65,7 +65,26 @@ impl LlamaCppBackend {
         let reply = parse_single_reply(request, &text)?;
         validate_model_safety(request, &reply)?;
         validate_model_grounding(request, &reply)?;
+        validate_model_semantics(request, &reply)?;
         Ok(reply)
+    }
+}
+
+pub(crate) fn validate_model_semantics(
+    request: &DialogueRequest,
+    reply: &DialogueReply,
+) -> Result<(), BackendError> {
+    let Some(required) = required_output_terms(request) else {
+        return Ok(());
+    };
+    let words = normalized_words(&reply.say);
+    if required
+        .iter()
+        .any(|required| words.iter().any(|word| word == required))
+    {
+        Ok(())
+    } else {
+        Err(BackendError::MalformedReply)
     }
 }
 
@@ -300,6 +319,26 @@ mod tests {
             };
             assert!(validate_model_safety(&request, &reply).is_ok(), "{say}");
         }
+    }
+
+    #[test]
+    fn typed_social_lane_rejects_a_safe_but_semantically_empty_reply() {
+        let mut value: serde_json::Value =
+            serde_json::from_str(BERRY_MEMORY).expect("request should parse");
+        value["candidate_memories"] = serde_json::json!([]);
+        value["desired_social_act"] = serde_json::json!("innuendo");
+        let request: DialogueRequest = serde_json::from_value(value).expect("request should parse");
+        let mut reply = DialogueReply {
+            protocol_version: request.protocol_version,
+            request_id: request.request_id,
+            say: "hm. rude giant.".to_owned(),
+            gesture: beastie_protocol::Gesture::None,
+            recalled_memory: None,
+            recalled_belief: None,
+        };
+        assert!(validate_model_semantics(&request, &reply).is_err());
+        reply.say = "nest is warm. come closer.".to_owned();
+        assert!(validate_model_semantics(&request, &reply).is_ok());
     }
 
     #[test]

@@ -1,36 +1,47 @@
 # Beastie
 
-Beastie is an offline, one-room creature game where a deterministic simulation owns the
-truth and a tiny local language model gives the creature an unreliable voice. The game is a
-Rust workspace built around a pure simulation core, a validated JSONL AI boundary, declarative
-render plans, and a thin ggez shell. macOS, Windows, and Linux are first-class targets.
+Beastie is an offline aquarium creature game. A deterministic Rust simulation owns the truth,
+while a tiny local language model gives the creature an unreliable voice. The creature swims,
+notices food and the player, develops habits and grudges, and expresses authoritative state through
+movement, face, sound, and scarce dialogue.
+
+The game uses a pure simulation core, a validated JSONL AI boundary, declarative 320x180 render
+plans, and a thin ggez shell. macOS, Windows, and Linux are first-class release targets.
 
 ## Start here
 
 ```bash
 cargo xtask verify
-cargo xtask sim --seed 42 --days 3
-cargo xtask dev --fake-ai
+cargo xtask play --scenario fixtures/scenarios/aquarium-v1.jsonl --fake-ai
+cargo xtask dev --fake-ai \
+  --script fixtures/scenarios/aquarium-v1-visible.jsonl \
+  --capture-dir target/captures/aquarium-v1
 ```
 
-`cargo xtask verify` requires no model, display, GPU, network connection, or asset-generation
-credential. The Mac-led MVP includes the playable three-day creature arc, deterministic saves and
-migration, generated room art, authored sound, a warm local Qwen dialogue runtime, and optional
-offline speech. See [the MVP specification](docs/mvp-spec.md), the chosen
-[V1 aquarium plan](docs/v1-plan.md), and [current project state](docs/STATE.md).
+`cargo xtask verify` needs no model, display, GPU, audio device, network connection, or asset
+generation credential. The visible command uses fixture AI and exercises the real game shell.
+
+V1 includes continuous deterministic aquarium movement, physical food, expressive animation and
+gaze, a persistent compose interface, controller-equivalent semantic navigation, versioned save
+migration and recovery, local transcript export, generated aquarium art, authored sound, a warm
+local Qwen dialogue runtime, and optional offline eSpeak NG speech. The original
+[MVP specification](docs/mvp-spec.md) remains as historical design context. See the
+[V1 plan](docs/v1-plan.md), [architecture](docs/architecture.md), and
+[current project state](docs/STATE.md) for the implemented reality and remaining acceptance work.
 
 ## Workspace
 
-- `crates/beastie-core`: authoritative deterministic simulation and save state
-- `crates/beastie-protocol`: versioned, validated dialogue protocol
-- `crates/beastie-view`: simulation state to declarative render/audio plans
-- `crates/beastie-ai-worker`: fixture, warm llama.cpp, and offline TTS worker boundaries
-- `crates/beastie-game`: thin cross-platform ggez executable
-- `crates/xtask`: developer commands and verification entry point
+- `crates/beastie-core`: authoritative deterministic simulation, aquarium objects, and save state
+- `crates/beastie-session`: shared semantic command and observation boundary
+- `crates/beastie-protocol`: versioned, validated dialogue and speech metadata
+- `crates/beastie-view`: display-free render, UI, expression, and audio plans
+- `crates/beastie-ai-worker`: fixture and warm llama.cpp worker boundaries
+- `crates/beastie-game`: cross-platform ggez window, input, audio, saves, settings, and transcripts
+- `crates/xtask`: verification, simulation, evaluation, capture, asset, and release tooling
 
-Real model weights and generated outputs are not committed. Their pinned metadata belongs in
-`models/manifest.toml` and `assets/manifest.toml`.
+Real model weights and generated test outputs are not committed. Pinned model metadata lives in
+`models/manifest.toml`; generated and promoted asset provenance lives in `assets/manifest.toml`.
 
-Release staging, local inference, content boundaries, and the Steam disclosure draft are documented
-in [packaging](docs/packaging.md), [local mouth](docs/local-mouth.md), and
+Release staging, local inference, content boundaries, and Steam disclosure are documented in
+[packaging](docs/packaging.md), [local mouth](docs/local-mouth.md), and
 [Steam AI disclosure](docs/steam-ai-disclosure.md).

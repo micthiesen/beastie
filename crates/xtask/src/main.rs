@@ -7,7 +7,9 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use beastie_core::{ACTIVE_DAY_MS, GameEvent, MemoryId, SeededRandom, WorldState, step};
-use beastie_protocol::{DialogueReply, DialogueRequest, Gesture, PROTOCOL_VERSION, validate_reply};
+use beastie_protocol::{
+    DialogueReply, DialogueRequest, Gesture, constrained_fallback_reply, validate_reply,
+};
 use beastie_session::{
     GameSession, MAX_COMMAND_BYTES, Observation, SESSION_PROTOCOL_VERSION, SessionError,
 };
@@ -17,6 +19,7 @@ use serde::Serialize;
 mod asset;
 mod dialogue_eval;
 mod packaging;
+mod store_assets;
 
 const BERRY_GRUDGE_SCENARIO: &str = "fixtures/scenarios/berry-grudge.jsonl";
 
@@ -35,6 +38,11 @@ enum Task {
     Asset {
         #[command(subcommand)]
         command: AssetTask,
+    },
+    /// Build or validate the checked-in Steam store art from its approved source image.
+    StoreAssets {
+        #[command(subcommand)]
+        command: StoreAssetsTask,
     },
     /// Score the checked-in dialogue corpus with fixtures or a local worker.
     Dialogue {
@@ -179,6 +187,14 @@ enum AssetTask {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum StoreAssetsTask {
+    /// Deterministically generate all required Steam art files offline.
+    Build,
+    /// Validate dimensions, formats, title treatment, and source provenance.
+    Check,
+}
+
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 enum PackagePlatform {
     Macos,
@@ -216,6 +232,12 @@ fn main() -> Result<()> {
         Task::Asset {
             command: AssetTask::Generate { id, force },
         } => asset::generate(Path::new("assets/manifest.toml"), &id, force),
+        Task::StoreAssets {
+            command: StoreAssetsTask::Build,
+        } => store_assets::build(Path::new(".")),
+        Task::StoreAssets {
+            command: StoreAssetsTask::Check,
+        } => store_assets::check(Path::new(".")),
         Task::Dialogue {
             command:
                 DialogueTask::Eval {
@@ -383,8 +405,10 @@ fn verify() -> Result<()> {
     asset::check(Path::new("assets/manifest.toml"), true)?;
     verify_manifest("models/manifest.toml")?;
     dialogue_eval::verify_fixtures()?;
+    store_assets::check(Path::new("."))?;
     run("cargo", &["build", "--workspace", "--locked"])?;
-    replay_scenario(BERRY_GRUDGE_SCENARIO)
+    replay_scenario(BERRY_GRUDGE_SCENARIO)?;
+    replay_scenario("fixtures/scenarios/aquarium-v1.jsonl")
 }
 
 struct DevOptions<'a> {
@@ -511,14 +535,15 @@ fn play(seed: u64, scenario: Option<&Path>, fake_ai: bool) -> Result<()> {
         bail!("--fake-ai is required until a local model backend is integrated");
     }
     let mut output = io::stdout().lock();
-    match scenario {
+    let report = match scenario {
         Some(path) => {
             let file = File::open(path)
                 .with_context(|| format!("failed to open scenario {}", path.display()))?;
-            process_commands(BufReader::new(file), &mut output, seed).map(|_| ())
+            process_commands(BufReader::new(file), &mut output, seed)
         }
-        None => process_commands(io::stdin().lock(), &mut output, seed).map(|_| ()),
-    }
+        None => process_commands(io::stdin().lock(), &mut output, seed),
+    }?;
+    reject_adapter_errors(report)
 }
 
 fn replay_scenario(path: &str) -> Result<()> {
@@ -527,17 +552,22 @@ fn replay_scenario(path: &str) -> Result<()> {
     if report.accepted == 0 {
         bail!("scenario {path} contains no commands");
     }
-    if report.rejected > 0 {
-        bail!(
-            "scenario {path} rejected {} of {} commands",
-            report.rejected,
-            report.accepted + report.rejected
-        );
-    }
-    if !report.grounded_reply || !report.food_rejected {
-        bail!("scenario {path} did not produce grounded recall and berry rejection");
+    reject_adapter_errors(report)?;
+    if !report.grounded_reply || !report.food_consumed {
+        bail!("scenario {path} did not produce grounded recall and berry consumption");
     }
     Ok(())
+}
+
+fn reject_adapter_errors(report: PlayReport) -> Result<()> {
+    if report.rejected == 0 {
+        return Ok(());
+    }
+    bail!(
+        "play encountered {} adapter error(s) across {} command(s)",
+        report.rejected,
+        report.accepted + report.rejected
+    )
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -545,7 +575,7 @@ struct PlayReport {
     accepted: usize,
     rejected: usize,
     grounded_reply: bool,
-    food_rejected: bool,
+    food_consumed: bool,
 }
 
 fn process_commands(
@@ -579,11 +609,11 @@ fn process_commands(
         match result {
             Ok(observation) => {
                 report.grounded_reply |= observation.recalled_memory.is_some();
-                report.food_rejected |= observation
+                report.food_consumed |= observation
                     .observation
                     .events
                     .iter()
-                    .any(|event| matches!(event, GameEvent::FoodRejected(_)));
+                    .any(|event| matches!(event, GameEvent::FoodConsumed(_)));
                 serde_json::to_writer(&mut output, &observation)
                     .context("failed to encode session observation")?;
                 report.accepted += 1;
@@ -637,31 +667,15 @@ fn process_command(
 
 fn fixture_reply(request: &DialogueRequest) -> std::result::Result<DialogueReply, AdapterError> {
     let memory = request.candidate_memories.first();
-    let reply = DialogueReply {
-        protocol_version: PROTOCOL_VERSION,
-        request_id: request.request_id,
-        say: memory.map_or_else(
-            || "hm. no old thought.".to_owned(),
-            |_| "yes. old thing remains.".to_owned(),
-        ),
-        gesture: if request
-            .constraints
-            .allowed_gestures
-            .contains(&Gesture::LookPlayer)
-        {
-            Gesture::LookPlayer
-        } else {
-            request
-                .constraints
-                .allowed_gestures
-                .iter()
-                .next()
-                .copied()
-                .unwrap_or(Gesture::None)
-        },
-        recalled_memory: memory.map(|candidate| candidate.id),
-        recalled_belief: None,
-    };
+    let mut reply = constrained_fallback_reply(request);
+    if request
+        .constraints
+        .allowed_gestures
+        .contains(&Gesture::LookPlayer)
+    {
+        reply.gesture = Gesture::LookPlayer;
+    }
+    reply.recalled_memory = memory.map(|candidate| candidate.id);
     validate_reply(request, reply).map_err(|error| {
         AdapterError::new(
             "fixture_reply_invalid",
@@ -801,7 +815,7 @@ mod tests {
 
         assert_eq!(report.rejected, 0);
         assert!(report.grounded_reply);
-        assert!(report.food_rejected);
+        assert!(report.food_consumed);
         let recalled = talk["recalled_memory"].clone();
         assert!(
             talk["dialogue_request"]["candidate_memories"]
@@ -810,6 +824,35 @@ mod tests {
                 .iter()
                 .any(|memory| memory["id"] == recalled)
         );
+    }
+
+    #[test]
+    fn fixture_reply_obeys_hatch_word_limit() {
+        let mut session = GameSession::new(42, "Mop");
+        let command =
+            GameSession::parse_command(r#"{"version":1,"command":"talk","text":"hello"}"#)
+                .expect("talk command should parse");
+        let request = session
+            .apply(command)
+            .expect("talk should apply")
+            .dialogue_request
+            .expect("hatch talk should request dialogue");
+
+        assert_eq!(request.constraints.max_words, 3);
+        let reply = fixture_reply(&request).expect("fixture reply should validate");
+        assert!(reply.say.split_whitespace().count() <= 3);
+        assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
+    }
+
+    #[test]
+    fn adapter_errors_make_play_fail_after_emitting_jsonl() {
+        let mut output = Vec::new();
+        let report = process_commands(b"not json\n".as_slice(), &mut output, 42)
+            .expect("adapter should emit its error JSONL");
+
+        assert_eq!(report.rejected, 1);
+        assert!(reject_adapter_errors(report).is_err());
+        assert!(reject_adapter_errors(PlayReport::default()).is_ok());
     }
 
     #[test]

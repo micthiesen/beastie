@@ -1,159 +1,110 @@
 # Development harness
 
-The game should become controllable and inspectable by Codex without relying on coordinate clicks
-for every interaction. Grow one versioned semantic command protocol alongside the MVP slices rather
-than building the entire harness before gameplay. Coordinate-driven automation remains useful for
-host smoke tests, coordinate mapping, and actual device input.
-
-## Host control derisk
-
-Completed on the development Mac on 2026-08-15:
-
-- launched `cargo xtask dev --fake-ai` as a native ggez window;
-- found and focused the Beastie window through macOS Accessibility and yabai;
-- captured the real rendered window by window ID to a valid RGBA PNG;
-- inspected the captured fixture dialogue and placeholder creature;
-- submitted a real Talk interaction through the native keyboard path and observed its durable
-  dialogue request ID advance;
-- used real macOS pointer events to open the Bowl context, open the food chooser, select Berry, and
-  observe the modal close with changed state.
-
-Alacritty required Screen Recording/Accessibility approval before capture and focus worked. Launching
-the Metal window directly from the automation backend can produce a blank or occluded window, while
-launching through Alacritty renders correctly. During repeated release-package automation, yabai
-occasionally trapped the ggez window on a blank first frame at 100% CPU. `yabai --stop-service`
-before launch made the same package complete immediately; restart it with `yabai --start-service`
-afterward. Stopping yabai for the focused native input run made real pointer and keyboard delivery
-reliable; the service was restored afterward. No physical controller was attached. A small native
-IOHID user-device probe compiled but macOS rejected device creation before any report was sent, so
-the remaining controller host smoke requires suitable hardware or a signed virtual-device setup.
-Controller callbacks, modal focus, action selection, and the on-screen keyboard remain covered by
-automated tests.
+Codex tests ordinary interactions through one semantic boundary instead of clicking screen
+coordinates. Coordinate input is reserved for pointer mapping and real-device acceptance.
 
 ## Shared session boundary
 
-Orchestration that sits above `beastie-core` and below ggez lives in reusable `GameSession`. It owns
-authoritative state, RNG, semantic commands, and dialogue-request construction. The game shell owns
-wall-clock timestamps, durable file replacement, worker lifecycle, and plan execution. Neither
-harness adapter gets a second implementation of game rules.
+`beastie-session::GameSession` is used by the headless adapter and the visible ggez shell. It owns
+world state, RNG, semantic commands, observations, dialogue-request construction, and checkpoints.
+The game shell owns persistent files, backups, settings, transcripts, wall-clock time, workers,
+audio, windows, and real input devices.
 
-Commands are high-level player or test intentions, not renderer events:
+Current semantic commands cover:
 
-```jsonl
-{"version":1,"command":"feed","food":"berry"}
-{"version":1,"command":"advance","minutes":5}
-{"version":1,"command":"talk","text":"Did you like it?"}
-{"version":1,"command":"react","reaction":"laugh"}
-{"version":1,"command":"inspect"}
-{"version":1,"command":"capture","name":"after-second-berry"}
-```
+- cursor position and physical food drops at normalized aquarium coordinates;
+- feed, play, comfort, tidy, talk, reaction, inspection, and real naming targets;
+- fixed ticks and accelerated minutes;
+- checkpoint save/load and authoritative inspection.
 
-The current command enum covers the primary interactions and deterministic control used by the
-implemented scenarios:
+Commands never expose arbitrary state mutation. Protocol lines and strings are bounded, versions
+and fields are validated, and malformed commands return structured errors without crashing the
+session. A 15-minute advance coalesces 900 redundant `NeedChanged` notifications into one without
+changing final world state, RNG, or meaningful event order.
 
-- player actions: feed, play, comfort, tidy, talk, and contextual speech reaction;
-- deterministic control: tick or advance game time and create/load an in-memory checkpoint;
-- observation: inspect authoritative state and emitted events.
+## Canonical V1 scenarios
 
-Visible scenario files add named framebuffer capture as a shell-level step. The runner waits for
-pending dialogue before capturing, while TTS remains asynchronous so speech never delays text or
-scenario progress.
-
-Do not expose arbitrary state mutation as a normal command. Purpose-built fixture setup may load a
-versioned save, but gameplay scenarios should reach states through ordinary actions whenever
-practical.
-
-Every accepted command emits a versioned observation. It should contain enough evidence to debug a
-failure without opening the game:
-
-```json
-{
-  "version": 1,
-  "sequence": 5,
-  "game_time": "day-1 09:05",
-  "accepted": true,
-  "events": ["creature_refused_food"],
-  "speech": "red shit again.",
-  "referenced_memories": ["memory-12"],
-  "state_digest": "...",
-  "render_plan_digest": "...",
-  "pending": []
-}
-```
-
-Full state and full plans belong in explicit `inspect` responses or trace artifacts rather than in
-every small acknowledgement. Protocol traffic is untrusted input: cap line size and string length,
-reject unknown versions/commands/fields where appropriate, and return structured errors without
-crashing the session.
-
-## Headless adapter
-
-The primary interaction laboratory is:
+Headless interaction:
 
 ```bash
-cargo xtask play --seed 42 --fake-ai
+cargo xtask play \
+  --scenario fixtures/scenarios/aquarium-v1.jsonl \
+  --fake-ai
 ```
 
-It reads JSONL from standard input and writes observations to standard output. It must not require
-a window, display server, GPU, audio device, local model, PixelLab credential, or network. A scenario
-file can drive the same adapter non-interactively:
+The scenario inspects the initial aquarium, moves the cursor, drops a berry at a real normalized
+position, advances through its full action sequence, names the creature Muck, talks, plays with the
+bell, comforts it, and proves checkpoint restoration after accelerated time.
 
-```bash
-cargo xtask play --scenario fixtures/scenarios/berry-grudge.jsonl --fake-ai
-```
-
-Scenario transcripts are deterministic fixtures. They should be usable for focused assertions and
-for long behavioral runs that compress hours or days of play into seconds.
-
-## Visible adapter
-
-The real game shell accepts the same scenario commands at deterministic update boundaries:
+Visible interaction:
 
 ```bash
 cargo xtask dev --fake-ai \
-  --script fixtures/scenarios/room-shell.jsonl \
-  --capture-dir target/captures/room-shell
+  --script fixtures/scenarios/aquarium-v1-visible.jsonl \
+  --capture-dir target/captures/aquarium-v1
 ```
 
-`capture` saves the 320×180 logical framebuffer directly as PNG before display scaling. This is
-stable evidence for visual review and avoids OS screenshot permissions, window overlap, and fragile
-screen coordinates. Captures supplement `RenderPlan` snapshots; neither replaces the other.
+The visible twin drives the same session commands and captures the logical framebuffer at eight
+named checkpoints: hatch, food dropped, notice, approach, food resolution, expression/dialogue,
+affection, and restored state. Scripted runs start from seed 42 and do not read or replace the
+player's persistent save.
 
-Scripted visible runs implicitly start from seed 42, do not load a prior user save, and do not write
-the persistent save. This makes the documented command deterministic and safe to rerun.
+The berry-grudge and Stage 5 scenarios remain long-form behavioral regressions. `room-shell.jsonl`
+is retained only as historical room-era coverage and is not the canonical visual target.
 
-Start with scenario files, not a socket. They are deterministic, reviewable, and sufficient for an
-agent to edit, run, and inspect the game. Add an opt-in localhost JSONL control socket only if real
-development shows that live poking would materially shorten the loop. A development socket must
-never be enabled in release builds.
+## What automated plans prove
 
-## Real input coverage
+Display-free tests cover fixed-point world mapping, action phases, authoritative objects, integer
+asset crop/scale, six mood faces, gaze, blink, protocol-driven mouth phases, queued feedback,
+persistent compose behavior, hover/focus parity, food-drop mode, controller hints, settings and
+bindings, save/reset controls, transcript controls, naming, and viewport calculations.
 
-Semantic commands intentionally bypass platform input translation, so a thin set of host-driven
-tests must still exercise real input:
+The visible runner proves real plan execution and direct 320x180 capture without OS screenshot
+permissions. `cargo xtask verify` stays independent of display, model, GPU, audio device, network,
+and generation credentials.
 
-- mouse selection and logical-coordinate mapping through nearest-neighbor scaling/letterboxing;
-- keyboard focus navigation, contextual actions, and Talk text entry;
-- controller focus navigation, action selection, and the modal on-screen keyboard;
-- window launch, resize behavior, and one real screenshot/capture comparison.
+## Native host evidence
 
-Coordinate clicks are correct for these tests because pointer mapping is the behavior under test.
-They are not the default way to test creature interactions.
+The development Mac has previously proven:
 
-## Incremental harness acceptance
+- native ggez launch, window discovery, focus, and rendered-window capture;
+- real pointer selection through the food flow;
+- real keyboard text entry and Talk submission;
+- direct logical framebuffer PNG capture;
+- packaged local dialogue and eSpeak speech without environment-variable discovery;
+- child-process cleanup after package exit.
 
-This is an MVP outcome, not a prerequisite to build in one upfront block. Add commands when the
-corresponding real interaction is implemented. By the end of the relevant slices, this loop passes:
+Alacritty required Screen Recording and Accessibility permissions for host automation. Starting the
+game through Alacritty avoided a blank or occluded Metal window. yabai has intermittently held the
+release window on a blank first frame at high CPU; stopping the service for the focused run and
+restarting it afterward made the same build render and accept input.
 
-1. Feed a berry and advance time through the headless adapter.
-2. Run the identical scenario through the visible ggez game with fixture AI.
-3. Produce and inspect a framebuffer PNG.
-4. Correlate authoritative state, emitted events, dialogue, and `RenderPlan` in one trace.
-5. Launch the real window and verify at least one genuine pointer or keyboard path. Pointer feeding
-   and keyboard Talk are proven on macOS; physical-controller input remains the outstanding host
-   check.
+In the shared remote session, launch visible validation as an Alacritty child. The daemon itself
+could not acquire a Metal drawable, and synthetic pointer or keyboard events sent from the daemon
+did not reach the focused game. The final eight-frame scripted capture and packaged smoke both
+completed through Alacritty; native pointer and keyboard evidence comes from the earlier direct
+Alacritty run.
 
-Keep completed scenarios as permanent fixtures and include their headless checks in
-`cargo xtask verify`. Visible capture and host-input smoke tests remain explicit host checks when a
-display is unavailable. Do not delay useful gameplay work to implement commands for features that
-do not exist yet.
+No physical controller was attached. Controller callbacks, semantic focus, actions, hints,
+on-screen keyboard, and rebinding are automated, but a macOS IOHID user-device probe was rejected
+before report delivery. A physical controller or appropriately signed virtual device is still
+required for native controller evidence.
+
+Windows and Linux have not received native V1 install, launch, save-path, offline-runtime, or
+child-cleanup acceptance. Cross-compilation and CI configuration are not substitutes for those
+runs.
+
+## Final V1 acceptance loop
+
+Before calling V1 accepted:
+
+1. Run `cargo xtask verify` on the final integrated commit.
+2. Replay the canonical headless aquarium scenario.
+3. Run and inspect all eight visible aquarium captures at native integer scale.
+4. Run the real local-model and real eSpeak smokes, including fallback behavior.
+5. Launch the staged macOS package, confirm rendering and child cleanup, and retain the earlier
+   direct native pointer and keyboard evidence unless a fresh direct GUI session is available.
+
+Physical-controller and native Windows/Linux evidence remain honest release prerequisites unless
+the release scope is explicitly changed. Record dated evidence in the acceptance documents rather
+than turning an unperformed check into a prose claim.

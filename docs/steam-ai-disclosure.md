@@ -5,19 +5,25 @@ survey wording immediately before submission, then adapt these facts without bro
 
 ## Pre-generated AI content
 
-Beastie includes pixel-art room, creature, furniture, food, and interface assets created with
-PixelLab during development. `assets/manifest.toml` records each asset's provider, job ID, seed,
-prompt summary, dimensions, palette reference, review status, and runtime status. The package
-contains the manifest beside the shipped assets. Generated assets are reviewed before they become
-runtime-required, and the game uses validated geometry fallbacks when art is absent or invalid.
+Beastie includes pre-generated pixel art made with OpenAI image generation and PixelLab. OpenAI
+image generation produced the aquarium concept reference. PixelLab produced the aquarium
+background, cave, plants, toys, and creature base and animation frames used by the game. Earlier
+development assets remain recorded but are not necessarily shipped or used at runtime.
+
+`assets/manifest.toml` records each asset's provider, generation identifier, prompt summary,
+dimensions, palette reference, review status, and runtime status. Generated assets are reviewed
+before selection. The asset checks enforce hard alpha, palette, dimensions, density, and animation
+contracts. Code-native pixel geometry keeps essential faces, gaze, mood, effects, food, and
+interaction cues legible when an optional overlay asset is absent.
 
 ## Live-generated AI content
 
 During offline play, a bundled Qwen3.5 0.8B model generates short creature dialogue from bounded
 authoritative game facts. A separately bundled eSpeak NG executable may synthesize that validated
-text into speech. Neither path contacts an online service. The model has no filesystem access,
-shell access, tools, account, API token, or general network access. Its loopback server requires a
-per-process authentication token and is supervised by the game worker.
+text into speech. Speech synthesis does not establish game facts. Neither path contacts an online
+service. The model has no filesystem access, shell access, tools, account, API token, or general
+network access. Its loopback server requires a per-process authentication token and is supervised
+by the game worker.
 
 Model output is expression, not game truth. It cannot mutate creature state, create memories,
 change preferences, unlock concepts, or award progress. Those outcomes come only from the
@@ -26,7 +32,7 @@ deterministic Rust simulation.
 ## Intended mature content
 
 The creature may learn profanity, crude jokes, non-graphic sexual innuendo, personal insults,
-spite, and provocation. It may criticize the player's choices, habits, furniture, food, or
+spite, and provocation. It may criticize the player's choices, habits, aquarium decor, food, or
 competence. These behaviors are intentional and simulation-backed. Beasties are explicitly
 ageless fictional animals, not children. Sexual humor is unavailable during the earliest language
 phase and remains vulgar or absurd rather than seductive.
@@ -43,15 +49,18 @@ The product does not permit:
 
 Player text is byte-bounded and classified before prompt construction. Prohibited text is replaced
 with a typed rejection signal, is never stored as canonical memory, and is not available for the
-creature to repeat. Dialogue requests contain only bounded player context, allow-listed concepts,
-candidate memories and beliefs selected by the simulation, personality values, mood, and explicit
-content-lane permissions.
+creature to repeat. Dialogue requests contain only bounded recent-turn context, allow-listed
+concepts, candidate memories and beliefs selected by the simulation, personality values, mood,
+the authoritative current action and emotion, and explicit content-lane permissions.
 
 The worker requires one versioned JSON reply with a short nonempty `say` field, an allow-listed
 gesture, and only memory or belief identifiers offered in that request. It rejects malformed,
 oversized, ungrounded, or prohibited output. The worker retries once with tighter instructions,
 then returns a short authored in-character fallback. Invalid output never reaches memory or save
 state. Dialogue and TTS failures leave the deterministic game playable.
+
+Transcript retention is off by default and can be enabled or disabled in settings. Any transcript
+export is an explicit player action and remains local to the player's computer.
 
 The checked-in dialogue corpus includes permitted-sharpness cases and prohibited-content cases.
 `cargo xtask verify` runs the fixture-backed protocol and safety gate without a model, display,
@@ -70,5 +79,7 @@ fallback, permitted-content, and prohibited-content results.
   network access disabled. `cargo xtask package --check` rejects missing, stale, extra, tampered,
   wrong-platform, oversized, or development-only contents.
 
-Human review remains required before submission for the store description, mature-content answers,
-screenshots, capsule art, and any change to the selected model or content boundary.
+Before submission, recheck Valve's then-current disclosure wording and review the final packaged
+asset set, store description, mature-content answers, screenshots, capsule art, selected model, and
+content boundary. This document records implementation facts; it is not evidence that the Steam
+survey or release review has been completed.
