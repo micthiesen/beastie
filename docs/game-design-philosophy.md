@@ -28,6 +28,11 @@ The game is not “a chatbot with a pet skin” or “an assistant that lives on
 creature game that remains recognizable when conversation is removed. Care, observation, play,
 development, and shared history are the center. Language is one way the creature reveals its life.
 
+Spoken interaction should eventually be Beastie's primary freeform social interface. The player
+talks aloud to a creature already living in a shared simulated space, not to a service waiting for a
+request. Voice makes the creature feel present; it must not make Beastie into a voice assistant.
+Text remains a complete, first-class alternative rather than a lesser mode.
+
 The distinctive promise is not merely local inference, memory, voice, or simulation-first design.
 It is their combination:
 
@@ -113,6 +118,41 @@ relationship behavior as well as words. It cannot exist only as a large system p
 The player cannot use a personality editor or instant reset to erase an inconvenient creature.
 Change happens through lived interaction and is gradual enough to feel earned.
 
+### Interaction is embodied before it is conversational
+
+The interaction hierarchy is embodied world interaction first, voice as the primary freeform
+language channel, text as an equivalent semantic path, and explicit conversational menus last.
+Feeding, touching, moving objects, playing, observing, arranging the environment, and performing
+routines must remain more fundamental than talking.
+
+Conversation stays inside the continuing world. The creature remains located, occupied, and able to
+move or act while the player speaks. Language may depend on shared objects and current activity:
+“Why are you doing that?” only means something because both participants inhabit the same context.
+Speaking must not open a mode that pauses creature life or turns the game into request-and-response
+chat.
+
+Primary does not mean mandatory. Anything meaningful that can be communicated through voice should
+generally remain expressible through text, with the same interpretation and creature behavior. Core
+progression must never require a microphone.
+
+### The creature hears before it understands
+
+Speech is an ongoing perceptual event before it becomes recognized language. The creature may
+notice a voice, glance over, become attentive, or deliberately continue what it is doing before any
+words are available. Hearing may capture some attention; it never automatically takes control.
+
+Audio detection, noticing, transcription, creature-limited interpretation, willingness to engage,
+and response are distinct events. Understanding does not imply cooperation, and acknowledgement
+does not imply understanding. Attention and interruptibility arise from activity, needs, mood,
+temperament, relationship, salience, and history rather than from an infinite conversational
+interrupt channel.
+
+Once transcribed, spoken and typed words enter the same creature-level language and behavior rules.
+Input modality cannot make the creature more intelligent, obedient, talkative, or willing to
+answer. The creature may respond verbally, act, acknowledge nonverbally, delay, misunderstand,
+refuse, or ignore. The game should usually make receipt legible without implying that the creature
+owes the player conversational compliance.
+
 ### Memory is history, not prose
 
 Canonical memory records structured events and facts with provenance. Generated summaries,
@@ -131,6 +171,23 @@ declare that it learned something and thereby mutate learning state.
 Language development should make the creature's growing understanding visible without pretending
 that a foundation model is being trained inside the save.
 
+A transcription may contain fluent language beyond the creature's current concepts. Recognition of
+the player's words cannot bypass developmental limits: the creature understands only what its own
+knowledge, associations, context, and development permit. Over time it may learn the player's
+nicknames, recurring phrases, pronunciations, and associations so that understanding feels specific
+to the relationship.
+
+### Perception is not truth
+
+Microphone audio and transcripts are untrusted perceptual evidence, not canonical facts. Acoustic
+uncertainty, transcription error, and creature misunderstanding are separate sources of ambiguity
+and may produce different behavior. The game must not silently convert uncertain speech into the
+most useful command merely for interface efficiency.
+
+Prosody, laughter, hesitation, calling, or other nonverbal audio may become soft perceptual signals.
+They must never be treated as certain knowledge of the player's feelings or as authority over world
+state.
+
 ### Private life stays local
 
 Dialogue, microphone input, memories, creature state, and generated private artifacts do not leave
@@ -141,9 +198,11 @@ Runtime play requires no account, cloud endpoint, subscription, API token, or re
 
 ### Failure stays technical
 
-A corrupt model, missing asset, unavailable voice, or crashed worker degrades gracefully. Technical
-failure must not be fictionalized as creature sickness, stupidity, punishment, or personality.
-Infrastructure can affect presentation quality, never canonical creature wellbeing.
+A corrupt model, missing asset, unavailable voice, unavailable speech recognition, microphone
+failure, or crashed worker degrades gracefully. Technical failure must not be fictionalized as
+creature sickness, stupidity, punishment, or personality. Infrastructure can affect presentation
+quality, never canonical creature wellbeing. Creature misunderstanding can be charming; broken
+software must remain distinguishable from it when the player needs practical feedback.
 
 ### Presentation reveals state without becoming state
 
@@ -174,6 +233,7 @@ These concerns should remain separate even when one implementation happens to co
 | **Cognition backend** | Local inference, capabilities, resource requirements | Canonical identity or state |
 | **Memory** | Events, facts, provenance, derived recollections | Raw chat history as truth |
 | **Learning** | Familiarity, labels, associations, habits, evidence | Model fine-tuning as the only representation of growth |
+| **Language input** | Uncertain perceived words, timing, and modality-specific evidence | Personality, obedience, intelligence, or separate dialogue policy |
 | **Voice** | Abstract vocal identity and presentation | Creature mechanics |
 | **Generated micro-content** | Dreams, stories, songs, doodles, rituals, flavor | Implicit world-state changes |
 
@@ -190,6 +250,8 @@ When deciding where a feature belongs, use these ownership questions:
 | Is the creature hungry, and does it like this food? | Simulation state |
 | What happened before, and what does the creature believe about it? | Canonical memory and belief rules |
 | Has it learned what a word or object means? | Learning state |
+| What words might the player have spoken? | Uncertain local input perception |
+| What did the creature understand, and will it engage? | Learning, context, attention, and behavior rules |
 | Which relevant facts may cognition see right now? | Bounded deterministic context selection |
 | How would it phrase its current feeling? | Expression profile and cognition |
 | What emotion, motion, or sound should make that feeling legible? | Authoritative semantic state projected through presentation |
@@ -221,6 +283,11 @@ Breeding, if adopted, should inherit creature data and tendencies rather than mo
 and generated artifacts begin as flavor. If they ever affect mechanics, the effect must be reduced
 to a closed, validated simulation event with recorded provenance.
 
+Future spoken interaction may become low-friction, interruptible, and sensitive to bounded
+nonverbal cues, but it must preserve explicit microphone control and strictly local processing. It
+must not imply indefinite background capture, omniscient understanding of the player's room, a
+universal wake-word command surface, or strict conversational turn-taking.
+
 The durable architecture is not a particular language, renderer, model, or speech engine. It is:
 
 ```text
@@ -229,6 +296,8 @@ particular simulated creature
 canonical history and learning
         +
 bounded local cognition
+        +
+embodied, uncertain perception
         +
 replaceable expression and voice
         +
@@ -247,3 +316,8 @@ The final question is:
 
 > **Does this make Beastie a more convincing particular little creature, or merely a smarter
 > chatbot?**
+
+For spoken interaction, also ask whether the same words would meet essentially the same creature,
+whether latency is absorbed by honest embodied behavior, and whether the feature creates presence
+rather than command convenience. The detailed V2 direction and review questions live in
+[v2-plan.md](v2-plan.md).

@@ -88,6 +88,7 @@ prose claims.
 
 - Product and acceptance direction: [v1-plan.md](v1-plan.md)
 - Canonical product philosophy: [game-design-philosophy.md](game-design-philosophy.md)
+- Future spoken-interaction direction: [v2-plan.md](v2-plan.md)
 - Runtime boundaries: [architecture.md](architecture.md)
 - Test and capture commands: [development-harness.md](development-harness.md)
 - Model and voice evidence: [local-mouth.md](local-mouth.md),
