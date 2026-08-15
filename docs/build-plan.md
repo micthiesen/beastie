@@ -25,10 +25,11 @@ without keeping room runtime fields.
 
 ### 2. Expression and movement
 
-Complete. The selected 80x80 creature animation sets render at exact 2x nearest scale. Hover,
-swim, and eat/recoil animation combine with whole-pixel bob, wake, sand, bubbles, gaze, blink, six
-mood faces, protocol-driven mouth phases, and queued code-native feedback. Optional PNG overlays are
-not required for readable expression.
+Complete. The selected 80x80 creature art renders at exact 2x nearest scale. Hover, swim,
+eat/recoil, sleep, and play combine with whole-pixel buoyancy, six side/player-facing full-body mood
+sets, six three-shape speech sets, a bespoke affection loop, and authored wake, sand, attention,
+heart, mouth-particle, and sleep effects. Direct reactions preempt stale presentation cues. The
+code-native creature is a missing-asset safety net, not a layer over shipped art.
 
 ### 3. Persistent interaction and accessibility
 

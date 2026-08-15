@@ -12,7 +12,9 @@
 {"version":1,"command":"name","target":"creature","name":"Muck"}
 {"version":1,"command":"talk","text":"Do you remember the berry?"}
 {"version":1,"command":"capture","name":"06-expression-and-talk"}
+{"version":1,"command":"tick","milliseconds":3000}
 {"version":1,"command":"play","toy":"bell"}
+{"version":1,"command":"tick","milliseconds":2500}
 {"version":1,"command":"comfort"}
 {"version":1,"command":"capture","name":"07-affection"}
 {"version":1,"command":"save"}

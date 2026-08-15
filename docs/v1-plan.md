@@ -138,18 +138,20 @@ The creature should occupy enough of the 320x180 frame for its eyes, mouth, body
 emotion to be readable. A target height around 64 to 80 logical pixels is a useful starting point,
 subject to visual testing.
 
-### Hybrid animation rig
+### Sprite-first animation rig
 
-Use composable presentation where it improves breadth without sacrificing pixel-art coherence:
+Use cohesive full-body presentation so expression and shading do not look pasted together:
 
 - animated body silhouettes for hover, swim, turn, eat, sleep, recoil, and play;
-- face overlays for gaze, blink, suspicion, anger, delight, loneliness, and smugness;
-- effect overlays for bubbles, blush, stress marks, spit, crumbs, and ink-like clouds;
+- whole-body side-facing and player-facing states for each authoritative mood;
+- mood-specific full-body speech shapes selected by protocol mouth timing;
+- authored sprite effects for bubbles, hearts, attention, spit, crumbs, sand, and sleep;
 - horizontal flipping only when the pose and lighting are safely symmetric;
 - bespoke hero reactions for the most important emotional moments.
 
-The face must know what the creature is looking at. Gaze should lead body turns and actions. Eye
-direction is expected to provide a disproportionate amount of perceived life.
+The face must know what the creature is looking at. Gaze should lead body turns and actions, and
+attention toward the player should turn the complete body rather than slide procedural pupils over
+a neutral sprite. Provider output is curated frame by frame at native size and actual game scale.
 
 ### Expression inputs
 
@@ -306,7 +308,7 @@ The first autonomous V1 pass should land four connected tracks together:
 
 1. Diagnose and enforce pixel-perfect rendering.
 2. Replace the room projection with the aquarium and deterministic swimming foundation.
-3. Add layered face, body, gaze, and reaction presentation.
+3. Add full-body mood, gaze, speech, and reaction presentation.
 4. Replace modal-heavy interaction with the persistent text and action interface.
 
 This is approximately one substantial 6 to 12 hour autonomous engineering pass, followed by a

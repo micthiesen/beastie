@@ -300,6 +300,17 @@ impl ViewState {
     }
 
     pub fn enqueue_cue(&mut self, kind: PresentationCueKind, duration_ms: u64, now_ms: u64) {
+        self.cue_queue.retain(|cue| cue.expires_at_ms > now_ms);
+        if matches!(
+            kind,
+            PresentationCueKind::Affection
+                | PresentationCueKind::Spit
+                | PresentationCueKind::AquariumFull
+        ) {
+            // Direct player feedback must be legible when it happens. Do not make comfort or a
+            // forceful refusal wait behind seconds of low-priority ambient/action punctuation.
+            self.cue_queue.clear();
+        }
         if self.cue_queue.len() >= CUE_QUEUE_LIMIT {
             return;
         }
@@ -721,8 +732,22 @@ fn add_creature(
     let (center_x, center_y) = world_to_logical(creature.position);
     let mut x =
         (center_x - CREATURE_CANVAS_SIZE / 2).clamp(-52, LOGICAL_WIDTH - CREATURE_CANVAS_SIZE + 52);
-    let y = (center_y - CREATURE_CANVAS_SIZE / 2)
+    let mut y = (center_y - CREATURE_CANVAS_SIZE / 2)
         .clamp(-50, AQUARIUM_BOTTOM - CREATURE_CANVAS_SIZE + 50);
+    let cue = view.active_cue(state.elapsed_ms);
+    if dialogue_active(view)
+        || matches!(creature.gaze, GazeTarget::Player)
+        || matches!(
+            cue,
+            Some(PresentationCueKind::Delight | PresentationCueKind::Affection)
+        )
+    {
+        // Full-body front-facing acting is the dialogue close-up. Keep every opaque pixel of the
+        // largest curated state inside the 320x130 water stage even if world movement reached an
+        // intentionally permissive edge position.
+        x = x.clamp(-16, 184);
+        y = y.clamp(-20, -8);
+    }
     let pose = creature_pose(state);
     let flip = if matches!(creature.facing, beastie_core::Facing::Left) {
         SpriteFlip::Horizontal
@@ -751,40 +776,17 @@ fn add_creature(
             2
         };
     }
-    let frame = animation_frame(pose, elapsed_ms);
+    let (body_id, body_flip, frame) = body_sprite(state, view, pose, elapsed_ms, flip);
     sprites.push(SpriteCommand {
-        id: body_asset(pose).to_owned(),
+        id: body_id,
         x,
         y: y + bob,
         layer: 12,
         frame,
-        flip,
+        flip: body_flip,
         source_rect: None,
         scale: 2,
     });
-    let expression = expression(state, view.active_cue(state.elapsed_ms));
-    sprites.push(SpriteCommand {
-        id: format!("creature-v1/face/{expression}"),
-        x,
-        y: y + bob,
-        layer: 14,
-        frame: blink_frame(state),
-        flip,
-        source_rect: None,
-        scale: 2,
-    });
-    sprites.push(SpriteCommand {
-        id: format!("creature-v1/gaze/{}", gaze_name(creature.gaze)),
-        x,
-        y: y + bob,
-        layer: 15,
-        frame: 0,
-        flip,
-        source_rect: None,
-        scale: 2,
-    });
-    add_procedural_expression(state, view, x, y + bob, flip, rects);
-
     if !view.reduced_motion
         && creature.velocity.x.unsigned_abs() + creature.velocity.y.unsigned_abs() > 25
     {
@@ -801,11 +803,11 @@ fn add_creature(
         ));
     }
     if let Some(cue) = view.active_cue(state.elapsed_ms) {
-        sprites.push(framed_sprite(
-            &format!("creature-v1/effect/{}", cue_name(cue)),
+        sprites.push(effect_sprite(
+            cue,
             x,
-            y - 8,
-            15,
+            y + bob,
+            body_flip,
             u8::try_from((elapsed_ms / 180) % 4).unwrap_or_default(),
         ));
     }
@@ -2050,677 +2052,6 @@ fn add_pixel_grid(rects: &mut Vec<RectCommand>) {
 }
 
 /// Guaranteed hard-pixel expression rig used even when optional overlay art is absent.
-fn add_procedural_expression(
-    state: &WorldState,
-    view: &ViewState,
-    canvas_x: i32,
-    canvas_y: i32,
-    flip: SpriteFlip,
-    rects: &mut Vec<RectCommand>,
-) {
-    const INK: [u8; 4] = [25, 25, 29, 255];
-    const EYE: [u8; 4] = [232, 216, 151, 255];
-    const BLUSH: [u8; 4] = [196, 91, 93, 220];
-    const EFFECT: [u8; 4] = [179, 229, 213, 235];
-    let expression = expression(state, view.active_cue(state.elapsed_ms));
-    let blinking = blink_frame(state) == 1 || expression == "sleepy";
-    if blinking {
-        face_pixel(
-            rects,
-            "face/eye-left",
-            42,
-            36,
-            5,
-            1,
-            INK,
-            canvas_x,
-            canvas_y,
-            flip,
-            17,
-        );
-        face_pixel(
-            rects,
-            "face/eye-right",
-            52,
-            35,
-            5,
-            1,
-            INK,
-            canvas_x,
-            canvas_y,
-            flip,
-            17,
-        );
-    } else {
-        face_pixel(
-            rects,
-            "face/eye-left",
-            42,
-            34,
-            5,
-            5,
-            EYE,
-            canvas_x,
-            canvas_y,
-            flip,
-            17,
-        );
-        face_pixel(
-            rects,
-            "face/eye-right",
-            52,
-            33,
-            5,
-            5,
-            EYE,
-            canvas_x,
-            canvas_y,
-            flip,
-            17,
-        );
-        let (world_gaze_x, gaze_y) = gaze_offset(state);
-        let gaze_x = if matches!(flip, SpriteFlip::Horizontal) {
-            -world_gaze_x
-        } else {
-            world_gaze_x
-        };
-        face_pixel(
-            rects,
-            "face/pupil-left",
-            44 + gaze_x,
-            36 + gaze_y,
-            2,
-            2,
-            INK,
-            canvas_x,
-            canvas_y,
-            flip,
-            18,
-        );
-        face_pixel(
-            rects,
-            "face/pupil-right",
-            54 + gaze_x,
-            35 + gaze_y,
-            2,
-            2,
-            INK,
-            canvas_x,
-            canvas_y,
-            flip,
-            18,
-        );
-    }
-
-    match expression {
-        "curious" | "suspicious" => {
-            face_pixel(
-                rects,
-                "face/brow-left",
-                41,
-                31,
-                5,
-                1,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-            face_pixel(
-                rects,
-                "face/brow-right",
-                52,
-                29,
-                6,
-                1,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-            face_pixel(
-                rects,
-                "face/mouth-curious",
-                50,
-                46,
-                2,
-                2,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-        }
-        "hungry" => {
-            face_pixel(
-                rects,
-                "face/mouth-hungry-top",
-                48,
-                45,
-                7,
-                1,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-            face_pixel(
-                rects,
-                "face/mouth-hungry-bottom",
-                49,
-                49,
-                5,
-                1,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-            face_pixel(
-                rects,
-                "face/mouth-hungry-left",
-                48,
-                46,
-                1,
-                3,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-            face_pixel(
-                rects,
-                "face/mouth-hungry-right",
-                54,
-                46,
-                1,
-                3,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-        }
-        "lonely" => {
-            face_pixel(
-                rects,
-                "face/brow-left-sad",
-                41,
-                30,
-                4,
-                1,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-            face_pixel(
-                rects,
-                "face/brow-right-sad",
-                54,
-                30,
-                4,
-                1,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-            face_pixel(
-                rects,
-                "face/mouth-sad",
-                49,
-                48,
-                6,
-                1,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-            face_pixel(
-                rects,
-                "face/mouth-sad-center",
-                51,
-                47,
-                2,
-                1,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-        }
-        "anger" => {
-            face_pixel(
-                rects,
-                "face/brow-left-angry",
-                41,
-                30,
-                6,
-                2,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-            face_pixel(
-                rects,
-                "face/brow-right-angry",
-                52,
-                30,
-                6,
-                2,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-            face_pixel(
-                rects,
-                "face/mouth-angry",
-                48,
-                47,
-                8,
-                2,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-        }
-        "sleepy" => {
-            face_pixel(
-                rects,
-                "face/mouth-yawn",
-                50,
-                46,
-                4,
-                4,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-        }
-        _ => {
-            face_pixel(
-                rects,
-                "face/mouth-smile",
-                49,
-                46,
-                6,
-                1,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-            face_pixel(
-                rects,
-                "face/mouth-smile-left",
-                48,
-                45,
-                1,
-                1,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-            face_pixel(
-                rects,
-                "face/mouth-smile-right",
-                55,
-                45,
-                1,
-                1,
-                INK,
-                canvas_x,
-                canvas_y,
-                flip,
-                18,
-            );
-        }
-    }
-
-    if view.speaking {
-        let (mouth_y, mouth_height) = match view.mouth_phase.min(2) {
-            0 => (47, 1),
-            1 => (46, 2),
-            _ => (45, 4),
-        };
-        face_pixel(
-            rects,
-            &format!("face/speech-mouth-{}", view.mouth_phase.min(2)),
-            49,
-            mouth_y,
-            7,
-            mouth_height,
-            INK,
-            canvas_x,
-            canvas_y,
-            flip,
-            20,
-        );
-    }
-
-    let Some(cue) = view.active_cue(state.elapsed_ms) else {
-        return;
-    };
-    match cue {
-        PresentationCueKind::Notice
-        | PresentationCueKind::Suspicion
-        | PresentationCueKind::Recoil
-        | PresentationCueKind::AquariumFull => {
-            face_pixel(
-                rects,
-                "effect/attention-a",
-                58,
-                24,
-                1,
-                4,
-                EFFECT,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-            face_pixel(
-                rects,
-                "effect/attention-b",
-                61,
-                26,
-                3,
-                1,
-                EFFECT,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-        }
-        PresentationCueKind::Delight | PresentationCueKind::Affection => {
-            face_pixel(
-                rects,
-                "effect/blush-left",
-                39,
-                42,
-                4,
-                2,
-                BLUSH,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-            face_pixel(
-                rects,
-                "effect/blush-right",
-                57,
-                41,
-                4,
-                2,
-                BLUSH,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-            face_pixel(
-                rects,
-                "effect/heart-top",
-                61,
-                22,
-                4,
-                2,
-                BLUSH,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-            face_pixel(
-                rects,
-                "effect/heart-tip",
-                62,
-                24,
-                2,
-                2,
-                BLUSH,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-        }
-        PresentationCueKind::Spit | PresentationCueKind::Crumbs => {
-            face_pixel(
-                rects,
-                "effect/mouth-particle-a",
-                61,
-                47,
-                2,
-                2,
-                EFFECT,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-            face_pixel(
-                rects,
-                "effect/mouth-particle-b",
-                66,
-                50,
-                1,
-                1,
-                EFFECT,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-        }
-        PresentationCueKind::SandPuff => {
-            face_pixel(
-                rects,
-                "effect/sand-a",
-                31,
-                62,
-                8,
-                2,
-                [134, 119, 87, 210],
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-            face_pixel(
-                rects,
-                "effect/sand-b",
-                47,
-                64,
-                10,
-                1,
-                [134, 119, 87, 180],
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-        }
-        PresentationCueKind::Wake => {
-            face_pixel(
-                rects,
-                "effect/wake-a",
-                14,
-                43,
-                3,
-                1,
-                EFFECT,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-            face_pixel(
-                rects,
-                "effect/wake-b",
-                9,
-                47,
-                4,
-                1,
-                EFFECT,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-        }
-        PresentationCueKind::Sleep => {
-            face_pixel(
-                rects,
-                "effect/sleep-z-top",
-                59,
-                23,
-                4,
-                1,
-                EFFECT,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-            face_pixel(
-                rects,
-                "effect/sleep-z-bottom",
-                59,
-                27,
-                4,
-                1,
-                EFFECT,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-            face_pixel(
-                rects,
-                "effect/sleep-z-diagonal",
-                61,
-                24,
-                1,
-                3,
-                EFFECT,
-                canvas_x,
-                canvas_y,
-                flip,
-                19,
-            );
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn face_pixel(
-    rects: &mut Vec<RectCommand>,
-    id: &str,
-    source_x: i32,
-    source_y: i32,
-    width: i32,
-    height: i32,
-    color: [u8; 4],
-    canvas_x: i32,
-    canvas_y: i32,
-    flip: SpriteFlip,
-    layer: i16,
-) {
-    const SOURCE_SIZE: i32 = 80;
-    const SCALE: i32 = 2;
-    let source_x = if matches!(flip, SpriteFlip::Horizontal) {
-        SOURCE_SIZE - source_x - width
-    } else {
-        source_x
-    };
-    rects.push(rect(
-        id,
-        Rect {
-            x: canvas_x + source_x * SCALE,
-            y: canvas_y + source_y * SCALE,
-            w: width * SCALE,
-            h: height * SCALE,
-        },
-        color,
-        layer,
-    ));
-}
-
-fn gaze_offset(state: &WorldState) -> (i32, i32) {
-    let origin = state.creature.aquarium.position;
-    let target = match state.creature.aquarium.gaze {
-        GazeTarget::Cursor | GazeTarget::Player => state.aquarium.cursor,
-        GazeTarget::Food(id) => state
-            .aquarium
-            .objects
-            .get(&id)
-            .and_then(|object| match object {
-                WorldObject::Food(food) => Some(food.position),
-                _ => None,
-            }),
-        GazeTarget::Toy(toy) => state
-            .aquarium
-            .objects
-            .values()
-            .find_map(|object| match object {
-                WorldObject::Toy {
-                    toy: candidate,
-                    position,
-                } if *candidate == toy => Some(*position),
-                _ => None,
-            }),
-        GazeTarget::Cave => state
-            .aquarium
-            .objects
-            .values()
-            .find_map(|object| match object {
-                WorldObject::Cave { position } => Some(*position),
-                _ => None,
-            }),
-        GazeTarget::Plant => state
-            .aquarium
-            .objects
-            .values()
-            .find_map(|object| match object {
-                WorldObject::Plant { position } => Some(*position),
-                _ => None,
-            }),
-        GazeTarget::None => None,
-    };
-    let Some(target) = target else { return (0, 0) };
-    (
-        (target.x - origin.x).signum() * 2,
-        (target.y - origin.y).signum(),
-    )
-}
-
 #[must_use]
 pub fn creature_summary(state: &WorldState) -> CreatureSummary {
     let mood = state.mood();
@@ -2775,30 +2106,6 @@ fn creature_pose(state: &WorldState) -> &'static str {
             SteeringMode::Settle => "settle",
             SteeringMode::Hover | SteeringMode::Drift => "hover",
         },
-    }
-}
-
-fn expression(state: &WorldState, cue: Option<PresentationCueKind>) -> &'static str {
-    if let Some(cue) = cue {
-        return match cue {
-            PresentationCueKind::Delight | PresentationCueKind::Affection => "delight",
-            PresentationCueKind::Recoil
-            | PresentationCueKind::Spit
-            | PresentationCueKind::AquariumFull => "anger",
-            PresentationCueKind::Suspicion | PresentationCueKind::Notice => "suspicious",
-            PresentationCueKind::Sleep => "sleepy",
-            PresentationCueKind::Crumbs
-            | PresentationCueKind::SandPuff
-            | PresentationCueKind::Wake => "content",
-        };
-    }
-    match state.mood() {
-        Mood::Content => "content",
-        Mood::Curious => "curious",
-        Mood::Hungry => "hungry",
-        Mood::Sleepy => "sleepy",
-        Mood::Lonely => "lonely",
-        Mood::Resentful => "anger",
     }
 }
 
@@ -2893,20 +2200,90 @@ fn animation_frame(pose: &str, elapsed_ms: u64) -> u8 {
     u8::try_from((elapsed_ms / frame_ms) % 4).unwrap_or_default()
 }
 
-fn body_asset(pose: &str) -> &'static str {
+fn body_sprite(
+    state: &WorldState,
+    view: &ViewState,
+    pose: &str,
+    elapsed_ms: u64,
+    side_flip: SpriteFlip,
+) -> (String, SpriteFlip, u8) {
+    let cue = view.active_cue(state.elapsed_ms);
+    let mood = visual_mood_name(state, cue);
+    let faces_player = view.speaking
+        || matches!(state.creature.aquarium.gaze, GazeTarget::Player)
+        || matches!(
+            cue,
+            Some(PresentationCueKind::Delight | PresentationCueKind::Affection)
+        );
+    if matches!(
+        cue,
+        Some(PresentationCueKind::Delight | PresentationCueKind::Affection)
+    ) {
+        return (
+            "creature-v1/reaction/affection-south".to_owned(),
+            SpriteFlip::None,
+            animation_frame("hover", elapsed_ms),
+        );
+    }
+    if dialogue_active(view) {
+        return (
+            format!("creature-v1/talk/{mood}-south"),
+            SpriteFlip::None,
+            if view.speaking {
+                view.mouth_phase.min(2)
+            } else {
+                u8::try_from((elapsed_ms / 160) % 3).unwrap_or_default()
+            },
+        );
+    }
+    if let Some(asset) = action_body_asset(pose) {
+        return (
+            asset.to_owned(),
+            side_flip,
+            animation_frame(pose, elapsed_ms),
+        );
+    }
+    let direction = if faces_player { "south" } else { "east" };
+    (
+        format!("creature-v1/mood/{mood}-{direction}"),
+        if faces_player {
+            SpriteFlip::None
+        } else {
+            side_flip
+        },
+        animation_frame("hover", elapsed_ms),
+    )
+}
+
+fn dialogue_active(view: &ViewState) -> bool {
+    view.speaking || view.speech.is_some()
+}
+
+fn action_body_asset(pose: &str) -> Option<&'static str> {
     match pose {
-        "swim" | "turn" => "creature-v1/swim",
-        "eat" | "react" | "recover" => "creature-v1/eat-recoil",
-        "sleep" => "creature-v1/sleep",
-        "play" => "creature-v1/play",
-        "hover" | "inspect" | "settle" => "creature-v1/hover",
-        _ => "creature-v1/base",
+        "swim" | "turn" => Some("creature-v1/swim"),
+        "eat" | "react" | "recover" => Some("creature-v1/eat-recoil"),
+        "sleep" => Some("creature-v1/sleep"),
+        "play" => Some("creature-v1/play"),
+        "hover" | "inspect" | "settle" => None,
+        _ => None,
     }
 }
 
-fn blink_frame(state: &WorldState) -> u8 {
-    let cycle = (state.elapsed_ms + state.seed % 2_100) % 4_700;
-    if cycle < 110 { 1 } else { 0 }
+fn visual_mood_name(state: &WorldState, cue: Option<PresentationCueKind>) -> &'static str {
+    match cue {
+        Some(PresentationCueKind::Recoil)
+        | Some(PresentationCueKind::Spit)
+        | Some(PresentationCueKind::AquariumFull) => "resentful",
+        Some(PresentationCueKind::Suspicion) | Some(PresentationCueKind::Notice) => "curious",
+        Some(PresentationCueKind::Sleep) => "sleepy",
+        Some(PresentationCueKind::Delight)
+        | Some(PresentationCueKind::Affection)
+        | Some(PresentationCueKind::Crumbs)
+        | Some(PresentationCueKind::SandPuff)
+        | Some(PresentationCueKind::Wake) => "content",
+        None => mood_name(state.mood()),
+    }
 }
 
 fn bob_offset(state: &WorldState) -> i32 {
@@ -2936,6 +2313,42 @@ fn framed_sprite(id: &str, x: i32, y: i32, layer: i16, frame: u8) -> SpriteComma
         source_rect: None,
         scale: 1,
     }
+}
+
+fn effect_sprite(
+    cue: PresentationCueKind,
+    body_x: i32,
+    body_y: i32,
+    flip: SpriteFlip,
+    frame: u8,
+) -> SpriteCommand {
+    let left = matches!(flip, SpriteFlip::Horizontal);
+    let (id, x, y) = match cue {
+        PresentationCueKind::Notice
+        | PresentationCueKind::Suspicion
+        | PresentationCueKind::Recoil
+        | PresentationCueKind::AquariumFull => (
+            "creature-v1/effect/attention",
+            body_x + if left { 10 } else { 116 },
+            body_y + 8,
+        ),
+        PresentationCueKind::Delight | PresentationCueKind::Affection => {
+            ("creature-v1/effect/affection", body_x + 108, body_y + 4)
+        }
+        PresentationCueKind::Spit | PresentationCueKind::Crumbs => (
+            "creature-v1/effect/mouth-particles",
+            body_x + if left { 8 } else { 120 },
+            body_y + 66,
+        ),
+        PresentationCueKind::SandPuff => ("aquarium/sand-puff", body_x + 64, body_y + 112),
+        PresentationCueKind::Wake => (
+            "aquarium/wake",
+            body_x + if left { 112 } else { 4 },
+            body_y + 64,
+        ),
+        PresentationCueKind::Sleep => ("creature-v1/effect/sleep", body_x + 108, body_y + 2),
+    };
+    framed_sprite(id, x, y, 15, frame)
 }
 
 fn rect(id: &str, dimensions: Rect, color: [u8; 4], layer: i16) -> RectCommand {
@@ -3019,17 +2432,6 @@ fn toy_name(toy: ToyId) -> &'static str {
     }
 }
 
-fn gaze_name(gaze: GazeTarget) -> &'static str {
-    match gaze {
-        GazeTarget::Cursor | GazeTarget::Player => "player",
-        GazeTarget::Food(_) => "food",
-        GazeTarget::Toy(_) => "toy",
-        GazeTarget::Cave => "cave",
-        GazeTarget::Plant => "plant",
-        GazeTarget::None => "forward",
-    }
-}
-
 fn mood_name(mood: Mood) -> &'static str {
     match mood {
         Mood::Content => "content",
@@ -3038,22 +2440,6 @@ fn mood_name(mood: Mood) -> &'static str {
         Mood::Sleepy => "sleepy",
         Mood::Lonely => "lonely",
         Mood::Resentful => "resentful",
-    }
-}
-
-fn cue_name(cue: PresentationCueKind) -> &'static str {
-    match cue {
-        PresentationCueKind::Notice => "notice",
-        PresentationCueKind::Recoil => "recoil",
-        PresentationCueKind::Delight => "delight",
-        PresentationCueKind::Suspicion => "suspicion",
-        PresentationCueKind::Affection => "affection",
-        PresentationCueKind::Spit => "spit",
-        PresentationCueKind::Crumbs => "crumbs",
-        PresentationCueKind::SandPuff => "sand-puff",
-        PresentationCueKind::Wake => "wake",
-        PresentationCueKind::Sleep => "sleep",
-        PresentationCueKind::AquariumFull => "aquarium-full",
     }
 }
 
@@ -3129,7 +2515,7 @@ mod tests {
             render
                 .sprites
                 .iter()
-                .any(|sprite| sprite.id == "creature-v1/hover" && sprite.scale == 2)
+                .any(|sprite| sprite.id.starts_with("creature-v1/mood/") && sprite.scale == 2)
         );
         let background = render
             .sprites
@@ -3231,7 +2617,7 @@ mod tests {
             render
                 .sprites
                 .iter()
-                .any(|sprite| sprite.id == "creature-v1/hover")
+                .any(|sprite| sprite.id.starts_with("creature-v1/mood/"))
         );
         assert_eq!(render.summary.behavior, "inspecting");
         assert_eq!(
@@ -3249,15 +2635,23 @@ mod tests {
     #[test]
     fn cue_queue_preserves_order_and_does_not_overwrite() {
         let mut view = ViewState::default();
-        view.observe_events(
-            &[GameEvent::FoodConsumed(FoodId::Berry), GameEvent::Comforted],
-            1_000,
-        );
+        view.enqueue_cue(PresentationCueKind::Crumbs, 900, 1_000);
+        view.enqueue_cue(PresentationCueKind::Sleep, 1_000, 1_000);
         assert_eq!(view.active_cue(1_000), Some(PresentationCueKind::Crumbs));
         assert_eq!(view.active_cue(1_899), Some(PresentationCueKind::Crumbs));
-        assert_eq!(view.active_cue(1_900), Some(PresentationCueKind::Affection));
+        assert_eq!(view.active_cue(1_900), Some(PresentationCueKind::Sleep));
         view.expire(3_100);
         assert!(view.cue_queue.is_empty());
+    }
+
+    #[test]
+    fn direct_reactions_preempt_stale_punctuation() {
+        let mut view = ViewState::default();
+        view.enqueue_cue(PresentationCueKind::Notice, 2_000, 1_000);
+        view.enqueue_cue(PresentationCueKind::Wake, 2_000, 1_000);
+        view.enqueue_cue(PresentationCueKind::Affection, 1_200, 1_100);
+        assert_eq!(view.cue_queue.len(), 1);
+        assert_eq!(view.active_cue(1_100), Some(PresentationCueKind::Affection));
     }
 
     #[test]
@@ -3337,7 +2731,7 @@ mod tests {
     }
 
     #[test]
-    fn every_mood_has_distinct_code_native_face_geometry() {
+    fn every_mood_uses_distinct_full_body_sprite_without_procedural_face() {
         let mut signatures = BTreeSet::new();
         for mood in [
             Mood::Content,
@@ -3363,45 +2757,74 @@ mod tests {
                 Mood::Resentful => state.creature.relationship.resentment = 0.8,
             }
             assert_eq!(state.mood(), mood);
-            let face = plan(&state, &ViewState::default())
-                .0
-                .rects
-                .into_iter()
-                .filter(|command| command.id.starts_with("face/"))
-                .map(|command| (command.id, command.rect, command.color))
-                .collect::<Vec<_>>();
-            assert!(!face.is_empty());
-            signatures.insert(format!("{face:?}"));
+            let render = plan(&state, &ViewState::default()).0;
+            let body = render
+                .sprites
+                .iter()
+                .find(|command| command.layer == 12)
+                .expect("full-body mood sprite");
+            assert!(body.id.starts_with("creature-v1/mood/"));
+            assert!(
+                !render
+                    .rects
+                    .iter()
+                    .any(|command| command.id.starts_with("face/")),
+                "shipped sprite art must not be covered by procedural facial geometry"
+            );
+            signatures.insert(body.id.clone());
         }
         assert_eq!(signatures.len(), 6);
     }
 
     #[test]
-    fn authoritative_gaze_moves_hard_pixel_pupils() {
+    fn player_attention_turns_the_full_body_toward_the_viewer() {
         let mut state = WorldState::new(7, "Mop");
         state.elapsed_ms = 1_000;
         state.creature.aquarium.gaze = GazeTarget::Cursor;
-        state.aquarium.cursor = Some(NormalizedPosition::new(1_000, 4_500));
-        let left = plan(&state, &ViewState::default())
+        let side = plan(&state, &ViewState::default())
             .0
-            .rects
+            .sprites
             .into_iter()
-            .find(|command| command.id == "face/pupil-left")
-            .expect("left-looking pupil")
-            .rect;
-        state.aquarium.cursor = Some(NormalizedPosition::new(9_000, 4_500));
-        let right = plan(&state, &ViewState::default())
+            .find(|command| command.layer == 12)
+            .expect("side body");
+        state.creature.aquarium.gaze = GazeTarget::Player;
+        let front = plan(&state, &ViewState::default())
             .0
-            .rects
+            .sprites
             .into_iter()
-            .find(|command| command.id == "face/pupil-left")
-            .expect("right-looking pupil")
-            .rect;
-        assert!(left.x < right.x);
+            .find(|command| command.layer == 12)
+            .expect("front body");
+        assert!(side.id.ends_with("-east"));
+        assert!(front.id.ends_with("-south"));
+        assert_eq!(front.flip, SpriteFlip::None);
     }
 
     #[test]
-    fn key_cues_have_visible_code_native_effects() {
+    fn affection_overrides_action_pose_and_keeps_the_close_up_visible() {
+        let mut state = WorldState::new(7, "Mop");
+        state.creature.aquarium.position = NormalizedPosition::new(10_000, 10_000);
+        state.creature.aquarium.action = Some(ActionTimeline {
+            phase: ActionPhase::Act,
+            elapsed_ms: 400,
+            phase_duration_ms: 1_000,
+            destination: SemanticDestination::Player,
+            food_id: None,
+        });
+        let mut view = ViewState::default();
+        view.enqueue_cue(PresentationCueKind::Affection, 1_000, state.elapsed_ms);
+        let body = plan(&state, &view)
+            .0
+            .sprites
+            .into_iter()
+            .find(|command| command.layer == 12)
+            .expect("affection body");
+        assert_eq!(body.id, "creature-v1/reaction/affection-south");
+        assert!((-16..=184).contains(&body.x));
+        assert!((-20..=-8).contains(&body.y));
+    }
+
+    #[test]
+    fn key_cues_use_authored_sprite_effects() {
         let state = WorldState::new(7, "Mop");
         for cue in [
             PresentationCueKind::Notice,
@@ -3415,11 +2838,14 @@ mod tests {
             view.enqueue_cue(cue, 1_000, state.elapsed_ms);
             let effects = plan(&state, &view)
                 .0
-                .rects
+                .sprites
                 .into_iter()
-                .filter(|command| command.id.starts_with("effect/"))
-                .count();
-            assert!(effects > 0, "{cue:?} needs a hard-pixel fallback");
+                .filter(|command| {
+                    command.id.starts_with("creature-v1/effect/")
+                        || matches!(command.id.as_str(), "aquarium/wake" | "aquarium/sand-puff")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(effects.len(), 1, "{cue:?} needs one authored effect sprite");
         }
     }
 
@@ -3544,15 +2970,15 @@ mod tests {
 
     #[test]
     fn body_pose_maps_only_to_shipped_animation_sets() {
-        assert_eq!(body_asset("hover"), "creature-v1/hover");
-        assert_eq!(body_asset("settle"), "creature-v1/hover");
-        assert_eq!(body_asset("swim"), "creature-v1/swim");
-        assert_eq!(body_asset("turn"), "creature-v1/swim");
-        assert_eq!(body_asset("eat"), "creature-v1/eat-recoil");
-        assert_eq!(body_asset("recover"), "creature-v1/eat-recoil");
-        assert_eq!(body_asset("sleep"), "creature-v1/sleep");
-        assert_eq!(body_asset("play"), "creature-v1/play");
-        assert_eq!(body_asset("unknown"), "creature-v1/base");
+        assert_eq!(action_body_asset("hover"), None);
+        assert_eq!(action_body_asset("settle"), None);
+        assert_eq!(action_body_asset("swim"), Some("creature-v1/swim"));
+        assert_eq!(action_body_asset("turn"), Some("creature-v1/swim"));
+        assert_eq!(action_body_asset("eat"), Some("creature-v1/eat-recoil"));
+        assert_eq!(action_body_asset("recover"), Some("creature-v1/eat-recoil"));
+        assert_eq!(action_body_asset("sleep"), Some("creature-v1/sleep"));
+        assert_eq!(action_body_asset("play"), Some("creature-v1/play"));
+        assert_eq!(action_body_asset("unknown"), None);
     }
 
     #[test]
@@ -3796,7 +3222,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_mouth_phase_changes_visible_hard_pixel_geometry() {
+    fn protocol_mouth_phase_selects_full_body_talking_frames() {
         let mut state = WorldState::new(7, "Mop");
         state.elapsed_ms = 1_000;
         let mouth = |phase| {
@@ -3809,14 +3235,15 @@ mod tests {
                 },
             )
             .0
-            .rects
+            .sprites
             .into_iter()
-            .find(|rect| rect.id == format!("face/speech-mouth-{phase}"))
-            .expect("speech mouth")
-            .rect
+            .find(|sprite| sprite.id.starts_with("creature-v1/talk/"))
+            .expect("full-body talking sprite")
         };
-        assert!(mouth(0).h < mouth(1).h);
-        assert!(mouth(1).h < mouth(2).h);
+        assert_eq!(mouth(0).frame, 0);
+        assert_eq!(mouth(1).frame, 1);
+        assert_eq!(mouth(2).frame, 2);
+        assert!(mouth(0).id.ends_with("-south"));
     }
 
     #[test]

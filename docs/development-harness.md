@@ -55,7 +55,8 @@ is retained only as historical room-era coverage and is not the canonical visual
 ## What automated plans prove
 
 Display-free tests cover fixed-point world mapping, action phases, authoritative objects, integer
-asset crop/scale, six mood faces, gaze, blink, protocol-driven mouth phases, queued feedback,
+asset crop/scale, six full-body moods, player-facing attention, protocol-driven speech frames,
+authored effects, direct-reaction cue preemption,
 persistent compose behavior, hover/focus parity, food-drop mode, controller hints, settings and
 bindings, save/reset controls, transcript controls, naming, and viewport calculations.
 

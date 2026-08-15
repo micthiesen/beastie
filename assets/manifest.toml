@@ -517,6 +517,598 @@ terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["generated/creature-v1/base.png"]
 human_modifications = "selected all four generated animation frames; no pixel edits"
 
+[[asset]]
+id = "creature-v1/mood/content-east"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 33
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "6cae3afa-091e-4dbd-94d3-765bcac9f0db"
+generated_at = "2026-08-15"
+prompt = "Content state preserving the exact creature identity, with a warm softly relaxed expression; seamless quiet underwater hover with controlled blink and tiny fin and tail drift."
+seed = "812731"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected frames 0 through 3 after reviewing the complete five-frame east and south loops at 2x game scale"
+
+[[asset]]
+id = "creature-v1/mood/content-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 27
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "6cae3afa-091e-4dbd-94d3-765bcac9f0db"
+generated_at = "2026-08-15"
+prompt = "Content state preserving the exact creature identity, with a warm softly relaxed expression; seamless quiet underwater hover with controlled blink and tiny fin and tail drift."
+seed = "812731"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected frames 0 through 3 after reviewing the complete five-frame east and south loops at 2x game scale"
+
+[[asset]]
+id = "creature-v1/mood/curious-east"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 31
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "8e990c15-59f9-48eb-82a1-84d69e13c9aa"
+generated_at = "2026-08-15"
+prompt = "Curious state preserving the exact creature identity, with forward attentive eyes and alert posture; restrained underwater hover while maintaining the curious expression."
+seed = "812733"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected frames 0 through 3 after reviewing the complete five-frame east and south loops at 2x game scale"
+
+[[asset]]
+id = "creature-v1/mood/curious-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 32
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "8e990c15-59f9-48eb-82a1-84d69e13c9aa"
+generated_at = "2026-08-15"
+prompt = "Curious state preserving the exact creature identity, with forward attentive eyes and alert posture; restrained underwater hover while maintaining the curious expression."
+seed = "812733"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected frames 0 through 3 after reviewing the complete five-frame east and south loops at 2x game scale"
+
+[[asset]]
+id = "creature-v1/mood/hungry-east"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 36
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "757b3525-1e2a-454f-883b-44685b3e56bd"
+generated_at = "2026-08-15"
+prompt = "Hungry state preserving the exact creature identity, with food-focused eyes, open expectant mouth and eager tail curl; restrained underwater hover."
+seed = "812734"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected frames 0 through 3 after reviewing the complete five-frame east and south loops at 2x game scale"
+
+[[asset]]
+id = "creature-v1/mood/hungry-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 31
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "757b3525-1e2a-454f-883b-44685b3e56bd"
+generated_at = "2026-08-15"
+prompt = "Hungry state preserving the exact creature identity, with food-focused eyes, open expectant mouth and eager tail curl; restrained underwater hover."
+seed = "812734"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected frames 0 through 3 after reviewing the complete five-frame east and south loops at 2x game scale"
+
+[[asset]]
+id = "creature-v1/mood/sleepy-east"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 32
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "1bfbf20e-72e7-4552-8a35-fc2f7100fcf7"
+generated_at = "2026-08-15"
+prompt = "Sleepy state preserving the exact creature identity, with heavy eyelids, drooping posture and tiny yawn; slow restrained underwater hover."
+seed = "812735"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected frames 0 through 3 after reviewing the complete five-frame east and south loops at 2x game scale"
+
+[[asset]]
+id = "creature-v1/mood/sleepy-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 34
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "1bfbf20e-72e7-4552-8a35-fc2f7100fcf7"
+generated_at = "2026-08-15"
+prompt = "Sleepy state preserving the exact creature identity, with heavy eyelids, drooping posture and tiny yawn; slow restrained underwater hover."
+seed = "812735"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected frames 0 through 3 after reviewing the complete five-frame east and south loops at 2x game scale"
+
+[[asset]]
+id = "creature-v1/mood/lonely-east"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 23
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "02325452-5269-495e-8c07-c1a00652897c"
+generated_at = "2026-08-15"
+prompt = "Lonely state preserving the exact creature identity, with sad eyes, downturned mouth and withdrawn posture; tiny slow body rise and fin drift."
+seed = "812736"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "east uses a deliberately restrained 0,1,0,1 two-pose cycle after later generated frames changed silhouette; south uses selected frames 0 through 3"
+
+[[asset]]
+id = "creature-v1/mood/lonely-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 25
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "02325452-5269-495e-8c07-c1a00652897c"
+generated_at = "2026-08-15"
+prompt = "Lonely state preserving the exact creature identity, with sad eyes, downturned mouth and withdrawn posture; tiny slow body rise and fin drift."
+seed = "812736"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "east uses a deliberately restrained 0,1,0,1 two-pose cycle after later generated frames changed silhouette; south uses selected frames 0 through 3"
+
+[[asset]]
+id = "creature-v1/mood/resentful-east"
+kind = "sprite"
+width = 80
+height = 80
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 21
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "69503a47-4f7b-42aa-9c31-cea6500d61c2"
+generated_at = "2026-08-15"
+prompt = "Resentful state preserving the exact creature identity, with narrowed eye, closed frown, rigid fins and turned-away posture."
+seed = "812732"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected the clean static east rotation; three animation attempts were rejected because generated middle frames changed the eye or invented a red tongue"
+
+[[asset]]
+id = "creature-v1/mood/resentful-south"
+kind = "sprite"
+width = 80
+height = 80
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 24
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "69503a47-4f7b-42aa-9c31-cea6500d61c2"
+generated_at = "2026-08-15"
+prompt = "Resentful state preserving the exact creature identity, with narrowed eyes, closed frown, rigid fins and confrontational front-facing posture."
+seed = "812732"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "selected the clean static south rotation; runtime buoyancy supplies motion without redrawing the fragile expression"
+
+[[asset]]
+id = "creature-v1/reaction/affection-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 19
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "79420bd3-4d20-49ef-a161-86f32b890375"
+generated_at = "2026-08-15"
+prompt = "Tender affectionate underwater lean toward the viewer, preserving warm half-lidded eyes, tiny smile, exact body identity, shading and palette."
+seed = "812737"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/base.png"]
+human_modifications = "curated frames 0,1,2,1 from the five-frame result so the loop stays tender instead of changing into a generic wide-eyed smile"
+
+[[asset]]
+id = "creature-v1/effect/attention"
+kind = "sprite"
+width = 32
+height = 32
+transparent = true
+palette = "style/aquarium-effects.hex"
+max_colors = 15
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "5d507a12-be2b-4f13-9370-521704ae1799"
+generated_at = "2026-08-15"
+prompt = "Three isolated pale cyan hand-pixelled attention marks and one tiny bubble on an otherwise empty transparent canvas, with no backdrop, square, glow field, text, creature, or border."
+seed = "812766"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/aquarium/background.png"]
+human_modifications = "selected after transparent-background review at native size and 2x game scale"
+
+[[asset]]
+id = "creature-v1/effect/affection"
+kind = "sprite"
+width = 32
+height = 32
+transparent = true
+palette = "style/aquarium-effects.hex"
+max_colors = 9
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "2553c8d6-caa1-4247-8b32-180ba39b505d"
+generated_at = "2026-08-15"
+prompt = "Polished compact pixel-art effect: one warm dusty-coral heart with two tiny pale bubbles; transparent background and crisp hand-placed-looking pixels."
+seed = "812761"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/aquarium/background.png"]
+human_modifications = "selected after transparent-background review at native size and 2x game scale"
+
+[[asset]]
+id = "creature-v1/effect/mouth-particles"
+kind = "sprite"
+width = 32
+height = 32
+transparent = true
+palette = "style/aquarium-effects.hex"
+max_colors = 15
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "aa4280db-bd64-44bf-81f8-b8c295df7222"
+generated_at = "2026-08-15"
+prompt = "Polished compact pixel-art effect: two pale food crumbs and a short sputtered bubble trail; transparent background and crisp hand-placed-looking pixels."
+seed = "812762"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/aquarium/background.png"]
+human_modifications = "selected after transparent-background review at native size and 2x game scale"
+
+[[asset]]
+id = "aquarium/sand-puff"
+kind = "sprite"
+width = 32
+height = 32
+transparent = true
+palette = "style/aquarium-effects.hex"
+max_colors = 18
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "9946470a-d7f5-44b7-a5d4-6354b8ef1385"
+generated_at = "2026-08-15"
+prompt = "Polished compact pixel-art effect: two low dusty tan aquarium sand clouds and a few rising grains; transparent background and crisp hand-placed-looking pixels."
+seed = "812763"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/aquarium/background.png"]
+human_modifications = "selected after transparent-background review at native size and 2x game scale"
+
+[[asset]]
+id = "aquarium/wake"
+kind = "sprite"
+width = 32
+height = 32
+transparent = true
+palette = "style/aquarium-effects.hex"
+max_colors = 18
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "205e70d4-210e-49fa-a804-4c77dcc103b6"
+generated_at = "2026-08-15"
+prompt = "Polished compact pixel-art effect: short curling trail of pale cyan bubbles and water streaks; transparent background and crisp hand-placed-looking pixels."
+seed = "812764"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/aquarium/background.png"]
+human_modifications = "selected after transparent-background review at native size and 2x game scale"
+
+[[asset]]
+id = "creature-v1/effect/sleep"
+kind = "sprite"
+width = 32
+height = 32
+transparent = true
+palette = "style/aquarium-effects.hex"
+max_colors = 8
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "c68ccde3-b749-4db7-93df-d1ff51b8a147"
+generated_at = "2026-08-15"
+prompt = "Polished compact pixel-art effect: three drifting bubble-like sleep marks in pale cyan; transparent background and crisp hand-placed-looking pixels."
+seed = "812765"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/aquarium/background.png"]
+human_modifications = "selected after transparent-background review at native size and 2x game scale"
+
+[[asset]]
+id = "creature-v1/talk/content-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 3
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 36
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "45756d94-a44c-4a1e-a1e8-664e9c64874e"
+generated_at = "2026-08-15"
+prompt = "Three full-body happy vocal mouth positions generated from the content south-facing character state while preserving identity, expression, outline and shading."
+seed = "812750"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/mood/content-south-0.png"]
+human_modifications = "mapped closed, medium and open mouth positions to protocol phases after reviewing the full talking GIF"
+
+[[asset]]
+id = "creature-v1/talk/curious-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 3
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 36
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "40077db8-2e3c-49a7-a64f-a61db58e269c"
+generated_at = "2026-08-15"
+prompt = "Three full-body surprised vocal mouth positions generated from the curious south-facing character state while preserving identity, expression, outline and shading."
+seed = "812751"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/mood/curious-south-0.png"]
+human_modifications = "mapped the three selected curious mouth shapes to closed, medium and open protocol phases"
+
+[[asset]]
+id = "creature-v1/talk/hungry-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 3
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 30
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "6e1300b8-aca7-4efd-a08b-f0c533854a96"
+generated_at = "2026-08-15"
+prompt = "Three full-body neutral vocal mouth positions generated from the hungry south-facing character state while preserving identity, expression, outline and shading."
+seed = "812752"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/mood/hungry-south-0.png"]
+human_modifications = "mapped the three selected hungry mouth shapes to closed, medium and open protocol phases"
+
+[[asset]]
+id = "creature-v1/talk/sleepy-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 3
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 30
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "7425be4e-b63d-450f-a325-44845cf9fee8"
+generated_at = "2026-08-15"
+prompt = "Three full-body sad vocal mouth positions generated from the sleepy south-facing character state while preserving identity, expression, outline and shading."
+seed = "812753"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/mood/sleepy-south-0.png"]
+human_modifications = "mapped the three selected sleepy mouth shapes to closed, medium and open protocol phases"
+
+[[asset]]
+id = "creature-v1/talk/lonely-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 3
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 25
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "7d269f37-6289-4023-a7ce-2970d91f3e28"
+generated_at = "2026-08-15"
+prompt = "Three full-body sad vocal mouth positions generated from the lonely south-facing character state while preserving identity, expression, outline and shading."
+seed = "812754"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/mood/lonely-south-0.png"]
+human_modifications = "mapped the three selected lonely mouth shapes to closed, medium and open protocol phases, retaining one natural blink"
+
+[[asset]]
+id = "creature-v1/talk/resentful-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 3
+transparent = true
+palette = "style/creature-v1-expression.hex"
+max_colors = 37
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "pixellab"
+job_id = "ced741bd-1717-4633-8041-a237906cdf02"
+generated_at = "2026-08-15"
+prompt = "Three full-body angry vocal mouth positions generated from the resentful south-facing character state while preserving identity, expression, outline and shading."
+seed = "812755"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/mood/resentful-south.png"]
+human_modifications = "selected the clean closed and open angry mouth positions; rejected the third generated position because it invented a red tongue"
+
 [[audio]]
 id = "audio/ui/select"
 sample_rate = 44100

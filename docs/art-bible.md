@@ -8,18 +8,29 @@ and a few warm or cyan accents. The aquarium should feel inhabited and slightly 
 like a clean fish tank. The lower boundary gives the eye a place to rest, but the creature owns most
 of the swimming volume.
 
-The hero creature is one recognizable 64 to 80 logical pixels tall rig. Its body silhouette carries
-swim, hover, turn, eat, sleep, recoil, and play. Layered face and effect planes carry gaze, blink,
-suspicion, anger, delight, loneliness, bubbles, blush, stress marks, spit, crumbs, and ink-like
-clouds. Gaze leads body turns. A bespoke hero reaction is preferable to a new generic pose when a
-moment matters. Horizontal flips are allowed only for poses whose lighting and asymmetry remain
-credible.
+The hero creature is one recognizable 80x80 source rig rendered at an exact 2x logical scale. Its
+whole sprite carries mood as well as motion: content, curious, hungry, sleepy, lonely, and resentful
+each have side-facing and player-facing art, while swim, eat, sleep, play, affection, and speech use
+their own curated full-body frames. The face must never look pasted onto a neutral body. Eyes,
+mouth, fins, tail, posture, outline, palette, and shading act together in every normal runtime pose.
+Small bubbles, hearts, attention marks, crumbs, sand, wake, and sleep marks are authored sprites,
+not rectangle overlays. Gaze leads body turns; attention toward the player uses the south-facing
+state. A bespoke hero reaction is preferable to a generic pose when a moment matters. Horizontal
+flips are allowed only for side poses whose lighting and asymmetry remain credible.
+
+Generated art is curated as if it were handcrafted. A provider result is source material, not an
+automatic acceptance. Inspect every frame at native size and at the actual 2x aquarium scale;
+reject identity drift, accidental props, expression changes, invented colors, edge clipping, and
+loops whose silhouette jumps. It is valid to use a clean static state with deterministic buoyancy
+when animation generation damages a fragile expression. Curated frame repetition is preferable to
+a more varied but incoherent loop. The renderer's simple code-native creature remains only a
+missing-asset safety net and is never layered over shipped hero art.
 
 ## Pixel contract
 
 - The logical framebuffer remains 320x180. Draw sprites on whole logical pixels.
-- Native aquarium body art targets 64 to 80 logical pixels in height. Face overlays must remain
-  readable at that size without smoothing.
+- Native hero state and speech art uses an 80x80 transparent canvas. Provider padding is cropped
+  symmetrically only after proving every opaque pixel remains inside that canonical canvas.
 - Use nearest-neighbor sampling, integer viewport scales, and intentional letterboxing. Never bake
   a bilinear resize into a runtime PNG.
 - Runtime pixel art has hard alpha edges: every alpha is exactly 0 or 255. Opaque backgrounds are
@@ -44,10 +55,11 @@ native_pixel_density = 1
 Provider-generated MVP art can use a measured, asset-specific tolerance and color ceiling when its
 manifest records that exception. Do not copy that exception into new aquarium entries.
 The selected V1 aquarium background has one measured exception: 34 exact declared colors instead
-of 32. Its props use 10 to 15 colors and the creature base uses exactly 32. The generated motion
-frames use 34 to 40 colors per frame to preserve expression and consistent identity. Every aquarium
-runtime asset still uses an exact declared palette with zero tolerance, hard alpha, and native
-density 1; these measured ceilings are not permission for later assets to grow their palettes.
+of 32. Its props use 10 to 15 colors and the creature base uses exactly 32. Generated motion and
+expression frames use measured per-asset ceilings to preserve cohesive shading and identity. Every
+aquarium runtime asset still uses an exact declared palette with zero tolerance, hard alpha, and
+native density 1; these measured ceilings are not permission for later assets to grow their
+palettes.
 Large `status = "reference"` concept images are provenance inputs rather than runtime candidates;
 they still need valid dimensions and transparency metadata but are not subject to the runtime color
 ceiling.

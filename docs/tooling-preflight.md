@@ -101,10 +101,11 @@ server and spend no account credits.
 
 The probe is intentionally not checked into `assets/` or declared in the manifest. Production work
 later selected an OpenAI-generated aquarium concept and PixelLab-generated background, cave,
-plants, toys, creature base, and four-frame hover/swim/eat-recoil animation sets. Runtime drawing
-uses exact integer crop and scale, with code-native expression fallbacks. Prompts, seeds, job IDs,
-references, dimensions, hashes, palettes, and validation policy are recorded in
-`assets/manifest.toml`.
+plants, toys, creature base, action loops, six directional mood sets, six speech sets, affection,
+and small reaction effects. Runtime drawing uses exact integer crop and scale; the provider's
+84/88/92-pixel animation padding was symmetrically normalized to 80x80 only after opaque-bounds
+checks. Prompts, seeds, job IDs, rejected outputs, curated frame choices, references, dimensions,
+palettes, and validation policy are recorded in `assets/manifest.toml`.
 
 ## Implemented V1 tool paths
 

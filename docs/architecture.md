@@ -47,15 +47,15 @@ berry-grudge, Stage 5, and room-shell scenarios remain regression and migration 
 ## Declarative presentation
 
 `beastie-view` converts authoritative state and short-lived presentation state into serializable
-render and audio plans. It maps normalized coordinates to whole logical pixels, selects the shipped
-hover/swim/eat-recoil animation sets, layers deterministic gaze and expression geometry, queues
-important reactions, and emits semantic hit regions shared by pointer, keyboard, and controller.
+render and audio plans. It maps normalized coordinates to whole logical pixels; selects authored
+full-body mood, action, speech, and reaction sprites; queues important feedback with direct-reaction
+preemption; and emits semantic hit regions shared by pointer, keyboard, and controller.
 
 The game shell executes plans on a 320x180 logical framebuffer with nearest sampling, whole-pixel
 sprite placement, integer sprite scaling, and integer viewport scaling. The selected background is
-cropped at 1:1 to remove its generated surface opening. Optional PNG overlays may enrich the scene,
-but code-native face, mouth, gaze, bubbles, caustics, particles, and feedback remain visible when an
-optional asset is missing.
+cropped at 1:1 to remove its generated surface opening. Shipped hero acting and effects are sprite
+art; the renderer keeps only a simple missing-asset creature and geometry fallback so a corrupt or
+absent optional file never blocks play.
 
 The persistent compose bar, shallow contextual actions, food-drop mode, settings, input bindings,
 save recovery/reset confirmation, transcript controls, and naming are declarative UI. Exact need,

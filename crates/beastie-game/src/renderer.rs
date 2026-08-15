@@ -39,10 +39,16 @@ impl AssetCatalog {
             .get(&asset_key(&command.id, Some(command.frame)))
             .or_else(|| self.images.get(&asset_key(&command.id, None)))
             .or_else(|| {
-                matches!(
+                (matches!(
                     command.id.as_str(),
-                    "creature-v1/hover" | "creature-v1/swim" | "creature-v1/eat-recoil"
-                )
+                    "creature-v1/hover"
+                        | "creature-v1/swim"
+                        | "creature-v1/eat-recoil"
+                        | "creature-v1/sleep"
+                        | "creature-v1/play"
+                ) || command.id.starts_with("creature-v1/mood/")
+                    || command.id.starts_with("creature-v1/talk/")
+                    || command.id.starts_with("creature-v1/reaction/"))
                 .then(|| self.images.get(&asset_key("creature-v1/base", None)))
                 .flatten()
             })
@@ -327,7 +333,15 @@ fn draw_sprite(
         "creature-v1/base"
         | "creature-v1/hover"
         | "creature-v1/swim"
-        | "creature-v1/eat-recoil" => draw_aquatic_creature(ctx, canvas, x, y)?,
+        | "creature-v1/eat-recoil"
+        | "creature-v1/sleep"
+        | "creature-v1/play" => draw_aquatic_creature(ctx, canvas, x, y)?,
+        id if id.starts_with("creature-v1/mood/")
+            || id.starts_with("creature-v1/talk/")
+            || id.starts_with("creature-v1/reaction/") =>
+        {
+            draw_aquatic_creature(ctx, canvas, x, y)?;
+        }
         id if id.starts_with("creature-v1/face/") => {
             draw_expression(ctx, canvas, id, x, y)?;
         }
