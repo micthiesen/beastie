@@ -1,0 +1,123 @@
+# Development harness
+
+The game must be controllable and inspectable by Codex without relying on coordinate clicks. Use
+one versioned semantic command protocol for both a fast headless session and the real rendered game.
+Coordinate-driven automation is reserved for testing coordinate mapping and actual device input.
+
+## Shared session boundary
+
+Put orchestration that sits above `beastie-core` and below ggez in a reusable `GameSession`. It owns
+the authoritative state, injected clock and RNG, dialogue/TTS backends, save operations, and the
+latest render/audio plans. Neither harness adapter gets a second implementation of game rules.
+
+Commands are high-level player or test intentions, not renderer events:
+
+```jsonl
+{"version":1,"command":"feed","food":"berry"}
+{"version":1,"command":"advance","minutes":5}
+{"version":1,"command":"talk","text":"Did you like it?"}
+{"version":1,"command":"react","reaction":"laugh"}
+{"version":1,"command":"inspect"}
+{"version":1,"command":"capture","name":"after-second-berry"}
+```
+
+The final command enum should cover every primary interaction and the small amount of test control
+needed to reproduce state:
+
+- player actions: feed, play, comfort, tidy, talk, and contextual speech reaction;
+- deterministic control: advance game time, wait for pending AI/TTS, save, load, and quit;
+- observation: inspect authoritative state, recent events, dialogue trace, `RenderPlan`, and
+  `AudioPlan`;
+- evidence: capture the logical framebuffer to a named PNG.
+
+Do not expose arbitrary state mutation as a normal command. Purpose-built fixture setup may load a
+versioned save, but gameplay scenarios should reach states through ordinary actions whenever
+practical.
+
+Every accepted command emits a versioned observation. It should contain enough evidence to debug a
+failure without opening the game:
+
+```json
+{
+  "version": 1,
+  "sequence": 5,
+  "game_time": "day-1 09:05",
+  "accepted": true,
+  "events": ["creature_refused_food"],
+  "speech": "red shit again.",
+  "referenced_memories": ["memory-12"],
+  "state_digest": "...",
+  "render_plan_digest": "...",
+  "pending": []
+}
+```
+
+Full state and full plans belong in explicit `inspect` responses or trace artifacts rather than in
+every small acknowledgement. Protocol traffic is untrusted input: cap line size and string length,
+reject unknown versions/commands/fields where appropriate, and return structured errors without
+crashing the session.
+
+## Headless adapter
+
+The primary interaction laboratory is:
+
+```bash
+cargo xtask play --seed 42 --fake-ai
+```
+
+It reads JSONL from standard input and writes observations to standard output. It must not require
+a window, display server, GPU, audio device, local model, PixelLab credential, or network. A scenario
+file can drive the same adapter non-interactively:
+
+```bash
+cargo xtask play --scenario fixtures/scenarios/berry-grudge.jsonl --fake-ai
+```
+
+Scenario transcripts are deterministic fixtures. They should be usable for focused assertions and
+for long behavioral runs that compress hours or days of play into seconds.
+
+## Visible adapter
+
+The real game shell accepts the same scenario commands at deterministic update boundaries:
+
+```bash
+cargo xtask dev --fake-ai \
+  --script fixtures/scenarios/berry-grudge.jsonl \
+  --capture-dir target/captures/berry-grudge
+```
+
+`capture` saves the 320×180 logical framebuffer directly as PNG before display scaling. This is
+stable evidence for visual review and avoids OS screenshot permissions, window overlap, and fragile
+screen coordinates. Captures supplement `RenderPlan` snapshots; neither replaces the other.
+
+Start with scenario files, not a socket. They are deterministic, reviewable, and sufficient for an
+agent to edit, run, and inspect the game. Add an opt-in localhost JSONL control socket only if real
+development shows that live poking would materially shorten the loop. A development socket must
+never be enabled in release builds.
+
+## Real input coverage
+
+Semantic commands intentionally bypass platform input translation, so a thin set of host-driven
+tests must still exercise real input:
+
+- mouse selection and logical-coordinate mapping through nearest-neighbor scaling/letterboxing;
+- keyboard focus navigation, contextual actions, and Talk text entry;
+- controller focus navigation, action selection, and the modal on-screen keyboard;
+- window launch, resize behavior, and one real screenshot/capture comparison.
+
+Coordinate clicks are correct for these tests because pointer mapping is the behavior under test.
+They are not the default way to test creature interactions.
+
+## Pre-MVP harness gate
+
+Do not begin the autonomous full-MVP build until this loop has passed on the development Mac:
+
+1. Feed a berry and advance time through the headless adapter.
+2. Run the identical scenario through the visible ggez game with fixture AI.
+3. Produce and inspect a framebuffer PNG.
+4. Correlate authoritative state, emitted events, dialogue, and `RenderPlan` in one trace.
+5. Launch the real window and verify at least one genuine pointer or keyboard path.
+
+Once proven, keep the scenario as a permanent fixture and include the headless checks in
+`cargo xtask verify`. Visible capture and host-input smoke tests remain explicit host checks when a
+display is unavailable.

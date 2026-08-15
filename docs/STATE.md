@@ -3,7 +3,7 @@
 Fast-moving work state and chosen next step. This records the work, not machine state or
 uncommitted changes. Durable findings live in the linked docs.
 
-Last updated: **2026-08-15** (local AI, speech, and PixelLab tooling preflight completed.)
+Last updated: **2026-08-15** (full-MVP build flow and agent control harness decided.)
 
 ## Now
 
@@ -17,16 +17,22 @@ Last updated: **2026-08-15** (local AI, speech, and PixelLab tooling preflight c
   [tooling-preflight.md](tooling-preflight.md).
 - The current AI worker is still fixture-backed. No real model weight, native TTS runtime, or
   promoted generated art is integrated yet.
+- The autonomous implementation target is the complete MVP. Its ordered slices and working rules
+  are recorded in [build-plan.md](build-plan.md).
+- Headless interaction and visible-game scripting will share one semantic command protocol. The
+  required pre-build proof is recorded in [development-harness.md](development-harness.md).
 
 ## Next
 
-Build the deterministic berry-memory acceptance slice in `beastie-core`: preference formation,
-sleep/save/reload, candidate-memory selection, and multi-day invariant simulation. This proves
-the authoritative game loop before renderer or model work widens the surface.
+Build and prove the shared development harness before widening the MVP: semantic JSONL commands,
+headless observations, identical visible-game scenario replay, logical-framebuffer PNG capture, and
+one genuine macOS input path. Preserve the proof as a fixture, then begin the berry-memory slice.
 
 ## Candidates Not Chosen
 
-- **Interactive room shell**: wait until core events and intentions are stable enough to render.
+- **Berry-memory acceptance slice**: it remains the first product slice, but follows the small
+  harness gate because every later interaction becomes faster to implement and validate.
+- **Interactive room shell**: build after the harness and authoritative berry-memory spine.
 - **Real local LLM benchmark**: the runtime smoke is complete; wait until the protocol fixture
   corpus can score candidates instead of selecting from one-off prompts.
 - **Pixel-art generation**: first create the approved art direction's anchor assets and
@@ -50,3 +56,11 @@ the authoritative game loop before renderer or model work widens the surface.
 - KittenTTS generated intelligible speech substantially faster than real time, and PixelLab's MCP
   completed a seeded transparent-sprite job. Native TTS packaging and canonical art selection are
   still explicit build tasks → [tooling-preflight.md](tooling-preflight.md).
+- Ordinary gameplay validation will use semantic commands, not coordinate clicks. Coordinate input
+  is reserved for targeted mouse-mapping and real-device tests; rendered scenarios save the logical
+  framebuffer directly → [development-harness.md](development-harness.md).
+- The initial full build is Mac-led but preserves portable headless boundaries. Windows and Linux
+  native acceptance remains part of MVP completion, not a blocker for the tooling preflight or
+  first autonomous implementation pass → [build-plan.md](build-plan.md).
+- Codex is the only coding-agent environment required for the MVP. Claude Code/rulesync compatibility
+  work is explicitly out of scope → [build-plan.md](build-plan.md).

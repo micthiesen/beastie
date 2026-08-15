@@ -1020,6 +1020,8 @@ cargo xtask dev
 cargo xtask dev --fake-ai
 cargo xtask verify
 cargo xtask sim --seed 42 --days 100
+cargo xtask play --seed 42 --fake-ai
+cargo xtask play --scenario fixtures/scenarios/berry-grudge.jsonl --fake-ai
 cargo xtask dialogue replay berry-memory
 cargo xtask dialogue eval
 cargo xtask tts smoke
@@ -1046,6 +1048,22 @@ Linux/Windows-appropriate packaging sanity checks
 ```
 
 and it should **not require a real model, PixelLab credential or GPU**.
+
+### Give agents semantic control of both game loops
+
+Use one versioned command protocol for a reusable `GameSession`, then expose it through two adapters:
+
+- a headless JSONL runner for fast deterministic interaction and inspection;
+- the real ggez shell, driven by the same scenario files at deterministic frame boundaries.
+
+Commands express actions such as Feed, Talk, React, Advance, Inspect and Capture rather than mouse
+coordinates. The visible adapter captures the 320×180 logical framebuffer directly to PNG. Start
+with scenario files instead of a socket; add a development-only live socket later only if measured
+workflow friction justifies it. Keep a small separate host-input suite for actual mouse mapping,
+keyboard text entry and controller navigation.
+
+The exact protocol, evidence contract and pre-build proof are specified in
+[development-harness.md](development-harness.md).
 
 ### Make fake AI a first-class backend
 
@@ -1406,6 +1424,9 @@ I would consider the vertical slice complete only when all of these are true:
 | Offline-time progression is deterministic and non-lethal | ✓ |
 | AI-generated pixel assets come through a reproducible manifest/MCP workflow | ✓ |
 | `cargo xtask verify` succeeds without an installed model or display | ✓ |
+| Headless semantic scenarios can drive every primary interaction and inspect authoritative state | ✓ |
+| The visible game can replay the same scenarios and capture its logical framebuffer to PNG | ✓ |
+| Native mouse, keyboard and controller input paths receive targeted host smoke coverage | ✓ |
 | Real-model evaluation is replayable from fixtures | ✓ |
 | Native Windows build passes | ✓ |
 | Native Linux build passes | ✓ |

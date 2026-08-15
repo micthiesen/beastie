@@ -81,3 +81,7 @@ IDs, dimensions, hashes, and any manual edits in `assets/manifest.toml` when ass
 - Local TTS generation: operational; native Rust packaging still needs an integration spike.
 - PixelLab generation: operational; canonical art anchors are not selected yet.
 - Headless fixture path: remains the required default for `cargo xtask verify`.
+
+The remaining prerequisite is not another model or asset smoke. Before autonomous full-MVP work,
+prove the shared semantic headless/visible control loop, framebuffer capture, and one genuine macOS
+input path described in [development-harness.md](development-harness.md).
