@@ -1,0 +1,8 @@
+{"version":1,"command":"speech_started"}
+{"version":1,"command":"speech_candidate","text":"Do you remember the berry?","confidence":900}
+{"version":1,"command":"speech_ended"}
+{"version":1,"command":"speech_started"}
+{"version":1,"command":"speech_candidate","text":"this uncertain text must not become dialogue","confidence":400}
+{"version":1,"command":"speech_ended"}
+{"version":1,"command":"speech_started"}
+{"version":1,"command":"speech_failed","failure":"recognizer_unavailable"}

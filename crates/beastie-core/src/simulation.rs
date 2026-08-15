@@ -29,6 +29,7 @@ pub enum PlayerEvent {
     Comfort,
     Tidy,
     ReturnedAfterAbsence,
+    SpeechStarted,
     Talk,
     React(Reaction),
     LanguageExposure(LanguageExposure),
@@ -50,6 +51,7 @@ pub enum GameEvent {
         contextual_follow_up: bool,
     },
     TalkIgnored,
+    SpeechPerceived(SpeechAttention),
     LanguageExposureRegistered(LanguageExposure),
     NonverbalAct(NonverbalAct),
     ConceptLearned(Concept),
@@ -76,6 +78,15 @@ pub enum GameEvent {
         target: NamingTarget,
         name: String,
     },
+}
+
+/// The creature's immediate, word-independent response to speech in its environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeechAttention {
+    Ignored,
+    Glanced,
+    Attended,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,6 +279,15 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
             state.creature.aquarium.steering = SteeringMode::Approach;
             events.push(GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer));
         }
+        PlayerEvent::SpeechStarted => {
+            let attention = speech_attention(state);
+            if !matches!(attention, SpeechAttention::Ignored) {
+                // Hearing may redirect the creature's eyes without replacing its intention,
+                // destination, steering, or in-progress action.
+                state.creature.aquarium.gaze = GazeTarget::Player;
+            }
+            events.push(GameEvent::SpeechPerceived(attention));
+        }
         PlayerEvent::Talk => {
             let follow_up = state.creature.conversation.contextual_follow_up_available;
             if state.elapsed_ms < state.creature.conversation.next_talk_at_ms && !follow_up {
@@ -301,6 +321,35 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
             state.creature.social_habits.clamp();
             events.push(GameEvent::LanguageExposureRegistered(*exposure));
         }
+    }
+}
+
+fn speech_attention(state: &WorldState) -> SpeechAttention {
+    let creature = &state.creature;
+    if matches!(creature.current_intention, Intention::Sleep) || creature.needs.energy < 0.12 {
+        return SpeechAttention::Ignored;
+    }
+
+    let social_attention =
+        creature.traits.sociability + creature.relationship.bond + creature.needs.curiosity * 0.5
+            - creature.relationship.resentment;
+    let occupied = creature.aquarium.action.is_some()
+        || !matches!(
+            creature.current_intention,
+            Intention::Idle | Intention::ApproachPlayer | Intention::SeekComfort
+        );
+    if occupied {
+        if social_attention >= 0.75 {
+            SpeechAttention::Glanced
+        } else {
+            SpeechAttention::Ignored
+        }
+    } else if social_attention >= 0.55 {
+        SpeechAttention::Attended
+    } else if social_attention >= 0.25 {
+        SpeechAttention::Glanced
+    } else {
+        SpeechAttention::Ignored
     }
 }
 

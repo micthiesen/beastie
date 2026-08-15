@@ -4,7 +4,7 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
-use beastie_core::GameEvent;
+use beastie_core::{GameEvent, SpeechAttention};
 use rodio::Player;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Source};
 
@@ -24,6 +24,7 @@ const FOOD_EAT: &str = "food/eat";
 const FOOD_REJECT: &str = "food/spit-reject";
 const CREATURE_AFFECTION: &str = "creature/affection";
 const CREATURE_WAKE: &str = "creature/wake";
+const CREATURE_CURIOUS: &str = "creature/curious";
 
 const SOUND_IDS: &[&str] = &[
     UI_SELECT,
@@ -252,6 +253,9 @@ pub fn sound_for_event(event: &GameEvent) -> Option<&'static str> {
             Some(CREATURE_MRR)
         }
         GameEvent::FoodExpired(_) => Some(BUBBLES_1),
+        GameEvent::SpeechPerceived(SpeechAttention::Glanced | SpeechAttention::Attended) => {
+            Some(CREATURE_CURIOUS)
+        }
         GameEvent::NonverbalAct(_) => Some(CAVE_SETTLE),
         _ => None,
     }
@@ -290,6 +294,14 @@ mod tests {
             Some(CREATURE_SLEEP)
         );
         assert_eq!(sound_for_event(&GameEvent::NeedChanged), None);
+        assert_eq!(
+            sound_for_event(&GameEvent::SpeechPerceived(SpeechAttention::Attended)),
+            Some(CREATURE_CURIOUS)
+        );
+        assert_eq!(
+            sound_for_event(&GameEvent::SpeechPerceived(SpeechAttention::Ignored)),
+            None
+        );
     }
 
     #[test]

@@ -798,17 +798,7 @@ impl Game {
                 if clears_speech(&envelope.command) {
                     self.clear_speech();
                 }
-                let persist = matches!(
-                    &envelope.command,
-                    SessionCommand::Feed { .. }
-                        | SessionCommand::DropFood { .. }
-                        | SessionCommand::Name { .. }
-                        | SessionCommand::Play { .. }
-                        | SessionCommand::Comfort
-                        | SessionCommand::Tidy
-                        | SessionCommand::Talk { .. }
-                        | SessionCommand::React { .. }
-                );
+                let persist = command_requires_persist(&envelope.command);
                 let observation = self.session.apply(envelope).map_err(session_error)?;
                 self.queued_audio
                     .extend(observation.events.iter().filter_map(sound_for_event));
@@ -1422,6 +1412,21 @@ fn clears_speech(command: &SessionCommand) -> bool {
     )
 }
 
+fn command_requires_persist(command: &SessionCommand) -> bool {
+    matches!(
+        command,
+        SessionCommand::Feed { .. }
+            | SessionCommand::DropFood { .. }
+            | SessionCommand::Name { .. }
+            | SessionCommand::Play { .. }
+            | SessionCommand::Comfort
+            | SessionCommand::Tidy
+            | SessionCommand::Talk { .. }
+            | SessionCommand::SpeechEnded
+            | SessionCommand::React { .. }
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use beastie_core::{Reaction, ToyId};
@@ -1429,9 +1434,9 @@ mod tests {
     use beastie_view::{UiAction, ViewState};
 
     use super::{
-        CaptureState, clears_speech, effective_dialogue_text_speed, load_session,
-        mark_capture_rendered, mouth_phase, play_command, revealed_text, show_dialogue_caption,
-        take_capture_for_readback,
+        CaptureState, clears_speech, command_requires_persist, effective_dialogue_text_speed,
+        load_session, mark_capture_rendered, mouth_phase, play_command, revealed_text,
+        show_dialogue_caption, take_capture_for_readback,
     };
     use crate::save_store::SaveStore;
     use crate::settings::TextSpeed;
@@ -1486,6 +1491,21 @@ mod tests {
         }));
         assert!(!clears_speech(&SessionCommand::React {
             reaction: Reaction::Laugh,
+        }));
+    }
+
+    #[test]
+    fn completed_spoken_input_is_persisted_but_transient_recognition_is_not() {
+        assert!(!command_requires_persist(&SessionCommand::SpeechStarted));
+        assert!(!command_requires_persist(
+            &SessionCommand::SpeechCandidate {
+                text: "hello".to_owned(),
+                confidence: beastie_protocol::AcousticConfidence::new(900).expect("valid"),
+            }
+        ));
+        assert!(command_requires_persist(&SessionCommand::SpeechEnded));
+        assert!(!command_requires_persist(&SessionCommand::SpeechFailed {
+            failure: beastie_protocol::SpeechInputFailure::RecognitionFailed,
         }));
     }
 

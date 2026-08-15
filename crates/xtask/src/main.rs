@@ -3,6 +3,8 @@ use std::{
     io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
+    thread,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
@@ -12,6 +14,7 @@ use beastie_protocol::{
 };
 use beastie_session::{
     GameSession, MAX_COMMAND_BYTES, Observation, SESSION_PROTOCOL_VERSION, SessionError,
+    SpokenInputStatus,
 };
 use clap::{Parser, Subcommand};
 use serde::Serialize;
@@ -22,6 +25,7 @@ mod packaging;
 mod store_assets;
 
 const BERRY_GRUDGE_SCENARIO: &str = "fixtures/scenarios/berry-grudge.jsonl";
+const SPOKEN_INPUT_SCENARIO: &str = "fixtures/scenarios/spoken-input-foundation.jsonl";
 
 #[derive(Debug, Parser)]
 #[command(about = "Beastie developer tasks")]
@@ -176,7 +180,11 @@ enum DialogueTask {
 #[derive(Debug, Subcommand)]
 enum AssetTask {
     /// Validate asset files, metadata, palette references, and runtime readiness.
-    Check,
+    Check {
+        /// Print diagnostics for every resolved asset candidate.
+        #[arg(long)]
+        verbose: bool,
+    },
     /// Generate one single-frame manifest asset with PixelLab.
     Generate {
         /// Exact manifest asset id, such as creature/sleep.
@@ -232,8 +240,8 @@ fn main() -> Result<()> {
     match Cli::parse().command {
         Task::Verify => verify(),
         Task::Asset {
-            command: AssetTask::Check,
-        } => asset::check(Path::new("assets/manifest.toml"), true),
+            command: AssetTask::Check { verbose },
+        } => asset::check(Path::new("assets/manifest.toml"), true, verbose),
         Task::Asset {
             command: AssetTask::Generate { id, force },
         } => asset::generate(Path::new("assets/manifest.toml"), &id, force),
@@ -410,9 +418,10 @@ fn verify() -> Result<()> {
         ],
     )?;
     run("cargo", &["test", "--workspace", "--locked"])?;
-    asset::check(Path::new("assets/manifest.toml"), true)?;
+    asset::check(Path::new("assets/manifest.toml"), true, false)?;
     verify_manifest("models/manifest.toml")?;
     dialogue_eval::verify_fixtures()?;
+    replay_spoken_input_scenario(SPOKEN_INPUT_SCENARIO)?;
     store_assets::check(Path::new("."))?;
     run("cargo", &["build", "--workspace", "--locked"])?;
     replay_scenario(BERRY_GRUDGE_SCENARIO)?;
@@ -445,22 +454,28 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
         stay_open,
         new_game,
     } = options;
-    run(
-        "cargo",
-        &[
-            "build",
-            "--package",
-            "beastie-ai-worker",
-            "--bin",
-            "beastie-ai-worker",
-            "--locked",
-        ],
-    )?;
-    let worker = std::env::current_dir()
-        .context("failed to locate repository root")?
-        .join("target")
-        .join("debug")
-        .join(format!("beastie-ai-worker{}", std::env::consts::EXE_SUFFIX));
+    let worker = if fake_ai {
+        None
+    } else {
+        run(
+            "cargo",
+            &[
+                "build",
+                "--package",
+                "beastie-ai-worker",
+                "--bin",
+                "beastie-ai-worker",
+                "--locked",
+            ],
+        )?;
+        Some(
+            std::env::current_dir()
+                .context("failed to locate repository root")?
+                .join("target")
+                .join("debug")
+                .join(format!("beastie-ai-worker{}", std::env::consts::EXE_SUFFIX)),
+        )
+    };
     let tts_worker = if tts_cache_dir.is_some() {
         let mut arguments = vec!["build", "--package", "beastie-ai-worker"];
         if tts_model_dir.is_some() {
@@ -480,9 +495,23 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
     } else {
         None
     };
-    let mut command = Command::new("cargo");
-    command.args(["run", "--package", "beastie-game", "--locked"]);
-    command.arg("--");
+    run(
+        "cargo",
+        &[
+            "build",
+            "--package",
+            "beastie-game",
+            "--bin",
+            "beastie-game",
+            "--locked",
+        ],
+    )?;
+    let game = std::env::current_dir()
+        .context("failed to locate repository root")?
+        .join("target")
+        .join("debug")
+        .join(format!("beastie-game{}", std::env::consts::EXE_SUFFIX));
+    let mut command = Command::new(game);
     if fake_ai {
         command.arg("--fake-ai");
     }
@@ -518,12 +547,43 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
     if new_game {
         command.arg("--new-game");
     }
-    let status = command
-        .env("BEASTIE_AI_WORKER", worker)
-        .status()
-        .context("failed to start cargo")?;
-    require_success("cargo", status)
+    if let Some(worker) = worker {
+        command.env("BEASTIE_AI_WORKER", worker);
+    }
+    let mut child = command.spawn().context("failed to start beastie-game")?;
+    if !smoke {
+        focus_macos_process(child.id());
+    }
+    if fake_ai && !stay_open && (smoke || script.is_some()) {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            if let Some(status) = child.try_wait().context("failed to poll beastie-game")? {
+                return require_success("beastie-game", status);
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                bail!(
+                    "beastie-game did not finish within 120 seconds; on macOS run the command from a focused foreground terminal if Metal did not acquire a drawable"
+                );
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    let status = child.wait().context("failed to wait for beastie-game")?;
+    require_success("beastie-game", status)
 }
+
+#[cfg(target_os = "macos")]
+fn focus_macos_process(pid: u32) {
+    let script = format!(
+        "tell application \"System Events\"\nrepeat 20 times\nset matches to every process whose unix id is {pid}\nif (count of matches) > 0 then\nset frontmost of item 1 of matches to true\nreturn\nend if\ndelay 0.1\nend repeat\nend tell"
+    );
+    let _ = Command::new("osascript").args(["-e", &script]).status();
+}
+
+#[cfg(not(target_os = "macos"))]
+fn focus_macos_process(_pid: u32) {}
 
 fn sim(seed: u64, days: u32) -> Result<()> {
     let mut world = WorldState::new(seed, "Mop");
@@ -564,6 +624,56 @@ fn replay_scenario(path: &str) -> Result<()> {
     if !report.grounded_reply || !report.food_consumed {
         bail!("scenario {path} did not produce grounded recall and berry consumption");
     }
+    Ok(())
+}
+
+fn replay_spoken_input_scenario(path: &str) -> Result<()> {
+    let file = File::open(path).with_context(|| format!("failed to open scenario {path}"))?;
+    let mut session = GameSession::new(99, "Mop");
+    let mut listening = 0;
+    let mut candidate_updates = 0;
+    let mut submitted = 0;
+    let mut uncertainty = 0;
+    let mut infrastructure_failures = 0;
+    let mut dialogue_requests = 0;
+
+    for (index, line) in BufReader::new(file).lines().enumerate() {
+        let line = line.with_context(|| format!("failed to read {path}:{}", index + 1))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let envelope = GameSession::parse_command(&line)
+            .with_context(|| format!("invalid command in {path}:{}", index + 1))?;
+        let observation = session
+            .apply(envelope)
+            .with_context(|| format!("failed command in {path}:{}", index + 1))?;
+        dialogue_requests += usize::from(observation.dialogue_request.is_some());
+        match observation.spoken_input {
+            Some(SpokenInputStatus::Listening) => listening += 1,
+            Some(SpokenInputStatus::CandidateUpdated { .. }) => candidate_updates += 1,
+            Some(SpokenInputStatus::Submitted) => submitted += 1,
+            Some(SpokenInputStatus::AcousticUncertainty { .. }) => uncertainty += 1,
+            Some(SpokenInputStatus::InfrastructureFailure { .. }) => {
+                infrastructure_failures += 1;
+            }
+            Some(SpokenInputStatus::NoCandidate) | None => {}
+        }
+    }
+
+    if (
+        listening,
+        candidate_updates,
+        submitted,
+        uncertainty,
+        infrastructure_failures,
+    ) != (3, 2, 1, 1, 1)
+        || dialogue_requests != 1
+    {
+        bail!(
+            "spoken-input scenario produced unexpected lifecycle counts: listening={listening}, candidates={candidate_updates}, submitted={submitted}, uncertainty={uncertainty}, failures={infrastructure_failures}, dialogue={dialogue_requests}"
+        );
+    }
+    println!("spoken-input replay passed: {path}");
     Ok(())
 }
 
@@ -722,6 +832,9 @@ impl AdapterError {
             SessionError::Advance(_) => "invalid_advance",
             SessionError::Tick(_) => "invalid_tick",
             SessionError::TalkTooLong => "talk_too_long",
+            SessionError::EmptySpeechCandidate => "empty_speech_candidate",
+            SessionError::SpeechAlreadyStarted => "speech_already_started",
+            SessionError::SpeechNotStarted => "speech_not_started",
             SessionError::NoCheckpoint => "no_checkpoint",
             SessionError::SaveVersion(_)
             | SessionError::LegacySave(_)
@@ -861,6 +974,40 @@ mod tests {
         assert_eq!(report.rejected, 1);
         assert!(reject_adapter_errors(report).is_err());
         assert!(reject_adapter_errors(PlayReport::default()).is_ok());
+    }
+
+    #[test]
+    fn spoken_input_order_errors_have_stable_adapter_codes() {
+        let input = concat!(
+            "{\"version\":1,\"command\":\"speech_started\"}\n",
+            "{\"version\":1,\"command\":\"speech_started\"}\n",
+            "{\"version\":1,\"command\":\"speech_failed\",\"failure\":\"recognition_failed\"}\n",
+            "{\"version\":1,\"command\":\"speech_candidate\",\"text\":\"\",\"confidence\":900}\n",
+            "{\"version\":1,\"command\":\"speech_ended\"}\n",
+        );
+        let mut output = Vec::new();
+        let report = process_commands(input.as_bytes(), &mut output, 42).expect("stream runs");
+        let codes = String::from_utf8(output)
+            .expect("UTF-8")
+            .lines()
+            .filter_map(|line| {
+                serde_json::from_str::<serde_json::Value>(line)
+                    .expect("JSON")
+                    .pointer("/error/code")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(report.rejected, 3);
+        assert_eq!(
+            codes,
+            [
+                "speech_already_started",
+                "empty_speech_candidate",
+                "speech_not_started"
+            ]
+        );
     }
 
     #[test]

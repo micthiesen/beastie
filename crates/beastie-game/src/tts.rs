@@ -1,13 +1,12 @@
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, BufRead, BufReader, Read, Seek, Write};
+use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
-use std::process::{ChildStdin, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use beastie_core::WorldState;
 use beastie_protocol::{
@@ -15,7 +14,7 @@ use beastie_protocol::{
     validate_tts_reply, validate_tts_request,
 };
 
-use crate::process::ContainedChild;
+use crate::process::JsonlWorkerSession;
 
 const MAX_REPLY_BYTES: usize = 1_024;
 const MAX_WAV_BYTES: u64 = 44 + 192_000 * 30 * 2;
@@ -262,17 +261,24 @@ fn run_manager(
 
 fn exchange_with_recovery(
     config: &TtsWorkerConfig,
-    worker: &mut Option<WorkerSession>,
+    worker: &mut Option<JsonlWorkerSession>,
     request: &TtsRequest,
     cancelled: &AtomicBool,
 ) -> Option<Arc<[u8]>> {
     if worker.is_none() {
-        *worker = WorkerSession::spawn(config).ok();
+        *worker =
+            JsonlWorkerSession::spawn(&config.executable, &config.arguments, MAX_REPLY_BYTES).ok();
     }
     let cache_key = worker.as_mut().and_then(|session| {
-        session
+        let line = session
             .exchange(request, config.reply_timeout, cancelled)
-            .ok()
+            .ok()?;
+        let reply = serde_json::from_str::<TtsReply>(&line).ok()?;
+        let reply = validate_tts_reply(request, reply).ok()?;
+        match reply.outcome {
+            TtsOutcome::Ready { cache_key } => Some(cache_key),
+            TtsOutcome::Error { .. } => None,
+        }
     });
     let Some(cache_key) = cache_key else {
         if let Some(mut failed) = worker.take() {
@@ -337,157 +343,11 @@ fn read_scoped_cache_file(cache_root: &Path, cache_key: &str) -> io::Result<Arc<
     Ok(Arc::from(bytes))
 }
 
-struct WorkerSession {
-    child: ContainedChild,
-    stdin: ChildStdin,
-    lines: Receiver<io::Result<String>>,
-    exchanged: bool,
-}
-
-impl WorkerSession {
-    fn spawn(config: &TtsWorkerConfig) -> io::Result<Self> {
-        let mut command = Command::new(&config.executable);
-        command
-            .args(&config.arguments)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        let mut child = ContainedChild::spawn(&mut command)?;
-        let Some(stdin) = child.stdin.take() else {
-            child.terminate_tree();
-            return Err(io::Error::other("TTS worker stdin unavailable"));
-        };
-        let Some(stdout) = child.stdout.take() else {
-            child.terminate_tree();
-            return Err(io::Error::other("TTS worker stdout unavailable"));
-        };
-        let (sender, lines) = mpsc::sync_channel(1);
-        thread::spawn(move || read_worker_lines(BufReader::new(stdout), sender));
-        Ok(Self {
-            child,
-            stdin,
-            lines,
-            exchanged: false,
-        })
-    }
-
-    fn exchange(
-        &mut self,
-        request: &TtsRequest,
-        timeout: Duration,
-        cancelled: &AtomicBool,
-    ) -> io::Result<String> {
-        if self.exchanged {
-            match self.lines.try_recv() {
-                Ok(_) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "TTS worker emitted an unsolicited reply",
-                    ));
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        "TTS worker reply reader disconnected",
-                    ));
-                }
-                Err(mpsc::TryRecvError::Empty) => {}
-            }
-        }
-        serde_json::to_writer(&mut self.stdin, request)?;
-        self.stdin.write_all(b"\n")?;
-        self.stdin.flush()?;
-        self.exchanged = true;
-        let started = Instant::now();
-        let line = loop {
-            if cancelled.load(Ordering::Acquire) {
-                return Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "TTS shutting down",
-                ));
-            }
-            let remaining = timeout.saturating_sub(started.elapsed());
-            if remaining.is_zero() {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "TTS reply timed out",
-                ));
-            }
-            match self
-                .lines
-                .recv_timeout(remaining.min(Duration::from_millis(10)))
-            {
-                Ok(line) => break line?,
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(error) => return Err(io::Error::new(io::ErrorKind::BrokenPipe, error)),
-            }
-        };
-        let reply = serde_json::from_str::<TtsReply>(&line)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let reply = validate_tts_reply(request, reply)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        match reply.outcome {
-            TtsOutcome::Ready { cache_key } => Ok(cache_key),
-            TtsOutcome::Error { code } => Err(io::Error::other(format!("TTS failed: {code:?}"))),
-        }
-    }
-
-    fn terminate(&mut self) {
-        self.child.terminate_tree();
-    }
-}
-
-fn read_worker_lines(mut reader: impl BufRead, sender: SyncSender<io::Result<String>>) {
-    loop {
-        let result = read_reply_line(&mut reader);
-        let finished = result.is_err() || matches!(result, Ok(None));
-        let line = result.and_then(|line| {
-            line.ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "TTS worker exited"))
-        });
-        if sender.send(line).is_err() || finished {
-            break;
-        }
-    }
-}
-
-fn read_reply_line(reader: &mut impl BufRead) -> io::Result<Option<String>> {
-    let mut bytes = Vec::new();
-    loop {
-        let available = reader.fill_buf()?;
-        if available.is_empty() {
-            return if bytes.is_empty() {
-                Ok(None)
-            } else {
-                Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "unterminated TTS reply",
-                ))
-            };
-        }
-        let newline = available.iter().position(|byte| *byte == b'\n');
-        let consumed = newline.map_or(available.len(), |index| index + 1);
-        if bytes.len().saturating_add(consumed) > MAX_REPLY_BYTES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "TTS reply too large",
-            ));
-        }
-        bytes.extend_from_slice(&available[..consumed]);
-        reader.consume(consumed);
-        if newline.is_some() {
-            bytes.pop();
-            return String::from_utf8(bytes)
-                .map(Some)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
     use super::*;
 

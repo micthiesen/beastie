@@ -197,7 +197,7 @@ impl Source {
     }
 }
 
-pub(crate) fn check(manifest_path: &Path, require_runtime: bool) -> Result<()> {
+pub(crate) fn check(manifest_path: &Path, require_runtime: bool, verbose: bool) -> Result<()> {
     let source = fs::read_to_string(manifest_path)
         .with_context(|| format!("failed to read asset manifest {}", manifest_path.display()))?;
     let manifest: Manifest = toml::from_str(&source)
@@ -205,7 +205,7 @@ pub(crate) fn check(manifest_path: &Path, require_runtime: bool) -> Result<()> {
     let asset_root = manifest_path
         .parent()
         .context("asset manifest must have a parent directory")?;
-    validate_manifest(&manifest, asset_root, require_runtime)?;
+    validate_manifest(&manifest, asset_root, require_runtime, verbose)?;
     validate_runtime_sprite_catalog(&manifest, asset_root)?;
     println!(
         "asset check passed: {} declared asset(s), runtime gate {}",
@@ -704,7 +704,12 @@ fn atomic_replace(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_manifest(manifest: &Manifest, asset_root: &Path, require_runtime: bool) -> Result<()> {
+fn validate_manifest(
+    manifest: &Manifest,
+    asset_root: &Path,
+    require_runtime: bool,
+    verbose: bool,
+) -> Result<()> {
     if manifest.version != 1 {
         bail!("asset manifest must declare version = 1");
     }
@@ -714,10 +719,10 @@ fn validate_manifest(manifest: &Manifest, asset_root: &Path, require_runtime: bo
 
     let mut ids = HashSet::new();
     for asset in &manifest.asset {
-        validate_asset(asset, asset_root, require_runtime, &mut ids)?;
+        validate_asset(asset, asset_root, require_runtime, verbose, &mut ids)?;
     }
     for audio in &manifest.audio {
-        validate_audio(audio, asset_root, require_runtime, &mut ids)?;
+        validate_audio(audio, asset_root, require_runtime, verbose, &mut ids)?;
     }
     Ok(())
 }
@@ -753,6 +758,7 @@ fn validate_audio(
     audio: &Audio,
     asset_root: &Path,
     require_runtime: bool,
+    verbose: bool,
     ids: &mut HashSet<String>,
 ) -> Result<()> {
     let label = format!("audio asset {}", audio.id);
@@ -794,7 +800,7 @@ fn validate_audio(
     if require_runtime && audio.status != Status::Runtime {
         bail!("{label} must have status runtime for the final gate");
     }
-    if let Some(source) = resolved {
+    if verbose && let Some(source) = resolved {
         println!("  {} -> {}/{}.wav", audio.id, source.directory(), audio.id);
     }
     Ok(())
@@ -804,6 +810,7 @@ fn validate_asset(
     asset: &Asset,
     asset_root: &Path,
     require_runtime: bool,
+    verbose: bool,
     ids: &mut HashSet<String>,
 ) -> Result<()> {
     let label = format!("asset {}", asset.id);
@@ -829,7 +836,9 @@ fn validate_asset(
             .context(format!("{label} with status reference must declare path"))?;
         let path = checked_relative_path(asset_root, relative, "reference asset", &asset.id)?;
         let diagnostics = validate_png(asset, &path, "reference", &palette)?;
-        print_asset_diagnostics(asset, "reference", &diagnostics);
+        if verbose {
+            print_asset_diagnostics(asset, "reference", &diagnostics);
+        }
         return Ok(());
     }
     if asset.path.is_some() {
@@ -857,12 +866,16 @@ fn validate_asset(
         if generated_exists {
             let diagnostics =
                 validate_png(asset, &generated, Source::Generated.directory(), &palette)?;
-            print_asset_diagnostics(asset, Source::Generated.directory(), &diagnostics);
+            if verbose {
+                print_asset_diagnostics(asset, Source::Generated.directory(), &diagnostics);
+            }
         }
         if final_exists {
             let diagnostics =
                 validate_png(asset, &final_path, Source::Final.directory(), &palette)?;
-            print_asset_diagnostics(asset, Source::Final.directory(), &diagnostics);
+            if verbose {
+                print_asset_diagnostics(asset, Source::Final.directory(), &diagnostics);
+            }
         }
 
         match resolve_source(final_exists, generated_exists) {
@@ -894,7 +907,7 @@ fn validate_asset(
         );
     }
 
-    if resolved_complete {
+    if verbose && resolved_complete {
         let resolution = if resolved_sources.len() == 1 {
             resolved_sources
                 .iter()
@@ -1564,7 +1577,8 @@ provenance = "docs/audio.md"
         assets.png(Source::Final, 2, 2, true);
         let manifest = assets.manifest("runtime");
 
-        validate_manifest(&manifest, &assets.root, true).expect("final candidate should resolve");
+        validate_manifest(&manifest, &assets.root, true, false)
+            .expect("final candidate should resolve");
         assert_eq!(
             resolve_source(
                 candidate_path(&assets.root, Source::Final, "creature.idle", 1, 0).is_file(),
@@ -1579,7 +1593,7 @@ provenance = "docs/audio.md"
         let assets = TestAssets::new();
         assets.png(Source::Generated, 3, 2, true);
         assets.png(Source::Final, 2, 2, true);
-        let error = validate_manifest(&assets.manifest("runtime"), &assets.root, true)
+        let error = validate_manifest(&assets.manifest("runtime"), &assets.root, true, false)
             .expect_err("all existing candidates should be validated")
             .to_string();
 
@@ -1590,7 +1604,7 @@ provenance = "docs/audio.md"
     fn rejects_wrong_dimensions_and_alpha() {
         let assets = TestAssets::new();
         assets.png(Source::Generated, 3, 2, false);
-        let error = validate_manifest(&assets.manifest("generated"), &assets.root, false)
+        let error = validate_manifest(&assets.manifest("generated"), &assets.root, false, false)
             .expect_err("invalid image should fail")
             .to_string();
 
@@ -1601,7 +1615,7 @@ provenance = "docs/audio.md"
     fn rejects_missing_expected_transparency() {
         let assets = TestAssets::new();
         assets.png(Source::Generated, 2, 2, false);
-        let error = validate_manifest(&assets.manifest("generated"), &assets.root, false)
+        let error = validate_manifest(&assets.manifest("generated"), &assets.root, false, false)
             .expect_err("opaque sprite should fail")
             .to_string();
 
@@ -1795,9 +1809,15 @@ status = "planned"
         ImageBuffer::from_pixel(17, 16, Rgba([0_u8, 0, 0, 0]))
             .save_with_format(frame1, ImageFormat::Png)
             .expect("frame 1");
-        let error = validate_asset(&manifest.asset[0], &assets.root, false, &mut HashSet::new())
-            .expect_err("mixed animation frame dimensions should fail")
-            .to_string();
+        let error = validate_asset(
+            &manifest.asset[0],
+            &assets.root,
+            false,
+            false,
+            &mut HashSet::new(),
+        )
+        .expect_err("mixed animation frame dimensions should fail")
+        .to_string();
         assert!(
             error.contains("17x16, expected 16x16"),
             "{error}; palette={palette:?}"
@@ -1808,7 +1828,7 @@ status = "planned"
     fn runtime_gate_rejects_non_runtime_assets() {
         let assets = TestAssets::new();
         assets.png(Source::Generated, 2, 2, true);
-        let error = validate_manifest(&assets.manifest("generated"), &assets.root, true)
+        let error = validate_manifest(&assets.manifest("generated"), &assets.root, true, false)
             .expect_err("generated-only status should fail final gate")
             .to_string();
 
@@ -1822,7 +1842,7 @@ status = "planned"
     fn missing_palette_and_provenance_are_rejected() {
         let assets = TestAssets::new();
         fs::remove_file(assets.root.join("style/main.hex")).expect("remove palette");
-        let error = validate_manifest(&assets.manifest("runtime"), &assets.root, true)
+        let error = validate_manifest(&assets.manifest("runtime"), &assets.root, true, false)
             .expect_err("missing palette should fail")
             .to_string();
 

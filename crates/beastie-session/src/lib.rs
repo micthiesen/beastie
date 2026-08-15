@@ -8,9 +8,10 @@ use beastie_core::{
     WorldState, advance_offline, step,
 };
 use beastie_protocol::{
-    DialogueActionPhase, DialogueContext, DialogueRequest, DialogueRequestContext, DialogueTopic,
-    Gesture, RecentTurn, build_dialogue_request, classify_content_boundary,
-    normalize_dialogue_request, progression_max_words, validate_request,
+    AcousticConfidence, DialogueActionPhase, DialogueContext, DialogueRequest,
+    DialogueRequestContext, DialogueTopic, Gesture, RecentTurn, SpeechInputFailure,
+    build_dialogue_request, classify_content_boundary, normalize_dialogue_request,
+    progression_max_words, validate_request,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -60,6 +61,15 @@ pub enum SessionCommand {
     Talk {
         text: String,
     },
+    SpeechStarted,
+    SpeechCandidate {
+        text: String,
+        confidence: AcousticConfidence,
+    },
+    SpeechEnded,
+    SpeechFailed {
+        failure: SpeechInputFailure,
+    },
     React {
         reaction: Reaction,
     },
@@ -80,9 +90,22 @@ pub struct Observation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dialogue_request: Option<DialogueRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub spoken_input: Option<SpokenInputStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub world: Option<WorldState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub save_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SpokenInputStatus {
+    Listening,
+    CandidateUpdated { confidence: AcousticConfidence },
+    Submitted,
+    AcousticUncertainty { confidence: AcousticConfidence },
+    NoCandidate,
+    InfrastructureFailure { failure: SpeechInputFailure },
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +115,19 @@ pub struct GameSession {
     sequence: u64,
     next_request_id: u64,
     checkpoint: Option<Checkpoint>,
+    spoken_input: SpokenInputState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SpokenInputState {
+    Idle,
+    Listening { candidate: Option<SpokenCandidate> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SpokenCandidate {
+    text: String,
+    confidence: AcousticConfidence,
 }
 
 #[derive(Debug, Clone)]
@@ -174,6 +210,7 @@ impl GameSession {
             sequence: 0,
             next_request_id: 1,
             checkpoint: None,
+            spoken_input: SpokenInputState::Idle,
         }
     }
 
@@ -206,6 +243,7 @@ impl GameSession {
             sequence: save.sequence,
             next_request_id: save.next_request_id,
             checkpoint: None,
+            spoken_input: SpokenInputState::Idle,
         };
         let progress = advance_offline(&mut session.world, offline_ms, &mut session.random);
         if progress.applied_ms > 0 {
@@ -236,6 +274,7 @@ impl GameSession {
                         sequence: 0,
                         next_request_id: 1,
                         checkpoint: None,
+                        spoken_input: SpokenInputState::Idle,
                     },
                     OfflineProgress {
                         requested_ms: 0,
@@ -265,10 +304,12 @@ impl GameSession {
 
     pub fn apply(&mut self, envelope: CommandEnvelope) -> Result<Observation, SessionError> {
         validate_envelope(&envelope)?;
+        validate_spoken_input_order(&self.spoken_input, &envelope.command)?;
         self.world.validate().map_err(SessionError::State)?;
         let next_sequence = self.sequence.saturating_add(1);
         let mut events = Vec::new();
         let mut dialogue_request = None;
+        let mut spoken_input = None;
         let mut inspected_world = None;
         let mut save_json = None;
 
@@ -306,46 +347,41 @@ impl GameSession {
                 dialogue_request = self.initiated_dialogue_request(&events)?;
             }
             SessionCommand::Talk { text } => {
-                let talk_events = self.apply_player_event(PlayerEvent::Talk);
-                let accepted = talk_events
-                    .iter()
-                    .any(|event| matches!(event, GameEvent::TalkAccepted { .. }));
-                events.extend(talk_events);
-                if accepted && classify_content_boundary(&text).is_none() {
-                    for exposure in language_exposures(&text) {
-                        events.extend(
-                            self.apply_player_event(PlayerEvent::LanguageExposure(exposure)),
-                        );
+                dialogue_request = self.apply_talk(&text, &mut events)?;
+            }
+            SessionCommand::SpeechStarted => {
+                events = self.apply_player_event(PlayerEvent::SpeechStarted);
+                self.spoken_input = SpokenInputState::Listening { candidate: None };
+                spoken_input = Some(SpokenInputStatus::Listening);
+            }
+            SessionCommand::SpeechCandidate { text, confidence } => {
+                self.spoken_input = SpokenInputState::Listening {
+                    candidate: Some(SpokenCandidate { text, confidence }),
+                };
+                spoken_input = Some(SpokenInputStatus::CandidateUpdated { confidence });
+            }
+            SessionCommand::SpeechEnded => {
+                let SpokenInputState::Listening { candidate } = &self.spoken_input else {
+                    unreachable!("spoken input ordering is validated before mutation");
+                };
+                let candidate = candidate.clone();
+                self.spoken_input = SpokenInputState::Idle;
+                match candidate {
+                    Some(candidate) if candidate.confidence.is_usable() => {
+                        dialogue_request = self.apply_talk(&candidate.text, &mut events)?;
+                        spoken_input = Some(SpokenInputStatus::Submitted);
                     }
+                    Some(candidate) => {
+                        spoken_input = Some(SpokenInputStatus::AcousticUncertainty {
+                            confidence: candidate.confidence,
+                        });
+                    }
+                    None => spoken_input = Some(SpokenInputStatus::NoCandidate),
                 }
-                if accepted {
-                    let desired_social_act = events.iter().find_map(|event| match event {
-                        GameEvent::SocialActExpressed(act) => Some(*act),
-                        _ => None,
-                    });
-                    let mut request = build_dialogue_request(
-                        &self.world,
-                        &memory_query(&text),
-                        DialogueRequestContext {
-                            request_id: self.next_request_id,
-                            mood: mood(&self.world),
-                            player_said: &text,
-                            desired_social_act,
-                            max_words: progression_max_words(&self.world),
-                            allowed_gestures: BTreeSet::from([
-                                Gesture::None,
-                                Gesture::LookPlayer,
-                                Gesture::LookWindow,
-                                Gesture::Shiver,
-                                Gesture::Sleepy,
-                            ]),
-                        },
-                    );
-                    normalize_dialogue_request(&mut request);
-                    validate_request(&request).map_err(SessionError::Dialogue)?;
-                    self.next_request_id = self.next_request_id.saturating_add(1);
-                    dialogue_request = Some(request);
-                }
+            }
+            SessionCommand::SpeechFailed { failure } => {
+                self.spoken_input = SpokenInputState::Idle;
+                spoken_input = Some(SpokenInputStatus::InfrastructureFailure { failure });
             }
             SessionCommand::React { reaction } => {
                 events = self.apply_player_event(PlayerEvent::React(reaction));
@@ -374,6 +410,7 @@ impl GameSession {
                 self.world = loaded.world.clone();
                 self.random = loaded.random;
                 self.next_request_id = loaded.next_request_id;
+                self.spoken_input = SpokenInputState::Idle;
             }
             SessionCommand::Inspect => inspected_world = Some(self.world.clone()),
         }
@@ -385,6 +422,7 @@ impl GameSession {
             sequence: self.sequence,
             events,
             dialogue_request,
+            spoken_input,
             world: inspected_world,
             save_json,
         })
@@ -392,6 +430,53 @@ impl GameSession {
 
     fn apply_player_event(&mut self, event: PlayerEvent) -> Vec<GameEvent> {
         step(&mut self.world, &[event], 0, &mut self.random)
+    }
+
+    fn apply_talk(
+        &mut self,
+        text: &str,
+        events: &mut Vec<GameEvent>,
+    ) -> Result<Option<DialogueRequest>, SessionError> {
+        let talk_events = self.apply_player_event(PlayerEvent::Talk);
+        let accepted = talk_events
+            .iter()
+            .any(|event| matches!(event, GameEvent::TalkAccepted { .. }));
+        events.extend(talk_events);
+        if accepted && classify_content_boundary(text).is_none() {
+            for exposure in language_exposures(text) {
+                events.extend(self.apply_player_event(PlayerEvent::LanguageExposure(exposure)));
+            }
+        }
+        if !accepted {
+            return Ok(None);
+        }
+
+        let desired_social_act = events.iter().find_map(|event| match event {
+            GameEvent::SocialActExpressed(act) => Some(*act),
+            _ => None,
+        });
+        let mut request = build_dialogue_request(
+            &self.world,
+            &memory_query(text),
+            DialogueRequestContext {
+                request_id: self.next_request_id,
+                mood: mood(&self.world),
+                player_said: text,
+                desired_social_act,
+                max_words: progression_max_words(&self.world),
+                allowed_gestures: BTreeSet::from([
+                    Gesture::None,
+                    Gesture::LookPlayer,
+                    Gesture::LookWindow,
+                    Gesture::Shiver,
+                    Gesture::Sleepy,
+                ]),
+            },
+        );
+        normalize_dialogue_request(&mut request);
+        validate_request(&request).map_err(SessionError::Dialogue)?;
+        self.next_request_id = self.next_request_id.saturating_add(1);
+        Ok(Some(request))
     }
 
     fn initiated_dialogue_request(
@@ -524,8 +609,34 @@ fn validate_envelope(envelope: &CommandEnvelope) -> Result<(), SessionError> {
         {
             Err(SessionError::Tick(*milliseconds))
         }
-        SessionCommand::Talk { text } if text.chars().count() > 512 => {
+        SessionCommand::Talk { text } | SessionCommand::SpeechCandidate { text, .. }
+            if text.chars().count() > 512 =>
+        {
             Err(SessionError::TalkTooLong)
+        }
+        SessionCommand::SpeechCandidate { text, .. } if text.trim().is_empty() => {
+            Err(SessionError::EmptySpeechCandidate)
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_spoken_input_order(
+    state: &SpokenInputState,
+    command: &SessionCommand,
+) -> Result<(), SessionError> {
+    match (state, command) {
+        (SpokenInputState::Idle, SessionCommand::SpeechStarted)
+        | (SpokenInputState::Listening { .. }, SessionCommand::SpeechCandidate { .. })
+        | (SpokenInputState::Listening { .. }, SessionCommand::SpeechEnded)
+        | (SpokenInputState::Listening { .. }, SessionCommand::SpeechFailed { .. }) => Ok(()),
+        (SpokenInputState::Listening { .. }, SessionCommand::SpeechStarted) => {
+            Err(SessionError::SpeechAlreadyStarted)
+        }
+        (SpokenInputState::Idle, SessionCommand::SpeechCandidate { .. })
+        | (SpokenInputState::Idle, SessionCommand::SpeechEnded)
+        | (SpokenInputState::Idle, SessionCommand::SpeechFailed { .. }) => {
+            Err(SessionError::SpeechNotStarted)
         }
         _ => Ok(()),
     }
@@ -580,6 +691,12 @@ pub enum SessionError {
     Tick(u64),
     #[error("talk text exceeds 512 characters")]
     TalkTooLong,
+    #[error("spoken candidate must contain non-whitespace text")]
+    EmptySpeechCandidate,
+    #[error("speech input has already started")]
+    SpeechAlreadyStarted,
+    #[error("speech input has not started")]
+    SpeechNotStarted,
     #[error("no in-memory checkpoint exists")]
     NoCheckpoint,
     #[error("session save version {0} is unsupported")]
@@ -1327,5 +1444,186 @@ mod tests {
         let serialized = serde_json::to_string(&request).expect("serialize request");
         assert!(!serialized.contains("go kill yourself"));
         assert!(session.world().creature.memories.is_empty());
+    }
+
+    #[test]
+    fn spoken_notice_precedes_words_and_identical_text_has_identical_semantics() {
+        let mut spoken = GameSession::new(51, "Same Beastie");
+        let mut typed = GameSession::new(51, "Same Beastie");
+        let started = spoken
+            .apply(command(SessionCommand::SpeechStarted))
+            .expect("speech starts");
+        assert!(
+            started
+                .events
+                .iter()
+                .any(|event| matches!(event, GameEvent::SpeechPerceived(_)))
+        );
+        assert!(started.dialogue_request.is_none());
+        spoken
+            .apply(command(SessionCommand::SpeechCandidate {
+                text: "Remember the berry?".to_owned(),
+                confidence: AcousticConfidence::new(900).expect("valid confidence"),
+            }))
+            .expect("candidate arrives");
+        let spoken_end = spoken
+            .apply(command(SessionCommand::SpeechEnded))
+            .expect("speech ends");
+        let typed_talk = typed
+            .apply(command(SessionCommand::Talk {
+                text: "Remember the berry?".to_owned(),
+            }))
+            .expect("typed talk");
+
+        assert_eq!(spoken_end.events, typed_talk.events);
+        assert_eq!(spoken_end.dialogue_request, typed_talk.dialogue_request);
+        assert_eq!(spoken_end.spoken_input, Some(SpokenInputStatus::Submitted));
+    }
+
+    #[test]
+    fn uncertain_or_missing_words_never_reach_language_or_dialogue() {
+        let mut session = GameSession::new(52, "Uncertain");
+        session
+            .apply(command(SessionCommand::SpeechStarted))
+            .expect("speech starts");
+        session
+            .apply(command(SessionCommand::SpeechCandidate {
+                text: "fuck that shitty nice package".to_owned(),
+                confidence: AcousticConfidence::new(649).expect("valid confidence"),
+            }))
+            .expect("candidate arrives");
+        let uncertain = session
+            .apply(command(SessionCommand::SpeechEnded))
+            .expect("speech ends");
+        assert_eq!(uncertain.dialogue_request, None);
+        assert_eq!(
+            uncertain.spoken_input,
+            Some(SpokenInputStatus::AcousticUncertainty {
+                confidence: AcousticConfidence::new(649).expect("valid confidence")
+            })
+        );
+        assert!(!uncertain.events.contains(&GameEvent::TalkIgnored));
+        assert!(
+            !uncertain
+                .events
+                .iter()
+                .any(|event| matches!(event, GameEvent::LanguageExposureRegistered(_)))
+        );
+        assert_eq!(session.world().creature.social_habits.profanity, 0.02);
+
+        session
+            .apply(command(SessionCommand::SpeechStarted))
+            .expect("another speech starts");
+        let missing = session
+            .apply(command(SessionCommand::SpeechEnded))
+            .expect("speech without words ends");
+        assert_eq!(missing.spoken_input, Some(SpokenInputStatus::NoCandidate));
+        assert!(missing.dialogue_request.is_none());
+    }
+
+    #[test]
+    fn infrastructure_failure_is_distinct_from_creature_refusal() {
+        let mut session = GameSession::new(53, "Technical");
+        session
+            .apply(command(SessionCommand::SpeechStarted))
+            .expect("speech starts");
+        let failed = session
+            .apply(command(SessionCommand::SpeechFailed {
+                failure: SpeechInputFailure::RecognizerUnavailable,
+            }))
+            .expect("recognition fails");
+        assert_eq!(failed.events, Vec::new());
+        assert_eq!(failed.dialogue_request, None);
+        assert_eq!(
+            failed.spoken_input,
+            Some(SpokenInputStatus::InfrastructureFailure {
+                failure: SpeechInputFailure::RecognizerUnavailable
+            })
+        );
+        assert!(!failed.events.contains(&GameEvent::TalkIgnored));
+    }
+
+    #[test]
+    fn spoken_lifecycle_replays_deterministically_and_raw_words_are_not_saved() {
+        let commands = [
+            command(SessionCommand::SpeechStarted),
+            command(SessionCommand::SpeechCandidate {
+                text: "private spoken words".to_owned(),
+                confidence: AcousticConfidence::new(800).expect("valid confidence"),
+            }),
+            command(SessionCommand::SpeechEnded),
+        ];
+        let mut first = GameSession::new(54, "Replay");
+        let mut second = GameSession::new(54, "Replay");
+        for input in commands {
+            assert_eq!(
+                first.apply(input.clone()).expect("first replay"),
+                second.apply(input).expect("second replay")
+            );
+        }
+        assert_eq!(first.world(), second.world());
+
+        let mut mid_speech = GameSession::new(55, "Private");
+        mid_speech
+            .apply(command(SessionCommand::SpeechStarted))
+            .expect("speech starts");
+        mid_speech
+            .apply(command(SessionCommand::SpeechCandidate {
+                text: "never persist this transcript".to_owned(),
+                confidence: AcousticConfidence::new(900).expect("valid confidence"),
+            }))
+            .expect("candidate arrives");
+        let saved = mid_speech
+            .capture(0)
+            .to_json()
+            .expect("mid-speech save remains valid");
+        assert!(!saved.contains("never persist this transcript"));
+        let (mut resumed, _) = GameSession::resume_json(&saved, 0).expect("resume save");
+        assert!(matches!(
+            resumed.apply(command(SessionCommand::SpeechEnded)),
+            Err(SessionError::SpeechNotStarted)
+        ));
+    }
+
+    #[test]
+    fn malformed_oversized_and_out_of_order_speech_reject_without_mutation() {
+        assert!(
+            GameSession::parse_command(
+                r#"{"version":1,"command":"speech_candidate","text":"hello","confidence":1001}"#
+            )
+            .is_err()
+        );
+        assert!(GameSession::parse_command(
+            r#"{"version":1,"command":"speech_candidate","text":"hello","confidence":900,"extra":true}"#
+        )
+        .is_err());
+
+        let mut session = GameSession::new(56, "Strict Speech");
+        let before = session.capture(0).to_json().expect("snapshot");
+        assert!(matches!(
+            session.apply(command(SessionCommand::SpeechEnded)),
+            Err(SessionError::SpeechNotStarted)
+        ));
+        assert_eq!(session.capture(0).to_json().expect("unchanged"), before);
+
+        session
+            .apply(command(SessionCommand::SpeechStarted))
+            .expect("speech starts");
+        let listening = session.capture(0).to_json().expect("listening snapshot");
+        assert!(matches!(
+            session.apply(command(SessionCommand::SpeechCandidate {
+                text: "x".repeat(513),
+                confidence: AcousticConfidence::new(900).expect("valid confidence"),
+            })),
+            Err(SessionError::TalkTooLong)
+        ));
+        assert_eq!(
+            session.capture(0).to_json().expect("still unchanged"),
+            listening
+        );
+        assert!(matches!(
+            session.apply(command(SessionCommand::SpeechStarted)),
+            Err(SessionError::SpeechAlreadyStarted)
+        ));
     }
 }

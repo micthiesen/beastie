@@ -5,8 +5,8 @@
 
 use beastie_core::{
     ActionPhase, FoodDisposition, FoodDropRejectionReason, FoodId, GameEvent, GazeTarget,
-    Intention, Mood, NonverbalAct, NormalizedPosition, Reaction, SteeringMode, ToyId, WorldObject,
-    WorldState,
+    Intention, Mood, NonverbalAct, NormalizedPosition, Reaction, SpeechAttention, SteeringMode,
+    ToyId, WorldObject, WorldState,
 };
 use serde::{Deserialize, Serialize};
 
@@ -2393,6 +2393,9 @@ fn cue_for_event(event: &GameEvent) -> Option<(PresentationCueKind, u64)> {
             to: ActionPhase::Approach,
             ..
         } => Some((PresentationCueKind::Wake, 650)),
+        GameEvent::SpeechPerceived(SpeechAttention::Glanced | SpeechAttention::Attended) => {
+            Some((PresentationCueKind::Notice, 900))
+        }
         _ => None,
     }
 }
@@ -3267,6 +3270,23 @@ mod tests {
         assert_eq!(view.active_cue(1_900), Some(PresentationCueKind::Sleep));
         view.expire(3_100);
         assert!(view.cue_queue.is_empty());
+    }
+
+    #[test]
+    fn audible_speech_gets_attention_without_faking_a_reaction_when_ignored() {
+        let mut view = ViewState::default();
+        view.observe_events(
+            &[GameEvent::SpeechPerceived(SpeechAttention::Attended)],
+            1_000,
+        );
+        assert_eq!(view.active_cue(1_000), Some(PresentationCueKind::Notice));
+
+        let mut ignored = ViewState::default();
+        ignored.observe_events(
+            &[GameEvent::SpeechPerceived(SpeechAttention::Ignored)],
+            1_000,
+        );
+        assert_eq!(ignored.active_cue(1_000), None);
     }
 
     #[test]

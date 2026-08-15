@@ -43,6 +43,8 @@ The canonical scenarios are `fixtures/scenarios/aquarium-v1.jsonl` and
 `aquarium-v1-visible.jsonl`. They cover cursor attention, physical food, action phases, naming,
 dialogue, play, comfort, save/advance/load, inspection, and eight visible checkpoints. Older
 berry-grudge, Stage 5, and room-shell scenarios remain regression and migration fixtures.
+`spoken-input-foundation.jsonl` proves the pre-recognizer hearing lifecycle without a microphone or
+model. See [spoken-input-foundation.md](spoken-input-foundation.md).
 
 ## Declarative presentation
 
@@ -85,8 +87,11 @@ recent turns, selected memories and beliefs, authoritative emotion/action contex
 content-lane permissions. Replies contain bounded text and allow-listed presentation metadata.
 They cannot mutate simulation state.
 
-`beastie-ai-worker` is a supervised JSONL child process. The release dialogue adapter keeps one
-authenticated loopback llama.cpp sidecar warm. eSpeak NG remains a separate offline executable,
+`beastie-ai-worker` is a supervised JSONL child process. Dialogue and TTS share a bounded,
+cancellable `JsonlWorkerSession` transport while retaining separate protocol validation and
+fallback policy. This is also the intended process seam for a future local recognizer. The release
+dialogue adapter keeps one authenticated loopback llama.cpp sidecar warm. eSpeak NG remains a
+separate offline executable,
 receives validated text plus authoritative voice settings, and returns cached WAV metadata and
 mouth timing. Fixture dialogue and silent speech fallbacks remain permanent test and failure modes.
 

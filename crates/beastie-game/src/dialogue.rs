@@ -1,8 +1,7 @@
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::{ChildStdin, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
@@ -16,7 +15,9 @@ use beastie_protocol::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::process::ContainedChild;
+use crate::process::JsonlWorkerSession;
+#[cfg(test)]
+use crate::process::read_bounded_jsonl_line;
 
 const MAX_REPLY_BYTES: usize = 16 * 1024;
 const MAX_MODEL_MANIFEST_BYTES: u64 = 256 * 1024;
@@ -498,18 +499,21 @@ fn run_manager(
 
 fn exchange_with_recovery(
     config: &WorkerConfig,
-    worker: &mut Option<WorkerSession>,
+    worker: &mut Option<JsonlWorkerSession>,
     request: &DialogueRequest,
     cancelled: &AtomicBool,
 ) -> Option<DialogueReply> {
     if worker.is_none() {
-        *worker = WorkerSession::spawn(config).ok();
+        *worker =
+            JsonlWorkerSession::spawn(&config.executable, &config.arguments, MAX_REPLY_BYTES).ok();
     }
 
     let reply = worker.as_mut().and_then(|session| {
-        session
+        let line = session
             .exchange(request, config.reply_timeout, cancelled)
-            .ok()
+            .ok()?;
+        let reply = serde_json::from_str::<DialogueReply>(&line).ok()?;
+        validate_reply(request, reply).ok()
     });
     if reply.is_some() {
         return reply;
@@ -519,154 +523,6 @@ fn exchange_with_recovery(
         failed.terminate();
     }
     None
-}
-
-struct WorkerSession {
-    child: ContainedChild,
-    stdin: ChildStdin,
-    lines: Receiver<io::Result<String>>,
-    exchanged: bool,
-}
-
-impl WorkerSession {
-    fn spawn(config: &WorkerConfig) -> io::Result<Self> {
-        let mut command = Command::new(&config.executable);
-        command
-            .args(&config.arguments)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        let mut child = ContainedChild::spawn(&mut command)?;
-        let Some(stdin) = child.stdin.take() else {
-            child.terminate_tree();
-            return Err(io::Error::other("worker stdin unavailable"));
-        };
-        let Some(stdout) = child.stdout.take() else {
-            child.terminate_tree();
-            return Err(io::Error::other("worker stdout unavailable"));
-        };
-        let (line_sender, lines) = mpsc::sync_channel(1);
-        thread::spawn(move || read_worker_lines(BufReader::new(stdout), line_sender));
-        Ok(Self {
-            child,
-            stdin,
-            lines,
-            exchanged: false,
-        })
-    }
-
-    fn exchange(
-        &mut self,
-        request: &DialogueRequest,
-        timeout: Duration,
-        cancelled: &AtomicBool,
-    ) -> io::Result<DialogueReply> {
-        if self.exchanged {
-            match self.lines.try_recv() {
-                Ok(_) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "worker emitted an unsolicited reply",
-                    ));
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        "worker reply reader disconnected",
-                    ));
-                }
-                Err(mpsc::TryRecvError::Empty) => {}
-            }
-        }
-        serde_json::to_writer(&mut self.stdin, request)?;
-        self.stdin.write_all(b"\n")?;
-        self.stdin.flush()?;
-        self.exchanged = true;
-        let started = std::time::Instant::now();
-        let line = loop {
-            if cancelled.load(Ordering::Acquire) {
-                return Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "dialogue manager is shutting down",
-                ));
-            }
-            let remaining = timeout.saturating_sub(started.elapsed());
-            if remaining.is_zero() {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "worker reply timed out",
-                ));
-            }
-            match self
-                .lines
-                .recv_timeout(remaining.min(Duration::from_millis(10)))
-            {
-                Ok(line) => break line?,
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(error @ mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(io::Error::new(io::ErrorKind::BrokenPipe, error));
-                }
-            }
-        };
-        let reply = serde_json::from_str::<DialogueReply>(&line)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        validate_reply(request, reply)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
-    }
-
-    fn terminate(&mut self) {
-        self.child.terminate_tree();
-    }
-}
-
-fn read_worker_lines(mut reader: impl BufRead, sender: SyncSender<io::Result<String>>) {
-    loop {
-        let line = read_bounded_line(&mut reader, MAX_REPLY_BYTES);
-        let finished = matches!(&line, Ok(None) | Err(_));
-        let result = line.and_then(|line| {
-            line.ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "worker exited"))
-        });
-        if sender.send(result).is_err() || finished {
-            break;
-        }
-    }
-}
-
-fn read_bounded_line(reader: &mut impl BufRead, maximum: usize) -> io::Result<Option<String>> {
-    let mut bytes = Vec::new();
-    loop {
-        let available = reader.fill_buf()?;
-        if available.is_empty() {
-            if bytes.is_empty() {
-                return Ok(None);
-            }
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unterminated worker reply",
-            ));
-        }
-        let consumed = available
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map_or(available.len(), |index| index + 1);
-        if bytes.len().saturating_add(consumed) > maximum {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "worker reply exceeds limit",
-            ));
-        }
-        bytes.extend_from_slice(&available[..consumed]);
-        reader.consume(consumed);
-        if bytes.last() == Some(&b'\n') {
-            bytes.pop();
-            if bytes.last() == Some(&b'\r') {
-                bytes.pop();
-            }
-            return String::from_utf8(bytes)
-                .map(Some)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
-        }
-    }
 }
 
 #[cfg(test)]
@@ -776,16 +632,16 @@ mod tests {
     fn bounded_reader_accepts_crlf_and_rejects_oversized_lines() {
         let mut valid = Cursor::new(b"ok\r\nnext\n");
         assert_eq!(
-            read_bounded_line(&mut valid, 8).unwrap().as_deref(),
+            read_bounded_jsonl_line(&mut valid, 8).unwrap().as_deref(),
             Some("ok")
         );
         assert_eq!(
-            read_bounded_line(&mut valid, 8).unwrap().as_deref(),
+            read_bounded_jsonl_line(&mut valid, 8).unwrap().as_deref(),
             Some("next")
         );
         let mut oversized = Cursor::new(b"123456789\n");
         assert_eq!(
-            read_bounded_line(&mut oversized, 8)
+            read_bounded_jsonl_line(&mut oversized, 8)
                 .expect_err("line should be rejected")
                 .kind(),
             io::ErrorKind::InvalidData

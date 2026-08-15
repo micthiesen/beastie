@@ -2,7 +2,7 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-15** (640x360 presentation polish pass complete).
+Last updated: **2026-08-15** (spoken-input foundation complete).
 
 ## Now
 
@@ -16,8 +16,8 @@ Last updated: **2026-08-15** (640x360 presentation polish pass complete).
   1280x720; fullscreen uses the largest integer presentation scale with letterboxing. Atkinson
   Hyperlegible Next replaces the generated microfont, world hover/focus follows sprite alpha rather
   than bounding rectangles, and deterministic half-pixel presentation offsets smooth motion
-  between simulation ticks. The sprite-first PixelLab
-  actor. Six moods have side-facing and player-facing full-body art, every mood has three curated
+  between simulation ticks. The sprite-first PixelLab actor has side-facing and player-facing art
+  for six moods, and every mood has three curated
   speech shapes, and accepted eating, food rejection, noticing, toy refusal, comfort, affection,
   and stronger swimming have distinct full-body acting. Attention, heart, mouth-particle, wake,
   sand, and sleep effects are authored sprites. These reactions project typed simulation events;
@@ -43,8 +43,9 @@ Last updated: **2026-08-15** (640x360 presentation polish pass complete).
   must retain GPLv3 license and corresponding source. See
   [tooling-preflight.md](tooling-preflight.md).
 - Asset validation now checks 76 declared assets for provenance, palette policy, alpha, transparent
-  RGB, pixel
-  density, dimensions, animation completeness, and final-over-generated resolution. The expression
+  RGB, pixel density, dimensions, animation completeness, and final-over-generated resolution.
+  Normal gate output is concise, with per-candidate diagnostics available through `--verbose`. The
+  expression
   pass normalizes provider-padded frames to the canonical 80x80 canvas only after opaque-bounds
   checks. The polished swim cycle has eight coherent frames; wake and sand effects were recurated
   to remove foam-like and white-box artifacts. Aquarium provenance and deliberate
@@ -53,6 +54,13 @@ Last updated: **2026-08-15** (640x360 presentation polish pass complete).
   [audio-direction.md](audio-direction.md).
 - The semantic session boundary compacts accelerated `NeedChanged` noise without changing final
   state, RNG, or meaningful event order. Headless and visible adapters consume the same commands.
+- The V2 spoken-input foundation is implemented without choosing a recognizer. Speech start reaches
+  deterministic creature attention before words; bounded candidates, end, and typed failures form
+  an order-checked transient session lifecycle. A usable final candidate reuses the exact text-talk
+  path, while uncertainty or infrastructure failure cannot create dialogue, language exposure, or
+  durable raw transcript state. Dialogue and TTS now share a contained, bounded, cancellable JSONL
+  transport ready for a future local STT worker. The display-free spoken fixture is part of the
+  full gate. See [spoken-input-foundation.md](spoken-input-foundation.md).
 - macOS native window capture and real pointer/keyboard delivery were proven during the MVP. No
   physical controller has been attached. Windows and Linux native install, launch, save-path, and
   child-cleanup evidence has not been produced. CI or cross-compilation is not native proof.
@@ -93,7 +101,9 @@ Last updated: **2026-08-15** (640x360 presentation polish pass complete).
 
 ## Next
 
-V1 game work is complete. Use `/next` to choose between post-V1 creature depth and release work.
+Implement the local STT batch described by [v2-plan.md](v2-plan.md), building on the typed boundary
+in [spoken-input-foundation.md](spoken-input-foundation.md). Recognition/runtime selection,
+microphone permissions and activation, partial timing, and player-facing recovery remain open.
 Release work must still collect native Windows/Linux install and launch evidence, a physical
 controller smoke, Developer ID and Windows signing, notarization, final native store captures and
 trailer, and Steam publication credentials. Do not turn those unperformed external checks into
@@ -104,6 +114,7 @@ prose claims.
 - Product and acceptance direction: [v1-plan.md](v1-plan.md)
 - Canonical product philosophy: [game-design-philosophy.md](game-design-philosophy.md)
 - Future spoken-interaction direction: [v2-plan.md](v2-plan.md)
+- Implemented spoken-input seam: [spoken-input-foundation.md](spoken-input-foundation.md)
 - Runtime boundaries: [architecture.md](architecture.md)
 - Test and capture commands: [development-harness.md](development-harness.md)
 - Model and voice evidence: [local-mouth.md](local-mouth.md),

@@ -20,8 +20,8 @@ pub use model::{
 pub use random::{RandomDomain, RandomSource, SeededRandom, deterministic_unit};
 pub use save::{SaveError, SaveGame};
 pub use simulation::{
-    GameEvent, MAX_OFFLINE_MS, OfflineProgress, PlayerEvent, SIMULATION_TICK_MS, TALK_COOLDOWN_MS,
-    advance_offline, step,
+    GameEvent, MAX_OFFLINE_MS, OfflineProgress, PlayerEvent, SIMULATION_TICK_MS, SpeechAttention,
+    TALK_COOLDOWN_MS, advance_offline, step,
 };
 
 pub const SAVE_VERSION: u32 = 3;
@@ -134,6 +134,64 @@ mod tests {
         );
         assert_eq!(a, b);
         assert_eq!(ar, br);
+    }
+
+    #[test]
+    fn speech_is_perceived_before_words_without_interrupting_an_action() {
+        let mut world = WorldState::new(42, "Listener");
+        world.creature.traits.sociability = 1.0;
+        world.creature.relationship.bond = 1.0;
+        world.creature.current_intention = Intention::Eat;
+        world.creature.aquarium.action = Some(ActionTimeline {
+            phase: ActionPhase::Act,
+            elapsed_ms: 120,
+            phase_duration_ms: 800,
+            destination: SemanticDestination::Food(4),
+            food_id: Some(4),
+        });
+        let action = world.creature.aquarium.action;
+        let intention = world.creature.current_intention;
+        let steering = world.creature.aquarium.steering;
+        let destination = world.creature.aquarium.destination;
+        let mut rng = SeededRandom::new(42);
+
+        let events = step(&mut world, &[PlayerEvent::SpeechStarted], 0, &mut rng);
+
+        assert_eq!(
+            events,
+            vec![GameEvent::SpeechPerceived(SpeechAttention::Glanced)]
+        );
+        assert_eq!(world.creature.aquarium.gaze, GazeTarget::Player);
+        assert_eq!(world.creature.aquarium.action, action);
+        assert_eq!(world.creature.current_intention, intention);
+        assert_eq!(world.creature.aquarium.steering, steering);
+        assert_eq!(world.creature.aquarium.destination, destination);
+        assert!(world.creature.memories.is_empty());
+    }
+
+    #[test]
+    fn speech_attention_is_deterministic_and_can_be_ignored() {
+        let mut first = WorldState::new(9, "Sleeper");
+        first.creature.current_intention = Intention::Sleep;
+        let mut second = first.clone();
+        let mut first_rng = SeededRandom::new(9);
+        let mut second_rng = first_rng;
+
+        let expected = step(&mut first, &[PlayerEvent::SpeechStarted], 0, &mut first_rng);
+        let actual = step(
+            &mut second,
+            &[PlayerEvent::SpeechStarted],
+            0,
+            &mut second_rng,
+        );
+
+        assert_eq!(
+            expected,
+            vec![GameEvent::SpeechPerceived(SpeechAttention::Ignored)]
+        );
+        assert_eq!(actual, expected);
+        assert_eq!(second, first);
+        assert_eq!(second_rng, first_rng);
     }
 
     #[test]

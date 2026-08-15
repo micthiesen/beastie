@@ -14,6 +14,7 @@ Current semantic commands cover:
 
 - cursor position and physical food drops at normalized aquarium coordinates;
 - feed, play, comfort, tidy, talk, reaction, inspection, and real naming targets;
+- word-independent speech start, bounded recognition candidates, speech end, and typed failure;
 - fixed ticks and accelerated minutes;
 - checkpoint save/load and authoritative inspection.
 
@@ -52,6 +53,18 @@ player's persistent save.
 The berry-grudge and Stage 5 scenarios remain long-form behavioral regressions. `room-shell.jsonl`
 is retained only as historical room-era coverage and is not the canonical visual target.
 
+Pre-recognizer spoken-input replay:
+
+```bash
+cargo xtask play --fake-ai \
+  --scenario fixtures/scenarios/spoken-input-foundation.jsonl
+```
+
+This fixture proves attention before words, usable and uncertain candidates, and a technical
+recognizer failure. `cargo xtask verify` asserts the transition counts and that only the usable
+candidate creates a dialogue request. It requires no microphone, recognizer, model, audio device,
+display, or network. See [spoken-input-foundation.md](spoken-input-foundation.md).
+
 ## What automated plans prove
 
 Display-free tests cover fixed-point world mapping, action phases, authoritative objects, integer
@@ -64,6 +77,13 @@ The visible runner proves real plan execution and direct 640x360 presentation ca
 screenshot permissions. The underlying plan remains 320x180, so the capture also proves the exact
 2x world projection and native-resolution UI pass. `cargo xtask verify` stays independent of
 display, model, GPU, audio device, network, and generation credentials.
+
+Asset validation is quiet by default so gate failures stay visible. Use
+`cargo xtask asset check --verbose` for per-candidate palette, alpha, density, and resolution
+diagnostics. `cargo xtask dev --fake-ai` skips the unused dialogue-worker build and launches the
+already-built game binary directly. On macOS it asks `osascript` to bring that exact process to the
+foreground when available. Noninteractive fake-AI smoke and scripted runs fail with an actionable
+message after 120 seconds instead of hanging indefinitely.
 
 ## Native host evidence
 

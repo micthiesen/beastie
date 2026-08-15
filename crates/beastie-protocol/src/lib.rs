@@ -6,7 +6,7 @@ use beastie_core::{
     ACTIVE_DAY_MS, Belief, Concept, Intention, LanguageStage, Memory, MemoryId, MemoryKind,
     MemoryQuery, Mood, SocialAct, WorldState, select_candidate_memories,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
 pub use beastie_core::{BeliefId, BeliefKind, Idiolect, IdiolectQuirk};
@@ -24,6 +24,59 @@ pub const MAX_AQUARIUM_OBJECTS: usize = 8;
 pub const MAX_AQUARIUM_LABEL_CHARS: usize = 48;
 pub const TRANSCRIPT_VERSION: u32 = 1;
 pub const MAX_TRANSCRIPT_FACT_IDS: usize = 8;
+
+/// Recognition confidence represented as fixed thousandths rather than an unchecked float.
+///
+/// Keeping this at the process boundary makes malformed recognizer output unrepresentable inside
+/// the session while retaining enough resolution for future STT backends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+pub struct AcousticConfidence(u16);
+
+impl AcousticConfidence {
+    pub const MAX: u16 = 1_000;
+    pub const USABLE_THRESHOLD: u16 = 650;
+
+    pub fn new(parts_per_thousand: u16) -> Result<Self, AcousticConfidenceError> {
+        if parts_per_thousand > Self::MAX {
+            return Err(AcousticConfidenceError(parts_per_thousand));
+        }
+        Ok(Self(parts_per_thousand))
+    }
+
+    #[must_use]
+    pub const fn parts_per_thousand(self) -> u16 {
+        self.0
+    }
+
+    #[must_use]
+    pub const fn is_usable(self) -> bool {
+        self.0 >= Self::USABLE_THRESHOLD
+    }
+}
+
+impl<'de> Deserialize<'de> for AcousticConfidence {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = u16::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("acoustic confidence {0} exceeds 1000 parts per thousand")]
+pub struct AcousticConfidenceError(u16);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeechInputFailure {
+    MicrophoneUnavailable,
+    RecognizerUnavailable,
+    RecognitionFailed,
+    UnsupportedLanguage,
+}
 
 /// A typed action phase lets the worker talk about what the simulation is doing without giving
 /// the model authority to invent a cause or mutate the world.
@@ -1371,6 +1424,22 @@ pub fn fallback_reply(request_id: u64) -> DialogueReply {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acoustic_confidence_is_bounded_fixed_point() {
+        let threshold = AcousticConfidence::new(AcousticConfidence::USABLE_THRESHOLD)
+            .expect("threshold is valid");
+        assert!(threshold.is_usable());
+        assert_eq!(threshold.parts_per_thousand(), 650);
+        assert!(!AcousticConfidence::new(649).expect("valid").is_usable());
+        assert!(AcousticConfidence::new(1_001).is_err());
+        assert!(serde_json::from_str::<AcousticConfidence>("1001").is_err());
+        assert!(serde_json::from_str::<AcousticConfidence>("0.72").is_err());
+        assert_eq!(
+            serde_json::to_string(&threshold).expect("serialize confidence"),
+            "650"
+        );
+    }
 
     fn request() -> DialogueRequest {
         DialogueRequest {
