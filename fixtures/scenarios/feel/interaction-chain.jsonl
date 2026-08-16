@@ -1,0 +1,25 @@
+{"version":1,"command":"marker","name":"00-chain-start"}
+{"version":1,"command":"wait","milliseconds":3000}
+{"version":1,"command":"marker","name":"01-food-offered"}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":7200,"y":1800}}
+{"version":1,"command":"wait","milliseconds":14000}
+{"version":1,"command":"marker","name":"02-food-recovered"}
+{"version":1,"command":"comfort"}
+{"version":1,"command":"wait","milliseconds":3500}
+{"version":1,"command":"marker","name":"03-play-start"}
+{"version":1,"command":"play","toy":"ball"}
+{"version":1,"command":"wait","milliseconds":1000}
+{"version":1,"command":"marker","name":"04-interrupt-play"}
+{"version":1,"command":"speech_started"}
+{"version":1,"command":"wait","milliseconds":700}
+{"version":1,"command":"speech_candidate","text":"Do you want the bell?","confidence":900}
+{"version":1,"command":"speech_ended"}
+{"version":1,"command":"wait","milliseconds":5000}
+{"version":1,"command":"marker","name":"05-disliked-toy"}
+{"version":1,"command":"play","toy":"bell"}
+{"version":1,"command":"wait","milliseconds":3000}
+{"version":1,"command":"marker","name":"06-repeat-disliked-toy"}
+{"version":1,"command":"play","toy":"bell"}
+{"version":1,"command":"wait","milliseconds":30000}
+{"version":1,"command":"marker","name":"07-return-to-life"}
+{"version":1,"command":"capture","name":"07-return-to-life"}

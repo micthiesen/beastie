@@ -4,7 +4,7 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
-use beastie_core::{GameEvent, SpeechAttention};
+use beastie_view::AudioCue;
 use rodio::Player;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Source};
 
@@ -22,6 +22,7 @@ const SWIM_WAKE: &str = "movement/swim-wake";
 const FOOD_DROP: &str = "food/drop-sink";
 const FOOD_EAT: &str = "food/eat";
 const FOOD_REJECT: &str = "food/spit-reject";
+const TOY_IMPACT: &str = "object/toy-impact";
 const CREATURE_AFFECTION: &str = "creature/affection";
 const CREATURE_WAKE: &str = "creature/wake";
 const CREATURE_CURIOUS: &str = "creature/curious";
@@ -41,7 +42,7 @@ const SOUND_IDS: &[&str] = &[
     FOOD_DROP,
     FOOD_EAT,
     FOOD_REJECT,
-    "object/toy-impact",
+    TOY_IMPACT,
     CREATURE_AFFECTION,
     "creature/surprise",
     "creature/curious",
@@ -53,10 +54,17 @@ pub struct AudioBank {
     output: Option<MixerDeviceSink>,
     sounds: BTreeMap<&'static str, Arc<[u8]>>,
     speech: Option<Player>,
+    one_shots: Vec<ActiveOneShot>,
     ambience: Option<Player>,
     effects_gain: f32,
     speech_gain: f32,
     ambience_duck: f32,
+}
+
+struct ActiveOneShot {
+    id: &'static str,
+    player: Player,
+    base_gain: f32,
 }
 
 impl AudioBank {
@@ -70,6 +78,7 @@ impl AudioBank {
             output,
             sounds: load_sounds(assets_root),
             speech: None,
+            one_shots: Vec::new(),
             ambience: None,
             effects_gain: 0.7,
             speech_gain: 0.7,
@@ -104,19 +113,37 @@ impl AudioBank {
         }
     }
 
-    pub fn play_queued(&self, queued: &mut Vec<&'static str>) {
+    pub fn play_queued(&mut self, queued: &mut Vec<&'static str>) {
         let Some(output) = &self.output else {
             queued.clear();
             return;
         };
         for id in queued.drain(..) {
+            if id == SWIM_WAKE
+                && self
+                    .one_shots
+                    .iter()
+                    .any(|sound| sound.id == SWIM_WAKE && !sound.player.empty())
+            {
+                continue;
+            }
             let Some(bytes) = self.sounds.get(id) else {
                 continue;
             };
             if let Ok(player) = rodio::play(output.mixer(), Cursor::new(Arc::clone(bytes))) {
-                let base = if id.starts_with("ui/") { 0.45 } else { 0.7 };
+                let base = if id.starts_with("ui/") {
+                    0.45
+                } else if id == SWIM_WAKE {
+                    0.54
+                } else {
+                    0.7
+                };
                 player.set_volume(base * self.effects_gain);
-                player.detach();
+                self.one_shots.push(ActiveOneShot {
+                    id,
+                    player,
+                    base_gain: base,
+                });
             }
         }
     }
@@ -138,17 +165,43 @@ impl AudioBank {
         }
     }
 
-    pub fn update_ducking(&mut self, one_shot_active: bool) {
+    pub fn update_ducking(&mut self, delta_ms: u64, queued_one_shot: bool) {
+        self.one_shots.retain(|sound| !sound.player.empty());
         let speech_active = self.speech_active();
-        self.ambience_duck = duck_gain(speech_active, one_shot_active);
+        let one_shot_active = queued_one_shot || !self.one_shots.is_empty();
+        let target = duck_gain(speech_active, one_shot_active);
+        let transition_ms = if target < self.ambience_duck {
+            if speech_active { 45 } else { 35 }
+        } else if self.ambience_duck <= duck_gain(true, false) + 0.001 {
+            260
+        } else {
+            180
+        };
+        self.ambience_duck = approach_gain(self.ambience_duck, target, delta_ms, transition_ms);
         if let Some(player) = &self.ambience {
             player.set_volume(0.35 * self.effects_gain * self.ambience_duck);
+        }
+        let speech_effect_duck = if speech_active { 0.562_341 } else { 1.0 };
+        for sound in &self.one_shots {
+            sound
+                .player
+                .set_volume(sound.base_gain * self.effects_gain * speech_effect_duck);
         }
     }
 
     #[must_use]
     pub fn speech_active(&self) -> bool {
         self.speech.as_ref().is_some_and(|player| !player.empty())
+    }
+
+    #[must_use]
+    pub const fn ambience_duck(&self) -> f32 {
+        self.ambience_duck
+    }
+
+    #[must_use]
+    pub fn one_shot_active(&self) -> bool {
+        !self.one_shots.is_empty()
     }
 }
 
@@ -212,6 +265,13 @@ fn duck_gain(speech_active: bool, one_shot_active: bool) -> f32 {
     }
 }
 
+fn approach_gain(current: f32, target: f32, delta_ms: u64, transition_ms: u64) -> f32 {
+    if delta_ms >= transition_ms || transition_ms == 0 {
+        return target;
+    }
+    current + (target - current) * delta_ms as f32 / transition_ms as f32
+}
+
 fn load_sounds(assets_root: &Path) -> BTreeMap<&'static str, Arc<[u8]>> {
     SOUND_IDS
         .iter()
@@ -234,38 +294,29 @@ fn load_sounds(assets_root: &Path) -> BTreeMap<&'static str, Arc<[u8]>> {
 }
 
 #[must_use]
-pub fn sound_for_event(event: &GameEvent) -> Option<&'static str> {
-    match event {
-        GameEvent::FoodDropped { .. } => Some(FOOD_DROP),
-        GameEvent::FoodDropRejected(_) => Some(FOOD_REJECT),
-        GameEvent::FoodConsumed(_) => Some(FOOD_EAT),
-        GameEvent::FoodRejected(_) => Some(FOOD_REJECT),
-        GameEvent::FoodSettled(_) => Some(SAND_DISTURB),
-        GameEvent::ToyRejected(_) => Some(CREATURE_ANNOYED),
-        GameEvent::SleepStarted => Some(CREATURE_SLEEP),
-        GameEvent::SleepEnded => Some(CREATURE_WAKE),
-        GameEvent::Comforted => Some(CREATURE_AFFECTION),
-        GameEvent::ActionPhaseChanged {
-            to: beastie_core::ActionPhase::Approach,
-            ..
-        } => Some(SWIM_WAKE),
-        GameEvent::NonverbalAct(beastie_core::NonverbalAct::LeanAgainstPlayer) => {
-            Some(CREATURE_MRR)
-        }
-        GameEvent::FoodExpired(_) => Some(BUBBLES_1),
-        GameEvent::SpeechPerceived(SpeechAttention::Glanced | SpeechAttention::Attended) => {
-            Some(CREATURE_CURIOUS)
-        }
-        GameEvent::NonverbalAct(_) => Some(CAVE_SETTLE),
-        _ => None,
+pub const fn sound_for_cue(cue: AudioCue) -> Option<&'static str> {
+    match cue {
+        AudioCue::AquariumHum => Some(UNDERWATER_LOOP),
+        AudioCue::Bubble => Some(BUBBLES_1),
+        AudioCue::SwimWake => Some(SWIM_WAKE),
+        AudioCue::Wake => Some(CREATURE_WAKE),
+        AudioCue::FoodDrop => Some(FOOD_DROP),
+        AudioCue::FoodEat => Some(FOOD_EAT),
+        AudioCue::FoodReject => Some(FOOD_REJECT),
+        AudioCue::Sand => Some(SAND_DISTURB),
+        AudioCue::ToyImpact => Some(TOY_IMPACT),
+        AudioCue::Affection => Some(CREATURE_AFFECTION),
+        AudioCue::Curious => Some(CREATURE_CURIOUS),
+        AudioCue::Mrr => Some(CREATURE_MRR),
+        AudioCue::Annoyed => Some(CREATURE_ANNOYED),
+        AudioCue::Sleep => Some(CREATURE_SLEEP),
+        AudioCue::UiReject => Some(UI_SELECT),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-
-    use beastie_core::{FoodId, GameEvent};
 
     use super::*;
 
@@ -274,34 +325,13 @@ mod tests {
     }
 
     #[test]
-    fn state_events_map_only_to_authored_one_shots() {
-        assert_eq!(
-            sound_for_event(&GameEvent::FoodDropRejected(
-                beastie_core::FoodDropRejectionReason::AquariumFull,
-            )),
-            Some(FOOD_REJECT)
-        );
-        assert_eq!(
-            sound_for_event(&GameEvent::FoodRejected(FoodId::Berry)),
-            Some(FOOD_REJECT)
-        );
-        assert_eq!(
-            sound_for_event(&GameEvent::Comforted),
-            Some(CREATURE_AFFECTION)
-        );
-        assert_eq!(
-            sound_for_event(&GameEvent::SleepStarted),
-            Some(CREATURE_SLEEP)
-        );
-        assert_eq!(sound_for_event(&GameEvent::NeedChanged), None);
-        assert_eq!(
-            sound_for_event(&GameEvent::SpeechPerceived(SpeechAttention::Attended)),
-            Some(CREATURE_CURIOUS)
-        );
-        assert_eq!(
-            sound_for_event(&GameEvent::SpeechPerceived(SpeechAttention::Ignored)),
-            None
-        );
+    fn semantic_cues_resolve_only_to_authored_audio() {
+        assert_eq!(sound_for_cue(AudioCue::UiReject), Some(UI_SELECT));
+        assert_eq!(sound_for_cue(AudioCue::FoodReject), Some(FOOD_REJECT));
+        assert_eq!(sound_for_cue(AudioCue::Affection), Some(CREATURE_AFFECTION));
+        assert_eq!(sound_for_cue(AudioCue::ToyImpact), Some(TOY_IMPACT));
+        assert_eq!(sound_for_cue(AudioCue::Sleep), Some(CREATURE_SLEEP));
+        assert_eq!(sound_for_cue(AudioCue::Curious), Some(CREATURE_CURIOUS));
     }
 
     #[test]
@@ -341,5 +371,12 @@ mod tests {
         assert!((duck_gain(false, true) - 0.630_957).abs() < 0.000_001);
         assert!((duck_gain(true, false) - 0.446_684).abs() < 0.000_001);
         assert_eq!(duck_gain(false, false), 1.0);
+
+        let attack = approach_gain(1.0, duck_gain(true, false), 17, 35);
+        assert!(attack < 1.0 && attack > duck_gain(true, false));
+        let settled = approach_gain(attack, duck_gain(true, false), 35, 35);
+        assert_eq!(settled, duck_gain(true, false));
+        let release = approach_gain(settled, 1.0, 17, 180);
+        assert!(release > settled && release < 1.0);
     }
 }

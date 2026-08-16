@@ -253,6 +253,8 @@ pub struct ViewState {
     #[serde(default)]
     pub status_message: Option<String>,
     #[serde(default)]
+    pub status_expires_at_ms: Option<u64>,
+    #[serde(default)]
     pub transcript_status: Option<String>,
 }
 
@@ -311,6 +313,7 @@ impl Default for ViewState {
             mouth_phase: 0,
             transcript_enabled: false,
             status_message: None,
+            status_expires_at_ms: None,
             transcript_status: None,
         }
     }
@@ -320,6 +323,16 @@ impl ViewState {
     pub fn show_speech(&mut self, speech: String, now_ms: u64) {
         self.speech = Some(speech);
         self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_LIFETIME_MS));
+    }
+
+    pub fn show_status(&mut self, status: impl Into<String>, now_ms: u64, duration_ms: u64) {
+        self.status_message = Some(status.into());
+        self.status_expires_at_ms = Some(now_ms.saturating_add(duration_ms.max(1)));
+    }
+
+    pub fn clear_status(&mut self) {
+        self.status_message = None;
+        self.status_expires_at_ms = None;
     }
 
     /// Appends important reactions instead of replacing the cue currently on screen.
@@ -340,6 +353,12 @@ impl ViewState {
         {
             self.speech = None;
             self.speech_expires_at_ms = None;
+        }
+        if self
+            .status_expires_at_ms
+            .is_some_and(|expires| now_ms >= expires)
+        {
+            self.clear_status();
         }
         self.cue_queue.retain(|cue| now_ms < cue.expires_at_ms);
     }
@@ -536,12 +555,17 @@ pub struct RenderPlan {
 pub enum AudioCue {
     AquariumHum,
     Bubble,
+    SwimWake,
     Wake,
     FoodDrop,
     FoodEat,
     FoodReject,
     Sand,
+    ToyImpact,
     Affection,
+    Curious,
+    Mrr,
+    Annoyed,
     Sleep,
     UiReject,
 }
@@ -551,6 +575,62 @@ pub enum AudioCue {
 pub struct AudioPlan {
     pub ambience: Vec<AudioCue>,
     pub events: Vec<AudioCue>,
+}
+
+#[must_use]
+pub fn audio_plan_for_events(events: &[GameEvent]) -> AudioPlan {
+    let food_rejected = events
+        .iter()
+        .any(|event| matches!(event, GameEvent::FoodRejected(_)));
+    let toy_rejected = events
+        .iter()
+        .any(|event| matches!(event, GameEvent::ToyRejected(_)));
+    let comforted = events.contains(&GameEvent::Comforted);
+    let mut cues = Vec::new();
+    for event in events {
+        let cue = match event {
+            GameEvent::FoodDropped { .. } => Some(AudioCue::FoodDrop),
+            GameEvent::FoodDropRejected(_) => Some(AudioCue::UiReject),
+            GameEvent::FoodConsumed(_) => Some(AudioCue::FoodEat),
+            GameEvent::FoodRejected(_) => Some(AudioCue::FoodReject),
+            GameEvent::FoodSettled(_) => Some(AudioCue::Sand),
+            GameEvent::FoodExpired(_) => Some(AudioCue::Bubble),
+            GameEvent::ToyPlayed(_) => Some(AudioCue::ToyImpact),
+            GameEvent::ToyRejected(_) | GameEvent::UtteranceRefused => Some(AudioCue::Annoyed),
+            GameEvent::Comforted => Some(AudioCue::Affection),
+            GameEvent::SleepStarted => Some(AudioCue::Sleep),
+            GameEvent::SleepEnded => Some(AudioCue::Wake),
+            GameEvent::ActionPhaseChanged {
+                to: ActionPhase::Approach,
+                ..
+            } => Some(AudioCue::SwimWake),
+            GameEvent::SpeechPerceived(SpeechAttention::Glanced | SpeechAttention::Attended)
+            | GameEvent::TalkAccepted { .. } => Some(AudioCue::Curious),
+            GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer) if !comforted => {
+                Some(AudioCue::Mrr)
+            }
+            GameEvent::NonverbalAct(NonverbalAct::RefuseAndStare) => Some(AudioCue::Annoyed),
+            GameEvent::NonverbalAct(NonverbalAct::PushFoodAway(_) | NonverbalAct::RefuseToEat)
+                if !food_rejected =>
+            {
+                Some(AudioCue::FoodReject)
+            }
+            GameEvent::NonverbalAct(NonverbalAct::TakeToyAway(_)) if !toy_rejected => {
+                Some(AudioCue::Annoyed)
+            }
+            GameEvent::NonverbalAct(NonverbalAct::UndoTidy) => Some(AudioCue::Sand),
+            _ => None,
+        };
+        if let Some(cue) = cue
+            && !cues.contains(&cue)
+        {
+            cues.push(cue);
+        }
+    }
+    AudioPlan {
+        ambience: Vec::new(),
+        events: cues,
+    }
 }
 
 #[must_use]
@@ -603,7 +683,7 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (RenderPlan, AudioPlan) {
     let mut text = Vec::new();
 
     add_objects(state, view, &mut sprites);
-    add_creature(state, view, &mut sprites, &mut rects);
+    add_creature(state, view, &mut sprites);
     let mut hit_regions = world_hit_regions(state, view, &sprites);
     add_speech(state, view, &mut rects, &mut text, &mut hit_regions);
     add_persistent_bar(
@@ -934,12 +1014,7 @@ fn add_objects(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCom
     }
 }
 
-fn add_creature(
-    state: &WorldState,
-    view: &ViewState,
-    sprites: &mut Vec<SpriteCommand>,
-    rects: &mut Vec<RectCommand>,
-) {
+fn add_creature(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCommand>) {
     let creature = state.creature.aquarium;
     let (center_x, center_y) = world_to_logical(creature.position);
     let (motion_offset_x, motion_offset_y) = presentation_offset_for(
@@ -1047,24 +1122,6 @@ fn add_creature(
             center_y + 16,
             11,
             u8::try_from((elapsed_ms / 250) % 4).unwrap_or_default(),
-        ));
-    }
-
-    if let Some(action) = creature.action {
-        let width =
-            i32::try_from(action.elapsed_ms.saturating_mul(24) / action.phase_duration_ms.max(1))
-                .unwrap_or(24)
-                .clamp(1, 24);
-        rects.push(rect(
-            "creature/action-phase",
-            Rect {
-                x: center_x - 12,
-                y: (y - 3).max(1),
-                w: width,
-                h: 1,
-            },
-            phase_color(action.phase),
-            16,
         ));
     }
 }
@@ -1352,21 +1409,40 @@ fn add_persistent_bar(
         food_rect.y + 2,
         35,
     ));
-    hits.push(hit(
-        "compose/settings",
-        Some(UiTarget::Actions),
-        UiAction::OpenSettings,
-        settings_rect,
-        true,
-        "Settings",
-    ));
-    add_button_chrome("compose/settings", settings_rect, true, false, 31, rects);
-    sprites.push(ui_sprite(
-        "ui/button-settings",
-        settings_rect.x + 2,
-        settings_rect.y + 2,
-        35,
-    ));
+    if matches!(view.mode, UiMode::Compose) {
+        hits.push(hit(
+            "compose/settings",
+            Some(UiTarget::Actions),
+            UiAction::OpenSettings,
+            settings_rect,
+            true,
+            "Settings",
+        ));
+        add_button_chrome("compose/settings", settings_rect, true, false, 31, rects);
+        sprites.push(ui_sprite(
+            "ui/button-settings",
+            settings_rect.x + 2,
+            settings_rect.y + 2,
+            35,
+        ));
+    } else {
+        hits.push(hit(
+            "compose/close",
+            Some(UiTarget::Actions),
+            UiAction::CancelMode,
+            settings_rect,
+            true,
+            "Close",
+        ));
+        add_button_chrome("compose/close", settings_rect, true, false, 31, rects);
+        text.push(label(
+            "compose/close-label",
+            "x",
+            settings_rect.x + 9,
+            settings_rect.y + 7,
+            35,
+        ));
+    }
     let send_action = if matches!(view.mode, UiMode::Rename) {
         UiAction::SubmitName
     } else {
@@ -1454,7 +1530,7 @@ fn add_temporary_mode(
         ),
         UiMode::FoodDrop(food) => {
             rects.push(rect(
-                "mode/drop-food",
+                "mode/drop-food-background",
                 Rect {
                     x: 79,
                     y: 4,
@@ -1886,7 +1962,7 @@ fn add_rebinding(
     text: &mut Vec<TextCommand>,
 ) {
     add_panel_chrome(
-        "bindings/capture-panel",
+        "bindings/capture/panel",
         Rect {
             x: 53,
             y: 46,
@@ -2249,7 +2325,6 @@ fn add_status(
 fn visible_status(view: &ViewState, now_ms: u64) -> Option<&str> {
     view.status_message
         .as_deref()
-        .or(view.transcript_status.as_deref())
         .or(match view.microphone_state {
             MicrophoneState::Listening => Some("Listening... release to send."),
             MicrophoneState::Recognizing => Some("Working out what you said..."),
@@ -2257,6 +2332,7 @@ fn visible_status(view: &ViewState, now_ms: u64) -> Option<&str> {
             MicrophoneState::Error => Some("Speech input failed. Text still works."),
             MicrophoneState::Disabled | MicrophoneState::Idle => None,
         })
+        .or(view.transcript_status.as_deref())
         .or_else(|| {
             matches!(
                 view.active_cue(now_ms),
@@ -2461,6 +2537,7 @@ fn cue_for_event(event: &GameEvent) -> Option<(PresentationCueKind, u64)> {
         GameEvent::FoodDropped { .. } => Some((PresentationCueKind::Notice, 700)),
         GameEvent::FoodConsumed(_) => Some((PresentationCueKind::Crumbs, 900)),
         GameEvent::FoodRejected(_) => Some((PresentationCueKind::Spit, 1_100)),
+        GameEvent::ToyPlayed(_) => Some((PresentationCueKind::Delight, 900)),
         GameEvent::ToyRejected(_) => Some((PresentationCueKind::Suspicion, 1_100)),
         GameEvent::FoodDropRejected(FoodDropRejectionReason::AquariumFull) => {
             Some((PresentationCueKind::AquariumFull, 1_300))
@@ -2476,6 +2553,7 @@ fn cue_for_event(event: &GameEvent) -> Option<(PresentationCueKind, u64)> {
         GameEvent::SpeechPerceived(SpeechAttention::Glanced | SpeechAttention::Attended) => {
             Some((PresentationCueKind::Notice, 900))
         }
+        GameEvent::TalkAccepted { .. } => Some((PresentationCueKind::Notice, 700)),
         _ => None,
     }
 }
@@ -2497,7 +2575,8 @@ fn audio_for_cue(cue: PresentationCueKind) -> AudioCue {
         | PresentationCueKind::Suspicion
         | PresentationCueKind::Spit => AudioCue::FoodReject,
         PresentationCueKind::AquariumFull => AudioCue::UiReject,
-        PresentationCueKind::Delight | PresentationCueKind::Crumbs => AudioCue::FoodEat,
+        PresentationCueKind::Delight => AudioCue::ToyImpact,
+        PresentationCueKind::Crumbs => AudioCue::FoodEat,
         PresentationCueKind::Affection | PresentationCueKind::Comfort => AudioCue::Affection,
         PresentationCueKind::SandPuff => AudioCue::Sand,
         PresentationCueKind::Sleep => AudioCue::Sleep,
@@ -2557,7 +2636,7 @@ fn body_sprite(
             if view.speaking {
                 view.mouth_phase.min(2)
             } else {
-                u8::try_from((elapsed_ms / 160) % 3).unwrap_or_default()
+                0
             },
         );
     }
@@ -2691,16 +2770,6 @@ fn ambient_bob_offset_half(state: &WorldState, view: &ViewState) -> i16 {
     )
     .unwrap_or_default();
     BOB_HALF_PIXELS[index]
-}
-
-fn phase_color(phase: ActionPhase) -> [u8; 4] {
-    match phase {
-        ActionPhase::Notice | ActionPhase::Gaze => [244, 219, 128, 210],
-        ActionPhase::Brake | ActionPhase::Turn | ActionPhase::Approach => [119, 209, 205, 210],
-        ActionPhase::Inspect => [196, 158, 214, 210],
-        ActionPhase::Act => [242, 137, 107, 230],
-        ActionPhase::Recover => [151, 206, 153, 190],
-    }
 }
 
 fn framed_sprite(id: &str, x: i32, y: i32, layer: i16, frame: u8) -> SpriteCommand {
@@ -3311,7 +3380,7 @@ mod tests {
     }
 
     #[test]
-    fn action_phases_are_legible_in_pose_behavior_and_progress() {
+    fn action_phases_are_legible_in_pose_and_behavior_without_debug_progress() {
         let mut state = WorldState::new(7, "Mop");
         state.creature.aquarium.action = Some(ActionTimeline {
             phase: ActionPhase::Inspect,
@@ -3328,15 +3397,11 @@ mod tests {
                 .any(|sprite| sprite.id.starts_with("creature-v1/mood/"))
         );
         assert_eq!(render.summary.behavior, "inspecting");
-        assert_eq!(
+        assert!(
             render
                 .rects
                 .iter()
-                .find(|rect| rect.id == "creature/action-phase")
-                .expect("phase indicator")
-                .rect
-                .w,
-            12
+                .all(|rect| rect.id != "creature/action-phase")
         );
     }
 
@@ -4082,11 +4147,46 @@ mod tests {
         );
         let (render, audio) = plan(&state, &view);
         assert!(audio.events.contains(&AudioCue::UiReject));
+        assert_eq!(
+            audio_plan_for_events(&[GameEvent::FoodDropRejected(
+                FoodDropRejectionReason::AquariumFull,
+            )])
+            .events,
+            vec![AudioCue::UiReject]
+        );
         assert!(
             render
                 .text
                 .iter()
                 .any(|text| { text.id == "status/message" && text.text.contains("Aquarium full") })
+        );
+    }
+
+    #[test]
+    fn paired_rejections_and_comfort_emit_one_semantic_sound_each() {
+        assert_eq!(
+            audio_plan_for_events(&[
+                GameEvent::FoodRejected(FoodId::Berry),
+                GameEvent::NonverbalAct(NonverbalAct::PushFoodAway(FoodId::Berry)),
+            ])
+            .events,
+            vec![AudioCue::FoodReject]
+        );
+        assert_eq!(
+            audio_plan_for_events(&[
+                GameEvent::ToyRejected(ToyId::Bell),
+                GameEvent::NonverbalAct(NonverbalAct::TakeToyAway(ToyId::Bell)),
+            ])
+            .events,
+            vec![AudioCue::Annoyed]
+        );
+        assert_eq!(
+            audio_plan_for_events(&[
+                GameEvent::Comforted,
+                GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer),
+            ])
+            .events,
+            vec![AudioCue::Affection]
         );
     }
 
@@ -4239,10 +4339,14 @@ mod tests {
     fn ui_depth_bands_and_modal_hit_regions_are_unambiguous() {
         let state = WorldState::new(7, "Mop");
         for mode in [
+            UiMode::Context(UiTarget::Creature),
             UiMode::FoodChoice,
+            UiMode::FoodDrop(FoodId::Berry),
             UiMode::ToyChoice,
             UiMode::Settings,
             UiMode::Bindings,
+            UiMode::Rebinding(BindableAction::Food),
+            UiMode::Rename,
             UiMode::DataManagement,
             UiMode::ConfirmReset,
             UiMode::OnScreenKeyboard,
@@ -4255,6 +4359,12 @@ mod tests {
                 },
             )
             .0;
+            assert!(
+                render.hit_regions.iter().any(|hit| {
+                    hit.id == "compose/close" && hit.action == UiAction::CancelMode && hit.enabled
+                }),
+                "{mode:?} has no pointer-close control"
+            );
             for (index, left) in render
                 .hit_regions
                 .iter()
@@ -4295,7 +4405,7 @@ mod tests {
                 })
                 .map(|command| command.layer)
                 .max()
-                .expect("modal chrome");
+                .unwrap_or_else(|| panic!("{mode:?} has no modal chrome"));
             let modal_text_bottom = render
                 .text
                 .iter()

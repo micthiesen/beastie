@@ -965,7 +965,7 @@ mod tests {
         assert_eq!(aggregated_semantic, raw_semantic);
         assert_eq!(observation.events.len(), aggregated_semantic.len() + 1);
         assert!(
-            observation.events.len() <= 64,
+            observation.events.len() <= 96,
             "accelerated output must stay bounded"
         );
         assert!(

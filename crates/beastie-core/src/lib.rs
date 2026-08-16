@@ -16,11 +16,12 @@ pub use model::{
     ActionPhase, ActionTimeline, AquariumCreatureState, AquariumPosition, AquariumState, Belief,
     BeliefId, BeliefKind, Concept, ConversationState, Creature, DepthLane, Development,
     DevelopmentMilestone, Facing, FoodBuoyancy, FoodDisposition, FoodDropRejectionReason, FoodId,
-    FoodObject, GazeTarget, Idiolect, IdiolectQuirk, InitiatedBehavior, InitiativeReason,
-    Intention, InteractionCounters, LanguageExposure, LanguageStage, Memory, MemoryId, MemoryKind,
-    Mood, NamingTarget, Needs, NonverbalAct, NormalizedPosition, NormalizedVelocity, Reaction,
-    Relationship, Routine, SemanticDestination, SocialAct, SocialHabits, StateValidationError,
-    SteeringMode, ToyId, Traits, WorldObject, WorldState,
+    FoodObject, GazeTarget, Idiolect, IdiolectQuirk, IdleLifeState, InitiatedBehavior,
+    InitiativeReason, Intention, InteractionCounters, InteractionState, LanguageExposure,
+    LanguageStage, Memory, MemoryId, MemoryKind, Mood, NamingTarget, Needs, NonverbalAct,
+    NormalizedPosition, NormalizedVelocity, Reaction, Relationship, Routine, SemanticDestination,
+    SocialAct, SocialHabits, StateValidationError, SteeringMode, ToyId, Traits, VisitEvidence,
+    WorldObject, WorldState,
 };
 pub use random::{RandomDomain, RandomSource, SeededRandom, deterministic_unit};
 pub use save::{SaveError, SaveGame};
@@ -197,6 +198,21 @@ mod tests {
         assert_eq!(actual, expected);
         assert_eq!(second, first);
         assert_eq!(second_rng, first_rng);
+    }
+
+    #[test]
+    fn autonomous_toy_interest_does_not_defer_the_player() {
+        let mut world = WorldState::new(10, "Listener");
+        world.creature.current_intention = Intention::Play;
+        world.creature.aquarium.destination = Some(SemanticDestination::Toy(ToyId::Ball));
+        let mut rng = SeededRandom::new(10);
+
+        let events = step(&mut world, &[PlayerEvent::SpeechStarted], 0, &mut rng);
+
+        assert_eq!(
+            events,
+            vec![GameEvent::SpeechPerceived(SpeechAttention::Attended)]
+        );
     }
 
     #[test]
@@ -452,6 +468,200 @@ mod tests {
     }
 
     #[test]
+    fn quiet_observation_has_bounded_varied_idle_bouts_and_exact_replay() {
+        let mut first = WorldState::new(42, "Quiet");
+        let mut replay = first.clone();
+        let mut first_rng = SeededRandom::new(42);
+        let mut replay_rng = SeededRandom::new(42);
+        let mut bouts = Vec::new();
+        let mut previous_visits = 0_u32;
+
+        for _ in 0..180 {
+            let first_events = step(&mut first, &[], SIMULATION_TICK_MS, &mut first_rng);
+            let replay_events = step(&mut replay, &[], SIMULATION_TICK_MS, &mut replay_rng);
+            assert_eq!(first_events, replay_events);
+            let visits = first.creature.favorite_locations.values().sum::<u32>();
+            if visits > previous_visits {
+                bouts.push(
+                    first
+                        .creature
+                        .idle_life
+                        .settled_until_ms
+                        .saturating_sub(first.elapsed_ms),
+                );
+                previous_visits = visits;
+            }
+        }
+
+        assert_eq!(first, replay);
+        assert_eq!(first_rng, replay_rng);
+        assert!(
+            bouts.len() >= 3,
+            "expected several actual idle arrivals: {bouts:?}"
+        );
+        assert!(bouts.iter().all(|duration| {
+            (4_000..=10_000).contains(duration) && duration % SIMULATION_TICK_MS == 0
+        }));
+        assert!(first.creature.favorite_locations.len() > 1);
+        assert!(first.creature.favorite_locations.values().sum::<u32>() <= bouts.len() as u32);
+        SaveGame::capture(&first, &first_rng)
+            .to_json()
+            .expect("idle life with toy visits remains JSON serializable");
+    }
+
+    #[test]
+    fn comfort_creates_history_improves_relationship_and_returns_to_life() {
+        let mut world = WorldState::new(43, "Comforted");
+        world.creature.relationship.resentment = 0.5;
+        let before = world.creature.relationship;
+        let mut rng = SeededRandom::new(43);
+
+        step(&mut world, &[PlayerEvent::Comfort], 0, &mut rng);
+
+        assert!(
+            world
+                .creature
+                .memories
+                .iter()
+                .any(|memory| memory.kind == MemoryKind::WasComforted)
+        );
+        assert!(world.creature.relationship.bond > before.bond);
+        assert!(world.creature.relationship.trust > before.trust);
+        assert!(world.creature.relationship.resentment < before.resentment);
+        assert_eq!(world.creature.current_intention, Intention::ShowAffection);
+
+        step(&mut world, &[], 8_000, &mut rng);
+        assert_eq!(world.creature.current_intention, Intention::Idle);
+        assert!(world.creature.aquarium.destination.is_some());
+    }
+
+    #[test]
+    fn disliked_repetition_raises_resentment_and_positive_care_recovers_it() {
+        let mut world = WorldState::new(44, "Taste");
+        world.creature.preferences.insert(FoodId::Berry, -1.0);
+        let mut rng = SeededRandom::new(44);
+        let initial = world.creature.relationship.resentment;
+
+        for _ in 0..2 {
+            step(
+                &mut world,
+                &[PlayerEvent::DropFood {
+                    food: FoodId::Berry,
+                    position: NormalizedPosition::new(5_000, 4_500),
+                }],
+                20_000,
+                &mut rng,
+            );
+        }
+        let after_disliked = world.creature.relationship.resentment;
+        assert!(after_disliked > initial);
+
+        step(&mut world, &[PlayerEvent::Comfort], 0, &mut rng);
+        assert!(world.creature.relationship.resentment < after_disliked);
+    }
+
+    #[test]
+    fn cursor_follow_requires_sustained_care() {
+        let mut world = WorldState::new(45, "Trust");
+        world.creature.traits.sociability = 1.0;
+        let mut rng = SeededRandom::new(45);
+        let cursor = NormalizedPosition::new(8_000, 4_500);
+
+        step(
+            &mut world,
+            &[PlayerEvent::Cursor(Some(cursor))],
+            0,
+            &mut rng,
+        );
+        assert_ne!(world.creature.aquarium.steering, SteeringMode::Approach);
+        step(&mut world, &[PlayerEvent::Cursor(None)], 0, &mut rng);
+        for _ in 0..36 {
+            step(
+                &mut world,
+                &[PlayerEvent::Comfort],
+                SIMULATION_TICK_MS,
+                &mut rng,
+            );
+        }
+        assert!(world.creature.relationship.trust > 0.5);
+
+        step(
+            &mut world,
+            &[PlayerEvent::Cursor(Some(cursor))],
+            0,
+            &mut rng,
+        );
+        assert_eq!(world.creature.aquarium.steering, SteeringMode::Approach);
+    }
+
+    #[test]
+    fn sleep_restores_energy_and_initiative_clears_or_expires() {
+        let mut world = WorldState::new(46, "Rest");
+        world.creature.needs.energy = 0.09;
+        let mut rng = SeededRandom::new(46);
+        let mut events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        assert!(events.contains(&GameEvent::SleepStarted));
+        for _ in 0..10 {
+            events.extend(step(&mut world, &[], SIMULATION_TICK_MS, &mut rng));
+        }
+        assert!(events.contains(&GameEvent::SleepEnded));
+        assert_ne!(world.creature.current_intention, Intention::Sleep);
+        assert!(world.creature.needs.energy >= 0.68);
+
+        world.creature.needs.hunger = 0.9;
+        step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        let first_request = world
+            .creature
+            .initiated_behavior
+            .as_ref()
+            .expect("hunger request")
+            .requested_at_ms;
+        world.creature.needs.hunger = 0.5;
+        step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        assert!(world.creature.initiated_behavior.is_none());
+
+        world.creature.needs.hunger = 0.9;
+        step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        let expires_at = world
+            .creature
+            .initiated_behavior
+            .as_ref()
+            .expect("second hunger request")
+            .expires_at_ms;
+        let remaining = expires_at.saturating_sub(world.elapsed_ms);
+        step(&mut world, &[], remaining, &mut rng);
+        assert!(
+            world
+                .creature
+                .initiated_behavior
+                .as_ref()
+                .is_some_and(|request| request.requested_at_ms > first_request)
+        );
+    }
+
+    #[test]
+    fn active_day_scaled_repeated_visits_form_a_bounded_routine() {
+        let mut world = WorldState::new(47, "Habit");
+        let mut rng = SeededRandom::new(47);
+        let cave = NormalizedPosition::new(1_500, 8_500);
+
+        for day in 0..2 {
+            world.elapsed_ms = day * ACTIVE_DAY_MS;
+            world.creature.aquarium.position = cave;
+            world.creature.aquarium.destination = Some(SemanticDestination::Cave);
+            world.creature.aquarium.steering = SteeringMode::Approach;
+            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        }
+
+        assert!(world.creature.routines.iter().any(|routine| {
+            routine.hour_start == 0
+                && routine.destination == SemanticDestination::Cave
+                && routine.strength >= 2
+        }));
+        assert!(world.creature.routines.len() <= 8);
+    }
+
+    #[test]
     fn offline_progress_is_bounded_nonlethal_and_records_return() {
         let mut a = WorldState::new(8, "Away");
         let mut rng = SeededRandom::new(8);
@@ -542,9 +752,37 @@ mod tests {
             serde_json::to_value(SaveGame::capture(&a, &SeededRandom::new(77))).unwrap();
         value["save_version"] = 2.into();
         value["world"]["save_version"] = 2.into();
+        let creature = value["world"]["creature"]
+            .as_object_mut()
+            .expect("creature object");
+        creature.remove("idle_life");
+        creature.remove("interaction_state");
         let (migrated, _) = SaveGame::from_json(&value.to_string()).unwrap().resume();
         assert_eq!(migrated.save_version, SAVE_VERSION);
+        assert_eq!(migrated.creature.idle_life, IdleLifeState::default());
+        assert_eq!(
+            migrated.creature.interaction_state,
+            InteractionState::default()
+        );
         assert!(migrated.validate().is_ok());
+    }
+
+    #[test]
+    fn current_version_save_defaults_new_persisted_life_state() {
+        let world = WorldState::new(78, "V3");
+        let mut value =
+            serde_json::to_value(SaveGame::capture(&world, &SeededRandom::new(78))).unwrap();
+        let creature = value["world"]["creature"]
+            .as_object_mut()
+            .expect("creature object");
+        creature.remove("idle_life");
+        creature.remove("interaction_state");
+        let (loaded, _) = SaveGame::from_json(&value.to_string()).unwrap().resume();
+        assert_eq!(loaded.creature.idle_life, IdleLifeState::default());
+        assert_eq!(
+            loaded.creature.interaction_state,
+            InteractionState::default()
+        );
     }
 
     #[test]
@@ -819,7 +1057,8 @@ mod tests {
         let mut world = WorldState::new(95, "Actions");
         let mut rng = SeededRandom::new(95);
         world.creature.toy_preferences.insert(ToyId::Bell, 0.8);
-        step(&mut world, &[PlayerEvent::Play(ToyId::Bell)], 0, &mut rng);
+        let played_toy = step(&mut world, &[PlayerEvent::Play(ToyId::Bell)], 0, &mut rng);
+        assert!(played_toy.contains(&GameEvent::ToyPlayed(ToyId::Bell)));
         assert_eq!(world.creature.current_intention, Intention::Play);
         assert_eq!(world.creature.aquarium.gaze, GazeTarget::Toy(ToyId::Bell));
         assert!(

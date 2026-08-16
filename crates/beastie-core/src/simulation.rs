@@ -11,6 +11,13 @@ use serde::{Deserialize, Serialize};
 pub const SIMULATION_TICK_MS: u64 = 1_000;
 pub const MAX_OFFLINE_MS: u64 = crate::ACTIVE_DAY_MS * 8;
 pub const TALK_COOLDOWN_MS: u64 = 30_000;
+const IDLE_BOUT_MIN_MS: u64 = 4_000;
+const IDLE_BOUT_MAX_MS: u64 = 10_000;
+const AFFECTION_DURATION_MS: u64 = 7_000;
+const MAX_SLEEP_MS: u64 = 30_000;
+const INITIATIVE_DURATION_MS: u64 = 45_000;
+const ACTIVE_DAY_HOURS: u64 = 24;
+const MAX_VISIT_EVIDENCE: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
@@ -42,6 +49,7 @@ pub enum GameEvent {
     MemoryCreated(MemoryId),
     FoodConsumed(FoodId),
     FoodRejected(FoodId),
+    ToyPlayed(ToyId),
     ToyRejected(ToyId),
     Comforted,
     SleepStarted,
@@ -177,12 +185,14 @@ pub fn advance_offline(
 
 fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut Vec<GameEvent>) {
     state.elapsed_ms = state.elapsed_ms.saturating_add(SIMULATION_TICK_MS);
+    advance_embodied_state(state, events);
     let minutes = SIMULATION_TICK_MS as f32 / 60_000.0;
     state.creature.needs.hunger += 0.025 * minutes;
     state.creature.needs.energy -= 0.018 * minutes;
     state.creature.needs.comfort -= 0.008 * minutes;
     state.creature.needs.curiosity += 0.012 * minutes;
     advance_aquarium(state, events);
+    clear_satisfied_or_expired_initiative(state);
     maybe_initiate(state, events);
     state.creature.needs.clamp();
     state.creature.relationship.clamp();
@@ -194,11 +204,41 @@ fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut
     {
         let previous = state.creature.current_intention;
         state.creature.current_intention = crate::Intention::Sleep;
+        state.creature.interaction_state.sleep_started_at_ms = Some(state.elapsed_ms);
         events.push(GameEvent::SleepStarted);
         events.push(GameEvent::IntentionChanged {
             from: previous,
             to: crate::Intention::Sleep,
         });
+    }
+}
+
+fn advance_embodied_state(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    if state.creature.current_intention == Intention::Sleep {
+        let started_at = state
+            .creature
+            .interaction_state
+            .sleep_started_at_ms
+            .get_or_insert(state.elapsed_ms);
+        state.creature.needs.energy = (state.creature.needs.energy + 0.08).min(1.0);
+        state.creature.needs.comfort = (state.creature.needs.comfort + 0.01).min(1.0);
+        if state.creature.needs.energy >= 0.68
+            || state.elapsed_ms.saturating_sub(*started_at) >= MAX_SLEEP_MS
+        {
+            state.creature.interaction_state.sleep_started_at_ms = None;
+            set_intention(state, Intention::Idle, events);
+            state.creature.aquarium.destination = None;
+            state.creature.aquarium.steering = SteeringMode::Hover;
+            events.push(GameEvent::SleepEnded);
+        }
+    }
+
+    if state.creature.current_intention == Intention::ShowAffection
+        && state.elapsed_ms >= state.creature.interaction_state.affectionate_until_ms
+    {
+        set_intention(state, Intention::Idle, events);
+        state.creature.aquarium.destination = None;
+        state.creature.aquarium.steering = SteeringMode::Hover;
     }
 }
 
@@ -252,13 +292,27 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
             play_with_toy(state, *toy, events);
         }
         PlayerEvent::Comfort => {
-            state.creature.needs.comfort += 0.2;
+            state.creature.needs.comfort = (state.creature.needs.comfort + 0.18).min(1.0);
+            improve_relationship(state, 0.015, 0.01, 0.035);
             state.creature.development.interactions.comforts = state
                 .creature
                 .development
                 .interactions
                 .comforts
                 .saturating_add(1);
+            state.remember(
+                MemoryKind::WasComforted,
+                &[Concept::You, Concept::Good],
+                0.55,
+                0.7,
+            );
+            state.creature.interaction_state.affectionate_until_ms =
+                state.elapsed_ms.saturating_add(AFFECTION_DURATION_MS);
+            set_intention(state, Intention::ShowAffection, events);
+            state.creature.aquarium.gaze = GazeTarget::Player;
+            state.creature.aquarium.destination = Some(SemanticDestination::Player);
+            state.creature.aquarium.steering = SteeringMode::Approach;
+            clear_satisfied_or_expired_initiative(state);
             events.push(GameEvent::Comforted);
         }
         PlayerEvent::Tidy => tidy_aquarium(state, events),
@@ -341,8 +395,15 @@ pub fn speech_attention(state: &WorldState) -> SpeechAttention {
         return SpeechAttention::Attended;
     }
 
-    let occupied =
-        creature.aquarium.action.is_some() || matches!(creature.current_intention, Intention::Play);
+    // A chosen toy destination may project `Play` while the creature is merely travelling or
+    // hovering. Authored play has an action timeline; the destination check also preserves old
+    // saves whose active play predates that timeline.
+    let autonomous_toy_interest = matches!(
+        creature.aquarium.destination,
+        Some(SemanticDestination::Toy(_))
+    ) && creature.aquarium.action.is_none();
+    let occupied = creature.aquarium.action.is_some()
+        || (matches!(creature.current_intention, Intention::Play) && !autonomous_toy_interest);
     if occupied {
         SpeechAttention::Glanced
     } else {
@@ -432,7 +493,9 @@ fn assign_name(
 }
 
 fn advance_aquarium(state: &mut WorldState, events: &mut Vec<GameEvent>) {
-    advance_creature_motion(state);
+    if state.creature.current_intention != Intention::Sleep {
+        advance_creature_motion(state);
+    }
     let mut settled = Vec::new();
     let mut expired = Vec::new();
     for (id, object) in &mut state.aquarium.objects {
@@ -466,8 +529,10 @@ fn advance_aquarium(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         }
     }
     for id in settled {
-        state.record_favorite(SemanticDestination::Bottom);
         events.push(GameEvent::FoodSettled(id));
+    }
+    if state.creature.current_intention == Intention::Sleep {
+        return;
     }
     for id in expired {
         state.aquarium.objects.remove(&id);
@@ -592,12 +657,7 @@ fn steering_target(state: &mut WorldState) -> Option<NormalizedPosition> {
     let target = destination_position(state, destination)?;
     if manhattan_distance(state.creature.aquarium.position, target) <= ARRIVAL_DISTANCE {
         state.creature.aquarium.velocity = NormalizedVelocity::default();
-        if !matches!(
-            destination,
-            SemanticDestination::Player | SemanticDestination::Position(_)
-        ) {
-            state.record_favorite(destination);
-        }
+        record_genuine_arrival(state, destination);
         state.creature.aquarium.destination = None;
         state.creature.aquarium.steering = SteeringMode::Hover;
         return None;
@@ -723,7 +783,11 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     if state.creature.aquarium.destination.is_some() {
         return;
     }
-    let hour = ((state.elapsed_ms / 3_600_000) % 24) as u8;
+    if state.elapsed_ms < state.creature.idle_life.settled_until_ms {
+        state.creature.aquarium.steering = SteeringMode::Hover;
+        return;
+    }
+    let hour = active_day_hour(state);
     let routine = state
         .creature
         .routines
@@ -750,13 +814,11 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
             SemanticDestination::Toy(preferred_toy(state))
         })
     } else {
-        Some(if state.creature.traits.boldness > 0.55 {
-            SemanticDestination::Plant
-        } else {
-            SemanticDestination::Cave
-        })
+        Some(identity_shaped_idle_destination(state))
     };
-    if let Some(destination) = destination {
+    if let Some(destination) =
+        destination.map(|destination| avoid_immediate_repeat(state, destination))
+    {
         state.creature.aquarium.destination = Some(destination);
         state.creature.aquarium.steering = SteeringMode::Approach;
         state.creature.aquarium.gaze = match destination {
@@ -771,6 +833,114 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
             _ => Intention::Idle,
         };
         set_intention(state, intention, events);
+    }
+}
+
+fn active_day_hour(state: &WorldState) -> u8 {
+    ((state.elapsed_ms % crate::ACTIVE_DAY_MS) * ACTIVE_DAY_HOURS / crate::ACTIVE_DAY_MS) as u8
+}
+
+fn identity_shaped_idle_destination(state: &mut WorldState) -> SemanticDestination {
+    let preferred = preferred_toy(state);
+    let alternatives = [
+        SemanticDestination::Cave,
+        SemanticDestination::Plant,
+        SemanticDestination::Toy(preferred),
+        SemanticDestination::Toy(if state.creature.traits.fussiness > 0.55 {
+            ToyId::Bell
+        } else {
+            ToyId::Sock
+        }),
+    ];
+    let identity_bias = ((state.creature.traits.boldness * 3.0) as usize
+        + (state.creature.traits.sociability * 2.0) as usize)
+        % alternatives.len();
+    let variation =
+        (state.domain_draw(RandomDomain::Environment) * alternatives.len() as f32) as usize;
+    alternatives[(identity_bias + variation) % alternatives.len()]
+}
+
+fn avoid_immediate_repeat(
+    state: &mut WorldState,
+    requested: SemanticDestination,
+) -> SemanticDestination {
+    if state.creature.idle_life.last_arrived_destination != Some(requested) {
+        return requested;
+    }
+    let alternatives = [
+        SemanticDestination::Cave,
+        SemanticDestination::Plant,
+        SemanticDestination::Toy(preferred_toy(state)),
+        SemanticDestination::Toy(ToyId::Bell),
+        SemanticDestination::Bottom,
+    ];
+    alternatives
+        .into_iter()
+        .find(|candidate| *candidate != requested)
+        .unwrap_or(requested)
+}
+
+fn record_genuine_arrival(state: &mut WorldState, destination: SemanticDestination) {
+    if !matches!(
+        destination,
+        SemanticDestination::Cave
+            | SemanticDestination::Plant
+            | SemanticDestination::Bottom
+            | SemanticDestination::Toy(_)
+    ) {
+        return;
+    }
+    state.record_favorite(destination);
+    state.creature.idle_life.last_arrived_destination = Some(destination);
+    let spans = IDLE_BOUT_MAX_MS / SIMULATION_TICK_MS - IDLE_BOUT_MIN_MS / SIMULATION_TICK_MS + 1;
+    let duration = IDLE_BOUT_MIN_MS
+        + (state.domain_draw(RandomDomain::Environment) * spans as f32) as u64 * SIMULATION_TICK_MS;
+    state.creature.idle_life.settled_until_ms = state.elapsed_ms.saturating_add(duration);
+    record_routine_visit(state, destination);
+}
+
+fn record_routine_visit(state: &mut WorldState, destination: SemanticDestination) {
+    let hour_start = active_day_hour(state);
+    let active_day = state.active_day();
+    let visits = if let Some(evidence) = state
+        .creature
+        .idle_life
+        .visit_evidence
+        .iter_mut()
+        .find(|evidence| evidence.hour_start == hour_start && evidence.destination == destination)
+    {
+        if evidence.last_active_day != active_day {
+            evidence.visits = evidence.visits.saturating_add(1);
+            evidence.last_active_day = active_day;
+        }
+        evidence.visits
+    } else {
+        if state.creature.idle_life.visit_evidence.len() >= MAX_VISIT_EVIDENCE {
+            state.creature.idle_life.visit_evidence.remove(0);
+        }
+        state
+            .creature
+            .idle_life
+            .visit_evidence
+            .push(crate::VisitEvidence {
+                hour_start,
+                destination,
+                visits: 1,
+                last_active_day: active_day,
+            });
+        state
+            .creature
+            .idle_life
+            .visit_evidence
+            .sort_by_key(|evidence| (evidence.hour_start, evidence.destination));
+        1
+    };
+    if visits >= 2 {
+        state.set_routine(crate::Routine {
+            hour_start,
+            destination,
+            strength: visits.min(5),
+        });
     }
 }
 
@@ -798,13 +968,14 @@ fn play_with_toy(state: &mut WorldState, toy: ToyId, events: &mut Vec<GameEvent>
     } else {
         set_intention(state, Intention::Play, events);
         state.creature.needs.curiosity = (state.creature.needs.curiosity - 0.18).max(0.0);
-        state.record_favorite(SemanticDestination::Toy(toy));
+        improve_relationship(state, 0.01, 0.008, 0.012);
         state.remember(
             MemoryKind::PlayedWith { toy },
             &[Concept::Good],
             preference,
             0.6,
         );
+        events.push(GameEvent::ToyPlayed(toy));
     }
 }
 
@@ -900,12 +1071,14 @@ fn resolve_food(state: &mut WorldState, food_id: Option<u64>, events: &mut Vec<G
             0.85,
         );
         state.revise_belief(BeliefKind::RedFoodIsATrick, memory, true);
+        state.creature.relationship.resentment += 0.035;
         events.push(GameEvent::FoodRejected(food));
         events.push(GameEvent::NonverbalAct(NonverbalAct::PushFoodAway(food)));
     } else {
         state.aquarium.objects.remove(&id);
         state.aquarium.object_names.remove(&id);
         state.creature.needs.hunger -= 0.45;
+        improve_relationship(state, 0.012, 0.009, 0.018);
         let memory = state.remember(
             MemoryKind::WasFed { food },
             &[Concept::Food, Concept::You],
@@ -913,6 +1086,7 @@ fn resolve_food(state: &mut WorldState, food_id: Option<u64>, events: &mut Vec<G
             0.75,
         );
         state.revise_belief(BeliefKind::RedFoodIsATrick, memory, false);
+        clear_satisfied_or_expired_initiative(state);
         events.push(GameEvent::FoodConsumed(food));
     }
 }
@@ -941,12 +1115,42 @@ fn maybe_initiate(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         reason,
         nonverbal,
         requested_at_ms: state.elapsed_ms,
+        expires_at_ms: state.elapsed_ms.saturating_add(INITIATIVE_DURATION_MS),
     });
     if nonverbal.is_some() {
         events.push(GameEvent::NonverbalRequest(reason));
     } else {
         events.push(GameEvent::InitiatedTalk(reason));
     }
+}
+
+fn clear_satisfied_or_expired_initiative(state: &mut WorldState) {
+    let Some(initiated) = state.creature.initiated_behavior.as_ref() else {
+        return;
+    };
+    let expired_at = if initiated.expires_at_ms == 0 {
+        initiated
+            .requested_at_ms
+            .saturating_add(INITIATIVE_DURATION_MS)
+    } else {
+        initiated.expires_at_ms
+    };
+    let satisfied = match initiated.reason {
+        InitiativeReason::Hunger => state.creature.needs.hunger < 0.65,
+        InitiativeReason::Loneliness => state.creature.needs.comfort > 0.35,
+        InitiativeReason::Curiosity => state.creature.needs.curiosity < 0.45,
+        InitiativeReason::Ritual | InitiativeReason::Request => false,
+    };
+    if satisfied || state.elapsed_ms >= expired_at {
+        state.creature.initiated_behavior = None;
+    }
+}
+
+fn improve_relationship(state: &mut WorldState, bond: f32, trust: f32, resentment_recovery: f32) {
+    state.creature.relationship.bond += bond;
+    state.creature.relationship.trust += trust;
+    state.creature.relationship.resentment -= resentment_recovery;
+    state.creature.relationship.clamp();
 }
 
 fn apply_reaction(state: &mut WorldState, reaction: Reaction) {

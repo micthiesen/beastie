@@ -59,7 +59,10 @@ impl AssetCatalog {
         let mut images = HashMap::new();
         for id in RUNTIME_SPRITE_IDS.lines().filter(|id| !id.is_empty()) {
             load_variant(ctx, assets_root, id, None, &mut images);
-            for frame in 0..=3 {
+            // Most authored actions use four frames, while the main swim cycle uses eight.
+            // Missing files are simply skipped, so loading the full runtime ceiling preserves
+            // shorter actions without letting swim frames 4-7 fall through to the static base.
+            for frame in 0..8 {
                 load_variant(ctx, assets_root, id, Some(frame), &mut images);
             }
         }
@@ -374,6 +377,24 @@ impl Viewport {
 }
 
 pub fn save_presentation_png(ctx: &Context, frame: &Image, path: &Path) -> GameResult {
+    let pixels = presentation_rgba(ctx, frame)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| GameError::FilesystemError(error.to_string()))?;
+    }
+    image::save_buffer_with_format(
+        path,
+        &pixels,
+        frame.width(),
+        frame.height(),
+        ColorType::Rgba8,
+        EncodingFormat::Png,
+    )
+    .map_err(|error| GameError::ResourceLoadError(error.to_string()))
+}
+
+/// Read the presentation image in stable RGBA byte order for captures and recordings.
+pub fn presentation_rgba(ctx: &Context, frame: &Image) -> GameResult<Vec<u8>> {
     let mut pixels = frame.to_pixels(ctx)?;
     match frame.format() {
         ImageFormat::Rgba8Unorm | ImageFormat::Rgba8UnormSrgb => {}
@@ -388,19 +409,7 @@ pub fn save_presentation_png(ctx: &Context, frame: &Image, path: &Path) -> GameR
             )));
         }
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| GameError::FilesystemError(error.to_string()))?;
-    }
-    image::save_buffer_with_format(
-        path,
-        &pixels,
-        frame.width(),
-        frame.height(),
-        ColorType::Rgba8,
-        EncodingFormat::Png,
-    )
-    .map_err(|error| GameError::ResourceLoadError(error.to_string()))
+    Ok(pixels)
 }
 
 pub fn execute_plan(

@@ -621,12 +621,45 @@ pub struct Routine {
     pub strength: u8,
 }
 
+/// Persisted evidence for a repeated, genuine visit during an active-day hour slot.
+///
+/// This deliberately records only one visit per active day.  A creature pacing back and
+/// forth during one short session must not manufacture a routine from a single outing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VisitEvidence {
+    pub hour_start: u8,
+    pub destination: SemanticDestination,
+    pub visits: u8,
+    pub last_active_day: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct IdleLifeState {
+    pub last_arrived_destination: Option<SemanticDestination>,
+    pub settled_until_ms: u64,
+    #[serde(default)]
+    pub visit_evidence: Vec<VisitEvidence>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct InteractionState {
+    /// A short embodied aftermath of comfort, after which the creature returns to its own life.
+    pub affectionate_until_ms: u64,
+    /// Kept so a sleeping save can resume restoring energy with a bounded wake-up.
+    pub sleep_started_at_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InitiatedBehavior {
     pub reason: InitiativeReason,
     pub nonverbal: Option<NonverbalAct>,
     pub requested_at_ms: u64,
+    #[serde(default)]
+    pub expires_at_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -670,6 +703,10 @@ pub struct Creature {
     pub development: Development,
     #[serde(default)]
     pub aquarium: AquariumCreatureState,
+    #[serde(default)]
+    pub idle_life: IdleLifeState,
+    #[serde(default)]
+    pub interaction_state: InteractionState,
     #[serde(default)]
     pub routines: Vec<Routine>,
     #[serde(default)]
@@ -792,6 +829,8 @@ impl WorldState {
                 conversation: ConversationState::default(),
                 development: Development::default(),
                 aquarium: AquariumCreatureState::default(),
+                idle_life: IdleLifeState::default(),
+                interaction_state: InteractionState::default(),
                 routines: Vec::new(),
                 favorite_locations: BTreeMap::new(),
                 initiated_behavior: None,
@@ -1054,6 +1093,51 @@ impl WorldState {
         {
             return Err(StateValidationError::Aquarium);
         }
+        let has_valid_visit_destination = |destination: SemanticDestination| {
+            matches!(
+                destination,
+                SemanticDestination::Cave
+                    | SemanticDestination::Plant
+                    | SemanticDestination::Bottom
+                    | SemanticDestination::Toy(_)
+            )
+        };
+        if self.creature.routines.len() > 8
+            || self.creature.routines.iter().any(|routine| {
+                routine.hour_start >= 24
+                    || routine.strength == 0
+                    || !has_valid_visit_destination(routine.destination)
+            })
+            || self.creature.idle_life.visit_evidence.len() > 32
+            || self
+                .creature
+                .idle_life
+                .visit_evidence
+                .iter()
+                .any(|evidence| {
+                    evidence.hour_start >= 24
+                        || evidence.visits == 0
+                        || evidence.last_active_day > self.active_day()
+                        || !has_valid_visit_destination(evidence.destination)
+                })
+            || self
+                .creature
+                .idle_life
+                .visit_evidence
+                .windows(2)
+                .any(|pair| {
+                    pair[0].hour_start > pair[1].hour_start
+                        || (pair[0].hour_start == pair[1].hour_start
+                            && pair[0].destination >= pair[1].destination)
+                })
+            || self
+                .creature
+                .interaction_state
+                .sleep_started_at_ms
+                .is_some_and(|started_at| started_at > self.elapsed_ms)
+        {
+            return Err(StateValidationError::IdleLife);
+        }
         if self.creature.beliefs.iter().any(|belief| {
             belief
                 .supporting_memories
@@ -1170,4 +1254,6 @@ pub enum StateValidationError {
     Belief,
     #[error("aquarium state is invalid")]
     Aquarium,
+    #[error("idle life, routine, or embodied interaction state is invalid")]
+    IdleLife,
 }

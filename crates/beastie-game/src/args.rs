@@ -42,6 +42,9 @@ pub struct Args {
     /// Directory for named 640x360 presentation captures.
     #[arg(long, requires = "script")]
     pub capture_dir: Option<PathBuf>,
+    /// Directory for a 60 fps feel-review evidence bundle.
+    #[arg(long, requires = "script")]
+    pub feel_dir: Option<PathBuf>,
     /// Keep a completed visible scenario open for native input inspection.
     #[arg(long, requires = "script")]
     pub stay_open: bool,
@@ -54,4 +57,26 @@ pub struct Args {
     /// Export validated privacy-safe transcript records to this JSONL file.
     #[arg(long)]
     pub export_transcript: Option<PathBuf>,
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::Args;
+
+    #[test]
+    fn feel_directory_requires_a_script() {
+        assert!(Args::try_parse_from(["beastie-game", "--feel-dir", "target/feel/run"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "beastie-game",
+                "--script",
+                "fixtures/scenarios/aquarium-v1-visible.jsonl",
+                "--feel-dir",
+                "target/feel/run",
+            ])
+            .is_ok()
+        );
+    }
 }

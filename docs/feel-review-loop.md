@@ -23,13 +23,18 @@ Run the baseline suite:
 cargo xtask feel --suite baseline
 ```
 
-Review the generated report and evidence under `target/feel/<run>/`. Create findings only when they
+Use `--output target/feel/<name>` when a stable before/after name matters. The output directory must
+be new or empty. Review the generated reports and evidence under `target/feel/<run>/`. Create findings only when they
 can cite a timestamp or a session-wide pattern. After a change, replay the same suite with the same
 seed and compare the synchronized before and after evidence.
 
-The feel tooling is assumed to provide the recording, trace, extraction, replay, and comparison
-capabilities described below. This document defines their intended workflow and evidence contract;
-it does not limit their implementation.
+Focused suites use the same command with `first-five-minutes`, `quiet-observation`,
+`interaction-chain`, `bad-conditions`, or `relationship-over-time` in place of `baseline`.
+The command builds the game and fake workers, verifies FFmpeg and FFprobe, launches each visible
+experience, validates its video, generates filmstrips, and hashes the evidence.
+Pass `--game <executable>` to record an exact copied, packaged, or release executable while still
+using the normal evidence pipeline. This is also the reliable macOS fallback when Metal renders a
+copied executable but stalls for the identical build under `target/debug`.
 
 ## Evidence bundle
 
@@ -37,14 +42,22 @@ Every run produces one self-contained directory:
 
 ```text
 target/feel/<run>/
-  manifest.json
-  session.mp4
-  inputs.jsonl
-  events.jsonl
-  state.jsonl
-  audio.jsonl
-  filmstrips/
-  review.md
+  README.md
+  <experience>/
+    manifest.json
+    session.mp4
+    session-audio-reference.mp4
+    reference-mix.wav
+    audio-overview.png
+    speech-*.wav
+    inputs.jsonl
+    events.jsonl
+    state.jsonl
+    audio.jsonl
+    markers.jsonl
+    captures/
+    filmstrips/
+    review.md
 ```
 
 The evidence has five synchronized parts:
@@ -55,14 +68,22 @@ The evidence has five synchronized parts:
    keys, controller actions, and speech lifecycle events.
 3. `events.jsonl` and `state.jsonl` align authoritative simulation events and selected presentation
    state with the recording. They explain causality without treating presentation as truth.
-4. `audio.jsonl` records cue, speech, and playback timing. The recording contains the audible mix
-   when the host supports capture.
+4. `audio.jsonl` records cue, speech, active-player, and ambience-duck timing. Speech WAVs are
+   retained inside the evidence directory. `session-audio-reference.mp4` mixes those speech files
+   and authored cues at their recorded times so an agent can review synchronized sound without a
+   system-audio device. It is explicitly a reference mix, not a claim that host output was captured;
+   `manifest.json` records that distinction.
 5. `filmstrips/` contains uniformly sampled session overviews plus dense, event-aligned frame
    sequences around every interaction. `review.md` links findings to these artifacts.
 
-The manifest records the commit, platform, build profile, seed, suite and scenario versions,
-viewport, presentation scale, enabled backends, and artifact hashes. A comparison is valid only
-when intentional differences are explicit.
+The manifest records the commit and dirty state, exact game-binary and scenario hashes, platform,
+build profile, seed, suite, viewport, presentation scale, enabled fake backend, audio-capture mode,
+and artifact hashes. A comparison is valid only when intentional differences are explicit.
+
+On macOS, a game created while yabai is managing the window can stall while Metal waits for its
+first drawable. If sampling shows `get_current_texture` or `acquire_texture` dominating, run
+`yabai --stop-service` once, restart that experience, and leave yabai stopped for the rest of the
+session. A stalled zero-frame run is invalid evidence.
 
 ## Baseline suite
 

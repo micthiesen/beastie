@@ -1,0 +1,15 @@
+{"version":1,"command":"marker","name":"00-quiet-start"}
+{"version":1,"command":"capture","name":"00-quiet-start"}
+{"version":1,"command":"wait","milliseconds":30000}
+{"version":1,"command":"marker","name":"01-thirty-seconds"}
+{"version":1,"command":"wait","milliseconds":30000}
+{"version":1,"command":"marker","name":"02-one-minute"}
+{"version":1,"command":"wait","milliseconds":30000}
+{"version":1,"command":"marker","name":"03-ninety-seconds"}
+{"version":1,"command":"wait","milliseconds":30000}
+{"version":1,"command":"marker","name":"04-two-minutes"}
+{"version":1,"command":"wait","milliseconds":30000}
+{"version":1,"command":"marker","name":"05-two-thirty"}
+{"version":1,"command":"wait","milliseconds":30000}
+{"version":1,"command":"marker","name":"06-three-minutes"}
+{"version":1,"command":"capture","name":"06-three-minutes"}

@@ -21,6 +21,7 @@ use serde::Serialize;
 
 mod asset;
 mod dialogue_eval;
+mod feel;
 mod packaging;
 mod store_assets;
 mod stt_eval;
@@ -59,6 +60,17 @@ enum Task {
     Stt {
         #[command(subcommand)]
         command: SttTask,
+    },
+    /// Capture synchronized evidence for subjective play-feel review.
+    Feel {
+        #[arg(long, value_enum, default_value = "baseline")]
+        suite: feel::FeelSuite,
+        /// New or empty evidence directory. Defaults beneath target/feel.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Exact game executable to capture, useful for release builds or macOS launch-path issues.
+        #[arg(long)]
+        game: Option<PathBuf>,
     },
     /// Run the game shell with fixture or environment-configured local AI.
     Dev {
@@ -372,6 +384,15 @@ fn main() -> Result<()> {
             worker_args: worker_arg,
             label,
         }),
+        Task::Feel {
+            suite,
+            output,
+            game,
+        } => feel::run(feel::FeelOptions {
+            suite,
+            output: output.as_deref(),
+            game: game.as_deref(),
+        }),
         Task::Dev {
             fake_ai,
             ai_timeout_ms,
@@ -570,7 +591,7 @@ fn verify() -> Result<()> {
     replay_spoken_input_scenario(SPOKEN_INPUT_SCENARIO)?;
     store_assets::check(Path::new("."))?;
     run("cargo", &["build", "--workspace", "--locked"])?;
-    replay_scenario(BERRY_GRUDGE_SCENARIO, false, false)?;
+    replay_scenario(BERRY_GRUDGE_SCENARIO, true, false)?;
     replay_scenario("fixtures/scenarios/aquarium-v1.jsonl", true, false)
 }
 

@@ -12,13 +12,28 @@ pub enum ScenarioStep {
     Session(CommandEnvelope),
     Ui(UiAction),
     Capture(String),
+    Marker(String),
+    /// One synthetic 60 Hz frame of a `wait` control.
+    WaitTick {
+        milliseconds: u64,
+    },
 }
 
 #[derive(Debug)]
 pub struct ScenarioRunner {
     steps: VecDeque<ScenarioStep>,
     pub capture_dir: PathBuf,
+    wait: Option<WaitState>,
 }
+
+#[derive(Debug)]
+struct WaitState {
+    requested_ms: u64,
+    elapsed_ms: u64,
+    frame: u64,
+}
+
+const MAX_WAIT_MS: u64 = 15 * 60_000;
 
 impl ScenarioRunner {
     pub fn load(path: &Path, capture_dir: PathBuf) -> Result<Self, ScenarioError> {
@@ -36,11 +51,50 @@ impl ScenarioRunner {
         if steps.is_empty() {
             return Err(ScenarioError::Empty);
         }
-        Ok(Self { steps, capture_dir })
+        Ok(Self {
+            steps,
+            capture_dir,
+            wait: None,
+        })
     }
 
     pub fn next(&mut self) -> Option<ScenarioStep> {
-        self.steps.pop_front()
+        if let Some(tick) = self.next_wait_tick() {
+            return Some(tick);
+        }
+        loop {
+            match self.steps.pop_front()? {
+                ScenarioStep::WaitTick { milliseconds } => {
+                    self.wait = Some(WaitState {
+                        requested_ms: milliseconds,
+                        elapsed_ms: 0,
+                        frame: 0,
+                    });
+                    if let Some(tick) = self.next_wait_tick() {
+                        return Some(tick);
+                    }
+                }
+                step => return Some(step),
+            }
+        }
+    }
+
+    fn next_wait_tick(&mut self) -> Option<ScenarioStep> {
+        let wait = self.wait.as_mut()?;
+        let remaining = wait.requested_ms.saturating_sub(wait.elapsed_ms);
+        if remaining == 0 {
+            self.wait = None;
+            return None;
+        }
+        // Bresenham-style frame boundaries retain an exact 1,000 ms per 60 frames.
+        // A non-frame-aligned requested duration has one bounded final partial frame.
+        let next_boundary = wait.frame.saturating_add(1).saturating_mul(1_000) / 60;
+        let previous_boundary = wait.frame.saturating_mul(1_000) / 60;
+        let cadence_ms = next_boundary.saturating_sub(previous_boundary);
+        let milliseconds = cadence_ms.min(remaining);
+        wait.frame = wait.frame.saturating_add(1);
+        wait.elapsed_ms = wait.elapsed_ms.saturating_add(milliseconds);
+        Some(ScenarioStep::WaitTick { milliseconds })
     }
 }
 
@@ -52,6 +106,22 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Capture {
+        version: u32,
+        command: String,
+        name: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Wait {
+        version: u32,
+        command: String,
+        milliseconds: u64,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Marker {
         version: u32,
         command: String,
         name: String,
@@ -96,6 +166,33 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
         };
         return Ok(ScenarioStep::Ui(action));
     }
+    if kind.command == "wait" {
+        let wait: Wait = serde_json::from_str(line).map_err(ScenarioError::Json)?;
+        if wait.version != beastie_session::SESSION_PROTOCOL_VERSION || wait.command != "wait" {
+            return Err(ScenarioError::Command(
+                "unsupported wait control version".to_owned(),
+            ));
+        }
+        if wait.milliseconds == 0 || wait.milliseconds > MAX_WAIT_MS {
+            return Err(ScenarioError::WaitBounds);
+        }
+        return Ok(ScenarioStep::WaitTick {
+            milliseconds: wait.milliseconds,
+        });
+    }
+    if kind.command == "marker" {
+        let marker: Marker = serde_json::from_str(line).map_err(ScenarioError::Json)?;
+        if marker.version != beastie_session::SESSION_PROTOCOL_VERSION || marker.command != "marker"
+        {
+            return Err(ScenarioError::Command(
+                "unsupported marker control version".to_owned(),
+            ));
+        }
+        if !safe_stem(&marker.name) {
+            return Err(ScenarioError::MarkerName);
+        }
+        return Ok(ScenarioStep::Marker(marker.name));
+    }
     if kind.command != "capture" {
         return GameSession::parse_command(line)
             .map(ScenarioStep::Session)
@@ -108,17 +205,18 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
             capture.version
         )));
     }
-    if capture.command != "capture"
-        || capture.name.is_empty()
-        || capture.name.len() > 64
-        || !capture
-            .name
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-    {
+    if capture.command != "capture" || !safe_stem(&capture.name) {
         return Err(ScenarioError::CaptureName);
     }
     Ok(ScenarioStep::Capture(capture.name))
+}
+
+fn safe_stem(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
 }
 
 #[derive(Debug, Error)]
@@ -136,6 +234,10 @@ pub enum ScenarioError {
     Command(String),
     #[error("capture name must contain only ASCII letters, numbers, '-' or '_'")]
     CaptureName,
+    #[error("marker name must contain only ASCII letters, numbers, '-' or '_'")]
+    MarkerName,
+    #[error("wait must be between 1 ms and 15 minutes")]
+    WaitBounds,
     #[error("scenario contains no commands")]
     Empty,
 }
@@ -161,6 +263,10 @@ mod tests {
             parse_step(r#"{"version":1,"command":"capture","name":"room_1"}"#),
             Ok(ScenarioStep::Capture(name)) if name == "room_1"
         ));
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"marker","name":"settled"}"#),
+            Ok(ScenarioStep::Marker(name)) if name == "settled"
+        ));
     }
 
     #[test]
@@ -168,6 +274,44 @@ mod tests {
         assert!(matches!(
             parse_step(r#"{"version":1,"command":"capture","name":"../save"}"#),
             Err(ScenarioError::CaptureName)
+        ));
+    }
+
+    #[test]
+    fn waits_use_exact_sixty_hertz_cadence_and_support_five_minutes() {
+        let mut runner = ScenarioRunner {
+            steps: VecDeque::from([ScenarioStep::WaitTick {
+                milliseconds: 1_000,
+            }]),
+            capture_dir: PathBuf::new(),
+            wait: None,
+        };
+        let ticks = std::iter::from_fn(|| runner.next())
+            .map(|step| match step {
+                ScenarioStep::WaitTick { milliseconds } => milliseconds,
+                _ => panic!("wait only"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ticks.len(), 60);
+        assert_eq!(ticks.iter().sum::<u64>(), 1_000);
+        assert!(ticks.iter().all(|tick| matches!(tick, 16 | 17)));
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"wait","milliseconds":300000}"#),
+            Ok(ScenarioStep::WaitTick {
+                milliseconds: 300_000
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_out_of_bounds_waits_and_unsafe_markers() {
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"wait","milliseconds":900001}"#),
+            Err(ScenarioError::WaitBounds)
+        ));
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"marker","name":"../private"}"#),
+            Err(ScenarioError::MarkerName)
         ));
     }
 

@@ -1,0 +1,27 @@
+{"version":1,"command":"marker","name":"00-first-frame"}
+{"version":1,"command":"capture","name":"00-first-frame"}
+{"version":1,"command":"wait","milliseconds":20000}
+{"version":1,"command":"marker","name":"01-first-exploration"}
+{"version":1,"command":"ui","action":"open_food"}
+{"version":1,"command":"wait","milliseconds":4000}
+{"version":1,"command":"ui","action":"close"}
+{"version":1,"command":"wait","milliseconds":2000}
+{"version":1,"command":"marker","name":"02-first-talk"}
+{"version":1,"command":"talk","text":"Hello Mop. What are you doing?"}
+{"version":1,"command":"wait","milliseconds":10000}
+{"version":1,"command":"marker","name":"03-first-food"}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":7200,"y":1800}}
+{"version":1,"command":"wait","milliseconds":14000}
+{"version":1,"command":"marker","name":"04-discover-toys"}
+{"version":1,"command":"ui","action":"open_toys"}
+{"version":1,"command":"wait","milliseconds":4000}
+{"version":1,"command":"ui","action":"close"}
+{"version":1,"command":"play","toy":"ball"}
+{"version":1,"command":"wait","milliseconds":8000}
+{"version":1,"command":"marker","name":"05-discover-settings"}
+{"version":1,"command":"ui","action":"open_settings"}
+{"version":1,"command":"wait","milliseconds":6000}
+{"version":1,"command":"ui","action":"close"}
+{"version":1,"command":"wait","milliseconds":232000}
+{"version":1,"command":"marker","name":"06-five-minutes"}
+{"version":1,"command":"capture","name":"06-five-minutes"}

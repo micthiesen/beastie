@@ -2,7 +2,7 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-15** (V2 spoken interaction and selected local recognizer complete).
+Last updated: **2026-08-16** (repeatable feel observatory and first full polish pass complete).
 
 ## Now
 
@@ -33,6 +33,15 @@ Last updated: **2026-08-15** (V2 spoken interaction and selected local recognize
   `aquarium-v1-visible.jsonl`, captures eight aquarium checkpoints through the real ggez shell. The
   berry-grudge, Stage 5, and room-shell fixtures remain regression and migration evidence. See
   [development-harness.md](development-harness.md).
+- `cargo xtask feel --suite baseline` now runs five deterministic subjective experiences through
+  the real game shell and produces synchronized 60 fps video, marker filmstrips, privacy-safe
+  input/event/state/audio traces, retained speech WAVs, a reference audio mix and waveform, review
+  scaffolding, and hash-pinned manifests. The first adjudicated pass fixed collapsed idle rhythm,
+  invalid relationship accumulation, incomplete swim loading, stale and missing interaction
+  receipts, semantic audio divergence, one-frame ducking, modal escape, and caption/mouth timing.
+  Same-seed replays and real macOS pointer/keyboard evidence are recorded in
+  [feel-review-baseline.md](feel-review-baseline.md); the repeatable method is in
+  [feel-review-loop.md](feel-review-loop.md).
 - The selected local mouth is Qwen3.5 0.8B Q4 behind one authenticated loopback llama.cpp sidecar.
   The expanded V1 corpus passed 26/26 with no fallback, permitted refusal, or prohibited escape;
   the portable CPU corpus remains 18/18. Exact model evidence and limitations are in
@@ -148,6 +157,7 @@ cleanup, and worker termination alongside the existing save and launch checks.
 - Runtime boundaries: [architecture.md](architecture.md)
 - Test and capture commands: [development-harness.md](development-harness.md)
 - Repeatable subjective playtest workflow: [feel-review-loop.md](feel-review-loop.md)
+- First adjudicated feel baseline: [feel-review-baseline.md](feel-review-baseline.md)
 - Model and voice evidence: [local-mouth.md](local-mouth.md),
   [tooling-preflight.md](tooling-preflight.md)
 - Release assembly and prerequisites: [packaging.md](packaging.md)

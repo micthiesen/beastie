@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use beastie_core::{NamingTarget, NormalizedPosition, ToyId};
+use beastie_core::{GameEvent, NamingTarget, NormalizedPosition, ToyId};
 use beastie_protocol::{
     MouthTiming, RecognitionOutcome, SpeechInputFailure, TranscriptRecord,
     identity_tts_voice_settings,
@@ -13,7 +13,7 @@ use beastie_session::{
 };
 use beastie_view::{
     BindableAction, BindingLabels, CursorKind, MicrophoneState, RenderPlan, UiAction, UiMode,
-    ViewState, logical_to_world, plan,
+    ViewState, audio_plan_for_events, logical_to_world, plan,
 };
 use ggez::conf::{FullscreenType, WindowMode};
 use ggez::event::{Button, EventHandler, GamepadId};
@@ -25,15 +25,18 @@ use ggez::winit::window::CursorIcon;
 use ggez::{Context, GameError, GameResult};
 
 use crate::args::Args;
-use crate::audio::{AmbientBubbleSchedule, AudioBank, UI_CONFIRM, UI_SELECT, sound_for_event};
+use crate::audio::{AmbientBubbleSchedule, AudioBank, UI_CONFIRM, UI_SELECT, sound_for_cue};
 use crate::dialogue::{DialogueManager, WorkerConfig};
+use crate::feel::FeelRecorder;
 use crate::input::{
     action_at_with_assets, append_text, cursor_at_with_assets, focused_action, move_focus,
     region_at_with_assets,
 };
 use crate::microphone::{MicrophoneCapture, MicrophoneError, PrivateAudioRoot};
 use crate::recognition::{RecognitionManager, RecognitionWorkerConfig, speech_failure};
-use crate::renderer::{AssetCatalog, Viewport, execute_plan, save_presentation_png};
+use crate::renderer::{
+    AssetCatalog, Viewport, execute_plan, presentation_rgba, save_presentation_png,
+};
 use crate::save_store::{LoadedSave, SaveStore};
 use crate::scenario::{ScenarioRunner, ScenarioStep};
 use crate::settings::{BindingKey, KeyBindings, SettingsStore, TextScale, TextSpeed, UserSettings};
@@ -72,6 +75,7 @@ pub struct Game {
     transcripts: TranscriptStore,
     save_enabled: bool,
     scenario: Option<ScenarioRunner>,
+    feel: Option<FeelRecorder>,
     capture: Option<CaptureState>,
     smoke_frames: Option<u8>,
     finished_frames: u8,
@@ -98,12 +102,18 @@ impl Game {
         let assets_root = assets_root();
         let save_store = SaveStore::new(ctx.fs.user_config_dir().join("saves").join("main.json"));
         let settings_store = SettingsStore::new(ctx.fs.user_config_dir().join("settings.json"));
-        let (settings, settings_message) = match settings_store.load() {
-            Ok(settings) => (settings, None),
-            Err(_) => (
-                UserSettings::default(),
-                Some("settings were unreadable. using safe defaults.".to_owned()),
-            ),
+        let (settings, settings_message) = if args.feel_dir.is_some() {
+            // Feel evidence must not inherit the operator's accessibility, window, audio, or
+            // microphone preferences. Comparisons need one explicit, repeatable presentation.
+            (UserSettings::default(), None)
+        } else {
+            match settings_store.load() {
+                Ok(settings) => (settings, None),
+                Err(_) => (
+                    UserSettings::default(),
+                    Some("settings were unreadable. using safe defaults.".to_owned()),
+                ),
+            }
         };
         if args.new_game {
             save_store
@@ -144,6 +154,12 @@ impl Game {
             })
             .transpose()
             .map_err(|error| GameError::ConfigError(error.to_string()))?;
+        let feel = args
+            .feel_dir
+            .clone()
+            .map(FeelRecorder::create)
+            .transpose()
+            .map_err(feel_error)?;
         let mut view = ViewState {
             pixel_grid: settings.pixel_grid,
             text_scale: u8::from(matches!(settings.text_scale, TextScale::Large)) + 1,
@@ -215,6 +231,7 @@ impl Game {
             transcripts,
             save_enabled,
             scenario,
+            feel,
             capture: None,
             smoke_frames: args.smoke.then_some(3),
             finished_frames: 0,
@@ -292,19 +309,26 @@ impl Game {
                 command,
             })
             .map_err(session_error)?;
-        self.queued_audio
-            .extend(observation.events.iter().filter_map(sound_for_event));
+        self.queued_audio.extend(
+            audio_plan_for_events(&observation.events)
+                .events
+                .into_iter()
+                .filter_map(sound_for_cue),
+        );
         self.view
             .observe_events(&observation.events, self.session.world().elapsed_ms);
+        if let Some(feel) = &mut self.feel {
+            feel.record_observation(&observation, self.session.world().elapsed_ms)
+                .map_err(feel_error)?;
+        }
+        let now_ms = self.session.world().elapsed_ms;
         if let Some(status) = observation.spoken_input {
-            self.spoken_turn_pending = spoken_input_is_pending(status);
-            if self.spoken_turn_pending && matches!(status, SpokenInputStatus::Deferred) {
-                self.view.microphone_state = MicrophoneState::Recognizing;
-                self.view.status_message =
-                    Some("Heard you. Waiting for a good moment...".to_owned());
-            } else if !self.spoken_turn_pending {
-                self.view.microphone_state = self.resting_microphone_state();
-            }
+            let resting_microphone_state = self.resting_microphone_state();
+            self.spoken_turn_pending =
+                apply_spoken_input_status(&mut self.view, status, now_ms, resting_microphone_state);
+        } else if observation.events.contains(&GameEvent::TalkIgnored) {
+            self.view
+                .show_status("Not interested right now.".to_owned(), now_ms, 4_000);
         }
         if let Some(request) = observation.dialogue_request
             && self.dialogue.request(request)
@@ -334,6 +358,7 @@ impl Game {
     }
 
     fn begin_push_to_talk(&mut self) -> GameResult {
+        self.view.transcript_status = None;
         if self.microphone.is_some() {
             return Ok(());
         }
@@ -539,6 +564,13 @@ impl Game {
                     self.settings.subtitles,
                     text_speed,
                 );
+                if turn.fallback {
+                    self.view.show_status(
+                        "Local thoughts unavailable. Using a simple response.".to_owned(),
+                        self.session.world().elapsed_ms,
+                        5_000,
+                    );
+                }
                 self.transcripts
                     .append(&TranscriptRecord::from_turn(
                         self.session.world().elapsed_ms,
@@ -573,11 +605,15 @@ impl Game {
         Ok(())
     }
 
-    fn poll_tts(&mut self) {
+    fn poll_tts(&mut self) -> GameResult {
         match self.tts.try_recv() {
             Ok(completion) => {
                 let _ = completion.request_id;
                 if let Some(wav) = completion.wav {
+                    if let Some(feel) = &mut self.feel {
+                        feel.record_speech(&wav, self.session.world().elapsed_ms)
+                            .map_err(feel_error)?;
+                    }
                     self.audio.play_speech(wav);
                     if let Some(timing) = self.pending_mouth_timing.take() {
                         self.speech_animation = Some(SpeechAnimation {
@@ -589,6 +625,7 @@ impl Game {
             }
             Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
         }
+        Ok(())
     }
 
     fn apply_ui_action(&mut self, action: UiAction, controller: bool) -> GameResult {
@@ -1035,21 +1072,37 @@ impl Game {
                 return Ok(());
             }
             self.finished_frames = self.finished_frames.saturating_add(1);
-            if self.finished_frames >= 3 {
-                ctx.request_quit();
-            }
+            ctx.gfx.window().request_redraw();
             return Ok(());
         };
         match step {
             ScenarioStep::Session(envelope) => {
+                if let Some(feel) = &mut self.feel {
+                    feel.record_command(&envelope, self.session.world().elapsed_ms)
+                        .map_err(feel_error)?;
+                }
                 let persist = command_requires_persist(&envelope.command);
                 self.apply_command(envelope.command, persist)?;
             }
             ScenarioStep::Ui(action) => {
+                if let Some(feel) = &mut self.feel {
+                    feel.record_ui(action, self.session.world().elapsed_ms)
+                        .map_err(feel_error)?;
+                }
                 self.apply_ui_action(action, false)?;
             }
             ScenarioStep::Capture(name) => {
                 self.capture = Some(CaptureState::RenderPending(name));
+                ctx.gfx.window().request_redraw();
+            }
+            ScenarioStep::Marker(name) => {
+                if let Some(feel) = &mut self.feel {
+                    feel.record_marker(&name, self.session.world().elapsed_ms)
+                        .map_err(feel_error)?;
+                }
+            }
+            ScenarioStep::WaitTick { milliseconds } => {
+                self.apply_command(SessionCommand::Tick { milliseconds }, false)?;
                 ctx.gfx.window().request_redraw();
             }
         }
@@ -1063,7 +1116,13 @@ impl EventHandler for Game {
             self.apply_window_settings(ctx)?;
             self.window_settings_dirty = false;
         }
-        let speech_was_visible = self.view.speech.is_some();
+        let frame_delta_ms = ctx
+            .time
+            .delta()
+            .as_millis()
+            .clamp(1, 250)
+            .try_into()
+            .unwrap_or(250);
         if self
             .microphone
             .as_ref()
@@ -1073,17 +1132,11 @@ impl EventHandler for Game {
         }
         self.poll_recognition()?;
         self.poll_dialogue()?;
-        self.poll_tts();
+        self.poll_tts()?;
         if self.scenario.is_some() {
             self.drive_scenario(ctx)?;
         } else {
-            let dt_ms = ctx
-                .time
-                .delta()
-                .as_millis()
-                .min(250)
-                .try_into()
-                .unwrap_or(250);
+            let dt_ms = frame_delta_ms;
             if dt_ms > 0 {
                 self.apply_command(
                     SessionCommand::Tick {
@@ -1099,11 +1152,12 @@ impl EventHandler for Game {
                 ctx.request_quit();
             }
         }
+        if self.audio.speech_active() && self.view.speech.is_some() {
+            self.view.speech_expires_at_ms =
+                Some(self.session.world().elapsed_ms.saturating_add(500));
+        }
         self.view.expire(self.session.world().elapsed_ms);
         self.update_speech_reveal();
-        if speech_was_visible && self.view.speech.is_none() {
-            self.audio.stop_speech();
-        }
         let had_one_shot = !self.queued_audio.is_empty();
         if let Some(bubble) = self
             .bubble_schedule
@@ -1112,7 +1166,18 @@ impl EventHandler for Game {
             self.queued_audio.push(bubble);
         }
         self.audio.ensure_ambience();
-        self.audio.update_ducking(!self.queued_audio.is_empty());
+        self.audio
+            .update_ducking(frame_delta_ms, !self.queued_audio.is_empty());
+        if let Some(feel) = &mut self.feel {
+            feel.record_audio(
+                &self.queued_audio,
+                self.audio.speech_active(),
+                self.audio.one_shot_active(),
+                self.audio.ambience_duck(),
+                self.session.world().elapsed_ms,
+            )
+            .map_err(feel_error)?;
+        }
         self.audio.play_queued(&mut self.queued_audio);
         if !self.audio.speech_active() {
             self.speech_animation = None;
@@ -1153,6 +1218,12 @@ impl EventHandler for Game {
         execute_plan(ctx, &mut presentation, &render, &self.assets)?;
         presentation.finish(ctx)?;
 
+        if let Some(feel) = &mut self.feel {
+            let rgba = presentation_rgba(ctx, &self.presentation_frame)?;
+            feel.record_frame(&rgba, self.session.world(), &self.view)
+                .map_err(feel_error)?;
+        }
+
         if mark_capture_rendered(&mut self.capture) {
             ctx.gfx.window().request_redraw();
         }
@@ -1168,6 +1239,12 @@ impl EventHandler for Game {
                 .scale([self.viewport.scale, self.viewport.scale]),
         );
         frame.finish(ctx)?;
+        if self.scenario.is_some() && !self.stay_open && self.finished_frames >= 3 {
+            if let Some(mut feel) = self.feel.take() {
+                feel.finish().map_err(feel_error)?;
+            }
+            ctx.request_quit();
+        }
         Ok(())
     }
 
@@ -1178,6 +1255,14 @@ impl EventHandler for Game {
         x: f32,
         y: f32,
     ) -> GameResult {
+        if let Some(feel) = &mut self.feel {
+            feel.record_native(
+                "mouse_button_down",
+                serde_json::json!({"button": format!("{button:?}"), "x": x, "y": y}),
+                self.session.world().elapsed_ms,
+            )
+            .map_err(feel_error)?;
+        }
         self.view.controller_active = false;
         if button != MouseButton::Left {
             return Ok(());
@@ -1206,9 +1291,17 @@ impl EventHandler for Game {
         &mut self,
         _ctx: &mut Context,
         button: MouseButton,
-        _x: f32,
-        _y: f32,
+        x: f32,
+        y: f32,
     ) -> GameResult {
+        if let Some(feel) = &mut self.feel {
+            feel.record_native(
+                "mouse_button_up",
+                serde_json::json!({"button": format!("{button:?}"), "x": x, "y": y}),
+                self.session.world().elapsed_ms,
+            )
+            .map_err(feel_error)?;
+        }
         if button == MouseButton::Left {
             self.end_push_to_talk()?;
         }
@@ -1223,6 +1316,14 @@ impl EventHandler for Game {
         _dx: f32,
         _dy: f32,
     ) -> GameResult {
+        if let Some(feel) = &mut self.feel {
+            feel.record_native(
+                "mouse_motion",
+                serde_json::json!({"x": x, "y": y}),
+                self.session.world().elapsed_ms,
+            )
+            .map_err(feel_error)?;
+        }
         self.view.controller_active = false;
         let logical = self
             .viewport
@@ -1268,6 +1369,25 @@ impl EventHandler for Game {
     }
 
     fn key_down_event(&mut self, ctx: &mut Context, input: KeyInput, repeated: bool) -> GameResult {
+        if let Some(feel) = &mut self.feel {
+            let key = match &input.event.logical_key {
+                Key::Character(_) => "character".to_owned(),
+                Key::Named(named) => format!("{named:?}"),
+                _ => "unidentified".to_owned(),
+            };
+            feel.record_native(
+                "key_down",
+                serde_json::json!({
+                    "key": key,
+                    "repeated": repeated,
+                    "control": input.mods.control_key(),
+                    "super": input.mods.super_key(),
+                    "shift": input.mods.shift_key(),
+                }),
+                self.session.world().elapsed_ms,
+            )
+            .map_err(feel_error)?;
+        }
         self.view.controller_active = false;
         let key = &input.event.logical_key;
         if let UiMode::Rebinding(action) = self.view.mode {
@@ -1356,6 +1476,28 @@ impl EventHandler for Game {
             self.view.text_speed = text_speed_value(self.settings.text_speed);
             return self.persist_settings();
         }
+        if matches!(self.view.mode, UiMode::Compose)
+            && !repeated
+            && matches!(key, Key::Named(NamedKey::Tab))
+        {
+            self.navigate(if input.mods.shift_key() { -1 } else { 1 });
+            return Ok(());
+        }
+        if matches!(self.view.mode, UiMode::Compose)
+            && self.view.focused_region.as_deref() != Some("compose/input")
+            && !repeated
+        {
+            match key {
+                Key::Named(NamedKey::ArrowRight | NamedKey::ArrowDown) => self.navigate(1),
+                Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) => self.navigate(-1),
+                Key::Named(NamedKey::Enter | NamedKey::Space) => self.activate_focus(false)?,
+                Key::Named(NamedKey::Escape) => {
+                    self.view.focused_region = Some("compose/input".to_owned());
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
         if matches!(self.view.mode, UiMode::Compose) {
             match key {
                 Key::Named(NamedKey::Escape) => {
@@ -1392,6 +1534,19 @@ impl EventHandler for Game {
     }
 
     fn key_up_event(&mut self, _ctx: &mut Context, input: KeyInput) -> GameResult {
+        if let Some(feel) = &mut self.feel {
+            let key = match &input.event.logical_key {
+                Key::Character(_) => "character".to_owned(),
+                Key::Named(named) => format!("{named:?}"),
+                _ => "unidentified".to_owned(),
+            };
+            feel.record_native(
+                "key_up",
+                serde_json::json!({"key": key}),
+                self.session.world().elapsed_ms,
+            )
+            .map_err(feel_error)?;
+        }
         if binding_key(&input.event.logical_key) == Some(self.settings.bindings.push_to_talk)
             || matches!(
                 input.event.logical_key,
@@ -1409,6 +1564,14 @@ impl EventHandler for Game {
         button: Button,
         _id: GamepadId,
     ) -> GameResult {
+        if let Some(feel) = &mut self.feel {
+            feel.record_native(
+                "gamepad_button_down",
+                serde_json::json!({"button": format!("{button:?}")}),
+                self.session.world().elapsed_ms,
+            )
+            .map_err(feel_error)?;
+        }
         self.view.controller_active = true;
         if self.view.focused_region.is_none() {
             self.reset_focus();
@@ -1429,6 +1592,14 @@ impl EventHandler for Game {
         button: Button,
         _id: GamepadId,
     ) -> GameResult {
+        if let Some(feel) = &mut self.feel {
+            feel.record_native(
+                "gamepad_button_up",
+                serde_json::json!({"button": format!("{button:?}")}),
+                self.session.world().elapsed_ms,
+            )
+            .map_err(feel_error)?;
+        }
         if button == Button::South {
             self.end_push_to_talk()?;
         }
@@ -1436,6 +1607,14 @@ impl EventHandler for Game {
     }
 
     fn focus_event(&mut self, _ctx: &mut Context, gained: bool) -> GameResult {
+        if let Some(feel) = &mut self.feel {
+            feel.record_native(
+                "window_focus",
+                serde_json::json!({"gained": gained}),
+                self.session.world().elapsed_ms,
+            )
+            .map_err(feel_error)?;
+        }
         if !gained {
             self.end_push_to_talk()?;
             self.persist()?;
@@ -1673,6 +1852,10 @@ fn session_error(error: SessionError) -> GameError {
     GameError::CustomError(error.to_string())
 }
 
+fn feel_error(error: crate::feel::FeelError) -> GameError {
+    GameError::FilesystemError(error.to_string())
+}
+
 fn play_command(toy: ToyId) -> SessionCommand {
     SessionCommand::Play { toy }
 }
@@ -1713,18 +1896,97 @@ const fn spoken_input_is_pending(status: SpokenInputStatus) -> bool {
     )
 }
 
+fn apply_spoken_input_status(
+    view: &mut ViewState,
+    status: SpokenInputStatus,
+    now_ms: u64,
+    resting_microphone_state: MicrophoneState,
+) -> bool {
+    let pending = spoken_input_is_pending(status);
+    match status {
+        SpokenInputStatus::Listening => {
+            view.microphone_state = MicrophoneState::Listening;
+            view.clear_status();
+        }
+        SpokenInputStatus::CandidateUpdated { .. } => {
+            view.microphone_state = MicrophoneState::Recognizing;
+        }
+        SpokenInputStatus::Deferred => {
+            view.microphone_state = MicrophoneState::Recognizing;
+            view.show_status(
+                "Heard you. Waiting for a good moment...".to_owned(),
+                now_ms,
+                60_000,
+            );
+        }
+        SpokenInputStatus::Submitted => {
+            view.microphone_state = resting_microphone_state;
+            view.clear_status();
+        }
+        SpokenInputStatus::AcousticUncertainty { .. } => {
+            view.microphone_state = resting_microphone_state;
+            view.show_status(
+                "Did not catch that. Hold F1 and try again.".to_owned(),
+                now_ms,
+                5_000,
+            );
+        }
+        SpokenInputStatus::NoCandidate => {
+            view.microphone_state = resting_microphone_state;
+            view.show_status(
+                "No speech heard. Hold F1 and try again.".to_owned(),
+                now_ms,
+                5_000,
+            );
+        }
+        SpokenInputStatus::Refused => {
+            view.microphone_state = resting_microphone_state;
+            view.show_status("Not answering right now.".to_owned(), now_ms, 4_000);
+        }
+        SpokenInputStatus::NotEngaged { .. } => {
+            view.microphone_state = resting_microphone_state;
+            view.show_status("Not interested right now.".to_owned(), now_ms, 4_000);
+        }
+        SpokenInputStatus::InfrastructureFailure { failure } => {
+            view.microphone_state = match failure {
+                SpeechInputFailure::MicrophoneUnavailable
+                | SpeechInputFailure::RecognizerUnavailable
+                | SpeechInputFailure::UnsupportedLanguage => MicrophoneState::Unavailable,
+                SpeechInputFailure::RecognitionFailed => MicrophoneState::Error,
+            };
+            let message = match failure {
+                SpeechInputFailure::MicrophoneUnavailable => {
+                    "Microphone unavailable. Text still works."
+                }
+                SpeechInputFailure::RecognizerUnavailable => {
+                    "Speech recognition unavailable. Text still works."
+                }
+                SpeechInputFailure::RecognitionFailed => {
+                    "Speech recognition failed. Hold F1 to try again."
+                }
+                SpeechInputFailure::UnsupportedLanguage => {
+                    "Speech language unsupported. Text still works."
+                }
+            };
+            view.show_status(message.to_owned(), now_ms, 5_000);
+        }
+    }
+    pending
+}
+
 #[cfg(test)]
 mod tests {
     use beastie_core::{Reaction, ToyId};
     use beastie_session::{
         SESSION_PROTOCOL_VERSION, SESSION_SAVE_VERSION, SessionCommand, SpokenInputStatus,
     };
-    use beastie_view::{UiAction, ViewState};
+    use beastie_view::{MicrophoneState, UiAction, ViewState};
 
     use super::{
-        CaptureState, clears_speech, command_requires_persist, effective_dialogue_text_speed,
-        load_session, mark_capture_rendered, mouth_phase, play_command, revealed_text,
-        show_dialogue_caption, spoken_input_is_pending, take_capture_for_readback,
+        CaptureState, apply_spoken_input_status, clears_speech, command_requires_persist,
+        effective_dialogue_text_speed, load_session, mark_capture_rendered, mouth_phase,
+        play_command, revealed_text, show_dialogue_caption, spoken_input_is_pending,
+        take_capture_for_readback,
     };
     use crate::save_store::SaveStore;
     use crate::settings::TextSpeed;
@@ -1823,6 +2085,44 @@ mod tests {
         ] {
             assert!(!spoken_input_is_pending(terminal));
         }
+    }
+
+    #[test]
+    fn submitted_speech_clears_the_deferred_message_and_failures_explain_recovery() {
+        let mut view = ViewState::default();
+        assert!(apply_spoken_input_status(
+            &mut view,
+            SpokenInputStatus::Deferred,
+            1_000,
+            MicrophoneState::Idle,
+        ));
+        assert_eq!(
+            view.status_message.as_deref(),
+            Some("Heard you. Waiting for a good moment...")
+        );
+
+        assert!(!apply_spoken_input_status(
+            &mut view,
+            SpokenInputStatus::Submitted,
+            2_000,
+            MicrophoneState::Idle,
+        ));
+        assert!(view.status_message.is_none());
+        assert_eq!(view.microphone_state, MicrophoneState::Idle);
+
+        apply_spoken_input_status(
+            &mut view,
+            SpokenInputStatus::InfrastructureFailure {
+                failure: beastie_protocol::SpeechInputFailure::RecognizerUnavailable,
+            },
+            3_000,
+            MicrophoneState::Idle,
+        );
+        assert_eq!(view.microphone_state, MicrophoneState::Unavailable);
+        assert_eq!(
+            view.status_message.as_deref(),
+            Some("Speech recognition unavailable. Text still works.")
+        );
     }
 
     #[test]

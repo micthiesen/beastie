@@ -2,6 +2,7 @@ mod app;
 mod args;
 mod audio;
 mod dialogue;
+mod feel;
 mod input;
 mod microphone;
 mod process;

@@ -53,6 +53,23 @@ player's persistent save.
 The berry-grudge and Stage 5 scenarios remain long-form behavioral regressions. `room-shell.jsonl`
 is retained only as historical room-era coverage and is not the canonical visual target.
 
+## Feel evidence
+
+Use the subjective baseline before and after a presentation or creature-life pass:
+
+```bash
+cargo xtask feel --suite baseline --output target/feel/baseline-before
+cargo xtask feel --suite baseline --output target/feel/baseline-after
+```
+
+The five visible experiences record a complete 640x360, 60 fps logical presentation plus
+synchronized privacy-safe input, event, state, audio, and marker traces. The harness generates
+uniform and interaction-centered filmstrips, retains offline TTS WAVs, creates an authored reference
+mix, validates the video, and hashes the exact binary and scenario. Focused suites accept the same
+experience names documented in [feel-review-loop.md](feel-review-loop.md). Semantic replay proves
+repeatable causality and timing; final pointer, keyboard, microphone, controller, window, and host
+audio judgments still require native input or device evidence.
+
 Deterministic spoken-input replay:
 
 ```bash
