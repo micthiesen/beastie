@@ -34,6 +34,11 @@ Always run `cargo xtask verify` after changes. It must stay independent of a dis
 GPU, audio device, network connection, or PixelLab credential. For visible game-shell changes,
 also run `cargo xtask dev --fake-ai` on the host platform.
 
+Do not rebuild native release binaries, installers, or complete model bundles after ordinary
+changes. Those slow artifacts are explicit portability checkpoints, not part of the iteration
+loop. Routine development stops at the normal build, lint, and test gate above unless the user
+specifically asks for a native bundle or the chosen acceptance task requires one.
+
 For macOS visible validation, stop yabai once if it interferes with Metal drawable acquisition or
 window focus, and leave it stopped for the rest of the session or until the next restart. Do not
 cycle background desktop tools off and on around every smoke run. The user prefers a temporarily
