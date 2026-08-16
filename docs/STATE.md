@@ -147,6 +147,7 @@ cleanup, and worker termination alongside the existing save and launch checks.
 - Implemented spoken-input seam: [spoken-input-foundation.md](spoken-input-foundation.md)
 - Runtime boundaries: [architecture.md](architecture.md)
 - Test and capture commands: [development-harness.md](development-harness.md)
+- Repeatable subjective playtest workflow: [feel-review-loop.md](feel-review-loop.md)
 - Model and voice evidence: [local-mouth.md](local-mouth.md),
   [tooling-preflight.md](tooling-preflight.md)
 - Release assembly and prerequisites: [packaging.md](packaging.md)
