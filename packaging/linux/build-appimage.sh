@@ -56,6 +56,22 @@ Exec=AppRun
 Icon=beastie
 Categories=Game;
 DESKTOP
+cat > "$appdir/README-LINUX.txt" <<'README'
+Beastie for Linux x64
+
+Extract the archive and run:
+
+    ./AppRun
+
+Beastie runs entirely offline and stores saves and generated speech in your
+normal per-user XDG configuration directory, never beside the executable.
+
+This tar bundle targets an x86-64 Linux desktop with X11 or Wayland, Vulkan or
+Mesa graphics, ALSA, udev, and xkbcommon-x11. Ubuntu 24.04 Desktop includes
+these libraries. A minimal Ubuntu installation can add them with:
+
+    sudo apt install libxkbcommon-x11-0 libasound2t64 libudev1 mesa-vulkan-drivers
+README
 mkdir -p "$(dirname "$output")"
 if [[ "$format" == appimage ]]; then
   appimagetool "$appdir" "$output"

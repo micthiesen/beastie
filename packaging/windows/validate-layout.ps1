@@ -13,13 +13,21 @@ if ($ConfigOnly) {
     exit 0
 }
 $required = @(
-    'beastie.exe', 'beastie-ai-worker.exe', 'beastie-stt.exe', 'assets\manifest.toml',
+    'beastie.exe', 'beastie-ai-worker.exe', 'beastie-tts.exe', 'beastie-stt.exe',
+    'assets\manifest.toml',
     'models\manifest.toml', 'models\LICENSE', 'models\README.md',
+    'models\Qwen3.5-0.8B-Q4_0.gguf',
     'runtime\llama-server.exe', 'runtime\LICENSE',
-    'runtime\stt\beastie-moonshine-engine.exe', 'runtime\stt\LICENSE',
-    'runtime\stt\THIRD_PARTY_NOTICES',
-    'models\moonshine-tiny-streaming-en\LICENSE',
-    'models\moonshine-tiny-streaming-en\README.md', 'package-manifest.json'
+    'runtime\espeak-ng.exe', 'runtime\espeak-ng-COPYING',
+    'runtime\espeak-ng-1.52.0.tar.gz',
+    'models\parakeet-tdt-0.6b-v3-int8\config.json',
+    'models\parakeet-tdt-0.6b-v3-int8\decoder_joint-model.int8.onnx',
+    'models\parakeet-tdt-0.6b-v3-int8\encoder-model.int8.onnx',
+    'models\parakeet-tdt-0.6b-v3-int8\nemo128.onnx',
+    'models\parakeet-tdt-0.6b-v3-int8\vocab.txt',
+    'models\parakeet-tdt-0.6b-v3-int8\LICENSE',
+    'models\parakeet-tdt-0.6b-v3-int8\README.md',
+    'THIRD_PARTY_NOTICES', 'LICENSE', 'package-manifest.json'
 )
 foreach ($relative in $required) {
     $path = Join-Path $PackageRoot $relative
@@ -27,9 +35,14 @@ foreach ($relative in $required) {
         throw "verified package is missing $relative"
     }
 }
+$espeakData = Join-Path $PackageRoot 'runtime\espeak-ng-data'
+if (-not (Test-Path -LiteralPath $espeakData -PathType Container)) {
+    throw 'verified package is missing runtime\espeak-ng-data'
+}
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $PackageRoot 'package-manifest.json') | ConvertFrom-Json
 if ($manifest.network -ne $false) { throw 'package-manifest.json must declare network=false' }
 if ($manifest.platform -ne 'windows') { throw 'package manifest platform is not windows' }
+if ($manifest.release_complete -ne $true) { throw 'package is not release-complete' }
 if ($LaunchSmoke) {
     # A real package launch is performed only on a Windows runner with the display available.
     $env:BEASTIE_DISABLE_NETWORK = '1'

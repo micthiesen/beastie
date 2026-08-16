@@ -21,7 +21,7 @@ Status: **not release-ready until every required native row has evidence**
 | --- | --- | --- | --- | --- | --- | --- |
 | macOS arm64 | ad hoc signed DMG or notarized DMG | [ ] | [ ] | [ ] | [ ] | link/hash |
 | Windows x64 | Inno Setup installer | [ ] | [ ] | [ ] | [ ] | link/hash |
-| Linux x64 | AppImage or tar equivalent | [ ] | [ ] | [ ] | [ ] | link/hash |
+| Linux x64 | tar equivalent | [x] | [x] | [x] | [x] | [evidence](linux-x64-2026-08-16.md), `97d8f2fc…b3cc4c6` |
 
 For each native run, disable networking at the OS/firewall or runner boundary, start from a clean
 user profile, verify the offline model/worker/TTS path, send one message, save, quit, and confirm no

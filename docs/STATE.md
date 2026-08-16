@@ -2,7 +2,7 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-16** (repeatable feel observatory and first full polish pass complete).
+Last updated: **2026-08-16** (Linux portability proof complete; Windows next).
 
 ## Now
 
@@ -79,9 +79,12 @@ Last updated: **2026-08-16** (repeatable feel observatory and first full polish 
   synthetic corpus. Handy rates Parakeet V3 fast and high-accuracy. Keyterm-biased Moonshine Tiny
   remains the 51 MB lightweight fallback at 0.192 WER and 307 MiB RSS. See
   [stt-runtime.md](stt-runtime.md) and [v2-plan.md](v2-plan.md).
-- macOS native window capture and real pointer/keyboard delivery were proven during the MVP. No
-  physical controller has been attached. Windows and Linux native install, launch, save-path, and
-  child-cleanup evidence has not been produced. CI or cross-compilation is not native proof.
+- macOS native window capture and real pointer/keyboard delivery were proven during the MVP. Linux
+  x64 now has a complete 1,088,135,478-byte tar bundle built and extracted on Ubuntu 24.04: its
+  package audit, clean-profile offline smoke, typed local-Qwen scenario, eSpeak cache, save/reload,
+  child cleanup, and packaged Parakeet corpus all passed. The headless VM had no physical microphone
+  or real audio output. Windows native evidence remains open, and no physical controller has been
+  attached. See [linux-x64-2026-08-16.md](acceptance/linux-x64-2026-08-16.md).
 - The final aquarium shell completed all eight logical captures from an Alacritty GUI child; the
   sprite pass repeated that run several times and the action-animation pass completed another
   eight-frame foreground run. Its inspected notice, swim, accepted-eating, dialogue, and comfort
@@ -125,27 +128,22 @@ Last updated: **2026-08-16** (repeatable feel observatory and first full polish 
 
 ## Next
 
-Produce one complete native Linux release-evidence bundle: package and extract the shipped artifact
-on a real Linux host, run it offline from a clean profile, exercise typed and spoken turns, verify
-the save path and private-audio cleanup, and prove every worker exits. This is the smallest
-independently finishable release gate and will expose cross-platform packaging, audio, microphone,
-and process-lifecycle defects before the more variable Windows installer pass. See
+Linux portability evidence is complete. Produce the Windows x64 bundle next: package and install it
+in the existing Windows VM, run it offline from a clean profile, exercise local dialogue and the
+packaged speech workers, verify save and cache paths, and prove every worker exits. These bundles
+are portability and development evidence only. After Windows passes, return to game-feel and feature
+iteration unless the user explicitly schedules publishing work. See
 [distribution-checklist.md](acceptance/distribution-checklist.md) and [packaging.md](packaging.md).
 
 ## Candidates Not Chosen
 
-- **Windows native release evidence:** the same independently finishable acceptance bundle is
-  required and likely takes one to two days on a real Windows host. It follows Linux so any shared
-  package, runtime, or cleanup defects are fixed once before adding Inno Setup, Windows audio, and
-  microphone-permission variables; cross-compilation and headless fixtures cannot supply the proof.
 - **Physical-controller acceptance:** attach a real controller and verify focus, compose, food,
   comfort, push-to-talk, rebinding, and glyph behavior through the native shell. Expect two to four
   hours once hardware is available; deterministic semantic coverage exists, but feel and native
   delivery require the device and human judgment.
-- **Signing, store captures, and trailer:** finish release identity and public media after native
-  behavior is stable, approximately one to two days plus credential availability and a short taste
-  pass. These require the final renderer, audio, platform artifacts, Apple/Steam credentials, and
-  human visual judgment, so doing them before platform closure risks recapturing and resigning.
+- **Next feel or feature pass:** choose it from a fresh feel bundle and the user's product direction
+  after both portability bundles work. This will likely mix deterministic fixture coverage with
+  native renderer, audio, and human judgment.
 
 ## Durable pointers
 

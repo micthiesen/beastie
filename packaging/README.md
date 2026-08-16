@@ -3,8 +3,8 @@
 Platform installers copy a verified `dist/<platform>` package as one immutable application
 directory. The first launch discovers `models/manifest.toml`, the selected GGUF, `beastie-ai-worker`,
 `runtime/llama-server`, the required eSpeak bundle, sibling `beastie-stt`,
-`runtime/stt/beastie-moonshine-engine`, and `models/moonshine-tiny-streaming-en` relative to the
-game executable. It never
+and `models/parakeet-tdt-0.6b-v3-int8` relative to the game executable. Parakeet inference is
+embedded in `beastie-stt`, so no separate recognition engine is shipped. It never
 downloads, extracts, or modifies runtime/model files and does not require an account or token.
 
 Only user data is created on first run: the platform-specific Beastie save/config directory and

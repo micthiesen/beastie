@@ -143,6 +143,10 @@ notarization. A real Developer ID certificate, Apple team, notarization credenti
 notarization submission are external release prerequisites. The Windows Inno
 configuration and Linux AppImage wrapper are checked in and consume the same sibling layout. Linux
 falls back to a `.tar.gz` equivalent when `appimagetool` is not installed.
+The tar wrapper targets an x86-64 desktop installation rather than a minimal server image. It
+includes `README-LINUX.txt` with the launch command and baseline X11/Wayland, Vulkan/Mesa, ALSA,
+udev, and xkbcommon-x11 requirements. Ubuntu 24.04 Desktop supplies that baseline; a minimal
+Ubuntu image needs the packages listed in the bundled README before native launch validation.
 
 `packaging/windows/validate-layout.ps1` and `packaging/linux/validate-layout.sh` validate extracted
 artifacts. Their optional launch smoke is only a native-runner proof. CI config is not evidence of
