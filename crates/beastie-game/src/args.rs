@@ -14,6 +14,13 @@ pub struct Args {
     /// Development override for the isolated local STT worker.
     #[arg(long)]
     pub stt_worker: Option<PathBuf>,
+    /// Local STT backend used by a development worker.
+    #[arg(
+        long,
+        value_parser = ["parakeet", "moonshine"],
+        default_value = "parakeet"
+    )]
+    pub stt_backend: String,
     /// Development override for the Moonshine model directory.
     #[arg(long, requires = "stt_worker")]
     pub stt_model_dir: Option<PathBuf>,

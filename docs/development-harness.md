@@ -66,12 +66,12 @@ verify` asserts the transition counts and that only the usable candidate creates
 request. It requires no microphone, recognizer, model, audio device, display, or network. See
 [spoken-input-foundation.md](spoken-input-foundation.md).
 
-`cargo xtask stt eval` is the fixture/model-free recognizer gate. A real run must explicitly
-provide the `beastie-stt` worker, seven-file model directory, and
-`beastie-moonshine-engine`; see `cargo xtask stt eval --help`. Real microphone acceptance is
-separate: speak naturally, include silence and cancellation cases, inspect endpointing, then
-verify the worker-owned temporary WAV directory is empty and no STT worker or engine descendant
-survives game exit. The default gate never downloads a model or requires an audio device.
+`cargo xtask stt eval` is the fixture/model-free recognizer gate. A real Parakeet run explicitly
+provides the `beastie-stt` worker and five-file model directory; see `cargo xtask stt eval --help`.
+Run `cargo xtask stt setup` once, then launch the game through `cargo xtask dev --stt-backend
+parakeet --stt-model-dir target/stt/parakeet-tdt-0.6b-v3-int8 --new-game`. Hold F1 to speak after
+enabling the microphone in Settings. The worker-owned temporary WAV is removed after every result,
+cancellation, and shutdown. The default gate never downloads a model or requires an audio device.
 
 ## What automated plans prove
 
@@ -90,8 +90,8 @@ Asset validation is quiet by default so gate failures stay visible. Use
 `cargo xtask asset check --verbose` for per-candidate palette, alpha, density, and resolution
 diagnostics. `cargo xtask dev --fake-ai` skips the unused dialogue-worker build and launches the
 already-built game binary directly. On macOS it asks `osascript` to bring that exact process to the
-foreground when available. Noninteractive fake-AI smoke and scripted runs fail with an actionable
-message after 120 seconds instead of hanging indefinitely.
+foreground when available. Noninteractive smoke and scripted runs fail with an actionable message
+after 120 seconds instead of hanging indefinitely, including real local AI and STT configurations.
 
 ## Native host evidence
 

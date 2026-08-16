@@ -21,7 +21,7 @@ use crate::process::JsonlWorkerSession;
 
 const MAX_REPLY_BYTES: usize = 4_096;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
-const SELECTED_MODEL_ID: &str = "moonshine-tiny-streaming-en";
+const SELECTED_MODEL_ID: &str = "parakeet-tdt-0.6b-v3-int8";
 
 #[derive(Debug, serde::Deserialize)]
 struct PackageIntegrityManifest {
@@ -47,6 +47,7 @@ impl RecognitionWorkerConfig {
         fake: bool,
         audio_root: &Path,
         worker_override: Option<&Path>,
+        backend_override: &str,
         model_override: Option<&Path>,
         engine_override: Option<&Path>,
         timeout_override_ms: Option<u64>,
@@ -66,6 +67,7 @@ impl RecognitionWorkerConfig {
                 executable,
                 fake,
                 audio_root,
+                backend_override,
                 model_override,
                 engine_override,
                 timeout,
@@ -95,11 +97,12 @@ impl RecognitionWorkerConfig {
         executable: PathBuf,
         fake: bool,
         audio_root: &Path,
+        backend: &str,
         model_override: Option<&Path>,
         engine_override: Option<&Path>,
         timeout: Duration,
     ) -> Self {
-        let backend = if fake { "fixture" } else { "moonshine" };
+        let backend = if fake { "fixture" } else { backend };
         let mut arguments = vec![
             "--backend".into(),
             backend.into(),
@@ -113,9 +116,10 @@ impl RecognitionWorkerConfig {
             {
                 arguments.extend(["--model-dir".into(), model]);
             }
-            if let Some(engine) = engine_override
-                .map(|path| path.as_os_str().to_owned())
-                .or_else(|| std::env::var_os("BEASTIE_MOONSHINE_ENGINE"))
+            if backend == "moonshine"
+                && let Some(engine) = engine_override
+                    .map(|path| path.as_os_str().to_owned())
+                    .or_else(|| std::env::var_os("BEASTIE_MOONSHINE_ENGINE"))
             {
                 arguments.extend(["--moonshine-engine".into(), engine]);
             }
@@ -133,13 +137,9 @@ impl RecognitionWorkerConfig {
         timeout: Duration,
     ) -> io::Result<Option<Self>> {
         let worker = root.join(format!("beastie-stt{}", std::env::consts::EXE_SUFFIX));
-        let engine = root.join("runtime").join("stt").join(format!(
-            "beastie-moonshine-engine{}",
-            std::env::consts::EXE_SUFFIX
-        ));
         let manifest = root.join("models/manifest.toml");
         let model = root.join("models").join(SELECTED_MODEL_ID);
-        if !worker.is_file() || !engine.is_file() || !manifest.is_file() || !model.is_dir() {
+        if !worker.is_file() || !manifest.is_file() || !model.is_dir() {
             return Ok(None);
         }
         let package_manifest =
@@ -149,26 +149,17 @@ impl RecognitionWorkerConfig {
             &package_manifest,
             &format!("beastie-stt{}", std::env::consts::EXE_SUFFIX),
         )?;
-        verify_packaged_file(
-            root,
-            &package_manifest,
-            &format!(
-                "runtime/stt/beastie-moonshine-engine{}",
-                std::env::consts::EXE_SUFFIX
-            ),
-        )?;
+        verify_packaged_file(root, &package_manifest, "models/manifest.toml")?;
         verify_selected_model(&manifest, &model)?;
         Ok(Some(Self {
             executable: worker,
             arguments: vec![
                 "--backend".into(),
-                "moonshine".into(),
+                "parakeet".into(),
                 "--audio-root".into(),
                 audio_root.as_os_str().to_owned(),
                 "--model-dir".into(),
                 model.into_os_string(),
-                "--moonshine-engine".into(),
-                engine.into_os_string(),
             ],
             timeout,
         }))
@@ -560,46 +551,31 @@ fn main() {
     fn packaged_runtime_fixture() -> PathBuf {
         let root = temporary_path("package");
         let worker = root.join(format!("beastie-stt{}", std::env::consts::EXE_SUFFIX));
-        let engine = root.join("runtime").join("stt").join(format!(
-            "beastie-moonshine-engine{}",
-            std::env::consts::EXE_SUFFIX
-        ));
         let model = root.join("models").join(SELECTED_MODEL_ID);
-        fs::create_dir_all(engine.parent().unwrap()).unwrap();
         fs::create_dir_all(&model).unwrap();
         fs::write(&worker, b"worker").unwrap();
-        fs::write(&engine, b"engine").unwrap();
         fs::write(model.join("encoder.ort"), b"model").unwrap();
         let digest = format!("{:x}", Sha256::digest(b"model"));
-        fs::write(
-            root.join("models/manifest.toml"),
-            format!(
-                "[selection.stt]\npreferred_candidate = \"{SELECTED_MODEL_ID}\"\n\n[[stt_candidate]]\nid = \"{SELECTED_MODEL_ID}\"\ncomponents = [{{ file = \"encoder.ort\", bytes = 5, sha256 = \"{digest}\" }}]\n"
-            ),
-        )
-        .unwrap();
+        let model_manifest = format!(
+            "[selection.stt]\npreferred_candidate = \"{SELECTED_MODEL_ID}\"\n\n[[stt_candidate]]\nid = \"{SELECTED_MODEL_ID}\"\ncomponents = [{{ file = \"encoder.ort\", bytes = 5, sha256 = \"{digest}\" }}]\n"
+        );
+        fs::write(root.join("models/manifest.toml"), &model_manifest).unwrap();
         let mut files = BTreeMap::new();
-        for (relative, contents) in [
-            (
-                format!("beastie-stt{}", std::env::consts::EXE_SUFFIX),
-                b"worker".as_slice(),
-            ),
-            (
-                format!(
-                    "runtime/stt/beastie-moonshine-engine{}",
-                    std::env::consts::EXE_SUFFIX
-                ),
-                b"engine".as_slice(),
-            ),
-        ] {
-            files.insert(
-                relative,
-                serde_json::json!({
-                    "bytes": contents.len(),
-                    "sha256": format!("{:x}", Sha256::digest(contents)),
-                }),
-            );
-        }
+        let contents = b"worker".as_slice();
+        files.insert(
+            format!("beastie-stt{}", std::env::consts::EXE_SUFFIX),
+            serde_json::json!({
+                "bytes": contents.len(),
+                "sha256": format!("{:x}", Sha256::digest(contents)),
+            }),
+        );
+        files.insert(
+            "models/manifest.toml".to_owned(),
+            serde_json::json!({
+                "bytes": model_manifest.len(),
+                "sha256": format!("{:x}", Sha256::digest(model_manifest.as_bytes())),
+            }),
+        );
         fs::write(
             root.join("package-manifest.json"),
             serde_json::to_vec(&serde_json::json!({ "files": files })).unwrap(),
@@ -666,26 +642,37 @@ fn main() {
     }
 
     #[test]
-    fn packaged_runtime_rejects_tampered_worker_or_engine() {
-        for relative in [
-            format!("beastie-stt{}", std::env::consts::EXE_SUFFIX),
-            format!(
-                "runtime/stt/beastie-moonshine-engine{}",
-                std::env::consts::EXE_SUFFIX
-            ),
-        ] {
-            let root = packaged_runtime_fixture();
-            fs::write(root.join(relative), b"tampered executable").unwrap();
-            assert!(
-                RecognitionWorkerConfig::from_package_root(
-                    &root,
-                    &root.join("private-audio"),
-                    Duration::from_secs(1)
-                )
-                .is_err()
-            );
-            fs::remove_dir_all(root).unwrap();
-        }
+    fn packaged_runtime_rejects_tampered_worker() {
+        let root = packaged_runtime_fixture();
+        fs::write(
+            root.join(format!("beastie-stt{}", std::env::consts::EXE_SUFFIX)),
+            b"tampered executable",
+        )
+        .unwrap();
+        assert!(
+            RecognitionWorkerConfig::from_package_root(
+                &root,
+                &root.join("private-audio"),
+                Duration::from_secs(1)
+            )
+            .is_err()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn packaged_runtime_rejects_tampered_model_manifest() {
+        let root = packaged_runtime_fixture();
+        fs::write(root.join("models/manifest.toml"), b"tampered manifest").unwrap();
+        assert!(
+            RecognitionWorkerConfig::from_package_root(
+                &root,
+                &root.join("private-audio"),
+                Duration::from_secs(1)
+            )
+            .is_err()
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

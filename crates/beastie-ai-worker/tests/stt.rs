@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use beastie_ai_worker::stt::{
-    FixtureSttBackend, MAX_STT_LINE_BYTES, MoonshineBackend, MoonshineConfig, SttBackend,
-    SttBackendError, ValidatedAudio, process_stt_line, run_stt_jsonl,
+    FixtureSttBackend, MAX_STT_LINE_BYTES, MoonshineBackend, MoonshineConfig, ParakeetBackend,
+    SttBackend, SttBackendError, ValidatedAudio, process_stt_line, run_stt_jsonl,
 };
 use beastie_protocol::{
     AcousticConfidence, RecognitionErrorCode, RecognitionLanguage, RecognitionOutcome,
@@ -242,6 +242,15 @@ fn absent_moonshine_engine_is_a_typed_technical_failure() {
         }
     ));
     fs::remove_dir_all(root).expect("temporary directory should be removable");
+}
+
+#[test]
+fn absent_parakeet_model_is_a_typed_technical_failure() {
+    let root = temporary_dir("missing-parakeet");
+    assert!(matches!(
+        ParakeetBackend::load(&root.join("does-not-exist")),
+        Err(SttBackendError::Unavailable)
+    ));
 }
 
 #[test]

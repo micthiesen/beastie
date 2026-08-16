@@ -29,8 +29,8 @@ Model output is expression, not game truth. It cannot mutate creature state, cre
 change preferences, unlock concepts, or award progress. Those outcomes come only from the
 deterministic Rust simulation.
 
-Optional spoken player input is transcribed locally by bundled Moonshine Voice and the bundled
-Tiny Streaming English model. Audio, recognition, dialogue, and speech synthesis do not contact a
+Optional spoken player input is transcribed locally by the bundled Parakeet TDT 0.6B V3 INT8
+model inside Beastie's contained STT worker. Audio, recognition, dialogue, and speech synthesis do not contact a
 cloud service. Raw microphone audio is written only as a bounded temporary WAV owned by the STT
 worker and is deleted after recognition, cancellation, timeout, and failure. Raw audio is never
 saved as game history. Recognized text follows the same bounded input rules as typed text and is
@@ -83,8 +83,7 @@ fallback, permitted-content, and prohibited-content results.
 - `THIRD_PARTY_NOTICES` records the shipped model and runtime licenses.
 - `cargo xtask package` requires the exact dialogue model, model license, model card, llama.cpp
   runtime and license, eSpeak NG runtime and data, GPLv3 license and corresponding source archive,
-  plus the STT worker, Moonshine engine runtime closure, licenses/notices/model card, and exact
-  seven-file STT model.
+  plus the STT worker, CC-BY-4.0 license/model card, and exact five-file Parakeet STT model.
 - `package-manifest.json` records the byte count and SHA-256 of every packaged file and declares
   network access disabled. `cargo xtask package --check` rejects missing, stale, extra, tampered,
   wrong-platform, oversized, or development-only contents.

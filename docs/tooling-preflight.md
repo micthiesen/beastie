@@ -52,15 +52,13 @@ This matters for headless evaluation and for measuring a realistic CPU fallback.
 
 ### Local speech recognition
 
-Moonshine Voice 0.1.2 with Tiny Streaming English is the provisional local recognizer. The
-packaged model is the exact seven-component, 51,441,771-byte set pinned in
-`models/manifest.toml`; the optional attention decoder is deliberately excluded. Checked-in
-fixture evaluation is display-, model-, microphone-, and network-free. Current real-model evidence
-is synthetic and does not prove human accuracy, accent coverage, microphone permission,
-endpointing feel, or native Windows/Linux behavior. Those remain acceptance work documented in
-`docs/stt-runtime.md` and the distribution checklist.
+Parakeet TDT 0.6B V3 INT8 is the selected local recognizer. Its five-file, 670,619,803-byte model is
+pinned in `models/manifest.toml` and runs inside the persistent worker through transcribe-rs and
+ONNX Runtime. Checked-in fixture evaluation is display-, model-, microphone-, and network-free;
+the explicit real-runtime evaluation records transcription, latency, and RSS on the development
+Mac. See `docs/stt-runtime.md` for the exact comparison and Moonshine lightweight fallback.
 
-Recognition uses a persistent bounded JSONL worker and a separately packaged native engine. It
+Recognition uses a persistent bounded JSONL worker with embedded local inference. It
 does not use Python or a cloud API at runtime. Captured WAV files are temporary worker inputs and
 are deleted after recognition, including timeout and failure paths. Recognized player text enters
 the ordinary dialogue path but is not persisted unless the player explicitly enables transcript

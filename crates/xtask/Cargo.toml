@@ -12,11 +12,13 @@ beastie-core = { path = "../beastie-core" }
 beastie-protocol = { path = "../beastie-protocol" }
 beastie-session = { path = "../beastie-session" }
 clap.workspace = true
+flate2 = "1"
 image.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 toml.workspace = true
+tar = "0.4"
 ureq = { version = "2.12", features = ["json"] }
 
 [target.'cfg(unix)'.dependencies]

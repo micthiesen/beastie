@@ -14,6 +14,13 @@
 #include "moonshine-cpp.h"
 
 namespace {
+// Streaming keyterms bias recognition toward the small vocabulary the player can
+// meaningfully use with Beastie. Keep this list semantic and product-owned: it
+// improves local recognition without sending audio or text to another service.
+constexpr char kBeastieKeyterms[] =
+    "Muck,Beastie,aquarium,berry,mushroom,pellet,ball,bell,sock,cave";
+constexpr char kBeastieKeytermBoost[] = "2.0";
+
 constexpr int32_t kSampleRate = 16000;
 constexpr size_t kChunkSamples = 342;
 constexpr size_t kUpdateSamples = 7696;
@@ -225,8 +232,12 @@ int main(int argc, char** argv) {
   if (model_dir.empty() || audio_root.empty()) return 2;
 
   try {
+    const moonshine::Options options{
+        {"keyterms", kBeastieKeyterms},
+        {"keyterm_boost", kBeastieKeytermBoost},
+    };
     moonshine::Transcriber transcriber(
-        model_dir.string(), moonshine::ModelArch::TINY_STREAMING, 0.48);
+        model_dir.string(), moonshine::ModelArch::TINY_STREAMING, 0.48, "", options);
     std::string line;
     while (std::getline(std::cin, line)) {
       uint64_t request_id = 0;

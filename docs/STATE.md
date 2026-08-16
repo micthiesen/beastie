@@ -2,7 +2,7 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-15** (V2 spoken interaction implemented; recognizer acceptance provisional).
+Last updated: **2026-08-15** (V2 spoken interaction and selected local recognizer complete).
 
 ## Now
 
@@ -62,11 +62,13 @@ Last updated: **2026-08-15** (V2 spoken interaction implemented; recognizer acce
   and defer, sleeping creatures ignore, and resentful creatures visibly refuse without having
   their current action hijacked. Typed and spoken words enter the same concept-gated interpretation
   and dialogue path; unknown raw words cannot select prompt lanes and are not saved.
-- The provisional recognizer is Moonshine Voice 0.1.2 Tiny Streaming English behind a persistent,
-  bounded, cancellable worker and native sidecar. The seven-file model is 51,441,771 bytes and is
-  pinned per component. The checked-in fixture gate is 11/11; the actual runtime scored 4/11 with
-  0.308 WER on the redistributable synthetic corpus, 122 ms cold, 57 ms warm median, and 304 MiB
-  peak process-tree RSS. This proves plumbing and speed, not human accuracy. See
+- The selected recognizer is Parakeet TDT 0.6B V3 INT8, running fully locally inside the persistent,
+  bounded, cancellable `beastie-stt` worker through transcribe-rs and ONNX Runtime. Its exact
+  five-file, 670,619,803-byte model is pinned per component. The fixture gate is 11/11; the real
+  local runtime scored 6/11 strict cases with 0.154 WER, 11/16 keyword recall, 2/2 no-speech,
+  1,155 ms cold load, 159 ms warm median, and 1,846 MiB peak RSS on the deliberately difficult
+  synthetic corpus. Handy rates Parakeet V3 fast and high-accuracy. Keyterm-biased Moonshine Tiny
+  remains the 51 MB lightweight fallback at 0.192 WER and 307 MiB RSS. See
   [stt-runtime.md](stt-runtime.md) and [v2-plan.md](v2-plan.md).
 - macOS native window capture and real pointer/keyboard delivery were proven during the MVP. No
   physical controller has been attached. Windows and Linux native install, launch, save-path, and
@@ -99,10 +101,10 @@ Last updated: **2026-08-15** (V2 spoken interaction implemented; recognizer acce
   audit; its packaged Qwen warm server returned two grounded replies, packaged eSpeak generated a
   validated cache entry, and all children exited. The prior bundle of the same game shell completed
   its packaged GUI smoke; the final remote-daemon retry did not acquire a drawable and was stopped.
-  The final V2 macOS staging audit covers 584 files and 759,039,770 bytes with network disabled.
-  An ad hoc signed `.app` contains the microphone purpose string, passes strict code-signature
-  verification, and its packaged STT worker loads the bundled engine and returns a correlated
-  transcript. Signing identities, notarization credentials, Steam IDs/credentials, native
+  The selected-Parakeet macOS staging audit covers 579 files and 1,355,731,775 bytes with network
+  disabled. Its packaged worker loaded the embedded model and returned the correlated transcript
+  "I cleaned your aquarium yesterday." An earlier ad hoc signed `.app` contains the microphone
+  purpose string and passes strict code-signature verification. Signing identities, notarization credentials, Steam IDs/credentials, native
   Windows/Linux runs, physical-controller smoke, final store screenshots, and trailer remain
   release prerequisites.
 - Three independent V2 review lenses covered general correctness, process/privacy boundaries, and
@@ -114,18 +116,11 @@ Last updated: **2026-08-15** (V2 spoken interaction implemented; recognizer acce
 
 ## Next
 
-Build the local real-human STT acceptance harness and use it to close the provisional recognizer
-decision. Capture consented clips through the same microphone/resampling path as the game into an
-ignored private corpus, describe speaker and acoustic conditions without identity data, extend
-`cargo xtask stt eval` to score that external corpus, and produce one redacted report covering at
-least three speakers, quiet speech, room/game noise, competing speech, proper names, aquarium
-vocabulary, disfluency, profanity, silence, and cancellation.
-
-Calibrate confidence only on a designated tuning split, then judge Moonshine on a held-out split
-and rerun pinned whisper.cpp 1.9.2 tiny/base through the same clips if it misses the acceptance bar.
-This one-to-two-day engineering batch plus human recording time beats open-microphone work because
-recognition accuracy is now the load-bearing unknown; it decides whether the current 51 MB runtime
-ships, needs narrow vocabulary adaptation, or is replaced. See [stt-runtime.md](stt-runtime.md).
+Close native release evidence on Windows and Linux, then complete signing, notarization, final store
+captures, and trailer work. STT no longer blocks this: the selected package is local, hash-pinned,
+model-free in the normal gate, and exercised through the real runtime on macOS. Native platform
+runs should prove model loading, microphone permission fallback, one spoken turn, private-audio
+cleanup, and worker termination alongside the existing save and launch checks.
 
 ## Candidates Not Chosen
 
@@ -136,9 +131,11 @@ ships, needs narrow vocabulary adaptation, or is replaced. See [stt-runtime.md](
 - **Prosody, laughter, and nonverbal acoustic cues:** useful future perception signals, but they
   must not infer player emotion as fact or bypass the shared language path. Expect one to three
   days for a fixture-backed signal boundary, with model/device evaluation as the main unknown.
+- **Broader speech-quality corpus:** valuable after release-platform closure, especially for more
+  accents and noisy rooms, but no longer an unautomated product gate. The deterministic corpus and
+  Handy comparison are the repeatable selection evidence.
 - **Release-platform closure:** several days plus external credentials and Windows/Linux hardware.
-  It remains necessary, but packaging a recognizer whose human accuracy is still unknown would
-  lock in the wrong runtime. Required evidence still includes native Windows/Linux install and
+  Required evidence still includes native Windows/Linux install and
   launch, a physical controller, signing, notarization, final store captures, trailer, and Steam
   credentials.
 

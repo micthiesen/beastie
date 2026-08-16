@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use beastie_ai_worker::stt::{
-    FixtureSttBackend, MoonshineBackend, MoonshineConfig, SttBackend, run_stt_jsonl,
+    FixtureSttBackend, MoonshineBackend, MoonshineConfig, ParakeetBackend, SttBackend,
+    run_stt_jsonl,
 };
 use clap::{Parser, ValueEnum};
 
@@ -11,6 +12,7 @@ use clap::{Parser, ValueEnum};
 enum Backend {
     Fixture,
     Moonshine,
+    Parakeet,
 }
 
 #[derive(Debug, Parser)]
@@ -24,7 +26,7 @@ struct Args {
     #[arg(long, env = "BEASTIE_STT_AUDIO_ROOT")]
     audio_root: PathBuf,
 
-    /// Moonshine Voice v0.1.2 Tiny Streaming arch 2 model directory.
+    /// Directory containing the selected local recognition model.
     #[arg(long, env = "BEASTIE_STT_MODEL_DIR")]
     model_dir: Option<PathBuf>,
 
@@ -60,6 +62,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 audio_root: args.audio_root.clone(),
                 timeout: Duration::from_millis(args.timeout_ms),
             }))
+        }
+        Backend::Parakeet => {
+            let model_dir = args
+                .model_dir
+                .ok_or("--model-dir is required with --backend parakeet")?;
+            Box::new(
+                ParakeetBackend::load(&model_dir)
+                    .map_err(|_| "failed to load the local Parakeet model")?,
+            )
         }
     };
     run_stt_jsonl(

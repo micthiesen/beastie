@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::mpsc::{self, Receiver},
@@ -14,6 +14,7 @@ use beastie_protocol::{
     RecognitionLanguage, RecognitionOutcome, RecognitionReply, RecognitionRequest,
     STT_PROTOCOL_VERSION, validate_recognition_reply, validate_recognition_request,
 };
+use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -24,6 +25,11 @@ const REPORT_DIR: &str = "evals/reports";
 const MAX_REPLY_BYTES: usize = 4 * 1024;
 const WORKER_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 const WORKER_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
+const PARAKEET_ARCHIVE_URL: &str = "https://blob.handy.computer/parakeet-v3-int8.tar.gz";
+const PARAKEET_ARCHIVE_BYTES: u64 = 478_517_071;
+const PARAKEET_ARCHIVE_SHA256: &str =
+    "43d37191602727524a7d8c6da0eef11c4ba24320f5b4730f1a2497befc2efa77";
+const PARAKEET_DIRECTORY: &str = "parakeet-tdt-0.6b-v3-int8";
 
 fn repository_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -36,10 +42,23 @@ fn repository_path(relative: &str) -> PathBuf {
 #[derive(Debug)]
 pub struct EvalOptions {
     pub worker: Option<PathBuf>,
+    pub backend: String,
     pub model_dir: Option<PathBuf>,
     pub moonshine_engine: Option<PathBuf>,
     pub worker_args: Vec<String>,
     pub label: String,
+}
+
+struct SetupCleanup {
+    archive: PathBuf,
+    staging: PathBuf,
+}
+
+impl Drop for SetupCleanup {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.archive);
+        let _ = fs::remove_dir_all(&self.staging);
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,6 +216,121 @@ pub fn verify_fixtures() -> Result<()> {
     Ok(())
 }
 
+pub fn setup() -> Result<()> {
+    let target_root = repository_path("target/stt");
+    let destination = target_root.join(PARAKEET_DIRECTORY);
+    if destination.is_dir() {
+        validate_setup_model(&destination)?;
+        println!("local STT model ready: {}", destination.display());
+        println!(
+            "next: cargo xtask dev --stt-model-dir target/stt/{PARAKEET_DIRECTORY} --new-game"
+        );
+        return Ok(());
+    }
+    fs::create_dir_all(&target_root)
+        .with_context(|| format!("failed to create {}", target_root.display()))?;
+    let process_id = std::process::id();
+    let archive_path = target_root.join(format!("parakeet-v3-int8-{process_id}.tar.gz.part"));
+    let staging = target_root.join(format!("setup-{process_id}"));
+    let _cleanup = SetupCleanup {
+        archive: archive_path.clone(),
+        staging: staging.clone(),
+    };
+    println!("downloading selected local STT model from {PARAKEET_ARCHIVE_URL}");
+    let response = ureq::get(PARAKEET_ARCHIVE_URL)
+        .call()
+        .context("failed to download the selected STT model")?;
+    let mut reader = response
+        .into_reader()
+        .take(PARAKEET_ARCHIVE_BYTES.saturating_add(1));
+    let mut archive_file = File::create(&archive_path)
+        .with_context(|| format!("failed to create {}", archive_path.display()))?;
+    let copied =
+        io::copy(&mut reader, &mut archive_file).context("failed to download STT model")?;
+    archive_file
+        .sync_all()
+        .context("failed to sync STT model archive")?;
+    ensure!(
+        copied == PARAKEET_ARCHIVE_BYTES,
+        "STT model archive has {copied} bytes, expected {PARAKEET_ARCHIVE_BYTES}"
+    );
+    ensure!(
+        sha256_file(&archive_path)? == PARAKEET_ARCHIVE_SHA256,
+        "STT model archive SHA-256 mismatch"
+    );
+    fs::create_dir(&staging).with_context(|| format!("failed to create {}", staging.display()))?;
+    let archive_file = File::open(&archive_path)?;
+    let mut archive = tar::Archive::new(GzDecoder::new(archive_file));
+    archive
+        .unpack(&staging)
+        .context("failed to safely unpack STT model archive")?;
+    let extracted = staging.join(PARAKEET_DIRECTORY);
+    validate_setup_model(&extracted)?;
+    fs::rename(&extracted, &destination).context("failed to publish verified STT model")?;
+    fs::remove_dir(&staging).context("failed to remove empty STT staging directory")?;
+    fs::remove_file(&archive_path).context("failed to remove verified STT archive")?;
+    println!("local STT model ready: {}", destination.display());
+    println!("next: cargo xtask dev --stt-model-dir target/stt/{PARAKEET_DIRECTORY} --new-game");
+    Ok(())
+}
+
+fn validate_setup_model(directory: &Path) -> Result<()> {
+    let source = fs::read_to_string(repository_path(MODEL_MANIFEST_PATH))?;
+    let manifest: ModelManifest = toml::from_str(&source)?;
+    let candidate = manifest
+        .stt_candidate
+        .iter()
+        .find(|candidate| candidate.id == "parakeet-tdt-0.6b-v3-int8")
+        .context("selected Parakeet model metadata is missing")?;
+    let components = candidate
+        .components
+        .as_ref()
+        .context("selected Parakeet model components are missing")?;
+    let expected = components
+        .iter()
+        .map(|component| component.file.clone())
+        .collect::<BTreeSet<_>>();
+    let actual = fs::read_dir(directory)
+        .with_context(|| format!("failed to read {}", directory.display()))?
+        .map(|entry| {
+            let entry = entry?;
+            ensure!(
+                entry.file_type()?.is_file(),
+                "STT model contains a non-file entry"
+            );
+            Ok(entry.file_name().to_string_lossy().into_owned())
+        })
+        .collect::<Result<BTreeSet<_>>>()?;
+    ensure!(
+        actual == expected,
+        "STT model component set does not match the manifest"
+    );
+    for component in components {
+        let path = directory.join(&component.file);
+        ensure!(
+            fs::metadata(&path)?.len() == component.bytes
+                && sha256_file(&path)? == component.sha256,
+            "STT model component failed validation: {}",
+            component.file
+        );
+    }
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
 pub fn run(options: EvalOptions) -> Result<()> {
     let corpus = load_corpus()?;
     let Some(worker) = options.worker else {
@@ -206,22 +340,30 @@ pub fn run(options: EvalOptions) -> Result<()> {
     let model_dir = options
         .model_dir
         .context("--model-dir is required when --worker is supplied")?;
-    let moonshine_engine = options
-        .moonshine_engine
-        .context("--moonshine-engine is required when --worker is supplied")?;
+    let moonshine_engine = match options.backend.as_str() {
+        "moonshine" => Some(
+            options
+                .moonshine_engine
+                .context("--moonshine-engine is required for the Moonshine backend")?,
+        ),
+        "parakeet" => None,
+        backend => anyhow::bail!("unsupported STT backend: {backend}"),
+    };
     let label = safe_label(&options.label)?;
     let audio_root = ScopedAudioRoot::create(&corpus)?;
 
     let mut command = Command::new(&worker);
     command
         .arg("--backend")
-        .arg("moonshine")
+        .arg(&options.backend)
         .arg("--audio-root")
         .arg(audio_root.path())
         .arg("--model-dir")
-        .arg(&model_dir)
-        .arg("--moonshine-engine")
-        .arg(&moonshine_engine)
+        .arg(&model_dir);
+    if let Some(moonshine_engine) = moonshine_engine {
+        command.arg("--moonshine-engine").arg(moonshine_engine);
+    }
+    command
         .args(&options.worker_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -999,22 +1141,23 @@ fn validate_selection_manifest() -> Result<()> {
         .with_context(|| format!("failed to parse STT selection in {MODEL_MANIFEST_PATH}"))?;
     let selection = manifest.selection.stt;
     ensure!(
-        selection.status == "provisional",
-        "STT selection must remain provisional"
+        selection.status == "selected",
+        "STT selection must be explicit"
     );
     ensure!(
-        selection.preferred_candidate == "moonshine-tiny-streaming-en",
-        "unexpected provisional STT candidate"
+        selection.preferred_candidate == "parakeet-tdt-0.6b-v3-int8",
+        "unexpected selected STT candidate"
     );
     ensure!(
-        selection.requires_real_human_acceptance,
-        "STT selection must require real-human acceptance"
+        !selection.requires_real_human_acceptance,
+        "STT selection must not depend on an unautomated human gate"
     );
     ensure!(
         selection.corpus == "evals/stt/corpus.json version 1",
         "STT selection references the wrong corpus"
     );
     let required = [
+        "parakeet-tdt-0.6b-v3-int8",
         "moonshine-tiny-streaming-en",
         "whisper-cpp-tiny-en-q5_1",
         "whisper-cpp-base-en-q5_1",
@@ -1085,6 +1228,26 @@ fn validate_selection_manifest() -> Result<()> {
         }),
         "Moonshine model component identity is incomplete"
     );
+    let parakeet = candidates
+        .get("parakeet-tdt-0.6b-v3-int8")
+        .context("Parakeet STT candidate metadata is missing")?;
+    ensure!(
+        parakeet.runtime_revision == "transcribe-rs 0.3.8" && parakeet.bytes == 670_619_803,
+        "Parakeet STT revision or total bytes drifted"
+    );
+    let components = parakeet
+        .components
+        .as_ref()
+        .context("Parakeet model components are missing")?;
+    ensure!(
+        components.len() == 5
+            && components
+                .iter()
+                .map(|component| component.bytes)
+                .sum::<u64>()
+                == parakeet.bytes,
+        "Parakeet model component set drifted"
+    );
     for (id, bytes, sha256) in [
         (
             "whisper-cpp-tiny-en-q5_1",
@@ -1151,7 +1314,7 @@ mod tests {
     }
 
     #[test]
-    fn selection_schema_keeps_acceptance_provisional() {
+    fn selection_schema_pins_the_complete_local_runtime() {
         validate_selection_manifest().expect("checked-in STT selection is strict and complete");
     }
 

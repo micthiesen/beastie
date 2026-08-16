@@ -366,10 +366,14 @@ pub fn build(options: PackageOptions<'_>) -> Result<PackageReport> {
     if stt_inputs_complete(&options)? {
         let stt = select_stt_model(&manifest)?;
         validate_stt_model_inputs(&options, stt, &manifest.stt_rejected_component)?;
+        if stt.id.starts_with("moonshine-") && options.stt_engine.is_none() {
+            bail!("selected Moonshine STT model requires its external engine and runtime files");
+        }
         if let Some(runtime) = manifest
             .runtime
             .as_ref()
             .and_then(|runtime| runtime.moonshine_voice.as_ref())
+            .filter(|_| options.stt_engine.is_some())
         {
             validate_provenance_file(
                 options.stt_runtime_license.expect("complete STT inputs"),
@@ -382,48 +386,50 @@ pub fn build(options: PackageOptions<'_>) -> Result<PackageReport> {
             &platform_root.join(options.platform.stt_worker_name()),
             "STT worker",
         )?;
-        let stt_runtime_destination = runtime_destination.join("stt");
-        copy_binary(
-            options.stt_engine.expect("complete STT inputs"),
-            &stt_runtime_destination.join(options.platform.stt_engine_name()),
-            "Moonshine engine",
-        )?;
-        let mut stt_runtime_names = BTreeSet::new();
-        for runtime in options.stt_runtime {
-            let name = runtime
-                .file_name()
-                .context("STT runtime path must name a file")?;
-            if !stt_runtime_names.insert(name.to_owned()) {
-                bail!(
-                    "STT runtime files contain duplicate basename: {}",
-                    name.to_string_lossy()
-                );
-            }
-            if name == "LICENSE"
-                || name == "THIRD_PARTY_NOTICES"
-                || name == options.platform.stt_engine_name()
-            {
-                bail!(
-                    "reserved STT runtime name must use its explicit package input: {}",
-                    runtime.display()
-                );
+        if let Some(stt_engine) = options.stt_engine {
+            let stt_runtime_destination = runtime_destination.join("stt");
+            copy_binary(
+                stt_engine,
+                &stt_runtime_destination.join(options.platform.stt_engine_name()),
+                "Moonshine engine",
+            )?;
+            let mut stt_runtime_names = BTreeSet::new();
+            for runtime in options.stt_runtime {
+                let name = runtime
+                    .file_name()
+                    .context("STT runtime path must name a file")?;
+                if !stt_runtime_names.insert(name.to_owned()) {
+                    bail!(
+                        "STT runtime files contain duplicate basename: {}",
+                        name.to_string_lossy()
+                    );
+                }
+                if name == "LICENSE"
+                    || name == "THIRD_PARTY_NOTICES"
+                    || name == options.platform.stt_engine_name()
+                {
+                    bail!(
+                        "reserved STT runtime name must use its explicit package input: {}",
+                        runtime.display()
+                    );
+                }
+                copy_required_file(
+                    runtime,
+                    &stt_runtime_destination.join(name),
+                    "Moonshine runtime",
+                )?;
             }
             copy_required_file(
-                runtime,
-                &stt_runtime_destination.join(name),
-                "Moonshine runtime",
+                options.stt_runtime_license.expect("complete STT runtime"),
+                &stt_runtime_destination.join("LICENSE"),
+                "Moonshine runtime license",
+            )?;
+            copy_required_file(
+                options.stt_runtime_notices.expect("complete STT runtime"),
+                &stt_runtime_destination.join("THIRD_PARTY_NOTICES"),
+                "Moonshine runtime notices",
             )?;
         }
-        copy_required_file(
-            options.stt_runtime_license.expect("complete STT inputs"),
-            &stt_runtime_destination.join("LICENSE"),
-            "Moonshine runtime license",
-        )?;
-        copy_required_file(
-            options.stt_runtime_notices.expect("complete STT inputs"),
-            &stt_runtime_destination.join("THIRD_PARTY_NOTICES"),
-            "Moonshine runtime notices",
-        )?;
         let stt_model_destination = models_destination_path(&platform_root).join(&stt.id);
         for component in &stt.components {
             copy_required_file(
@@ -432,18 +438,18 @@ pub fn build(options: PackageOptions<'_>) -> Result<PackageReport> {
                     .expect("complete STT inputs")
                     .join(&component.file),
                 &stt_model_destination.join(&component.file),
-                "Moonshine model component",
+                "STT model component",
             )?;
         }
         copy_required_file(
             options.stt_model_license.expect("complete STT inputs"),
             &stt_model_destination.join("LICENSE"),
-            "Moonshine model license",
+            "STT model license",
         )?;
         copy_required_file(
             options.stt_model_card.expect("complete STT inputs"),
             &stt_model_destination.join("README.md"),
-            "Moonshine model card",
+            "STT model card",
         )?;
     }
 
@@ -700,44 +706,43 @@ fn validate_options(options: &PackageOptions<'_>) -> Result<()> {
 }
 
 fn stt_inputs_complete(options: &PackageOptions<'_>) -> Result<bool> {
-    let present = [
+    let base = [
         options.stt_worker.is_some(),
-        options.stt_engine.is_some(),
-        options.stt_runtime_license.is_some(),
-        options.stt_runtime_notices.is_some(),
         options.stt_model_dir.is_some(),
         options.stt_model_license.is_some(),
         options.stt_model_card.is_some(),
     ];
-    let count = present.into_iter().filter(|value| *value).count();
-    if count == 0 && options.stt_runtime.is_empty() {
+    let runtime = [
+        options.stt_engine.is_some(),
+        options.stt_runtime_license.is_some(),
+        options.stt_runtime_notices.is_some(),
+    ];
+    let base_count = base.into_iter().filter(|value| *value).count();
+    let runtime_count = runtime.into_iter().filter(|value| *value).count();
+    if base_count == 0 && runtime_count == 0 && options.stt_runtime.is_empty() {
         return Ok(false);
     }
-    if count != present.len() {
+    if base_count != base.len() {
         bail!(
-            "STT package is incomplete: provide the worker, engine, runtime license/notices, model directory, model license, and model card together"
+            "STT package is incomplete: provide the worker, model directory, model license, and model card together"
         );
+    }
+    if runtime_count != 0 && runtime_count != runtime.len() {
+        bail!(
+            "external STT runtime is incomplete: provide the engine, license, and notices together"
+        );
+    }
+    if runtime_count == 0 && !options.stt_runtime.is_empty() {
+        bail!("STT runtime libraries require the external engine, license, and notices");
     }
     for (label, path) in [
         ("STT worker", options.stt_worker.expect("checked present")),
         (
-            "Moonshine engine",
-            options.stt_engine.expect("checked present"),
-        ),
-        (
-            "Moonshine runtime license",
-            options.stt_runtime_license.expect("checked present"),
-        ),
-        (
-            "Moonshine runtime notices",
-            options.stt_runtime_notices.expect("checked present"),
-        ),
-        (
-            "Moonshine model license",
+            "STT model license",
             options.stt_model_license.expect("checked present"),
         ),
         (
-            "Moonshine model card",
+            "STT model card",
             options.stt_model_card.expect("checked present"),
         ),
     ] {
@@ -746,24 +751,33 @@ fn stt_inputs_complete(options: &PackageOptions<'_>) -> Result<bool> {
         }
     }
     if !options.stt_model_dir.expect("checked present").is_dir() {
-        bail!("required Moonshine model directory is absent");
+        bail!("required STT model directory is absent");
     }
     validate_executable(
         options.stt_worker.expect("checked present"),
         options.platform,
         "STT worker",
     )?;
-    validate_executable(
-        options.stt_engine.expect("checked present"),
-        options.platform,
-        "Moonshine engine",
-    )?;
-    for path in options.stt_runtime {
-        if !path.is_file() {
-            bail!(
-                "required Moonshine runtime file is absent: {}",
-                path.display()
-            );
+    if let Some(engine) = options.stt_engine {
+        validate_executable(engine, options.platform, "external STT engine")?;
+        for (label, path) in [
+            (
+                "external STT runtime license",
+                options.stt_runtime_license.expect("complete runtime"),
+            ),
+            (
+                "external STT runtime notices",
+                options.stt_runtime_notices.expect("complete runtime"),
+            ),
+        ] {
+            if !path.is_file() {
+                bail!("required {label} is absent: {}", path.display());
+            }
+        }
+        for path in options.stt_runtime {
+            if !path.is_file() {
+                bail!("required STT runtime file is absent: {}", path.display());
+            }
         }
     }
     Ok(true)
@@ -1041,24 +1055,29 @@ fn validate_stt_model_inputs(
     }
     let directory = options.stt_model_dir.expect("complete STT inputs");
     validate_stt_model_directory(directory, model, rejected)?;
-    for (label, path) in [
+    let mut provenance = vec![
         (
-            "Moonshine runtime license",
-            options.stt_runtime_license.expect("complete STT inputs"),
-        ),
-        (
-            "Moonshine runtime notices",
-            options.stt_runtime_notices.expect("complete STT inputs"),
-        ),
-        (
-            "Moonshine model license",
+            "STT model license",
             options.stt_model_license.expect("complete STT inputs"),
         ),
         (
-            "Moonshine model card",
+            "STT model card",
             options.stt_model_card.expect("complete STT inputs"),
         ),
-    ] {
+    ];
+    if options.stt_engine.is_some() {
+        provenance.extend([
+            (
+                "external STT runtime license",
+                options.stt_runtime_license.expect("complete STT runtime"),
+            ),
+            (
+                "external STT runtime notices",
+                options.stt_runtime_notices.expect("complete STT runtime"),
+            ),
+        ]);
+    }
+    for (label, path) in provenance {
         if file_record(path)?.bytes == 0 {
             bail!("{label} must not be empty");
         }
@@ -1076,8 +1095,8 @@ fn validate_stt_model_directory(
         .iter()
         .map(|item| item.file.as_str())
         .collect();
-    if expected.len() != 7 {
-        bail!("selected Moonshine model must contain exactly seven declared components");
+    if expected.is_empty() || expected.len() != model.components.len() {
+        bail!("selected STT model must declare a nonempty unique component set");
     }
     let declared_total = model.components.iter().try_fold(0_u64, |total, item| {
         total
@@ -1158,30 +1177,34 @@ fn validate_packaged_stt(
     if !present {
         return Ok(false);
     }
-    for required in [
-        &worker,
-        &engine,
-        &runtime.join("LICENSE"),
-        &runtime.join("THIRD_PARTY_NOTICES"),
-        &model.join("LICENSE"),
-        &model.join("README.md"),
-    ] {
+    for required in [&worker, &model.join("LICENSE"), &model.join("README.md")] {
         if !required.is_file() {
             bail!("packaged STT is incomplete: missing {}", required.display());
         }
     }
     validate_executable(&worker, platform, "packaged STT worker")?;
-    validate_executable(&engine, platform, "packaged Moonshine engine")?;
-    if let Some(runtime_manifest) = manifest
-        .runtime
-        .as_ref()
-        .and_then(|runtime| runtime.moonshine_voice.as_ref())
-    {
-        validate_provenance_file(
+    if selected.id.starts_with("moonshine-") {
+        for required in [
+            &engine,
             &runtime.join("LICENSE"),
-            &runtime_manifest.license_sha256,
-            "packaged Moonshine runtime license",
-        )?;
+            &runtime.join("THIRD_PARTY_NOTICES"),
+        ] {
+            if !required.is_file() {
+                bail!("packaged STT is incomplete: missing {}", required.display());
+            }
+        }
+        validate_executable(&engine, platform, "packaged Moonshine engine")?;
+        if let Some(runtime_manifest) = manifest
+            .runtime
+            .as_ref()
+            .and_then(|runtime| runtime.moonshine_voice.as_ref())
+        {
+            validate_provenance_file(
+                &runtime.join("LICENSE"),
+                &runtime_manifest.license_sha256,
+                "packaged Moonshine runtime license",
+            )?;
+        }
     }
     let expected: BTreeSet<String> = selected
         .components
@@ -1881,15 +1904,15 @@ tracked = false
         assert_eq!(selected.bytes, 563_036_064);
         assert_eq!(selected.sha256.len(), SHA256_HEX_LEN);
         let stt = select_stt_model(&manifest).expect("preferred STT model should be declared");
-        assert_eq!(stt.id, "moonshine-tiny-streaming-en");
-        assert_eq!(stt.components.len(), 7);
-        assert_eq!(stt.bytes, 51_441_771);
+        assert_eq!(stt.id, "parakeet-tdt-0.6b-v3-int8");
+        assert_eq!(stt.components.len(), 5);
+        assert_eq!(stt.bytes, 670_619_803);
         assert_eq!(
             stt.components
                 .iter()
                 .map(|component| component.bytes)
                 .sum::<u64>(),
-            51_441_771
+            670_619_803
         );
     }
 
@@ -2092,6 +2115,24 @@ tracked = false
         let error = check(&package.destination, Platform::Macos, false)
             .expect_err("partial packaged STT must fail");
         assert!(error.to_string().contains("packaged STT model is partial"));
+    }
+
+    #[test]
+    fn embedded_stt_packages_without_an_external_engine() {
+        let package = test_package("embedded-stt");
+        let mut package_options = options(&package, &package.runtime);
+        package_options.stt_engine = None;
+        package_options.stt_runtime_license = None;
+        package_options.stt_runtime_notices = None;
+        let report = build(package_options).expect("embedded STT should stage without a sidecar");
+        assert!(report.files.contains_key("beastie-stt"));
+        assert!(
+            !report
+                .files
+                .contains_key("runtime/stt/beastie-moonshine-engine")
+        );
+        check(&package.destination, Platform::Macos, true)
+            .expect("embedded STT package should pass release validation");
     }
 
     #[test]

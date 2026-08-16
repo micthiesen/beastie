@@ -13,6 +13,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 sherpa-onnx = { version = "=1.13.5", optional = true, default-features = false, features = ["static"] }
+transcribe-rs = { version = "=0.3.8", features = ["onnx"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }

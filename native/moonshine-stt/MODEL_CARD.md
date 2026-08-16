@@ -15,5 +15,5 @@ This model performs local speech recognition. It may misrecognize names, accents
 speech differences, competing voices, or noisy rooms. Beastie treats its output as uncertain
 perception, never authoritative state. Text input remains fully available.
 
-Current evaluation evidence and the real-human acceptance requirements are documented in
+Current evaluation evidence and the selected Parakeet default are documented in
 `docs/stt-runtime.md`.

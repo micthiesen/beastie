@@ -1,6 +1,6 @@
 # Beastie Moonshine engine
 
-This small native sidecar keeps Moonshine Voice loaded while Beastie's bounded Rust STT worker
+This optional lightweight fallback keeps Moonshine Voice loaded while Beastie's bounded Rust STT worker
 owns validation, timeouts, restart, and fallback policy. It targets Moonshine Voice `v0.1.2`
 Tiny Streaming English (architecture `2`). The model directory contains exactly the seven files
 returned by Moonshine's dependency catalog. The optional word-alignment model is deliberately not

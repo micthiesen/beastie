@@ -18,12 +18,10 @@ delay, ignore, and refusal; and the same authoritative dialogue path for typed a
 Text remains complete, recognition never pauses simulation, raw microphone audio is temporary,
 and raw recognized words are not durable game state.
 
-Moonshine Voice 0.1.2 Tiny Streaming English is the provisional packaged recognizer. Its bounded
-worker, native sidecar, model hashes, fixture evaluator, package closure, and current synthetic
-accuracy/latency evidence are documented in [stt-runtime.md](stt-runtime.md). The implementation is
-complete, but recognizer selection is not a shipping acceptance until the real-human matrix there
-passes. That distinction preserves this document's design contract without overstating synthetic
-speech results.
+Parakeet TDT 0.6B V3 INT8 is the selected packaged recognizer. Its bounded persistent worker, model
+hashes, fixture evaluator, package closure, and real local accuracy/latency evidence are documented
+in [stt-runtime.md](stt-runtime.md). Moonshine remains a lightweight fallback. The deterministic
+corpus is regression evidence rather than a universal claim about every speaker or room.
 
 ## Product outcome
 

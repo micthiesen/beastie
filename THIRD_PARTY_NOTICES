@@ -21,6 +21,19 @@ MIT License. Beastie packages the pinned `llama-server` runtime and required lib
 official llama.cpp release archive. The exact release archive, digest, and platform proof are
 recorded in docs/packaging.md; the upstream LICENSE file must accompany the final runtime bundle.
 
+NVIDIA Parakeet TDT 0.6B V3 INT8
+--------------------------------
+The selected speech-recognition model is derived from NVIDIA Parakeet TDT 0.6B V3 and is
+distributed under Creative Commons Attribution 4.0. The exact five files, byte counts, hashes,
+source archive, and model card are recorded in `models/manifest.toml`. The model weights remain
+external to git and packaging includes the CC-BY-4.0 legal code and model card beside them.
+
+transcribe-rs and ONNX Runtime
+------------------------------
+The local Parakeet adapter uses transcribe-rs 0.3.8 and ONNX Runtime, both under the MIT License.
+They are linked into the contained `beastie-stt` worker. Cargo's locked source metadata and crate
+distributions retain their complete notices and license texts.
+
 eSpeak NG 1.52.0
 ----------------
 Copyright (C) 2005-2024 the eSpeak NG authors and contributors.

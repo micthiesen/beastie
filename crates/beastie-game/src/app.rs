@@ -118,6 +118,7 @@ impl Game {
             args.fake_ai,
             stt_audio_root.path(),
             args.stt_worker.as_deref(),
+            &args.stt_backend,
             args.stt_model_dir.as_deref(),
             args.moonshine_engine.as_deref(),
             args.stt_timeout_ms,

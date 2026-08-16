@@ -90,8 +90,9 @@ They cannot mutate simulation state.
 
 `beastie-ai-worker` is a supervised JSONL child process. Dialogue, TTS, and STT use bounded,
 cancellable worker transports while retaining separate protocol validation and fallback policy.
-The STT worker validates a private content-addressed WAV before sending only its key to one
-persistent Moonshine native sidecar. The release dialogue adapter keeps one authenticated loopback
+The STT worker validates a private content-addressed WAV before running the selected Parakeet model
+inside its persistent contained process. The optional Moonshine fallback retains its native
+sidecar boundary. The release dialogue adapter keeps one authenticated loopback
 llama.cpp sidecar warm. eSpeak NG remains a separate offline executable,
 receives validated text plus authoritative voice settings, and returns cached WAV metadata and
 mouth timing. Fixture dialogue and silent speech fallbacks remain permanent test and failure modes.

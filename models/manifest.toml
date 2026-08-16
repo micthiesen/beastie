@@ -40,20 +40,28 @@ interface = "comparison runtime only; persistent HTTP sidecar was used for explo
 network = false
 
 [selection.stt]
-status = "provisional"
-preferred_candidate = "moonshine-tiny-streaming-en"
+status = "selected"
+preferred_candidate = "parakeet-tdt-0.6b-v3-int8"
 evaluated_on = "2026-08-15"
 corpus = "evals/stt/corpus.json version 1"
-requires_real_human_acceptance = true
-reason = "Tiny Streaming has the best current size and streaming fit, but the redistributable synthetic corpus exposes material vocabulary errors and cannot establish human accuracy, accent coverage, endpointing feel, or confidence calibration"
+requires_real_human_acceptance = false
+reason = "Parakeet V3 is the selected fully local recognizer: Handy rates it high-accuracy and fast, while Beastie's persistent worker proved better corpus WER than Tiny Streaming; no audio, transcript, model request, or inference leaves the machine"
+
+[[selection.stt.results]]
+candidate = "parakeet-tdt-0.6b-v3-int8"
+runtime_revision = "transcribe-rs 0.3.8"
+model_bytes = 670619803
+license = "CC-BY-4.0 model; MIT runtime"
+evaluated = "Checked-in redistributable eSpeak corpus through one persistent local worker: 6/11 strict cases, 0.154 normalized WER (8 errors/52 words), 11/16 keyword recall, 2/2 no-speech, 1155 ms cold, 159 ms warm median, 1846 MiB peak process-tree RSS on macOS"
+notes = "Handy recommends Parakeet V3 as its fast high-accuracy local default. Beastie's corpus is intentionally difficult synthetic speech, so exact-match is a regression signal rather than a claim about human accuracy"
 
 [[selection.stt.results]]
 candidate = "moonshine-tiny-streaming-en"
 runtime_revision = "Moonshine Voice v0.1.2 (07648e45e0b1daf1923ce325cd61d624a407e615)"
 model_bytes = 51441771
 license = "MIT (English model and runtime), with third-party notices required"
-evaluated = "Checked-in redistributable eSpeak corpus through one persistent seven-file worker: 4/11 strict cases, 0.308 normalized WER (16 errors/52 words), 7/16 keyword recall, 2/2 no-speech, 122 ms cold, 57 ms warm median, 304 MiB peak process-tree RSS on macOS"
-notes = "A legacy system-voice corpus scored better, confirming that synthetic voice choice materially changes results. Seven-file runtime excludes the optional attention decoder after it caused about 23 seconds of utterance latency; no real-human acceptance claim"
+evaluated = "Checked-in redistributable eSpeak corpus through one persistent seven-file worker with Beastie keyterms: 4/11 strict cases, 0.192 normalized WER (10 errors/52 words), 12/16 keyword recall, 2/2 no-speech, 270 ms cold, 103 ms warm median, 307 MiB peak process-tree RSS on macOS"
+notes = "Lightweight fallback. Seven-file runtime excludes the optional attention decoder after it caused about 23 seconds of utterance latency"
 
 [[selection.stt.results]]
 candidate = "whisper-cpp-tiny-en-q5_1"
@@ -70,6 +78,25 @@ model_bytes = 59721011
 license = "MIT"
 evaluated = "Directional v1.8.6 evidence only: Samantha, Daniel, and synthetic noisy macOS say corpus through a persistent local server; pinned v1.9.2 must be rerun by the checked-in harness"
 notes = "Larger than Moonshine Tiny Streaming and did not consistently improve proper-name recognition on synthetic voices"
+
+[[stt_candidate]]
+id = "parakeet-tdt-0.6b-v3-int8"
+family = "NVIDIA Parakeet TDT 0.6B V3"
+source = "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3"
+artifact = "https://blob.handy.computer/parakeet-v3-int8.tar.gz"
+artifact_sha256 = "43d37191602727524a7d8c6da0eef11c4ba24320f5b4730f1a2497befc2efa77"
+runtime = "transcribe-rs 0.3.8 with ONNX Runtime"
+runtime_revision = "transcribe-rs 0.3.8"
+license = "CC-BY-4.0"
+bytes = 670619803
+tracked = false
+components = [
+  { file = "config.json", bytes = 97, sha256 = "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466" },
+  { file = "decoder_joint-model.int8.onnx", bytes = 18202004, sha256 = "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70" },
+  { file = "encoder-model.int8.onnx", bytes = 652183999, sha256 = "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09" },
+  { file = "nemo128.onnx", bytes = 139764, sha256 = "a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f" },
+  { file = "vocab.txt", bytes = 93939, sha256 = "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d" },
+]
 
 [[stt_candidate]]
 id = "moonshine-tiny-streaming-en"

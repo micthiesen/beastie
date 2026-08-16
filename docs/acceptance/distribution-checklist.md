@@ -10,8 +10,8 @@ Status: **not release-ready until every required native row has evidence**
 - [ ] Every platform package passes `cargo xtask package --check` with `network = false`.
 - [ ] Package manifests, installer hashes, and source notices are retained as CI artifacts.
 - [ ] The exact Qwen model, llama.cpp runtime closure, and eSpeak source archive match pinned hashes.
-- [ ] The exact seven-file Moonshine model is 51,441,771 bytes and every component matches its
-  pinned SHA-256. The STT engine closure, license, notices, and model card are present.
+- [ ] The exact five-file Parakeet model is 670,619,803 bytes and every component matches its
+  pinned SHA-256. The CC-BY-4.0 license and model card are present.
 - [ ] Missing, partial, tampered, symlinked, unexpected, and oversized STT package probes fail.
 - [ ] Save directory is writable and remains outside the install directory after first launch.
 
@@ -26,14 +26,14 @@ Status: **not release-ready until every required native row has evidence**
 For each native run, disable networking at the OS/firewall or runner boundary, start from a clean
 user profile, verify the offline model/worker/TTS path, send one message, save, quit, and confirm no
 `beastie-ai-worker`, `llama-server`, `beastie-tts`, `beastie-stt`, or
-`beastie-moonshine-engine` descendants remain. Confirm microphone permission denial falls back to
+STT descendants remain. Confirm microphone permission denial falls back to
 typed input, cancellation and timeout remove temporary WAV files, recognized text is not retained
 by default, and a fresh offline spoken turn succeeds. A CI definition is not a substitute for
 this evidence.
 
-For each native target, record at least one ordinary voice, one quiet/no-speech sample, one noisy
-sample, and one profane in-policy phrase. Record transcription, endpointing feel, latency, and any
-fallback. macOS development evidence alone does not satisfy Windows or Linux rows.
+For each native target, run the pinned automated STT corpus plus one microphone smoke. Record
+transcription, endpointing feel, latency, and any fallback. macOS development evidence alone does
+not satisfy Windows or Linux rows.
 
 ## Store assets and compliance
 

@@ -1,4 +1,4 @@
-//! Bounded offline speech-recognition worker and external Moonshine engine boundary.
+//! Bounded offline speech recognition with embedded Parakeet and optional Moonshine backends.
 
 use std::fmt;
 use std::fs::{self, File};
@@ -15,6 +15,10 @@ use beastie_protocol::{
     validate_recognition_request,
 };
 use sha2::{Digest, Sha256};
+use transcribe_rs::onnx::{
+    Quantization,
+    parakeet::{ParakeetModel, ParakeetParams, TimestampGranularity},
+};
 
 use crate::bounded::{BoundedLine, read_bounded_line};
 use crate::process::{ContainedChild, UnixProcessGroup};
@@ -24,6 +28,7 @@ pub const MAX_STT_SECONDS: usize = 30;
 pub const STT_SAMPLE_RATE: u32 = 16_000;
 pub const MOONSHINE_ENGINE_PROTOCOL_VERSION: u32 = 1;
 pub const MOONSHINE_MODEL_ID: &str = "moonshine-voice-v0.1.2-tiny-streaming-arch2";
+pub const PARAKEET_MODEL_ID: &str = "parakeet-tdt-0.6b-v3-int8";
 const MAX_WAV_FILE_BYTES: u64 = 1_048_576;
 
 #[derive(Debug, Clone)]
@@ -83,6 +88,61 @@ impl SttBackend for FixtureSttBackend {
         Ok(RecognitionOutcome::Recognized {
             text: "hello beastie".to_owned(),
             confidence: AcousticConfidence::new(900).expect("fixture confidence is bounded"),
+        })
+    }
+}
+
+pub struct ParakeetBackend {
+    model: ParakeetModel,
+}
+
+impl fmt::Debug for ParakeetBackend {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ParakeetBackend")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ParakeetBackend {
+    pub fn load(model_dir: &Path) -> Result<Self, SttBackendError> {
+        ParakeetModel::load(model_dir, &Quantization::Int8)
+            .map(|model| Self { model })
+            .map_err(|_| SttBackendError::Unavailable)
+    }
+}
+
+impl SttBackend for ParakeetBackend {
+    fn recognize(
+        &mut self,
+        _request: &RecognitionRequest,
+        audio: &ValidatedAudio,
+    ) -> Result<RecognitionOutcome, SttBackendError> {
+        if audio.samples.iter().all(|sample| *sample == 0) {
+            return Ok(RecognitionOutcome::NoSpeech {});
+        }
+        let samples = audio
+            .samples
+            .iter()
+            .map(|sample| f32::from(*sample) / f32::from(i16::MAX))
+            .collect::<Vec<_>>();
+        let params = ParakeetParams {
+            timestamp_granularity: Some(TimestampGranularity::Segment),
+            ..ParakeetParams::default()
+        };
+        let result = self
+            .model
+            .transcribe_with(&samples, &params)
+            .map_err(|_| SttBackendError::Failed)?;
+        let text = result.text.trim().to_owned();
+        if text.is_empty() {
+            return Ok(RecognitionOutcome::NoSpeech {});
+        }
+        Ok(RecognitionOutcome::Recognized {
+            text,
+            // Parakeet does not expose calibrated utterance confidence. This
+            // means "recognized and usable", not a probability of correctness.
+            confidence: AcousticConfidence::new(800).expect("constant confidence is bounded"),
         })
     }
 }

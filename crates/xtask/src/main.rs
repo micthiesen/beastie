@@ -67,6 +67,18 @@ enum Task {
         /// Outer worker watchdog in milliseconds.
         #[arg(long)]
         ai_timeout_ms: Option<u64>,
+        /// Real local recognizer used with --stt-model-dir.
+        #[arg(long, value_parser = ["parakeet", "moonshine"], default_value = "parakeet")]
+        stt_backend: String,
+        /// Enable real local STT with this model directory.
+        #[arg(long, conflicts_with = "fake_ai")]
+        stt_model_dir: Option<PathBuf>,
+        /// Persistent local Moonshine engine used with --stt-model-dir.
+        #[arg(long, requires = "stt_model_dir", conflicts_with = "fake_ai")]
+        moonshine_engine: Option<PathBuf>,
+        /// Watchdog for one local STT result in milliseconds.
+        #[arg(long)]
+        stt_timeout_ms: Option<u64>,
         /// Opt into GPL-blocked Kitten TTS instead of the release eSpeak backend.
         #[arg(long, requires = "tts_cache_dir")]
         tts_model_dir: Option<PathBuf>,
@@ -125,25 +137,25 @@ enum Task {
         /// Already-built Beastie STT worker.
         #[arg(long)]
         stt_worker: Option<PathBuf>,
-        /// Already-built native Moonshine engine.
+        /// Optional external Moonshine engine for lightweight fallback packages.
         #[arg(long)]
         stt_engine: Option<PathBuf>,
-        /// Moonshine engine dynamic runtime library. Repeatable.
+        /// Optional external STT engine dynamic runtime library. Repeatable.
         #[arg(long)]
         stt_runtime: Vec<PathBuf>,
-        /// Moonshine runtime MIT license snapshot.
+        /// Optional external STT runtime license snapshot.
         #[arg(long)]
         stt_runtime_license: Option<PathBuf>,
-        /// Moonshine runtime third-party notices.
+        /// Optional external STT runtime third-party notices.
         #[arg(long)]
         stt_runtime_notices: Option<PathBuf>,
-        /// Directory containing exactly the seven selected Moonshine model files.
+        /// Directory containing exactly the selected STT model components.
         #[arg(long)]
         stt_model_dir: Option<PathBuf>,
-        /// Moonshine model MIT license snapshot.
+        /// Selected STT model license snapshot.
         #[arg(long)]
         stt_model_license: Option<PathBuf>,
-        /// Moonshine model card snapshot.
+        /// Selected STT model card snapshot.
         #[arg(long)]
         stt_model_card: Option<PathBuf>,
         /// Selected local GGUF file.
@@ -210,15 +222,25 @@ enum DialogueTask {
 
 #[derive(Debug, Subcommand)]
 enum SttTask {
-    /// Evaluate deterministic replies, or opt into a real Moonshine worker run.
+    /// Download and verify the selected local STT model for development.
+    Setup,
+    /// Evaluate deterministic replies, or opt into a real local worker run.
     Eval {
         /// Path to the beastie-stt executable. Enables a real-runtime run.
         #[arg(long)]
         worker: Option<PathBuf>,
-        /// Directory containing the selected Moonshine model components.
+        /// Local recognition backend.
+        #[arg(
+            long,
+            value_parser = ["moonshine", "parakeet"],
+            default_value = "moonshine",
+            requires = "worker"
+        )]
+        backend: String,
+        /// Directory containing the selected local model components.
         #[arg(long, requires = "worker")]
         model_dir: Option<PathBuf>,
-        /// Moonshine transcriber engine loaded by the worker.
+        /// Moonshine transcriber engine, required only by that backend.
         #[arg(long, requires = "worker")]
         moonshine_engine: Option<PathBuf>,
         /// Extra worker argument. Repeatable.
@@ -330,9 +352,13 @@ fn main() -> Result<()> {
             label,
         }),
         Task::Stt {
+            command: SttTask::Setup,
+        } => stt_eval::setup(),
+        Task::Stt {
             command:
                 SttTask::Eval {
                     worker,
+                    backend,
                     model_dir,
                     moonshine_engine,
                     worker_arg,
@@ -340,6 +366,7 @@ fn main() -> Result<()> {
                 },
         } => stt_eval::run(stt_eval::EvalOptions {
             worker,
+            backend,
             model_dir,
             moonshine_engine,
             worker_args: worker_arg,
@@ -348,6 +375,10 @@ fn main() -> Result<()> {
         Task::Dev {
             fake_ai,
             ai_timeout_ms,
+            stt_backend,
+            stt_model_dir,
+            moonshine_engine,
+            stt_timeout_ms,
             tts_model_dir,
             tts_cache_dir,
             tts_espeak,
@@ -359,6 +390,10 @@ fn main() -> Result<()> {
         } => dev(DevOptions {
             fake_ai,
             ai_timeout_ms,
+            stt_backend: &stt_backend,
+            stt_model_dir: stt_model_dir.as_deref(),
+            moonshine_engine: moonshine_engine.as_deref(),
+            stt_timeout_ms,
             tts_model_dir: tts_model_dir.as_deref(),
             tts_cache_dir: tts_cache_dir.as_deref(),
             tts_espeak: tts_espeak.as_deref(),
@@ -542,6 +577,10 @@ fn verify() -> Result<()> {
 struct DevOptions<'a> {
     fake_ai: bool,
     ai_timeout_ms: Option<u64>,
+    stt_backend: &'a str,
+    stt_model_dir: Option<&'a Path>,
+    moonshine_engine: Option<&'a Path>,
+    stt_timeout_ms: Option<u64>,
     tts_model_dir: Option<&'a Path>,
     tts_cache_dir: Option<&'a Path>,
     tts_espeak: Option<&'a Path>,
@@ -556,6 +595,10 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
     let DevOptions {
         fake_ai,
         ai_timeout_ms,
+        stt_backend,
+        stt_model_dir,
+        moonshine_engine,
+        stt_timeout_ms,
         tts_model_dir,
         tts_cache_dir,
         tts_espeak,
@@ -565,6 +608,9 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
         stay_open,
         new_game,
     } = options;
+    if stt_backend == "moonshine" && stt_model_dir.is_some() && moonshine_engine.is_none() {
+        bail!("--moonshine-engine is required with --stt-backend moonshine");
+    }
     let worker = if fake_ai {
         None
     } else {
@@ -587,7 +633,7 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
                 .join(format!("beastie-ai-worker{}", std::env::consts::EXE_SUFFIX)),
         )
     };
-    let stt_worker = if fake_ai {
+    let stt_worker = if fake_ai || stt_model_dir.is_some() {
         run(
             "cargo",
             &[
@@ -650,6 +696,23 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
     if let Some(timeout) = ai_timeout_ms {
         command.arg("--ai-timeout-ms").arg(timeout.to_string());
     }
+    if let (Some(stt_worker), Some(model_dir)) = (stt_worker.as_ref(), stt_model_dir) {
+        command
+            .arg("--stt-worker")
+            .arg(stt_worker)
+            .arg("--stt-backend")
+            .arg(stt_backend)
+            .arg("--stt-model-dir")
+            .arg(model_dir);
+        if stt_backend == "moonshine" {
+            command
+                .arg("--moonshine-engine")
+                .arg(moonshine_engine.expect("validated Moonshine engine"));
+        }
+    }
+    if let Some(timeout) = stt_timeout_ms {
+        command.arg("--stt-timeout-ms").arg(timeout.to_string());
+    }
     if let (Some(tts_worker), Some(cache_dir)) = (tts_worker, tts_cache_dir) {
         command
             .arg("--tts")
@@ -682,14 +745,14 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
     if let Some(worker) = worker {
         command.env("BEASTIE_AI_WORKER", worker);
     }
-    if let Some(stt_worker) = stt_worker {
+    if fake_ai && let Some(stt_worker) = stt_worker {
         command.env("BEASTIE_STT_WORKER", stt_worker);
     }
     let mut child = command.spawn().context("failed to start beastie-game")?;
     if !smoke {
         focus_macos_process(child.id());
     }
-    if fake_ai && !stay_open && (smoke || script.is_some()) {
+    if !stay_open && (smoke || script.is_some()) {
         let deadline = Instant::now() + Duration::from_secs(120);
         loop {
             if let Some(status) = child.try_wait().context("failed to poll beastie-game")? {

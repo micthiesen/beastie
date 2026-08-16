@@ -21,8 +21,8 @@ energy, curiosity, personality, bond, and resentment. Hearing may redirect gaze,
 cancel an action, replace an intention, or move the creature. Glancing or attending projects to the
 authored notice reaction and curious sound; ignoring adds no fake acknowledgement.
 
-Recognition confidence is an integer from 0 through 1000. The provisional usable threshold is
-650. Candidate text is transient session state. A usable final candidate enters the exact same
+Recognition confidence is an integer from 0 through 1000. The usable threshold is 650. Candidate
+text is transient session state. A usable final candidate enters the exact same
 `apply_talk` path as typed text. An uncertain candidate, missing candidate, or technical failure
 does not create dialogue, language exposure, memory, or belief. Technical failures remain typed and
 separate from `TalkIgnored`, which represents creature behavior.
@@ -41,8 +41,8 @@ and recovery rules.
 The implemented STT path keeps microphone capture and recognition details outside `beastie-core`,
 translates backend confidence into `AcousticConfidence`, and emits only the typed lifecycle above.
 Audio bytes and raw partial transcripts never enter saves or authoritative memory. The game owns
-capture and resampling; `beastie-stt` validates a private content-addressed WAV and supervises the
-persistent native recognizer sidecar.
+capture and resampling; `beastie-stt` validates a private content-addressed WAV and runs Parakeet
+inside its persistent contained process. The Moonshine fallback supervises a native sidecar.
 
 ## Deterministic evidence
 
@@ -67,7 +67,7 @@ durable state.
 
 ## Deliberately deferred
 
-- shipping acceptance of the provisional recognizer on real human voices;
+- broader speaker and room-condition quality evaluation beyond the deterministic corpus;
 - open-microphone, wake-word, or partial-result activation beyond bounded push-to-talk;
 - learned pronunciation and per-player vocabulary adaptation;
 - prosody, laughter, and other nonverbal acoustic cues;

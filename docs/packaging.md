@@ -22,13 +22,9 @@ cargo xtask package \
   --espeak-license /path/to/espeak-ng-COPYING \
   --espeak-source /path/to/espeak-ng-1.52.0.tar.gz \
   --stt-worker target/release/beastie-stt \
-  --stt-engine /path/to/beastie-moonshine-engine \
-  --stt-runtime /path/to/each-required-moonshine-library \
-  --stt-runtime-license /path/to/moonshine-LICENSE \
-  --stt-runtime-notices /path/to/moonshine-THIRD_PARTY_NOTICES \
-  --stt-model-dir /path/to/moonshine-tiny-streaming-en \
-  --stt-model-license /path/to/moonshine-model-LICENSE \
-  --stt-model-card /path/to/moonshine-model-README.md
+  --stt-model-dir /path/to/parakeet-tdt-0.6b-v3-int8 \
+  --stt-model-license /path/to/CC-BY-4.0-legalcode.txt \
+  --stt-model-card /path/to/parakeet-model-README.md
 cargo xtask package --platform macos --destination dist --check
 ```
 
@@ -58,11 +54,6 @@ dist/
       espeak-ng-data/**
       espeak-ng-COPYING
       espeak-ng-1.52.0.tar.gz
-      stt/
-        beastie-moonshine-engine
-        LICENSE
-        THIRD_PARTY_NOTICES
-        **/*                  # complete native dynamic-library closure
     assets/manifest.toml
     assets/generated/**
     assets/final/**          # when promoted assets exist
@@ -71,14 +62,12 @@ dist/
     models/Qwen3.5-0.8B-Q4_0.gguf
     models/LICENSE
     models/README.md
-    models/moonshine-tiny-streaming-en/
-      adapter.ort
-      cross_kv.ort
-      decoder_kv.ort
-      encoder.ort
-      frontend.ort
-      streaming_config.json
-      tokenizer.bin
+    models/parakeet-tdt-0.6b-v3-int8/
+      config.json
+      decoder_joint-model.int8.onnx
+      encoder-model.int8.onnx
+      nemo128.onnx
+      vocab.txt
       LICENSE
       README.md
     THIRD_PARTY_NOTICES
@@ -117,14 +106,13 @@ inputs.
 Every eSpeak-enabled package includes the exact eSpeak NG 1.52.0 source archive. Its byte count and
 SHA-256 are enforced by the package builder and recorded in `THIRD_PARTY_NOTICES`.
 
-The packaged game discovers sibling `beastie-stt`, which discovers
-`runtime/stt/beastie-moonshine-engine` and
-`models/moonshine-tiny-streaming-en` relative to itself. No Homebrew path, development checkout,
-or environment variable is needed in a release. The selected model is exactly seven files and
-51,441,771 bytes. Every component size and SHA-256 comes from `models/manifest.toml`. Missing,
-partial, tampered, symlinked, or unexpected contents fail closed. In particular,
-`decoder_kv_with_attention.ort` is rejected. Runtime and model license, notices, and model-card
-files are mandatory.
+The packaged game discovers sibling `beastie-stt` and
+`models/parakeet-tdt-0.6b-v3-int8` relative to itself. Parakeet inference is embedded in the worker,
+so no separate STT engine or Homebrew path is needed. The selected model is exactly five files and
+670,619,803 bytes. Every component size and SHA-256 comes from `models/manifest.toml`. Missing,
+partial, tampered, symlinked, or unexpected contents fail closed. The CC-BY-4.0 license and model
+card are mandatory. Moonshine fallback packages may still supply the optional external STT engine,
+runtime license, and notices as a complete group.
 
 The macOS app declares `NSMicrophoneUsageDescription` with the bounded push-to-talk purpose before
 signing. The game requests audio only after the player explicitly enables the microphone and begins
