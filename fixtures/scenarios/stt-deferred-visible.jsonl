@@ -1,0 +1,5 @@
+{"version":1,"command":"play","toy":"ball"}
+{"version":1,"command":"speech_started"}
+{"version":1,"command":"speech_candidate","text":"hello beastie","confidence":900}
+{"version":1,"command":"speech_ended"}
+{"version":1,"command":"capture","name":"01-deferred-speech"}

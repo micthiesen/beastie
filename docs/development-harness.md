@@ -107,6 +107,12 @@ The development Mac has previously proven:
 This list predates Moonshine integration and is not evidence of a packaged real-microphone STT
 run. Native STT rows remain unchecked until dated logs and package hashes are attached.
 
+`fixtures/scenarios/stt-deferred-visible.jsonl` holds the creature in Play, submits a recognized
+spoken turn, and leaves that turn deferred. Launch it with `--stay-open`, then press F1 repeatedly.
+The game must remain open and show that it already heard the player. This is the native regression
+for the former deferred-speech crash, where the shell displayed an idle microphone while the
+session still owned a queued utterance.
+
 Alacritty required Screen Recording and Accessibility permissions for host automation. Starting the
 game through Alacritty avoided a blank or occluded Metal window. yabai has intermittently held the
 release window on a blank first frame at high CPU; stopping the service for the focused run and

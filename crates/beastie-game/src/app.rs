@@ -9,6 +9,7 @@ use beastie_protocol::{
 };
 use beastie_session::{
     CommandEnvelope, GameSession, SESSION_PROTOCOL_VERSION, SessionCommand, SessionError,
+    SpokenInputStatus,
 };
 use beastie_view::{
     BindableAction, BindingLabels, CursorKind, MicrophoneState, RenderPlan, UiAction, UiMode,
@@ -63,6 +64,7 @@ pub struct Game {
     stt_audio_root: PrivateAudioRoot,
     recognition_sequence: u64,
     active_recognition: Option<u64>,
+    spoken_turn_pending: bool,
     tts: TtsManager,
     save_store: SaveStore,
     settings_store: SettingsStore,
@@ -205,6 +207,7 @@ impl Game {
             stt_audio_root,
             recognition_sequence: 0,
             active_recognition: None,
+            spoken_turn_pending: false,
             tts,
             save_store,
             settings_store,
@@ -293,6 +296,16 @@ impl Game {
             .extend(observation.events.iter().filter_map(sound_for_event));
         self.view
             .observe_events(&observation.events, self.session.world().elapsed_ms);
+        if let Some(status) = observation.spoken_input {
+            self.spoken_turn_pending = spoken_input_is_pending(status);
+            if self.spoken_turn_pending && matches!(status, SpokenInputStatus::Deferred) {
+                self.view.microphone_state = MicrophoneState::Recognizing;
+                self.view.status_message =
+                    Some("Heard you. Waiting for a good moment...".to_owned());
+            } else if !self.spoken_turn_pending {
+                self.view.microphone_state = self.resting_microphone_state();
+            }
+        }
         if let Some(request) = observation.dialogue_request
             && self.dialogue.request(request)
         {
@@ -321,10 +334,24 @@ impl Game {
     }
 
     fn begin_push_to_talk(&mut self) -> GameResult {
-        if !self.settings.microphone_enabled || self.microphone.is_some() {
+        if self.microphone.is_some() {
             return Ok(());
         }
-        if self.recognition.is_pending() || self.dialogue.is_pending() {
+        if !self.settings.microphone_enabled {
+            self.view.status_message =
+                Some("Microphone is off. Enable it in Settings (F5)".to_owned());
+            return Ok(());
+        }
+        if self.spoken_turn_pending {
+            self.view.status_message =
+                Some("Already heard you. Waiting for a good moment...".to_owned());
+            return Ok(());
+        }
+        if self.recognition.is_pending() {
+            self.view.status_message = Some("Still recognizing what you said...".to_owned());
+            return Ok(());
+        }
+        if self.dialogue.is_pending() {
             self.view.status_message = Some("Finish this thought before speaking again".to_owned());
             return Ok(());
         }
@@ -427,8 +454,10 @@ impl Game {
                             false,
                         )?;
                         self.apply_command(SessionCommand::SpeechEnded, true)?;
-                        self.view.status_message = None;
-                        self.view.microphone_state = self.resting_microphone_state();
+                        if !self.spoken_turn_pending {
+                            self.view.status_message = None;
+                            self.view.microphone_state = self.resting_microphone_state();
+                        }
                     }
                     RecognitionOutcome::NoSpeech {} => {
                         self.apply_command(SessionCommand::SpeechEnded, false)?;
@@ -1013,24 +1042,8 @@ impl Game {
         };
         match step {
             ScenarioStep::Session(envelope) => {
-                if clears_speech(&envelope.command) {
-                    self.clear_speech();
-                }
                 let persist = command_requires_persist(&envelope.command);
-                let observation = self.session.apply(envelope).map_err(session_error)?;
-                self.queued_audio
-                    .extend(observation.events.iter().filter_map(sound_for_event));
-                self.view
-                    .observe_events(&observation.events, self.session.world().elapsed_ms);
-                if let Some(request) = observation.dialogue_request
-                    && self.dialogue.request(request)
-                {
-                    self.view.pending = true;
-                    self.view.speech = None;
-                }
-                if persist {
-                    self.persist()?;
-                }
+                self.apply_command(envelope.command, persist)?;
             }
             ScenarioStep::Ui(action) => {
                 self.apply_ui_action(action, false)?;
@@ -1691,16 +1704,27 @@ fn command_requires_persist(command: &SessionCommand) -> bool {
     )
 }
 
+const fn spoken_input_is_pending(status: SpokenInputStatus) -> bool {
+    matches!(
+        status,
+        SpokenInputStatus::Listening
+            | SpokenInputStatus::CandidateUpdated { .. }
+            | SpokenInputStatus::Deferred
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use beastie_core::{Reaction, ToyId};
-    use beastie_session::{SESSION_PROTOCOL_VERSION, SESSION_SAVE_VERSION, SessionCommand};
+    use beastie_session::{
+        SESSION_PROTOCOL_VERSION, SESSION_SAVE_VERSION, SessionCommand, SpokenInputStatus,
+    };
     use beastie_view::{UiAction, ViewState};
 
     use super::{
         CaptureState, clears_speech, command_requires_persist, effective_dialogue_text_speed,
         load_session, mark_capture_rendered, mouth_phase, play_command, revealed_text,
-        show_dialogue_caption, take_capture_for_readback,
+        show_dialogue_caption, spoken_input_is_pending, take_capture_for_readback,
     };
     use crate::save_store::SaveStore;
     use crate::settings::TextSpeed;
@@ -1771,6 +1795,34 @@ mod tests {
         assert!(!command_requires_persist(&SessionCommand::SpeechFailed {
             failure: beastie_protocol::SpeechInputFailure::RecognitionFailed,
         }));
+    }
+
+    #[test]
+    fn deferred_spoken_input_stays_busy_until_the_session_submits_it() {
+        assert!(spoken_input_is_pending(SpokenInputStatus::Listening));
+        assert!(spoken_input_is_pending(
+            SpokenInputStatus::CandidateUpdated {
+                confidence: beastie_protocol::AcousticConfidence::new(900).expect("valid"),
+            }
+        ));
+        assert!(spoken_input_is_pending(SpokenInputStatus::Deferred));
+
+        for terminal in [
+            SpokenInputStatus::Submitted,
+            SpokenInputStatus::NoCandidate,
+            SpokenInputStatus::Refused,
+            SpokenInputStatus::AcousticUncertainty {
+                confidence: beastie_protocol::AcousticConfidence::new(500).expect("valid"),
+            },
+            SpokenInputStatus::NotEngaged {
+                attention: beastie_core::SpeechAttention::Ignored,
+            },
+            SpokenInputStatus::InfrastructureFailure {
+                failure: beastie_protocol::SpeechInputFailure::RecognitionFailed,
+            },
+        ] {
+            assert!(!spoken_input_is_pending(terminal));
+        }
     }
 
     #[test]
