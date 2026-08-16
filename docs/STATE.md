@@ -114,28 +114,33 @@ Last updated: **2026-08-15** (V2 spoken interaction implemented; recognizer acce
 
 ## Next
 
-Close real-human recognition acceptance before adding another major interaction system. Record at
-least three speakers across quiet, ordinary room noise, game audio, competing speech, proper names,
-aquarium vocabulary, disfluency, and permitted profanity. Use held-out clips to calibrate the
-confidence threshold, and rerun pinned whisper.cpp 1.9.2 tiny/base comparisons through the same
-worker evaluator if Moonshine misses remain disruptive.
+Build the local real-human STT acceptance harness and use it to close the provisional recognizer
+decision. Capture consented clips through the same microphone/resampling path as the game into an
+ignored private corpus, describe speaker and acoustic conditions without identity data, extend
+`cargo xtask stt eval` to score that external corpus, and produce one redacted report covering at
+least three speakers, quiet speech, room/game noise, competing speech, proper names, aquarium
+vocabulary, disfluency, profanity, silence, and cancellation.
 
-The V2 product path is complete and remains fully playable through text. This next batch decides
-whether Moonshine should graduate from provisional to shipped, needs vocabulary adaptation, or
-should be replaced. It is quality closure, not permission to paper over recognition errors in the
-creature's cognition.
+Calibrate confidence only on a designated tuning split, then judge Moonshine on a held-out split
+and rerun pinned whisper.cpp 1.9.2 tiny/base through the same clips if it misses the acceptance bar.
+This one-to-two-day engineering batch plus human recording time beats open-microphone work because
+recognition accuracy is now the load-bearing unknown; it decides whether the current 51 MB runtime
+ships, needs narrow vocabulary adaptation, or is replaced. See [stt-runtime.md](stt-runtime.md).
 
 ## Candidates Not Chosen
 
 - **Open-microphone or wake-word activation:** bounded push-to-talk is intentionally the V2
   activation model. Background capture would materially widen privacy, endpointing, and accidental
-  activation risk before recognition quality is accepted.
+  activation risk before recognition quality is accepted. Expect two to four days plus sustained
+  real-device and human judgment.
 - **Prosody, laughter, and nonverbal acoustic cues:** useful future perception signals, but they
-  must not infer player emotion as fact or bypass the shared language path.
+  must not infer player emotion as fact or bypass the shared language path. Expect one to three
+  days for a fixture-backed signal boundary, with model/device evaluation as the main unknown.
 - **Release-platform closure:** several days plus external credentials and Windows/Linux hardware.
-  It remains necessary, but it does not advance the chosen V2 spoken-interaction slice. Required
-  evidence still includes native Windows/Linux install and launch, a physical controller, signing,
-  notarization, final store captures, trailer, and Steam credentials.
+  It remains necessary, but packaging a recognizer whose human accuracy is still unknown would
+  lock in the wrong runtime. Required evidence still includes native Windows/Linux install and
+  launch, a physical controller, signing, notarization, final store captures, trailer, and Steam
+  credentials.
 
 ## Durable pointers
 
