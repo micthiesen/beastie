@@ -51,6 +51,10 @@ pub enum GameEvent {
         contextual_follow_up: bool,
     },
     TalkIgnored,
+    /// Language was heard and understood as an attempt to engage, but the creature declined.
+    UtteranceRefused,
+    /// Language was noticed without cancelling the creature's current embodied action.
+    UtteranceDeferred,
     SpeechPerceived(SpeechAttention),
     LanguageExposureRegistered(LanguageExposure),
     NonverbalAct(NonverbalAct),
@@ -324,32 +328,26 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
     }
 }
 
-fn speech_attention(state: &WorldState) -> SpeechAttention {
+#[must_use]
+pub fn speech_attention(state: &WorldState) -> SpeechAttention {
     let creature = &state.creature;
     if matches!(creature.current_intention, Intention::Sleep) || creature.needs.energy < 0.12 {
         return SpeechAttention::Ignored;
     }
 
-    let social_attention =
-        creature.traits.sociability + creature.relationship.bond + creature.needs.curiosity * 0.5
-            - creature.relationship.resentment;
-    let occupied = creature.aquarium.action.is_some()
-        || !matches!(
-            creature.current_intention,
-            Intention::Idle | Intention::ApproachPlayer | Intention::SeekComfort
-        );
+    // Resentment changes willingness, not hearing. The session layer turns this attended
+    // perception into a legible refusal after it has creature-bounded words.
+    if state.mood() == crate::Mood::Resentful {
+        return SpeechAttention::Attended;
+    }
+
+    let occupied =
+        creature.aquarium.action.is_some() || matches!(creature.current_intention, Intention::Play);
     if occupied {
-        if social_attention >= 0.75 {
-            SpeechAttention::Glanced
-        } else {
-            SpeechAttention::Ignored
-        }
-    } else if social_attention >= 0.55 {
-        SpeechAttention::Attended
-    } else if social_attention >= 0.25 {
         SpeechAttention::Glanced
     } else {
-        SpeechAttention::Ignored
+        // An unoccupied creature attends instead of randomly dropping player language.
+        SpeechAttention::Attended
     }
 }
 

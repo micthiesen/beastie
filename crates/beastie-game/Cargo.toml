@@ -16,6 +16,7 @@ beastie-protocol = { path = "../beastie-protocol" }
 beastie-session = { path = "../beastie-session" }
 beastie-view = { path = "../beastie-view" }
 clap.workspace = true
+cpal = "0.17"
 ggez.workspace = true
 font8x8 = "0.3"
 image.workspace = true
@@ -24,6 +25,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 thiserror.workspace = true
+toml.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

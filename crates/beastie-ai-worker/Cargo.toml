@@ -30,3 +30,7 @@ experimental-gpl-tts = ["dep:sherpa-onnx"]
 [[bin]]
 name = "beastie-tts"
 path = "src/bin/beastie-tts.rs"
+
+[[bin]]
+name = "beastie-stt"
+path = "src/bin/beastie-stt.rs"

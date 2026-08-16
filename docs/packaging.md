@@ -20,7 +20,15 @@ cargo xtask package \
   --espeak /path/to/espeak-ng \
   --espeak-data /path/to/espeak-ng-data \
   --espeak-license /path/to/espeak-ng-COPYING \
-  --espeak-source /path/to/espeak-ng-1.52.0.tar.gz
+  --espeak-source /path/to/espeak-ng-1.52.0.tar.gz \
+  --stt-worker target/release/beastie-stt \
+  --stt-engine /path/to/beastie-moonshine-engine \
+  --stt-runtime /path/to/each-required-moonshine-library \
+  --stt-runtime-license /path/to/moonshine-LICENSE \
+  --stt-runtime-notices /path/to/moonshine-THIRD_PARTY_NOTICES \
+  --stt-model-dir /path/to/moonshine-tiny-streaming-en \
+  --stt-model-license /path/to/moonshine-model-LICENSE \
+  --stt-model-card /path/to/moonshine-model-README.md
 cargo xtask package --platform macos --destination dist --check
 ```
 
@@ -28,9 +36,10 @@ cargo xtask package --platform macos --destination dist --check
 and every dynamic library it needs. Package inputs may use only sibling-resolving runtime symlinks;
 asset symlinks and runtime symlinks that escape their source directory fail closed.
 
-Release packages require all five TTS inputs. Supplying only some of them fails before staging.
-An intentionally silent developer package must opt in with `--development-package` during both
-staging and checking. The TTS inputs must come from the same eSpeak NG distribution so the
+Release packages require complete TTS and STT inputs. Supplying only part of either bundle fails
+before staging. A developer package may omit either bundle only by passing
+`--development-package` during staging and checking. This opt-out is never valid for a release.
+The TTS inputs must come from the same eSpeak NG distribution so the
 executable, data, GPLv3 license, and corresponding source remain auditable as one separately
 distributed component.
 
@@ -42,12 +51,18 @@ dist/
     beastie
     beastie-ai-worker
     beastie-tts              # external-process JSONL TTS adapter
+    beastie-stt              # bounded persistent JSONL recognition worker
     runtime/                 # local inference and TTS runtimes
       llama-server
       espeak-ng
       espeak-ng-data/**
       espeak-ng-COPYING
       espeak-ng-1.52.0.tar.gz
+      stt/
+        beastie-moonshine-engine
+        LICENSE
+        THIRD_PARTY_NOTICES
+        **/*                  # complete native dynamic-library closure
     assets/manifest.toml
     assets/generated/**
     assets/final/**          # when promoted assets exist
@@ -56,6 +71,16 @@ dist/
     models/Qwen3.5-0.8B-Q4_0.gguf
     models/LICENSE
     models/README.md
+    models/moonshine-tiny-streaming-en/
+      adapter.ort
+      cross_kv.ort
+      decoder_kv.ort
+      encoder.ort
+      frontend.ort
+      streaming_config.json
+      tokenizer.bin
+      LICENSE
+      README.md
     THIRD_PARTY_NOTICES
     LICENSE
     package-manifest.json    # bytes and SHA-256 for every file above
@@ -91,6 +116,19 @@ inputs.
 
 Every eSpeak-enabled package includes the exact eSpeak NG 1.52.0 source archive. Its byte count and
 SHA-256 are enforced by the package builder and recorded in `THIRD_PARTY_NOTICES`.
+
+The packaged game discovers sibling `beastie-stt`, which discovers
+`runtime/stt/beastie-moonshine-engine` and
+`models/moonshine-tiny-streaming-en` relative to itself. No Homebrew path, development checkout,
+or environment variable is needed in a release. The selected model is exactly seven files and
+51,441,771 bytes. Every component size and SHA-256 comes from `models/manifest.toml`. Missing,
+partial, tampered, symlinked, or unexpected contents fail closed. In particular,
+`decoder_kv_with_attention.ort` is rejected. Runtime and model license, notices, and model-card
+files are mandatory.
+
+The macOS app declares `NSMicrophoneUsageDescription` with the bounded push-to-talk purpose before
+signing. The game requests audio only after the player explicitly enables the microphone and begins
+a push-to-talk capture. Permission denial leaves text and the rest of the simulation available.
 
 The resulting manifest is suitable for release evidence: it records the platform, an explicit
 `network = false` assertion, installed bytes and budget, and each staged file's byte count and

@@ -3,13 +3,16 @@ use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use beastie_core::{NamingTarget, NormalizedPosition, ToyId};
-use beastie_protocol::{MouthTiming, TranscriptRecord, identity_tts_voice_settings};
+use beastie_protocol::{
+    MouthTiming, RecognitionOutcome, SpeechInputFailure, TranscriptRecord,
+    identity_tts_voice_settings,
+};
 use beastie_session::{
     CommandEnvelope, GameSession, SESSION_PROTOCOL_VERSION, SessionCommand, SessionError,
 };
 use beastie_view::{
-    BindableAction, BindingLabels, CursorKind, RenderPlan, UiAction, UiMode, ViewState,
-    logical_to_world, plan,
+    BindableAction, BindingLabels, CursorKind, MicrophoneState, RenderPlan, UiAction, UiMode,
+    ViewState, logical_to_world, plan,
 };
 use ggez::conf::{FullscreenType, WindowMode};
 use ggez::event::{Button, EventHandler, GamepadId};
@@ -27,6 +30,8 @@ use crate::input::{
     action_at_with_assets, append_text, cursor_at_with_assets, focused_action, move_focus,
     region_at_with_assets,
 };
+use crate::microphone::{MicrophoneCapture, MicrophoneError, PrivateAudioRoot};
+use crate::recognition::{RecognitionManager, RecognitionWorkerConfig, speech_failure};
 use crate::renderer::{AssetCatalog, Viewport, execute_plan, save_presentation_png};
 use crate::save_store::{LoadedSave, SaveStore};
 use crate::scenario::{ScenarioRunner, ScenarioStep};
@@ -53,6 +58,11 @@ pub struct Game {
     queued_audio: Vec<&'static str>,
     viewport: Viewport,
     dialogue: DialogueManager,
+    recognition: RecognitionManager,
+    microphone: Option<MicrophoneCapture>,
+    stt_audio_root: PrivateAudioRoot,
+    recognition_sequence: u64,
+    active_recognition: Option<u64>,
     tts: TtsManager,
     save_store: SaveStore,
     settings_store: SettingsStore,
@@ -102,6 +112,16 @@ impl Game {
             args.tts && settings.voice_enabled,
             ctx.fs.user_config_dir().join("tts-cache"),
         ));
+        let stt_audio_root = PrivateAudioRoot::prepare(ctx.fs.user_config_dir().join("stt-input"))
+            .map_err(|error| GameError::FilesystemError(error.to_string()))?;
+        let recognition = RecognitionManager::new(RecognitionWorkerConfig::discover(
+            args.fake_ai,
+            stt_audio_root.path(),
+            args.stt_worker.as_deref(),
+            args.stt_model_dir.as_deref(),
+            args.moonshine_engine.as_deref(),
+            args.stt_timeout_ms,
+        ));
         let (session, load_message, _resumed, save_enabled) = if args.script.is_some() {
             (GameSession::new(42, "Mop"), None, false, false)
         } else if args.new_game {
@@ -136,6 +156,12 @@ impl Game {
             text_speed: text_speed_value(settings.text_speed),
             binding_labels: binding_labels(&settings.bindings),
             transcript_enabled: args.transcript || settings.transcript_enabled,
+            microphone_enabled: settings.microphone_enabled,
+            microphone_state: if settings.microphone_enabled {
+                MicrophoneState::Idle
+            } else {
+                MicrophoneState::Disabled
+            },
             ..ViewState::default()
         };
         if let Some(message) = settings_message.or(load_message) {
@@ -173,6 +199,11 @@ impl Game {
                     Duration::from_millis,
                 ),
             )),
+            recognition,
+            microphone: None,
+            stt_audio_root,
+            recognition_sequence: 0,
+            active_recognition: None,
             tts,
             save_store,
             settings_store,
@@ -286,6 +317,170 @@ impl Game {
         self.save_store
             .store(&save)
             .map_err(|error| GameError::FilesystemError(error.to_string()))
+    }
+
+    fn begin_push_to_talk(&mut self) -> GameResult {
+        if !self.settings.microphone_enabled || self.microphone.is_some() {
+            return Ok(());
+        }
+        if self.recognition.is_pending() || self.dialogue.is_pending() {
+            self.view.status_message = Some("Finish this thought before speaking again".to_owned());
+            return Ok(());
+        }
+        self.apply_command(SessionCommand::SpeechStarted, false)?;
+        match MicrophoneCapture::start() {
+            Ok(capture) => {
+                self.microphone = Some(capture);
+                self.view.microphone_state = MicrophoneState::Listening;
+                self.view.status_message = None;
+            }
+            Err(MicrophoneError::Unavailable | MicrophoneError::UnsupportedFormat) => {
+                self.apply_command(
+                    SessionCommand::SpeechFailed {
+                        failure: SpeechInputFailure::MicrophoneUnavailable,
+                    },
+                    false,
+                )?;
+                self.view.microphone_state = MicrophoneState::Unavailable;
+                self.view.status_message =
+                    Some("Microphone unavailable. Text still works".to_owned());
+            }
+            Err(MicrophoneError::Start(_) | MicrophoneError::Storage(_)) => {
+                self.apply_command(
+                    SessionCommand::SpeechFailed {
+                        failure: SpeechInputFailure::MicrophoneUnavailable,
+                    },
+                    false,
+                )?;
+                self.view.microphone_state = MicrophoneState::Error;
+                self.view.status_message =
+                    Some("Microphone could not start. Text still works".to_owned());
+            }
+        }
+        Ok(())
+    }
+
+    fn end_push_to_talk(&mut self) -> GameResult {
+        let Some(capture) = self.microphone.take() else {
+            return Ok(());
+        };
+        match capture.finish(self.stt_audio_root.path()) {
+            Ok(audio) => {
+                self.recognition_sequence = self.recognition_sequence.wrapping_add(1).max(1);
+                let request_id = self.recognition_sequence;
+                if self.recognition.request(request_id, audio) {
+                    self.active_recognition = Some(request_id);
+                    self.view.microphone_state = MicrophoneState::Recognizing;
+                } else {
+                    self.apply_command(
+                        SessionCommand::SpeechFailed {
+                            failure: SpeechInputFailure::RecognizerUnavailable,
+                        },
+                        false,
+                    )?;
+                    self.view.microphone_state = MicrophoneState::Unavailable;
+                    self.view.status_message =
+                        Some("Speech recognition unavailable. Text still works".to_owned());
+                }
+            }
+            Err(
+                MicrophoneError::Unavailable
+                | MicrophoneError::UnsupportedFormat
+                | MicrophoneError::Start(_),
+            ) => {
+                self.apply_command(
+                    SessionCommand::SpeechFailed {
+                        failure: SpeechInputFailure::MicrophoneUnavailable,
+                    },
+                    false,
+                )?;
+                self.view.microphone_state = MicrophoneState::Unavailable;
+                self.view.status_message =
+                    Some("Microphone disconnected. Text still works".to_owned());
+            }
+            Err(MicrophoneError::Storage(_)) => {
+                self.apply_command(
+                    SessionCommand::SpeechFailed {
+                        failure: SpeechInputFailure::RecognitionFailed,
+                    },
+                    false,
+                )?;
+                self.view.microphone_state = MicrophoneState::Error;
+                self.view.status_message = Some("Recording could not be prepared".to_owned());
+            }
+        }
+        Ok(())
+    }
+
+    fn poll_recognition(&mut self) -> GameResult {
+        match self.recognition.try_recv() {
+            Ok(completion) => {
+                if self.active_recognition != Some(completion.request_id) {
+                    return Ok(());
+                }
+                self.active_recognition = None;
+                match completion.outcome {
+                    RecognitionOutcome::Recognized { text, confidence } => {
+                        self.apply_command(
+                            SessionCommand::SpeechCandidate { text, confidence },
+                            false,
+                        )?;
+                        self.apply_command(SessionCommand::SpeechEnded, true)?;
+                        self.view.status_message = None;
+                        self.view.microphone_state = self.resting_microphone_state();
+                    }
+                    RecognitionOutcome::NoSpeech {} => {
+                        self.apply_command(SessionCommand::SpeechEnded, false)?;
+                        self.view.status_message =
+                            Some("No speech heard. Hold F1 and try again".to_owned());
+                        self.view.microphone_state = self.resting_microphone_state();
+                    }
+                    RecognitionOutcome::Error { code } => {
+                        let unavailable = matches!(
+                            code,
+                            beastie_protocol::RecognitionErrorCode::BackendUnavailable
+                        );
+                        self.apply_command(
+                            SessionCommand::SpeechFailed {
+                                failure: speech_failure(code),
+                            },
+                            false,
+                        )?;
+                        self.view.microphone_state = if unavailable {
+                            MicrophoneState::Unavailable
+                        } else {
+                            MicrophoneState::Error
+                        };
+                        self.view.status_message = Some(if unavailable {
+                            "Speech recognition unavailable. Text still works".to_owned()
+                        } else {
+                            "Speech recognition failed. Hold F1 to try again".to_owned()
+                        });
+                    }
+                }
+            }
+            Err(TryRecvError::Disconnected) if self.active_recognition.take().is_some() => {
+                self.apply_command(
+                    SessionCommand::SpeechFailed {
+                        failure: SpeechInputFailure::RecognizerUnavailable,
+                    },
+                    false,
+                )?;
+                self.view.microphone_state = MicrophoneState::Unavailable;
+                self.view.status_message =
+                    Some("Speech recognition stopped. Text still works".to_owned());
+            }
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
+        }
+        Ok(())
+    }
+
+    const fn resting_microphone_state(&self) -> MicrophoneState {
+        if self.settings.microphone_enabled {
+            MicrophoneState::Idle
+        } else {
+            MicrophoneState::Disabled
+        }
     }
 
     fn poll_dialogue(&mut self) -> GameResult {
@@ -526,6 +721,27 @@ impl Game {
                 }
                 self.persist_settings()?;
             }
+            UiAction::ToggleMicrophone => {
+                if self.microphone.is_some() {
+                    self.end_push_to_talk()?;
+                }
+                self.settings.microphone_enabled = !self.settings.microphone_enabled;
+                self.view.microphone_enabled = self.settings.microphone_enabled;
+                self.view.microphone_state = if self.settings.microphone_enabled {
+                    MicrophoneState::Idle
+                } else if self.recognition.is_pending() {
+                    MicrophoneState::Recognizing
+                } else {
+                    MicrophoneState::Disabled
+                };
+                self.view.status_message = Some(if self.settings.microphone_enabled {
+                    "Microphone enabled. Hold F1 or the mic button to speak".to_owned()
+                } else {
+                    "Microphone disabled".to_owned()
+                });
+                self.persist_settings()?;
+            }
+            UiAction::PushToTalk => self.begin_push_to_talk()?,
             UiAction::ToggleSubtitles => {
                 self.settings.subtitles = !self.settings.subtitles;
                 self.view.subtitles = self.settings.subtitles;
@@ -729,6 +945,7 @@ impl Game {
 
     fn activate_binding(&mut self, action: BindableAction) -> GameResult {
         match action {
+            BindableAction::PushToTalk => self.begin_push_to_talk(),
             BindableAction::Food => self.apply_confirmed_ui_action(UiAction::OpenFoodChoice, false),
             BindableAction::Play => self.apply_confirmed_ui_action(UiAction::OpenToyChoice, false),
             BindableAction::Comfort => self.apply_confirmed_ui_action(UiAction::Comfort, false),
@@ -833,6 +1050,14 @@ impl EventHandler for Game {
             self.window_settings_dirty = false;
         }
         let speech_was_visible = self.view.speech.is_some();
+        if self
+            .microphone
+            .as_ref()
+            .is_some_and(MicrophoneCapture::has_failed)
+        {
+            self.end_push_to_talk()?;
+        }
+        self.poll_recognition()?;
         self.poll_dialogue()?;
         self.poll_tts();
         if self.scenario.is_some() {
@@ -940,7 +1165,7 @@ impl EventHandler for Game {
         y: f32,
     ) -> GameResult {
         self.view.controller_active = false;
-        if button != MouseButton::Left || self.view.pending {
+        if button != MouseButton::Left {
             return Ok(());
         }
         let Some((x, y)) = self.viewport.logical_point(x, y) else {
@@ -948,7 +1173,9 @@ impl EventHandler for Game {
         };
         let render = self.render_plan();
         if let Some(action) = action_at_with_assets(&render, &self.assets, x, y) {
-            if let UiAction::DropFood(food) = action {
+            if action == UiAction::PushToTalk {
+                self.begin_push_to_talk()?;
+            } else if let UiAction::DropFood(food) = action {
                 let position = logical_to_world(x.floor() as i32, y.floor() as i32);
                 self.cursor_world = Some(position);
                 self.apply_command(SessionCommand::DropFood { food, position }, true)?;
@@ -957,6 +1184,19 @@ impl EventHandler for Game {
             } else {
                 self.apply_confirmed_ui_action(action, false)?;
             }
+        }
+        Ok(())
+    }
+
+    fn mouse_button_up_event(
+        &mut self,
+        _ctx: &mut Context,
+        button: MouseButton,
+        _x: f32,
+        _y: f32,
+    ) -> GameResult {
+        if button == MouseButton::Left {
+            self.end_push_to_talk()?;
         }
         Ok(())
     }
@@ -1137,6 +1377,18 @@ impl EventHandler for Game {
         Ok(())
     }
 
+    fn key_up_event(&mut self, _ctx: &mut Context, input: KeyInput) -> GameResult {
+        if binding_key(&input.event.logical_key) == Some(self.settings.bindings.push_to_talk)
+            || matches!(
+                input.event.logical_key,
+                Key::Named(NamedKey::Enter | NamedKey::Space)
+            )
+        {
+            self.end_push_to_talk()?;
+        }
+        Ok(())
+    }
+
     fn gamepad_button_down_event(
         &mut self,
         _ctx: &mut Context,
@@ -1144,9 +1396,6 @@ impl EventHandler for Game {
         _id: GamepadId,
     ) -> GameResult {
         self.view.controller_active = true;
-        if self.view.pending {
-            return Ok(());
-        }
         if self.view.focused_region.is_none() {
             self.reset_focus();
         }
@@ -1160,8 +1409,21 @@ impl EventHandler for Game {
         Ok(())
     }
 
+    fn gamepad_button_up_event(
+        &mut self,
+        _ctx: &mut Context,
+        button: Button,
+        _id: GamepadId,
+    ) -> GameResult {
+        if button == Button::South {
+            self.end_push_to_talk()?;
+        }
+        Ok(())
+    }
+
     fn focus_event(&mut self, _ctx: &mut Context, gained: bool) -> GameResult {
         if !gained {
+            self.end_push_to_talk()?;
             self.persist()?;
         }
         Ok(())
@@ -1342,6 +1604,7 @@ const fn text_speed_value(speed: TextSpeed) -> u8 {
 
 fn binding_labels(bindings: &KeyBindings) -> BindingLabels {
     BindingLabels {
+        push_to_talk: bindings.push_to_talk.label().to_owned(),
         food: bindings.food.label().to_owned(),
         play: bindings.play.label().to_owned(),
         comfort: bindings.comfort.label().to_owned(),

@@ -77,6 +77,20 @@ impl Platform {
         }
     }
 
+    const fn stt_worker_name(self) -> &'static str {
+        match self {
+            Self::Windows => "beastie-stt.exe",
+            Self::Macos | Self::Linux => "beastie-stt",
+        }
+    }
+
+    const fn stt_engine_name(self) -> &'static str {
+        match self {
+            Self::Windows => "beastie-moonshine-engine.exe",
+            Self::Macos | Self::Linux => "beastie-moonshine-engine",
+        }
+    }
+
     const fn espeak_name(self) -> &'static str {
         match self {
             Self::Windows => "espeak-ng.exe",
@@ -103,8 +117,19 @@ pub struct PackageOptions<'a> {
     pub espeak_data: Option<&'a Path>,
     pub espeak_license: Option<&'a Path>,
     pub espeak_source: Option<&'a Path>,
+    pub stt_worker: Option<&'a Path>,
+    pub stt_engine: Option<&'a Path>,
+    /// Dynamic libraries needed by the Moonshine engine, excluding the engine itself.
+    pub stt_runtime: &'a [PathBuf],
+    pub stt_runtime_license: Option<&'a Path>,
+    pub stt_runtime_notices: Option<&'a Path>,
+    pub stt_model_dir: Option<&'a Path>,
+    pub stt_model_license: Option<&'a Path>,
+    pub stt_model_card: Option<&'a Path>,
     /// Release packages require speech. Development-only staging may opt out explicitly.
     pub require_tts: bool,
+    /// Release packages require recognition. Development-only staging may opt out explicitly.
+    pub require_stt: bool,
     /// The warm local inference runtime and any dynamic libraries it needs.
     /// A worker binary alone is not considered a complete release runtime.
     pub runtime: &'a [PathBuf],
@@ -135,13 +160,58 @@ pub struct FileRecord {
 #[derive(Debug, Deserialize)]
 struct ModelManifest {
     version: u32,
+    #[serde(default)]
+    runtime: Option<RuntimeManifest>,
     selection: Selection,
     candidate: Vec<ModelCandidate>,
+    #[serde(default)]
+    stt_candidate: Vec<SttCandidate>,
+    #[serde(default)]
+    stt_rejected_component: Vec<RejectedSttComponent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RuntimeManifest {
+    moonshine_voice: Option<MoonshineRuntime>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MoonshineRuntime {
+    license_sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct Selection {
     dialogue: DialogueSelection,
+    stt: Option<SttSelection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SttSelection {
+    preferred_candidate: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SttCandidate {
+    id: String,
+    license: String,
+    bytes: u64,
+    tracked: bool,
+    #[serde(default)]
+    components: Vec<SttComponent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SttComponent {
+    file: String,
+    bytes: u64,
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RejectedSttComponent {
+    candidate: String,
+    file: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -293,6 +363,89 @@ pub fn build(options: PackageOptions<'_>) -> Result<PackageReport> {
             "eSpeak NG corresponding source",
         )?;
     }
+    if stt_inputs_complete(&options)? {
+        let stt = select_stt_model(&manifest)?;
+        validate_stt_model_inputs(&options, stt, &manifest.stt_rejected_component)?;
+        if let Some(runtime) = manifest
+            .runtime
+            .as_ref()
+            .and_then(|runtime| runtime.moonshine_voice.as_ref())
+        {
+            validate_provenance_file(
+                options.stt_runtime_license.expect("complete STT inputs"),
+                &runtime.license_sha256,
+                "Moonshine runtime license",
+            )?;
+        }
+        copy_binary(
+            options.stt_worker.expect("complete STT inputs"),
+            &platform_root.join(options.platform.stt_worker_name()),
+            "STT worker",
+        )?;
+        let stt_runtime_destination = runtime_destination.join("stt");
+        copy_binary(
+            options.stt_engine.expect("complete STT inputs"),
+            &stt_runtime_destination.join(options.platform.stt_engine_name()),
+            "Moonshine engine",
+        )?;
+        let mut stt_runtime_names = BTreeSet::new();
+        for runtime in options.stt_runtime {
+            let name = runtime
+                .file_name()
+                .context("STT runtime path must name a file")?;
+            if !stt_runtime_names.insert(name.to_owned()) {
+                bail!(
+                    "STT runtime files contain duplicate basename: {}",
+                    name.to_string_lossy()
+                );
+            }
+            if name == "LICENSE"
+                || name == "THIRD_PARTY_NOTICES"
+                || name == options.platform.stt_engine_name()
+            {
+                bail!(
+                    "reserved STT runtime name must use its explicit package input: {}",
+                    runtime.display()
+                );
+            }
+            copy_required_file(
+                runtime,
+                &stt_runtime_destination.join(name),
+                "Moonshine runtime",
+            )?;
+        }
+        copy_required_file(
+            options.stt_runtime_license.expect("complete STT inputs"),
+            &stt_runtime_destination.join("LICENSE"),
+            "Moonshine runtime license",
+        )?;
+        copy_required_file(
+            options.stt_runtime_notices.expect("complete STT inputs"),
+            &stt_runtime_destination.join("THIRD_PARTY_NOTICES"),
+            "Moonshine runtime notices",
+        )?;
+        let stt_model_destination = models_destination_path(&platform_root).join(&stt.id);
+        for component in &stt.components {
+            copy_required_file(
+                &options
+                    .stt_model_dir
+                    .expect("complete STT inputs")
+                    .join(&component.file),
+                &stt_model_destination.join(&component.file),
+                "Moonshine model component",
+            )?;
+        }
+        copy_required_file(
+            options.stt_model_license.expect("complete STT inputs"),
+            &stt_model_destination.join("LICENSE"),
+            "Moonshine model license",
+        )?;
+        copy_required_file(
+            options.stt_model_card.expect("complete STT inputs"),
+            &stt_model_destination.join("README.md"),
+            "Moonshine model card",
+        )?;
+    }
 
     let assets_source = options.repository_root.join("assets");
     let assets_destination = platform_root.join("assets");
@@ -315,7 +468,7 @@ pub fn build(options: PackageOptions<'_>) -> Result<PackageReport> {
         "asset licenses",
     )?;
 
-    let models_destination = platform_root.join("models");
+    let models_destination = models_destination_path(&platform_root);
     copy_required_file(
         &options.repository_root.join("models/manifest.toml"),
         &models_destination.join("manifest.toml"),
@@ -353,18 +506,11 @@ pub fn build(options: PackageOptions<'_>) -> Result<PackageReport> {
             .checked_add(record.bytes)
             .context("package size overflow")
     })?;
-    if total_bytes > INSTALL_SIZE_BUDGET {
-        bail!(
-            "package {} is {} bytes, above the {} byte installed-size budget",
-            platform_root.display(),
-            total_bytes,
-            INSTALL_SIZE_BUDGET
-        );
-    }
+    validate_installed_size(total_bytes, &platform_root)?;
     let report = PackageReport {
         platform: options.platform.as_str().to_owned(),
         network: false,
-        release_complete: tts_inputs_complete(&options)?,
+        release_complete: tts_inputs_complete(&options)? && stt_inputs_complete(&options)?,
         total_bytes,
         size_budget_bytes: INSTALL_SIZE_BUDGET,
         files,
@@ -408,7 +554,7 @@ pub fn check(
         bail!("package manifest enables network access; Beastie releases must be offline");
     }
     if require_release_complete && !report.release_complete {
-        bail!("package is development-only because the required release TTS bundle is absent");
+        bail!("package is development-only because a required release TTS or STT bundle is absent");
     }
     if report.size_budget_bytes != INSTALL_SIZE_BUDGET {
         bail!("package manifest has an unexpected installed-size budget");
@@ -471,8 +617,9 @@ pub fn check(
         "packaged llama-server",
     )?;
     let has_tts = validate_packaged_tts(&root, platform)?;
-    if has_tts != report.release_complete {
-        bail!("package release-complete flag does not match its TTS contents");
+    let has_stt = validate_packaged_stt(&root, platform, &packaged_model_manifest)?;
+    if (has_tts && has_stt) != report.release_complete {
+        bail!("package release-complete flag does not match its TTS/STT contents");
     }
     for path in report.files.keys() {
         let file = root.join(path);
@@ -503,9 +650,7 @@ pub fn check(
             actual_total
         );
     }
-    if actual_total > INSTALL_SIZE_BUDGET {
-        bail!("package exceeds installed-size budget: {actual_total} bytes");
-    }
+    validate_installed_size(actual_total, &root)?;
     for forbidden in ["experimental-gpl-tts", "sherpa-onnx"] {
         if report.files.keys().any(|path| path.contains(forbidden)) {
             bail!("GPL-blocked TTS artifact is present in package: {forbidden}");
@@ -539,6 +684,12 @@ fn validate_options(options: &PackageOptions<'_>) -> Result<()> {
             "release package requires local TTS; provide all five TTS inputs or use --development-package"
         );
     }
+    let has_stt = stt_inputs_complete(options)?;
+    if options.require_stt && !has_stt {
+        bail!(
+            "release package requires local STT; provide every STT input or use --development-package"
+        );
+    }
     if !options.repository_root.is_dir() {
         bail!(
             "repository root is absent: {}",
@@ -546,6 +697,76 @@ fn validate_options(options: &PackageOptions<'_>) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn stt_inputs_complete(options: &PackageOptions<'_>) -> Result<bool> {
+    let present = [
+        options.stt_worker.is_some(),
+        options.stt_engine.is_some(),
+        options.stt_runtime_license.is_some(),
+        options.stt_runtime_notices.is_some(),
+        options.stt_model_dir.is_some(),
+        options.stt_model_license.is_some(),
+        options.stt_model_card.is_some(),
+    ];
+    let count = present.into_iter().filter(|value| *value).count();
+    if count == 0 && options.stt_runtime.is_empty() {
+        return Ok(false);
+    }
+    if count != present.len() {
+        bail!(
+            "STT package is incomplete: provide the worker, engine, runtime license/notices, model directory, model license, and model card together"
+        );
+    }
+    for (label, path) in [
+        ("STT worker", options.stt_worker.expect("checked present")),
+        (
+            "Moonshine engine",
+            options.stt_engine.expect("checked present"),
+        ),
+        (
+            "Moonshine runtime license",
+            options.stt_runtime_license.expect("checked present"),
+        ),
+        (
+            "Moonshine runtime notices",
+            options.stt_runtime_notices.expect("checked present"),
+        ),
+        (
+            "Moonshine model license",
+            options.stt_model_license.expect("checked present"),
+        ),
+        (
+            "Moonshine model card",
+            options.stt_model_card.expect("checked present"),
+        ),
+    ] {
+        if !path.is_file() {
+            bail!("required {label} is absent: {}", path.display());
+        }
+    }
+    if !options.stt_model_dir.expect("checked present").is_dir() {
+        bail!("required Moonshine model directory is absent");
+    }
+    validate_executable(
+        options.stt_worker.expect("checked present"),
+        options.platform,
+        "STT worker",
+    )?;
+    validate_executable(
+        options.stt_engine.expect("checked present"),
+        options.platform,
+        "Moonshine engine",
+    )?;
+    for path in options.stt_runtime {
+        if !path.is_file() {
+            bail!(
+                "required Moonshine runtime file is absent: {}",
+                path.display()
+            );
+        }
+    }
+    Ok(true)
 }
 
 fn tts_inputs_complete(options: &PackageOptions<'_>) -> Result<bool> {
@@ -792,6 +1013,215 @@ fn select_model<'a>(manifest: &'a ModelManifest, requested: &str) -> Result<&'a 
         .with_context(|| format!("selected model {requested} is absent from models/manifest.toml"))
 }
 
+fn select_stt_model(manifest: &ModelManifest) -> Result<&SttCandidate> {
+    let selected = manifest
+        .selection
+        .stt
+        .as_ref()
+        .context("model manifest has no selected STT candidate")?;
+    manifest
+        .stt_candidate
+        .iter()
+        .find(|candidate| candidate.id == selected.preferred_candidate)
+        .with_context(|| {
+            format!(
+                "selected STT model {} is absent",
+                selected.preferred_candidate
+            )
+        })
+}
+
+fn validate_stt_model_inputs(
+    options: &PackageOptions<'_>,
+    model: &SttCandidate,
+    rejected: &[RejectedSttComponent],
+) -> Result<()> {
+    if model.license.trim().is_empty() || model.tracked {
+        bail!("selected STT model must have a license and remain external to git");
+    }
+    let directory = options.stt_model_dir.expect("complete STT inputs");
+    validate_stt_model_directory(directory, model, rejected)?;
+    for (label, path) in [
+        (
+            "Moonshine runtime license",
+            options.stt_runtime_license.expect("complete STT inputs"),
+        ),
+        (
+            "Moonshine runtime notices",
+            options.stt_runtime_notices.expect("complete STT inputs"),
+        ),
+        (
+            "Moonshine model license",
+            options.stt_model_license.expect("complete STT inputs"),
+        ),
+        (
+            "Moonshine model card",
+            options.stt_model_card.expect("complete STT inputs"),
+        ),
+    ] {
+        if file_record(path)?.bytes == 0 {
+            bail!("{label} must not be empty");
+        }
+    }
+    Ok(())
+}
+
+fn validate_stt_model_directory(
+    directory: &Path,
+    model: &SttCandidate,
+    rejected: &[RejectedSttComponent],
+) -> Result<()> {
+    let expected: BTreeSet<&str> = model
+        .components
+        .iter()
+        .map(|item| item.file.as_str())
+        .collect();
+    if expected.len() != 7 {
+        bail!("selected Moonshine model must contain exactly seven declared components");
+    }
+    let declared_total = model.components.iter().try_fold(0_u64, |total, item| {
+        total
+            .checked_add(item.bytes)
+            .context("STT model size overflow")
+    })?;
+    if declared_total != model.bytes {
+        bail!(
+            "selected STT model component total is {declared_total}, expected {}",
+            model.bytes
+        );
+    }
+    let mut actual = BTreeSet::new();
+    for entry in fs::read_dir(directory)
+        .with_context(|| format!("failed to read STT model directory {}", directory.display()))?
+    {
+        let entry = entry.context("failed to read STT model directory entry")?;
+        let file_type = entry
+            .file_type()
+            .context("failed to inspect STT model component")?;
+        if file_type.is_symlink() || !file_type.is_file() {
+            bail!(
+                "STT model directory contains unsupported entry: {}",
+                entry.path().display()
+            );
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if rejected
+            .iter()
+            .any(|item| item.candidate == model.id && item.file == name)
+        {
+            bail!("rejected STT model component must not be packaged: {name}");
+        }
+        actual.insert(name);
+    }
+    let expected_owned: BTreeSet<String> = expected.into_iter().map(str::to_owned).collect();
+    if actual != expected_owned {
+        bail!("STT model directory is partial or contains unexpected files");
+    }
+    for component in &model.components {
+        let record = file_record(&directory.join(&component.file))?;
+        if component.sha256.len() != SHA256_HEX_LEN
+            || !component
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || record.bytes != component.bytes
+            || record.sha256 != component.sha256
+        {
+            bail!(
+                "STT model component failed size/hash validation: {}",
+                component.file
+            );
+        }
+    }
+    Ok(())
+}
+
+fn models_destination_path(platform_root: &Path) -> PathBuf {
+    platform_root.join("models")
+}
+
+fn validate_packaged_stt(
+    root: &Path,
+    platform: Platform,
+    manifest: &ModelManifest,
+) -> Result<bool> {
+    let worker = root.join(platform.stt_worker_name());
+    let runtime = root.join("runtime/stt");
+    let engine = runtime.join(platform.stt_engine_name());
+    let selected = match select_stt_model(manifest) {
+        Ok(selected) => selected,
+        Err(_) if !worker.exists() && !runtime.exists() => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let model = root.join("models").join(&selected.id);
+    let present = worker.exists() || runtime.exists() || model.exists();
+    if !present {
+        return Ok(false);
+    }
+    for required in [
+        &worker,
+        &engine,
+        &runtime.join("LICENSE"),
+        &runtime.join("THIRD_PARTY_NOTICES"),
+        &model.join("LICENSE"),
+        &model.join("README.md"),
+    ] {
+        if !required.is_file() {
+            bail!("packaged STT is incomplete: missing {}", required.display());
+        }
+    }
+    validate_executable(&worker, platform, "packaged STT worker")?;
+    validate_executable(&engine, platform, "packaged Moonshine engine")?;
+    if let Some(runtime_manifest) = manifest
+        .runtime
+        .as_ref()
+        .and_then(|runtime| runtime.moonshine_voice.as_ref())
+    {
+        validate_provenance_file(
+            &runtime.join("LICENSE"),
+            &runtime_manifest.license_sha256,
+            "packaged Moonshine runtime license",
+        )?;
+    }
+    let expected: BTreeSet<String> = selected
+        .components
+        .iter()
+        .map(|item| item.file.clone())
+        .collect();
+    let actual: BTreeSet<String> = fs::read_dir(&model)?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            (name != "LICENSE" && name != "README.md").then_some(name)
+        })
+        .collect();
+    if actual != expected {
+        bail!("packaged STT model is partial or contains unexpected files");
+    }
+    let total = selected
+        .components
+        .iter()
+        .try_fold(0_u64, |total, component| {
+            let record = file_record(&model.join(&component.file))?;
+            if record.bytes != component.bytes || record.sha256 != component.sha256 {
+                bail!(
+                    "packaged STT model component failed size/hash validation: {}",
+                    component.file
+                );
+            }
+            total
+                .checked_add(record.bytes)
+                .context("STT model size overflow")
+        })?;
+    if total != selected.bytes {
+        bail!(
+            "packaged STT model has {total} bytes, expected {}",
+            selected.bytes
+        );
+    }
+    Ok(true)
+}
+
 fn validate_model_file(path: &Path, expected: &ModelCandidate) -> Result<()> {
     let record = file_record(path)?;
     if record.bytes != expected.bytes {
@@ -1020,6 +1450,18 @@ fn file_record(path: &Path) -> Result<FileRecord> {
     })
 }
 
+fn validate_installed_size(total: u64, root: &Path) -> Result<()> {
+    if total > INSTALL_SIZE_BUDGET {
+        bail!(
+            "package {} is {} bytes, above the {} byte installed-size budget",
+            root.display(),
+            total,
+            INSTALL_SIZE_BUDGET
+        );
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 struct Sha256 {
     state: [u32; 8],
@@ -1163,6 +1605,13 @@ mod tests {
         espeak_data: PathBuf,
         espeak_license: PathBuf,
         espeak_source: PathBuf,
+        stt_worker: PathBuf,
+        stt_engine: PathBuf,
+        stt_runtime_license: PathBuf,
+        stt_runtime_notices: PathBuf,
+        stt_model_dir: PathBuf,
+        stt_model_license: PathBuf,
+        stt_model_card: PathBuf,
         model: PathBuf,
         model_license: PathBuf,
         model_card: PathBuf,
@@ -1247,6 +1696,34 @@ tracked = false
         write_file(&model, b"test");
         write_file(&model_license, b"model license\n");
         write_file(&model_card, b"model card\n");
+        let stt_worker = root.join("inputs/beastie-stt");
+        let stt_engine = root.join("inputs/beastie-moonshine-engine");
+        let stt_runtime_license = root.join("inputs/moonshine-LICENSE");
+        let stt_runtime_notices = root.join("inputs/moonshine-NOTICES");
+        let stt_model_dir = root.join("inputs/moonshine-model");
+        let stt_model_license = root.join("inputs/moonshine-model-LICENSE");
+        let stt_model_card = root.join("inputs/moonshine-model-README");
+        write_file(&stt_worker, macho);
+        write_file(&stt_engine, macho);
+        write_file(&stt_runtime_license, b"MIT\n");
+        write_file(&stt_runtime_notices, b"notices\n");
+        write_file(&stt_model_license, b"MIT model\n");
+        write_file(&stt_model_card, b"model card\n");
+        let fixture_stt = tiny_stt_model(&stt_model_dir);
+        let mut manifest = OpenOptions::new()
+            .append(true)
+            .open(root.join("models/manifest.toml"))
+            .unwrap();
+        writeln!(manifest, "\n[selection.stt]\npreferred_candidate = \"test-stt\"\n\n[[stt_candidate]]\nid = \"test-stt\"\nlicense = \"MIT\"\nbytes = 7\ntracked = false\ncomponents = [").unwrap();
+        for component in &fixture_stt.components {
+            writeln!(
+                manifest,
+                "  {{ file = \"{}\", bytes = {}, sha256 = \"{}\" }},",
+                component.file, component.bytes, component.sha256
+            )
+            .unwrap();
+        }
+        writeln!(manifest, "]").unwrap();
         let llama_server = root.join("inputs/llama-server");
         let runtime_library = root.join("inputs/libllama.dylib");
         let runtime_license = root.join("inputs/LICENSE");
@@ -1263,6 +1740,13 @@ tracked = false
             espeak_data,
             espeak_license,
             espeak_source,
+            stt_worker,
+            stt_engine,
+            stt_runtime_license,
+            stt_runtime_notices,
+            stt_model_dir,
+            stt_model_license,
+            stt_model_card,
             model,
             model_license,
             model_card,
@@ -1281,7 +1765,16 @@ tracked = false
             espeak_data: Some(&package.espeak_data),
             espeak_license: Some(&package.espeak_license),
             espeak_source: Some(&package.espeak_source),
+            stt_worker: Some(&package.stt_worker),
+            stt_engine: Some(&package.stt_engine),
+            stt_runtime: &[],
+            stt_runtime_license: Some(&package.stt_runtime_license),
+            stt_runtime_notices: Some(&package.stt_runtime_notices),
+            stt_model_dir: Some(&package.stt_model_dir),
+            stt_model_license: Some(&package.stt_model_license),
+            stt_model_card: Some(&package.stt_model_card),
             require_tts: true,
+            require_stt: true,
             runtime,
             model: &package.model,
             model_license: &package.model_license,
@@ -1309,6 +1802,13 @@ tracked = false
             hasher.finish(),
             "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592"
         );
+    }
+
+    #[test]
+    fn installed_size_ceiling_is_enforced_without_allocating_a_large_fixture() {
+        validate_installed_size(INSTALL_SIZE_BUDGET, Path::new("fixture"))
+            .expect("exact budget should pass");
+        assert!(validate_installed_size(INSTALL_SIZE_BUDGET + 1, Path::new("fixture")).is_err());
     }
 
     #[test]
@@ -1340,7 +1840,16 @@ tracked = false
             espeak_data: None,
             espeak_license: None,
             espeak_source: None,
+            stt_worker: None,
+            stt_engine: None,
+            stt_runtime: &[],
+            stt_runtime_license: None,
+            stt_runtime_notices: None,
+            stt_model_dir: None,
+            stt_model_license: None,
+            stt_model_card: None,
             require_tts: true,
+            require_stt: true,
             runtime: &[],
             model: Path::new("Cargo.toml"),
             model_license: Path::new("Cargo.toml"),
@@ -1371,6 +1880,79 @@ tracked = false
         assert_eq!(selected.license, "Apache-2.0");
         assert_eq!(selected.bytes, 563_036_064);
         assert_eq!(selected.sha256.len(), SHA256_HEX_LEN);
+        let stt = select_stt_model(&manifest).expect("preferred STT model should be declared");
+        assert_eq!(stt.id, "moonshine-tiny-streaming-en");
+        assert_eq!(stt.components.len(), 7);
+        assert_eq!(stt.bytes, 51_441_771);
+        assert_eq!(
+            stt.components
+                .iter()
+                .map(|component| component.bytes)
+                .sum::<u64>(),
+            51_441_771
+        );
+    }
+
+    fn tiny_stt_model(directory: &Path) -> SttCandidate {
+        let mut components = Vec::new();
+        for index in 0_u8..7 {
+            let file = format!("component-{index}.bin");
+            let path = directory.join(&file);
+            write_file(&path, &[index]);
+            let record = file_record(&path).expect("fixture component should hash");
+            components.push(SttComponent {
+                file,
+                bytes: record.bytes,
+                sha256: record.sha256,
+            });
+        }
+        SttCandidate {
+            id: "test-stt".to_owned(),
+            license: "MIT".to_owned(),
+            bytes: 7,
+            tracked: false,
+            components,
+        }
+    }
+
+    #[test]
+    fn stt_model_rejects_missing_tampered_and_unexpected_components() {
+        let root = temporary_root("stt-integrity");
+        let model = tiny_stt_model(&root);
+        validate_stt_model_directory(&root, &model, &[]).expect("exact model should pass");
+
+        fs::remove_file(root.join("component-0.bin")).unwrap();
+        assert!(validate_stt_model_directory(&root, &model, &[]).is_err());
+        write_file(&root.join("component-0.bin"), &[0]);
+
+        write_file(&root.join("component-1.bin"), b"tampered");
+        assert!(validate_stt_model_directory(&root, &model, &[]).is_err());
+        write_file(&root.join("component-1.bin"), &[1]);
+
+        write_file(&root.join("decoder_kv_with_attention.ort"), b"rejected");
+        let rejected = [RejectedSttComponent {
+            candidate: model.id.clone(),
+            file: "decoder_kv_with_attention.ort".to_owned(),
+        }];
+        let error = validate_stt_model_directory(&root, &model, &rejected)
+            .expect_err("rejected attention decoder must fail");
+        assert!(error.to_string().contains("rejected STT model component"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stt_model_rejects_symlinked_components() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary_root("stt-symlink");
+        let model = tiny_stt_model(&root);
+        let target = root.join("target.bin");
+        write_file(&target, &[0]);
+        fs::remove_file(root.join("component-0.bin")).unwrap();
+        symlink(&target, root.join("component-0.bin")).unwrap();
+        assert!(validate_stt_model_directory(&root, &model, &[]).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1474,12 +2056,42 @@ tracked = false
         );
         assert!(report.files.contains_key("runtime/espeak-ng-COPYING"));
         assert!(report.files.contains_key("runtime/espeak-ng-1.52.0.tar.gz"));
+        assert!(report.release_complete);
         check(&package.destination, Platform::Macos, true)
-            .expect("complete packaged TTS should pass validation");
+            .expect("complete packaged TTS/STT should pass validation");
         fs::remove_file(package.destination.join("macos/runtime/espeak-ng-COPYING")).unwrap();
-        let error = check(&package.destination, Platform::Macos, true)
+        let error = check(&package.destination, Platform::Macos, false)
             .expect_err("partial packaged TTS must fail before launch");
         assert!(error.to_string().contains("packaged TTS is incomplete"));
+    }
+
+    #[test]
+    fn stt_inputs_must_be_complete_and_packaged_contents_are_checked() {
+        let package = test_package("partial-stt-input");
+        let mut package_options = options(&package, &package.runtime);
+        package_options.stt_model_card = None;
+        let error = build(package_options).expect_err("partial STT input must fail");
+        assert!(error.to_string().contains("STT package is incomplete"));
+
+        let package = test_package("partial-stt-package");
+        let report = build(options(&package, &package.runtime)).expect("complete package stages");
+        assert_eq!(
+            report
+                .files
+                .keys()
+                .filter(|path| path.starts_with("models/test-stt/component-"))
+                .count(),
+            7
+        );
+        fs::remove_file(
+            package
+                .destination
+                .join("macos/models/test-stt/component-0.bin"),
+        )
+        .unwrap();
+        let error = check(&package.destination, Platform::Macos, false)
+            .expect_err("partial packaged STT must fail");
+        assert!(error.to_string().contains("packaged STT model is partial"));
     }
 
     #[test]
@@ -1556,7 +2168,7 @@ tracked = false
             .expect("packaged game should exist");
         file.write_all(b"tampered")
             .expect("packaged game should be writable in test");
-        let error = check(&package.destination, Platform::Macos, true)
+        let error = check(&package.destination, Platform::Macos, false)
             .expect_err("tampered package must fail integrity check");
         assert!(error.to_string().contains("hash or size changed"));
     }
@@ -1567,7 +2179,7 @@ tracked = false
         build(options(&package, &package.runtime)).expect("test package should stage");
         fs::remove_file(package.destination.join("macos/runtime/llama-server"))
             .expect("packaged server should be removable");
-        let error = check(&package.destination, Platform::Macos, true)
+        let error = check(&package.destination, Platform::Macos, false)
             .expect_err("package without its server must fail");
         assert!(error.to_string().contains("inference executable"));
 
@@ -1575,7 +2187,7 @@ tracked = false
         build(options(&package, &package.runtime)).expect("test package should stage");
         fs::remove_file(package.destination.join("macos/runtime/LICENSE"))
             .expect("packaged license should be removable");
-        let error = check(&package.destination, Platform::Macos, true)
+        let error = check(&package.destination, Platform::Macos, false)
             .expect_err("package without the llama.cpp license must fail");
         assert!(error.to_string().contains("llama.cpp license"));
     }
@@ -1590,7 +2202,7 @@ tracked = false
                 .join("macos/runtime/espeak-ng-1.52.0.tar.gz"),
         )
         .expect("packaged source should be removable");
-        let error = check(&package.destination, Platform::Macos, true)
+        let error = check(&package.destination, Platform::Macos, false)
             .expect_err("eSpeak package without corresponding source must fail");
         assert!(error.to_string().contains("packaged TTS is incomplete"));
     }

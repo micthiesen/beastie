@@ -9,6 +9,22 @@ does not commit to a recognition system, activation gesture, technical architect
 implementation. [game-design-philosophy.md](game-design-philosophy.md) remains the canonical product
 authority.
 
+## Implementation status
+
+The V2 interaction slice is implemented as of 2026-08-15. Beastie now has explicit opt-in,
+hold-to-talk microphone capture through F1, pointer, and controller; asynchronous local
+recognition; perceptual attention before words; concept-gated interpretation; activity-aware
+delay, ignore, and refusal; and the same authoritative dialogue path for typed and spoken input.
+Text remains complete, recognition never pauses simulation, raw microphone audio is temporary,
+and raw recognized words are not durable game state.
+
+Moonshine Voice 0.1.2 Tiny Streaming English is the provisional packaged recognizer. Its bounded
+worker, native sidecar, model hashes, fixture evaluator, package closure, and current synthetic
+accuracy/latency evidence are documented in [stt-runtime.md](stt-runtime.md). The implementation is
+complete, but recognizer selection is not a shipping acceptance until the real-human matrix there
+passes. That distinction preserves this document's design contract without overstating synthetic
+speech results.
+
 ## Product outcome
 
 V2 succeeds when:

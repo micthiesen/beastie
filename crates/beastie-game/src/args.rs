@@ -11,6 +11,18 @@ pub struct Args {
     /// Watchdog for one reply from the long-lived outer AI worker.
     #[arg(long)]
     pub ai_timeout_ms: Option<u64>,
+    /// Development override for the isolated local STT worker.
+    #[arg(long)]
+    pub stt_worker: Option<PathBuf>,
+    /// Development override for the Moonshine model directory.
+    #[arg(long, requires = "stt_worker")]
+    pub stt_model_dir: Option<PathBuf>,
+    /// Development override for the persistent Moonshine engine.
+    #[arg(long, requires = "stt_worker")]
+    pub moonshine_engine: Option<PathBuf>,
+    /// Watchdog for one reply from the STT worker.
+    #[arg(long)]
+    pub stt_timeout_ms: Option<u64>,
     /// Enable environment-configured TTS; complete packaged bundles enable automatically.
     #[arg(long)]
     pub tts: bool,

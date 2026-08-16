@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "audio_format": {
+    "container": "wav",
+    "encoding": "pcm_s16le",
+    "sample_rate_hz": 16000,
+    "channels": 1
+  },
+  "provenance": "Synthetic development corpus generated with eSpeak NG 1.52.0 voices and deterministic ffmpeg controls. It tests plumbing and regression only, not real-human recognition quality.",
+  "cases": [
+    {
+      "id": "espeak-us-muck-berry",
+      "audio": "fixtures/stt/audio/espeak-us-muck-berry.wav",
+      "reference": "Muck, do you remember the berry?",
+      "keywords": ["muck", "berry"],
+      "expected": "speech",
+      "voice": "eSpeak NG en-us+f3",
+      "condition": "clean",
+      "bytes": 71346,
+      "sha256": "860919f21ee4d3aa1bfebc79d2554721bc8d24ce39a28f987f90b3d2c5cdcc19"
+    },
+    {
+      "id": "espeak-gb-why-there",
+      "audio": "fixtures/stt/audio/espeak-gb-why-there.wav",
+      "reference": "Why did you put that there?",
+      "keywords": ["why", "there"],
+      "expected": "speech",
+      "voice": "eSpeak NG en-gb+m3",
+      "condition": "question",
+      "bytes": 60838,
+      "sha256": "cc28ef16aa008bed6856c9353791649ad206d1ea63b0e3ca9f2c2b5b814dd6c3"
+    },
+    {
+      "id": "espeak-us-mushroom",
+      "audio": "fixtures/stt/audio/espeak-us-mushroom.wav",
+      "reference": "Do you want this mushroom?",
+      "keywords": ["mushroom"],
+      "expected": "speech",
+      "voice": "eSpeak NG en-us+f3",
+      "condition": "aquarium interaction vocabulary",
+      "bytes": 57430,
+      "sha256": "05e4bcaf2ab8bdbd9464f9d52094013efce6e6e4c2ad18ec09326392e76e427f"
+    },
+    {
+      "id": "espeak-gb-profanity",
+      "audio": "fixtures/stt/audio/espeak-gb-profanity.wav",
+      "reference": "You're a weird little bastard.",
+      "keywords": ["weird", "bastard"],
+      "expected": "speech",
+      "voice": "eSpeak NG en-gb+m3",
+      "condition": "permitted profanity",
+      "bytes": 59660,
+      "sha256": "1a77190ccd2fb259fb71bf311954b35e794e131c7bb36e76c41134225a2ae892"
+    },
+    {
+      "id": "espeak-us-bell-sock",
+      "audio": "fixtures/stt/audio/espeak-us-bell-sock.wav",
+      "reference": "Do you like the bell or the sock?",
+      "keywords": ["bell", "sock"],
+      "expected": "speech",
+      "voice": "eSpeak NG en-us+f3",
+      "condition": "aquarium object vocabulary",
+      "bytes": 69794,
+      "sha256": "0ceda47ffbf09a75a2490709821cfc09cd1b329ac1ce34b014de2d5f39d2af05"
+    },
+    {
+      "id": "espeak-gb-asshole",
+      "audio": "fixtures/stt/audio/espeak-gb-asshole.wav",
+      "reference": "You're being an asshole again.",
+      "keywords": ["asshole"],
+      "expected": "speech",
+      "voice": "eSpeak NG en-gb+m3",
+      "condition": "permitted profanity",
+      "bytes": 60212,
+      "sha256": "53abe7d76aad9681ec25b8d67e615dbd3f231d8d9b42e56f8f0f75838ce38273"
+    },
+    {
+      "id": "espeak-us-repeated-name",
+      "audio": "fixtures/stt/audio/espeak-us-repeated-name.wav",
+      "reference": "Muck? Muck, are you listening?",
+      "keywords": ["muck", "listening"],
+      "expected": "speech",
+      "voice": "eSpeak NG en-us+f3",
+      "condition": "repetition and question",
+      "bytes": 79068,
+      "sha256": "9973df4f30ecdbd97c348bacfcbb0cabca3f7ae7bbd71d356dde272e1a399197"
+    },
+    {
+      "id": "espeak-gb-disfluency",
+      "audio": "fixtures/stt/audio/espeak-gb-disfluency.wav",
+      "reference": "Um, Muck, I, uh, cleaned your aquarium.",
+      "keywords": ["muck", "aquarium"],
+      "expected": "speech",
+      "voice": "eSpeak NG en-gb+m3",
+      "condition": "disfluency",
+      "bytes": 113576,
+      "sha256": "767a653ed004f5b51726db9caae6545b71d9667f4e0c1f815fdae4d30006a26a"
+    },
+    {
+      "id": "espeak-us-noisy-aquarium",
+      "audio": "fixtures/stt/audio/espeak-us-noisy-aquarium.wav",
+      "reference": "I cleaned your aquarium yesterday.",
+      "keywords": ["aquarium", "yesterday"],
+      "expected": "speech",
+      "voice": "eSpeak NG en-us+f3",
+      "condition": "deterministic aquarium-like noise mix",
+      "bytes": 74504,
+      "sha256": "70cc3aed4df029fecc8368ef180ac141b1ce04f077e777527a9ff2bcb70af077"
+    },
+    {
+      "id": "silence",
+      "audio": "fixtures/stt/audio/silence.wav",
+      "reference": "",
+      "keywords": [],
+      "expected": "no_speech",
+      "voice": "none",
+      "condition": "one second digital silence",
+      "bytes": 32078,
+      "sha256": "0d1facd99af6b4e49919b5647a43bfa62fdcb4c145c27cb803ad7bb3ad06cc8e"
+    },
+    {
+      "id": "aquarium-noise",
+      "audio": "fixtures/stt/audio/aquarium-noise.wav",
+      "reference": "",
+      "keywords": [],
+      "expected": "no_speech",
+      "voice": "none",
+      "condition": "one second deterministic low-amplitude pink noise",
+      "bytes": 32078,
+      "sha256": "8e8dc0710c7b9e8a61336d7226f269a3bf6a691916decf8cdfe0bf7732900944"
+    }
+  ]
+}

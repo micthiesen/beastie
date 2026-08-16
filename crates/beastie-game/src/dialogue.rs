@@ -581,6 +581,7 @@ mod tests {
             desired_social_act: None,
             input_rejection: None,
             context: beastie_protocol::DialogueContext::default(),
+            interpretation: Default::default(),
             player_said: "hello".to_owned(),
             constraints: DialogueConstraints {
                 max_words: 3,

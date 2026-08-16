@@ -3,17 +3,22 @@
 use std::collections::BTreeSet;
 
 use beastie_core::{
-    ACTIVE_DAY_MS, Belief, Concept, Intention, LanguageStage, Memory, MemoryId, MemoryKind,
-    MemoryQuery, Mood, SocialAct, WorldState, select_candidate_memories,
+    ACTIVE_DAY_MS, Belief, Intention, LanguageStage, Memory, MemoryId, MemoryKind, MemoryQuery,
+    Mood, SocialAct, WorldState, select_candidate_memories,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
-pub use beastie_core::{BeliefId, BeliefKind, Idiolect, IdiolectQuirk};
+pub use beastie_core::{
+    BeliefId, BeliefKind, Concept, Idiolect, IdiolectQuirk, UtteranceInterpretation,
+    UtteranceReference,
+};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_DIALOGUE_REPLY_BYTES: usize = 512;
 pub const TTS_PROTOCOL_VERSION: u32 = 1;
+pub const STT_PROTOCOL_VERSION: u32 = 1;
+pub const MAX_RECOGNITION_TEXT_BYTES: usize = 512;
 pub const MAX_TTS_TEXT_BYTES: usize = 2_048;
 pub const MAX_CANDIDATE_BELIEFS: usize = 4;
 pub const MAX_BELIEF_SUPPORTS: usize = 8;
@@ -76,6 +81,117 @@ pub enum SpeechInputFailure {
     RecognizerUnavailable,
     RecognitionFailed,
     UnsupportedLanguage,
+}
+
+/// Languages intentionally supported by the current offline recognizer contract.
+///
+/// This is an enum instead of a free-form locale so unsupported languages fail at the untrusted
+/// process boundary rather than silently selecting a recognizer default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecognitionLanguage {
+    English,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecognitionRequest {
+    pub protocol_version: u32,
+    pub request_id: u64,
+    /// Lowercase SHA-256 of the complete WAV file stored in the worker's scoped audio root.
+    pub audio_key: String,
+    pub language: RecognitionLanguage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecognitionErrorCode {
+    InvalidRequest,
+    AudioUnavailable,
+    InvalidAudio,
+    BackendUnavailable,
+    RecognitionFailed,
+    Timeout,
+    UnsupportedLanguage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RecognitionOutcome {
+    Recognized {
+        text: String,
+        confidence: AcousticConfidence,
+    },
+    NoSpeech {},
+    Error {
+        code: RecognitionErrorCode,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecognitionReply {
+    pub protocol_version: u32,
+    pub request_id: u64,
+    pub outcome: RecognitionOutcome,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum RecognitionValidationError {
+    #[error("STT protocol version {0} is unsupported")]
+    ProtocolVersion(u32),
+    #[error("STT request id must be nonzero and replies must match it")]
+    RequestId,
+    #[error("STT audio key is not a lowercase SHA-256 digest")]
+    AudioKey,
+    #[error("recognized text is empty, too long, or contains a control character")]
+    Text,
+}
+
+pub fn validate_recognition_request(
+    request: &RecognitionRequest,
+) -> Result<(), RecognitionValidationError> {
+    if request.protocol_version != STT_PROTOCOL_VERSION {
+        return Err(RecognitionValidationError::ProtocolVersion(
+            request.protocol_version,
+        ));
+    }
+    if request.request_id == 0 {
+        return Err(RecognitionValidationError::RequestId);
+    }
+    if !is_lowercase_sha256(&request.audio_key) {
+        return Err(RecognitionValidationError::AudioKey);
+    }
+    Ok(())
+}
+
+pub fn validate_recognition_reply(
+    request: &RecognitionRequest,
+    reply: RecognitionReply,
+) -> Result<RecognitionReply, RecognitionValidationError> {
+    if reply.protocol_version != STT_PROTOCOL_VERSION {
+        return Err(RecognitionValidationError::ProtocolVersion(
+            reply.protocol_version,
+        ));
+    }
+    if reply.request_id != request.request_id {
+        return Err(RecognitionValidationError::RequestId);
+    }
+    if let RecognitionOutcome::Recognized { text, .. } = &reply.outcome
+        && (text.trim().is_empty()
+            || text.len() > MAX_RECOGNITION_TEXT_BYTES
+            || text.chars().any(char::is_control))
+    {
+        return Err(RecognitionValidationError::Text);
+    }
+    Ok(reply)
+}
+
+fn is_lowercase_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// A typed action phase lets the worker talk about what the simulation is doing without giving
@@ -189,6 +305,50 @@ pub struct DialogueContext {
     pub repetition_count: u8,
     #[serde(default)]
     pub aquarium: Option<AquariumContext>,
+}
+
+/// Simulation-bounded meaning extracted from player words before they reach expression.
+///
+/// This projection deliberately uses dialogue object kinds rather than exact world IDs. The
+/// simulation resolves exact utterance references first, then exposes only kinds present in the
+/// bounded dialogue context.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct DialogueInterpretation {
+    #[serde(default)]
+    pub understood_concepts: BTreeSet<Concept>,
+    #[serde(default)]
+    pub referenced_objects: Vec<DialogueObjectKind>,
+    #[serde(default)]
+    pub unknown_words: u16,
+    #[serde(default)]
+    pub ambiguous: bool,
+    #[serde(default)]
+    pub is_question: bool,
+}
+
+impl From<UtteranceInterpretation> for DialogueInterpretation {
+    fn from(interpretation: UtteranceInterpretation) -> Self {
+        let mut referenced_objects = Vec::new();
+        for reference in interpretation.references {
+            let kind = match reference {
+                UtteranceReference::Creature => continue,
+                UtteranceReference::Player => DialogueObjectKind::Player,
+                UtteranceReference::Food(_) => DialogueObjectKind::Food,
+                UtteranceReference::Toy(_) => DialogueObjectKind::Toy,
+            };
+            if !referenced_objects.contains(&kind) {
+                referenced_objects.push(kind);
+            }
+        }
+        Self {
+            understood_concepts: interpretation.understood_concepts,
+            referenced_objects,
+            unknown_words: interpretation.unknown_words,
+            ambiguous: interpretation.ambiguous,
+            is_question: interpretation.question_understood,
+        }
+    }
 }
 
 impl Default for DialogueContext {
@@ -371,6 +531,9 @@ pub struct DialogueRequest {
     /// empty context, preserving the V1 protocol's serde compatibility.
     #[serde(default)]
     pub context: DialogueContext,
+    /// Authoritative interpretation bounded by the creature's current development.
+    #[serde(default)]
+    pub interpretation: DialogueInterpretation,
     pub player_said: String,
     pub constraints: DialogueConstraints,
 }
@@ -677,6 +840,8 @@ pub enum ValidationError {
     RecentFactCount,
     #[error("dialogue context contains an invalid turn or object")]
     ContextShape,
+    #[error("dialogue interpretation exceeds its bounded shape")]
+    InterpretationShape,
 }
 
 pub fn validate_request(request: &DialogueRequest) -> Result<(), ValidationError> {
@@ -694,6 +859,11 @@ pub fn validate_request(request: &DialogueRequest) -> Result<(), ValidationError
     }
     if request.creature_name.chars().count() > 64 {
         return Err(ValidationError::CreatureName);
+    }
+    if request.interpretation.referenced_objects.len() > MAX_AQUARIUM_OBJECTS
+        || request.interpretation.unknown_words > 512
+    {
+        return Err(ValidationError::InterpretationShape);
     }
     validate_dialogue_context(request)?;
     if request.candidate_memories.len() > 8 {
@@ -854,6 +1024,7 @@ pub fn build_dialogue_request(
         desired_social_act: context.desired_social_act,
         input_rejection: None,
         context: DialogueContext::default(),
+        interpretation: DialogueInterpretation::default(),
         player_said: context.player_said.to_owned(),
         constraints: DialogueConstraints {
             max_words: context.max_words.min(progression_max_words(world)),
@@ -1441,6 +1612,121 @@ mod tests {
         );
     }
 
+    fn recognition_request() -> RecognitionRequest {
+        RecognitionRequest {
+            protocol_version: STT_PROTOCOL_VERSION,
+            request_id: 91,
+            audio_key: "a".repeat(64),
+            language: RecognitionLanguage::English,
+        }
+    }
+
+    #[test]
+    fn recognition_protocol_accepts_a_bounded_correlated_result() {
+        let request = recognition_request();
+        let reply = RecognitionReply {
+            protocol_version: STT_PROTOCOL_VERSION,
+            request_id: request.request_id,
+            outcome: RecognitionOutcome::Recognized {
+                text: "hello, Muck".to_owned(),
+                confidence: AcousticConfidence::new(812).expect("confidence is bounded"),
+            },
+        };
+        assert_eq!(validate_recognition_request(&request), Ok(()));
+        assert_eq!(
+            validate_recognition_reply(&request, reply.clone()),
+            Ok(reply)
+        );
+    }
+
+    #[test]
+    fn recognition_protocol_rejects_bad_keys_text_and_correlation() {
+        for key in ["a".repeat(63), "A".repeat(64), "g".repeat(64)] {
+            let mut request = recognition_request();
+            request.audio_key = key;
+            assert_eq!(
+                validate_recognition_request(&request),
+                Err(RecognitionValidationError::AudioKey)
+            );
+        }
+
+        let mut zero_id = recognition_request();
+        zero_id.request_id = 0;
+        assert_eq!(
+            validate_recognition_request(&zero_id),
+            Err(RecognitionValidationError::RequestId)
+        );
+
+        let request = recognition_request();
+        for text in [
+            " ".to_owned(),
+            "x".repeat(MAX_RECOGNITION_TEXT_BYTES + 1),
+            "two\nlines".to_owned(),
+        ] {
+            let reply = RecognitionReply {
+                protocol_version: STT_PROTOCOL_VERSION,
+                request_id: request.request_id,
+                outcome: RecognitionOutcome::Recognized {
+                    text,
+                    confidence: AcousticConfidence::new(500).expect("confidence is bounded"),
+                },
+            };
+            assert_eq!(
+                validate_recognition_reply(&request, reply),
+                Err(RecognitionValidationError::Text)
+            );
+        }
+
+        let reply = RecognitionReply {
+            protocol_version: STT_PROTOCOL_VERSION,
+            request_id: request.request_id + 1,
+            outcome: RecognitionOutcome::NoSpeech {},
+        };
+        assert_eq!(
+            validate_recognition_reply(&request, reply),
+            Err(RecognitionValidationError::RequestId)
+        );
+    }
+
+    #[test]
+    fn recognition_protocol_denies_unknown_fields_at_every_level() {
+        let request = format!(
+            r#"{{"protocol_version":1,"request_id":1,"audio_key":"{}","language":"english","extra":true}}"#,
+            "a".repeat(64)
+        );
+        assert!(serde_json::from_str::<RecognitionRequest>(&request).is_err());
+        assert!(
+            serde_json::from_str::<RecognitionReply>(
+                r#"{"protocol_version":1,"request_id":1,"outcome":{"status":"no_speech","extra":true}}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn core_interpretation_projects_only_resolved_meaning() {
+        let interpretation = UtteranceInterpretation {
+            understood_concepts: BTreeSet::from([Concept::Food, Concept::Why]),
+            references: BTreeSet::from([
+                UtteranceReference::Food(beastie_core::FoodId::Berry),
+                UtteranceReference::Player,
+            ]),
+            unknown_words: 3,
+            ambiguous: true,
+            question_understood: true,
+        };
+        assert_eq!(
+            DialogueInterpretation::from(interpretation),
+            DialogueInterpretation {
+                understood_concepts: BTreeSet::from([Concept::Food, Concept::Why]),
+                referenced_objects: vec![DialogueObjectKind::Player, DialogueObjectKind::Food],
+                unknown_words: 3,
+                ambiguous: true,
+                is_question: true,
+            }
+        );
+    }
+
     fn request() -> DialogueRequest {
         DialogueRequest {
             protocol_version: PROTOCOL_VERSION,
@@ -1458,6 +1744,7 @@ mod tests {
             desired_social_act: Some(SocialAct::Insult),
             input_rejection: None,
             context: DialogueContext::default(),
+            interpretation: DialogueInterpretation::default(),
             player_said: "Remember the berry?".to_owned(),
             constraints: DialogueConstraints {
                 max_words: 6,

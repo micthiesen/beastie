@@ -23,6 +23,7 @@ mod asset;
 mod dialogue_eval;
 mod packaging;
 mod store_assets;
+mod stt_eval;
 
 const BERRY_GRUDGE_SCENARIO: &str = "fixtures/scenarios/berry-grudge.jsonl";
 const SPOKEN_INPUT_SCENARIO: &str = "fixtures/scenarios/spoken-input-foundation.jsonl";
@@ -35,6 +36,7 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Task {
     /// Run every headless verification gate.
     Verify,
@@ -52,6 +54,11 @@ enum Task {
     Dialogue {
         #[command(subcommand)]
         command: DialogueTask,
+    },
+    /// Score the checked-in speech corpus or benchmark one persistent local recognizer.
+    Stt {
+        #[command(subcommand)]
+        command: SttTask,
     },
     /// Run the game shell with fixture or environment-configured local AI.
     Dev {
@@ -91,7 +98,7 @@ enum Task {
         /// Check an existing package instead of staging one.
         #[arg(long)]
         check: bool,
-        /// Permit a development-only package without the required release TTS bundle.
+        /// Permit a development-only package without required release TTS and/or STT.
         #[arg(long)]
         development_package: bool,
         /// Already-built game executable.
@@ -115,6 +122,30 @@ enum Task {
         /// Exact eSpeak NG 1.52.0 corresponding-source archive.
         #[arg(long)]
         espeak_source: Option<PathBuf>,
+        /// Already-built Beastie STT worker.
+        #[arg(long)]
+        stt_worker: Option<PathBuf>,
+        /// Already-built native Moonshine engine.
+        #[arg(long)]
+        stt_engine: Option<PathBuf>,
+        /// Moonshine engine dynamic runtime library. Repeatable.
+        #[arg(long)]
+        stt_runtime: Vec<PathBuf>,
+        /// Moonshine runtime MIT license snapshot.
+        #[arg(long)]
+        stt_runtime_license: Option<PathBuf>,
+        /// Moonshine runtime third-party notices.
+        #[arg(long)]
+        stt_runtime_notices: Option<PathBuf>,
+        /// Directory containing exactly the seven selected Moonshine model files.
+        #[arg(long)]
+        stt_model_dir: Option<PathBuf>,
+        /// Moonshine model MIT license snapshot.
+        #[arg(long)]
+        stt_model_license: Option<PathBuf>,
+        /// Moonshine model card snapshot.
+        #[arg(long)]
+        stt_model_card: Option<PathBuf>,
         /// Selected local GGUF file.
         #[arg(long, required_unless_present = "check")]
         model: Option<PathBuf>,
@@ -173,6 +204,28 @@ enum DialogueTask {
         llama_arg: Vec<String>,
         /// Safe report filename stem under evals/reports.
         #[arg(long, default_value = "local-model", requires = "worker")]
+        label: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SttTask {
+    /// Evaluate deterministic replies, or opt into a real Moonshine worker run.
+    Eval {
+        /// Path to the beastie-stt executable. Enables a real-runtime run.
+        #[arg(long)]
+        worker: Option<PathBuf>,
+        /// Directory containing the selected Moonshine model components.
+        #[arg(long, requires = "worker")]
+        model_dir: Option<PathBuf>,
+        /// Moonshine transcriber engine loaded by the worker.
+        #[arg(long, requires = "worker")]
+        moonshine_engine: Option<PathBuf>,
+        /// Extra worker argument. Repeatable.
+        #[arg(long, requires = "worker", allow_hyphen_values = true)]
+        worker_arg: Vec<String>,
+        /// Safe report filename suffix under evals/reports.
+        #[arg(long, default_value = "moonshine-local", requires = "worker")]
         label: String,
     },
 }
@@ -276,6 +329,22 @@ fn main() -> Result<()> {
             llama_args: llama_arg,
             label,
         }),
+        Task::Stt {
+            command:
+                SttTask::Eval {
+                    worker,
+                    model_dir,
+                    moonshine_engine,
+                    worker_arg,
+                    label,
+                },
+        } => stt_eval::run(stt_eval::EvalOptions {
+            worker,
+            model_dir,
+            moonshine_engine,
+            worker_args: worker_arg,
+            label,
+        }),
         Task::Dev {
             fake_ai,
             ai_timeout_ms,
@@ -311,6 +380,14 @@ fn main() -> Result<()> {
             espeak_data,
             espeak_license,
             espeak_source,
+            stt_worker,
+            stt_engine,
+            stt_runtime,
+            stt_runtime_license,
+            stt_runtime_notices,
+            stt_model_dir,
+            stt_model_license,
+            stt_model_card,
             model,
             model_license,
             model_card,
@@ -327,6 +404,14 @@ fn main() -> Result<()> {
             espeak_data: espeak_data.as_deref(),
             espeak_license: espeak_license.as_deref(),
             espeak_source: espeak_source.as_deref(),
+            stt_worker: stt_worker.as_deref(),
+            stt_engine: stt_engine.as_deref(),
+            stt_runtime: &stt_runtime,
+            stt_runtime_license: stt_runtime_license.as_deref(),
+            stt_runtime_notices: stt_runtime_notices.as_deref(),
+            stt_model_dir: stt_model_dir.as_deref(),
+            stt_model_license: stt_model_license.as_deref(),
+            stt_model_card: stt_model_card.as_deref(),
             model: model.as_deref(),
             model_license: model_license.as_deref(),
             model_card: model_card.as_deref(),
@@ -353,6 +438,14 @@ struct PackageCommandOptions<'a> {
     espeak_data: Option<&'a Path>,
     espeak_license: Option<&'a Path>,
     espeak_source: Option<&'a Path>,
+    stt_worker: Option<&'a Path>,
+    stt_engine: Option<&'a Path>,
+    stt_runtime: &'a [PathBuf],
+    stt_runtime_license: Option<&'a Path>,
+    stt_runtime_notices: Option<&'a Path>,
+    stt_model_dir: Option<&'a Path>,
+    stt_model_license: Option<&'a Path>,
+    stt_model_card: Option<&'a Path>,
     model: Option<&'a Path>,
     model_license: Option<&'a Path>,
     model_card: Option<&'a Path>,
@@ -372,6 +465,14 @@ fn package(options: PackageCommandOptions<'_>) -> Result<()> {
         espeak_data,
         espeak_license,
         espeak_source,
+        stt_worker,
+        stt_engine,
+        stt_runtime,
+        stt_runtime_license,
+        stt_runtime_notices,
+        stt_model_dir,
+        stt_model_license,
+        stt_model_card,
         model,
         model_license,
         model_card,
@@ -391,7 +492,16 @@ fn package(options: PackageCommandOptions<'_>) -> Result<()> {
         espeak_data,
         espeak_license,
         espeak_source,
+        stt_worker,
+        stt_engine,
+        stt_runtime,
+        stt_runtime_license,
+        stt_runtime_notices,
+        stt_model_dir,
+        stt_model_license,
+        stt_model_card,
         require_tts: require_release_complete,
+        require_stt: require_release_complete,
         runtime,
         model: model.context("--model is required when staging a package")?,
         model_license: model_license
@@ -421,11 +531,12 @@ fn verify() -> Result<()> {
     asset::check(Path::new("assets/manifest.toml"), true, false)?;
     verify_manifest("models/manifest.toml")?;
     dialogue_eval::verify_fixtures()?;
+    stt_eval::verify_fixtures()?;
     replay_spoken_input_scenario(SPOKEN_INPUT_SCENARIO)?;
     store_assets::check(Path::new("."))?;
     run("cargo", &["build", "--workspace", "--locked"])?;
-    replay_scenario(BERRY_GRUDGE_SCENARIO)?;
-    replay_scenario("fixtures/scenarios/aquarium-v1.jsonl")
+    replay_scenario(BERRY_GRUDGE_SCENARIO, false, false)?;
+    replay_scenario("fixtures/scenarios/aquarium-v1.jsonl", true, false)
 }
 
 struct DevOptions<'a> {
@@ -475,6 +586,27 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
                 .join("debug")
                 .join(format!("beastie-ai-worker{}", std::env::consts::EXE_SUFFIX)),
         )
+    };
+    let stt_worker = if fake_ai {
+        run(
+            "cargo",
+            &[
+                "build",
+                "--package",
+                "beastie-ai-worker",
+                "--bin",
+                "beastie-stt",
+                "--locked",
+            ],
+        )?;
+        Some(
+            std::env::current_dir()?
+                .join("target")
+                .join("debug")
+                .join(format!("beastie-stt{}", std::env::consts::EXE_SUFFIX)),
+        )
+    } else {
+        None
     };
     let tts_worker = if tts_cache_dir.is_some() {
         let mut arguments = vec!["build", "--package", "beastie-ai-worker"];
@@ -550,6 +682,9 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
     if let Some(worker) = worker {
         command.env("BEASTIE_AI_WORKER", worker);
     }
+    if let Some(stt_worker) = stt_worker {
+        command.env("BEASTIE_STT_WORKER", stt_worker);
+    }
     let mut child = command.spawn().context("failed to start beastie-game")?;
     if !smoke {
         focus_macos_process(child.id());
@@ -614,15 +749,20 @@ fn play(seed: u64, scenario: Option<&Path>, fake_ai: bool) -> Result<()> {
     reject_adapter_errors(report)
 }
 
-fn replay_scenario(path: &str) -> Result<()> {
+fn replay_scenario(path: &str, expect_grounded_reply: bool, expect_refusal: bool) -> Result<()> {
     let file = File::open(path).with_context(|| format!("failed to open scenario {path}"))?;
     let report = process_commands(BufReader::new(file), io::sink(), 99)?;
     if report.accepted == 0 {
         bail!("scenario {path} contains no commands");
     }
     reject_adapter_errors(report)?;
-    if !report.grounded_reply || !report.food_consumed {
-        bail!("scenario {path} did not produce grounded recall and berry consumption");
+    if !report.food_consumed
+        || report.grounded_reply != expect_grounded_reply
+        || report.refused != expect_refusal
+    {
+        bail!(
+            "scenario {path} did not produce its expected consumption, grounding, and refusal arc"
+        );
     }
     Ok(())
 }
@@ -656,7 +796,11 @@ fn replay_spoken_input_scenario(path: &str) -> Result<()> {
             Some(SpokenInputStatus::InfrastructureFailure { .. }) => {
                 infrastructure_failures += 1;
             }
-            Some(SpokenInputStatus::NoCandidate) | None => {}
+            Some(SpokenInputStatus::Refused) => {}
+            Some(SpokenInputStatus::Deferred)
+            | Some(SpokenInputStatus::NotEngaged { .. })
+            | Some(SpokenInputStatus::NoCandidate)
+            | None => {}
         }
     }
 
@@ -694,6 +838,7 @@ struct PlayReport {
     rejected: usize,
     grounded_reply: bool,
     food_consumed: bool,
+    refused: bool,
 }
 
 fn process_commands(
@@ -732,6 +877,11 @@ fn process_commands(
                     .events
                     .iter()
                     .any(|event| matches!(event, GameEvent::FoodConsumed(_)));
+                report.refused |= observation
+                    .observation
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, GameEvent::UtteranceRefused));
                 serde_json::to_writer(&mut output, &observation)
                     .context("failed to encode session observation")?;
                 report.accepted += 1;
@@ -835,6 +985,7 @@ impl AdapterError {
             SessionError::EmptySpeechCandidate => "empty_speech_candidate",
             SessionError::SpeechAlreadyStarted => "speech_already_started",
             SessionError::SpeechNotStarted => "speech_not_started",
+            SessionError::UtteranceBusy => "utterance_busy",
             SessionError::NoCheckpoint => "no_checkpoint",
             SessionError::SaveVersion(_)
             | SessionError::LegacySave(_)
@@ -924,7 +1075,7 @@ mod tests {
 
     #[test]
     fn talk_output_is_grounded_in_an_offered_memory() {
-        let input = include_bytes!("../../../fixtures/scenarios/berry-grudge.jsonl");
+        let input = include_bytes!("../../../fixtures/scenarios/aquarium-v1.jsonl");
         let mut output = Vec::new();
         let report = process_commands(&input[..], &mut output, 99).expect("scenario should run");
         let lines = String::from_utf8(output).expect("output should be UTF-8");

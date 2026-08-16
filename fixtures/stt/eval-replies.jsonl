@@ -1,0 +1,11 @@
+{"case_id":"espeak-us-muck-berry","latency_ms":128,"reply":{"protocol_version":1,"request_id":1,"outcome":{"status":"recognized","text":"Muck, do you remember the berry?","confidence":910}}}
+{"case_id":"espeak-gb-why-there","latency_ms":31,"reply":{"protocol_version":1,"request_id":2,"outcome":{"status":"recognized","text":"Why did you put that there?","confidence":930}}}
+{"case_id":"espeak-us-mushroom","latency_ms":29,"reply":{"protocol_version":1,"request_id":3,"outcome":{"status":"recognized","text":"Do you want this mushroom?","confidence":880}}}
+{"case_id":"espeak-gb-profanity","latency_ms":34,"reply":{"protocol_version":1,"request_id":4,"outcome":{"status":"recognized","text":"You're a weird little bastard.","confidence":840}}}
+{"case_id":"espeak-us-bell-sock","latency_ms":30,"reply":{"protocol_version":1,"request_id":5,"outcome":{"status":"recognized","text":"Do you like the bell or the sock?","confidence":900}}}
+{"case_id":"espeak-gb-asshole","latency_ms":33,"reply":{"protocol_version":1,"request_id":6,"outcome":{"status":"recognized","text":"You're being an asshole again.","confidence":810}}}
+{"case_id":"espeak-us-repeated-name","latency_ms":32,"reply":{"protocol_version":1,"request_id":7,"outcome":{"status":"recognized","text":"Muck? Muck, are you listening?","confidence":820}}}
+{"case_id":"espeak-gb-disfluency","latency_ms":38,"reply":{"protocol_version":1,"request_id":8,"outcome":{"status":"recognized","text":"Um, Muck, I, uh, cleaned your aquarium.","confidence":760}}}
+{"case_id":"espeak-us-noisy-aquarium","latency_ms":42,"reply":{"protocol_version":1,"request_id":9,"outcome":{"status":"recognized","text":"I cleaned your aquarium yesterday.","confidence":690}}}
+{"case_id":"silence","latency_ms":18,"reply":{"protocol_version":1,"request_id":10,"outcome":{"status":"no_speech"}}}
+{"case_id":"aquarium-noise","latency_ms":20,"reply":{"protocol_version":1,"request_id":11,"outcome":{"status":"no_speech"}}}

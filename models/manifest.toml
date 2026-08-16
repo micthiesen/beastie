@@ -18,6 +18,110 @@ archive_sha256 = "fdec9afcb2ee389dee74cc7c5f86c7f270b0f88fb248f0a7d1e5956fa61f10
 # Metal on the development Mac.
 cpu_only_args = ["--device", "none", "--no-op-offload", "-ngl", "0"]
 
+[runtime.moonshine_voice]
+version = "0.1.2"
+revision = "07648e45e0b1daf1923ce325cd61d624a407e615"
+source = "https://github.com/moonshine-ai/moonshine"
+license = "MIT for runtime and English-language models; bundled third-party notices still required"
+license_sha256 = "6148d7574a6554b7379b633cfd4c4fe5840c3f548d13bc83e00b52dc6fa00abd"
+interface = "isolated persistent beastie-stt JSONL worker loading a separately distributed engine"
+network = false
+macos_arm64_archive = "moonshine-voice-macos-arm64.tar.gz"
+macos_arm64_archive_bytes = 27118708
+macos_arm64_archive_sha256 = "9a1a4431096e95783c386c3846174785d142b24184ca6016d19438a2714c2acd"
+
+[runtime.whisper_cpp]
+version = "1.9.2"
+revision = "306c88f4d1286aec1bf96e544632897886af5501"
+source = "https://github.com/ggml-org/whisper.cpp"
+license = "MIT"
+license_sha256 = "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
+interface = "comparison runtime only; persistent HTTP sidecar was used for exploratory evaluation"
+network = false
+
+[selection.stt]
+status = "provisional"
+preferred_candidate = "moonshine-tiny-streaming-en"
+evaluated_on = "2026-08-15"
+corpus = "evals/stt/corpus.json version 1"
+requires_real_human_acceptance = true
+reason = "Tiny Streaming has the best current size and streaming fit, but the redistributable synthetic corpus exposes material vocabulary errors and cannot establish human accuracy, accent coverage, endpointing feel, or confidence calibration"
+
+[[selection.stt.results]]
+candidate = "moonshine-tiny-streaming-en"
+runtime_revision = "Moonshine Voice v0.1.2 (07648e45e0b1daf1923ce325cd61d624a407e615)"
+model_bytes = 51441771
+license = "MIT (English model and runtime), with third-party notices required"
+evaluated = "Checked-in redistributable eSpeak corpus through one persistent seven-file worker: 4/11 strict cases, 0.308 normalized WER (16 errors/52 words), 7/16 keyword recall, 2/2 no-speech, 122 ms cold, 57 ms warm median, 304 MiB peak process-tree RSS on macOS"
+notes = "A legacy system-voice corpus scored better, confirming that synthetic voice choice materially changes results. Seven-file runtime excludes the optional attention decoder after it caused about 23 seconds of utterance latency; no real-human acceptance claim"
+
+[[selection.stt.results]]
+candidate = "whisper-cpp-tiny-en-q5_1"
+runtime_revision = "whisper.cpp v1.9.2 (306c88f4d1286aec1bf96e544632897886af5501)"
+model_bytes = 32166155
+license = "MIT"
+evaluated = "Directional v1.8.6 evidence only: Samantha, Daniel, and synthetic noisy macOS say corpus through a persistent local server; pinned v1.9.2 must be rerun by the checked-in harness"
+notes = "Smallest model, but weaker proper-name and noisy profanity behavior; confidence evidence did not reliably predict correctness"
+
+[[selection.stt.results]]
+candidate = "whisper-cpp-base-en-q5_1"
+runtime_revision = "whisper.cpp v1.9.2 (306c88f4d1286aec1bf96e544632897886af5501)"
+model_bytes = 59721011
+license = "MIT"
+evaluated = "Directional v1.8.6 evidence only: Samantha, Daniel, and synthetic noisy macOS say corpus through a persistent local server; pinned v1.9.2 must be rerun by the checked-in harness"
+notes = "Larger than Moonshine Tiny Streaming and did not consistently improve proper-name recognition on synthetic voices"
+
+[[stt_candidate]]
+id = "moonshine-tiny-streaming-en"
+family = "Moonshine Tiny Streaming English"
+source = "https://download.moonshine.ai/model/tiny-streaming-en/quantized_26_07_30"
+runtime = "moonshine-voice 0.1.2"
+runtime_revision = "07648e45e0b1daf1923ce325cd61d624a407e615"
+architecture = 2
+license = "MIT"
+bytes = 51441771
+tracked = false
+components = [
+  { file = "adapter.ort", bytes = 1319664, sha256 = "22ecc949e146c49667fda28d102d4e30749a107dc88a396292aa8f277ef1347c" },
+  { file = "cross_kv.ort", bytes = 1287544, sha256 = "143a36667b8d05fd9d04e8c337b7ee121f37ef299aea6b3d82bdb3d3401950b4" },
+  { file = "decoder_kv.ort", bytes = 32583720, sha256 = "8852553f312adb6c9aa4d17418015049b30f412209ee569d336548c0044627de" },
+  { file = "encoder.ort", bytes = 7675440, sha256 = "a8414e1a5dedf9f2093d7680601dd8a9b0433e7020260eafe0e370ead91134ca" },
+  { file = "frontend.ort", bytes = 8324920, sha256 = "271a563251f11e6311949530f8025ed4d345c5d69d4ac1efa74093779927d636" },
+  { file = "streaming_config.json", bytes = 509, sha256 = "74fe5ddebd63b17caf59e8a3b18c17547ff7bce1642050edbb1c3962674f8950" },
+  { file = "tokenizer.bin", bytes = 249974, sha256 = "6884b35fd6377d4c4d32336a0bc152f36b64d1e45b6503683cdc238250a8472d" },
+]
+
+[[stt_rejected_component]]
+candidate = "moonshine-tiny-streaming-en"
+file = "decoder_kv_with_attention.ort"
+bytes = 32515016
+sha256 = "c1b41adca4ef75ad8dfdfc71875b5d0ae9be959865a14498da01cbddab8c02b8"
+reason = "Optional attention and word-alignment path caused about 23 seconds of latency for a short utterance on the development Mac; conservative VAD and completed-endpoint confidence is used instead"
+
+[[stt_candidate]]
+id = "whisper-cpp-tiny-en-q5_1"
+family = "Whisper tiny.en Q5_1"
+source = "https://huggingface.co/ggerganov/whisper.cpp"
+runtime = "whisper.cpp 1.9.2"
+runtime_revision = "306c88f4d1286aec1bf96e544632897886af5501"
+license = "MIT"
+file = "ggml-tiny.en-q5_1.bin"
+bytes = 32166155
+sha256 = "c77c5766f1cef09b6b7d47f21b546cbddd4157886b3b5d6d4f709e91e66c7c2b"
+tracked = false
+
+[[stt_candidate]]
+id = "whisper-cpp-base-en-q5_1"
+family = "Whisper base.en Q5_1"
+source = "https://huggingface.co/ggerganov/whisper.cpp"
+runtime = "whisper.cpp 1.9.2"
+runtime_revision = "306c88f4d1286aec1bf96e544632897886af5501"
+license = "MIT"
+file = "ggml-base.en-q5_1.bin"
+bytes = 59721011
+sha256 = "4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f"
+tracked = false
+
 [selection.dialogue]
 status = "selected"
 preferred_candidate = "qwen3.5-0.8b-q4_0"

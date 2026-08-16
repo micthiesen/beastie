@@ -2,7 +2,7 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-15** (spoken-input foundation complete).
+Last updated: **2026-08-15** (V2 spoken interaction implemented; recognizer acceptance provisional).
 
 ## Now
 
@@ -42,7 +42,7 @@ Last updated: **2026-08-15** (spoken-input foundation complete).
   3.36-second mono PCM16 line at 22,050 Hz in under 10 ms and about 3.1 MB maximum RSS. Packaging
   must retain GPLv3 license and corresponding source. See
   [tooling-preflight.md](tooling-preflight.md).
-- Asset validation now checks 76 declared assets for provenance, palette policy, alpha, transparent
+- Asset validation now checks 77 declared assets for provenance, palette policy, alpha, transparent
   RGB, pixel density, dimensions, animation completeness, and final-over-generated resolution.
   Normal gate output is concise, with per-candidate diagnostics available through `--verbose`. The
   expression
@@ -54,13 +54,20 @@ Last updated: **2026-08-15** (spoken-input foundation complete).
   [audio-direction.md](audio-direction.md).
 - The semantic session boundary compacts accelerated `NeedChanged` noise without changing final
   state, RNG, or meaningful event order. Headless and visible adapters consume the same commands.
-- The V2 spoken-input foundation is implemented without choosing a recognizer. Speech start reaches
-  deterministic creature attention before words; bounded candidates, end, and typed failures form
-  an order-checked transient session lifecycle. A usable final candidate reuses the exact text-talk
-  path, while uncertainty or infrastructure failure cannot create dialogue, language exposure, or
-  durable raw transcript state. Dialogue and TTS now share a contained, bounded, cancellable JSONL
-  transport ready for a future local STT worker. The display-free spoken fixture is part of the
-  full gate. See [spoken-input-foundation.md](spoken-input-foundation.md).
+- V2 spoken interaction is implemented end to end. Microphone capture is explicit opt-in and
+  bounded push-to-talk through F1, pointer, or controller. Audio is resampled to mono PCM16 16 kHz,
+  written only beneath a private content-addressed temporary root, and removed after success,
+  cancellation, failure, process shutdown, or recovery from an interrupted prior run. Recognition
+  is asynchronous and cannot freeze simulation. Idle creatures attend, occupied creatures glance
+  and defer, sleeping creatures ignore, and resentful creatures visibly refuse without having
+  their current action hijacked. Typed and spoken words enter the same concept-gated interpretation
+  and dialogue path; unknown raw words cannot select prompt lanes and are not saved.
+- The provisional recognizer is Moonshine Voice 0.1.2 Tiny Streaming English behind a persistent,
+  bounded, cancellable worker and native sidecar. The seven-file model is 51,441,771 bytes and is
+  pinned per component. The checked-in fixture gate is 11/11; the actual runtime scored 4/11 with
+  0.308 WER on the redistributable synthetic corpus, 122 ms cold, 57 ms warm median, and 304 MiB
+  peak process-tree RSS. This proves plumbing and speed, not human accuracy. See
+  [stt-runtime.md](stt-runtime.md) and [v2-plan.md](v2-plan.md).
 - macOS native window capture and real pointer/keyboard delivery were proven during the MVP. No
   physical controller has been attached. Windows and Linux native install, launch, save-path, and
   child-cleanup evidence has not been produced. CI or cross-compilation is not native proof.
@@ -92,35 +99,39 @@ Last updated: **2026-08-15** (spoken-input foundation complete).
   audit; its packaged Qwen warm server returned two grounded replies, packaged eSpeak generated a
   validated cache entry, and all children exited. The prior bundle of the same game shell completed
   its packaged GUI smoke; the final remote-daemon retry did not acquire a drawable and was stopped.
-  Signing identities, notarization credentials, Steam IDs/credentials, native Windows/Linux runs,
-  physical-controller smoke, final store screenshots, and trailer remain release prerequisites.
-- Three independent review lenses covered general correctness, runtime/content boundaries, and V1
-  acceptance. Their surviving findings and the subsequent release-script, capture, dialogue, and
-  staging findings were fixed. The final integrated `cargo xtask verify` gate is green after the
-  presentation pass.
+  The final V2 macOS staging audit covers 584 files and 759,039,770 bytes with network disabled.
+  An ad hoc signed `.app` contains the microphone purpose string, passes strict code-signature
+  verification, and its packaged STT worker loads the bundled engine and returns a correlated
+  transcript. Signing identities, notarization credentials, Steam IDs/credentials, native
+  Windows/Linux runs, physical-controller smoke, final store screenshots, and trailer remain
+  release prerequisites.
+- Three independent V2 review lenses covered general correctness, process/privacy boundaries, and
+  semantic/test completeness. Surviving findings were fixed: interrupted microphone files are
+  cleaned on startup, deferred speech rechecks sleep and resentment, packaged STT executables are
+  hash-checked, and macOS declares its microphone purpose. A flaky warm-server harness deadline was
+  widened only in the test backend and passed ten repeated focused runs. The final integrated
+  `cargo xtask verify` gate is green.
 
 ## Next
 
-Build the offline STT runtime bake-off and fixture worker described by [v2-plan.md](v2-plan.md),
-using the typed seam in [spoken-input-foundation.md](spoken-input-foundation.md). Pin a small set of
-redistributable runtime/model candidates, transcribe a checked-in utterance corpus through the
-bounded worker boundary, measure accuracy, finalization latency, warm memory, model bytes, and
-confidence behavior, then record one selected runtime with deterministic fake and real-model eval
-paths.
+Close real-human recognition acceptance before adding another major interaction system. Record at
+least three speakers across quiet, ordinary room noise, game audio, competing speech, proper names,
+aquarium vocabulary, disfluency, and permitted profanity. Use held-out clips to calibrate the
+confidence threshold, and rerun pinned whisper.cpp 1.9.2 tiny/base comparisons through the same
+worker evaluator if Moonshine misses remain disruptive.
 
-This comes before microphone UI because recognition quality, latency, confidence calibration, and
-distribution terms are the load-bearing unknowns. It is headless and fixture-testable apart from
-the explicit real-model benchmark, so a poor candidate can be discarded without entangling device
-permissions, activation UX, or creature behavior.
+The V2 product path is complete and remains fully playable through text. This next batch decides
+whether Moonshine should graduate from provisional to shipped, needs vocabulary adaptation, or
+should be replaced. It is quality closure, not permission to paper over recognition errors in the
+creature's cognition.
 
 ## Candidates Not Chosen
 
-- **Microphone capture and push-to-talk UX:** about one day once the worker contract is selected.
-  It needs a real audio device, macOS permission acceptance, and human judgment; doing it first
-  would couple UI work to an unproven recognizer and endpointing model.
-- **Richer attention, interruption, and delayed response:** one to two days, mostly deterministic
-  core/view work with visual tuning. It waits for measured recognition timing so the behavior is
-  designed around real latency rather than invented timing.
+- **Open-microphone or wake-word activation:** bounded push-to-talk is intentionally the V2
+  activation model. Background capture would materially widen privacy, endpointing, and accidental
+  activation risk before recognition quality is accepted.
+- **Prosody, laughter, and nonverbal acoustic cues:** useful future perception signals, but they
+  must not infer player emotion as fact or bypass the shared language path.
 - **Release-platform closure:** several days plus external credentials and Windows/Linux hardware.
   It remains necessary, but it does not advance the chosen V2 spoken-interaction slice. Required
   evidence still includes native Windows/Linux install and launch, a physical controller, signing,

@@ -53,7 +53,7 @@ player's persistent save.
 The berry-grudge and Stage 5 scenarios remain long-form behavioral regressions. `room-shell.jsonl`
 is retained only as historical room-era coverage and is not the canonical visual target.
 
-Pre-recognizer spoken-input replay:
+Deterministic spoken-input replay:
 
 ```bash
 cargo xtask play --fake-ai \
@@ -61,9 +61,17 @@ cargo xtask play --fake-ai \
 ```
 
 This fixture proves attention before words, usable and uncertain candidates, and a technical
-recognizer failure. `cargo xtask verify` asserts the transition counts and that only the usable
-candidate creates a dialogue request. It requires no microphone, recognizer, model, audio device,
-display, or network. See [spoken-input-foundation.md](spoken-input-foundation.md).
+recognizer failure through the same lifecycle used by the shipped microphone path. `cargo xtask
+verify` asserts the transition counts and that only the usable candidate creates a dialogue
+request. It requires no microphone, recognizer, model, audio device, display, or network. See
+[spoken-input-foundation.md](spoken-input-foundation.md).
+
+`cargo xtask stt eval` is the fixture/model-free recognizer gate. A real run must explicitly
+provide the `beastie-stt` worker, seven-file model directory, and
+`beastie-moonshine-engine`; see `cargo xtask stt eval --help`. Real microphone acceptance is
+separate: speak naturally, include silence and cancellation cases, inspect endpointing, then
+verify the worker-owned temporary WAV directory is empty and no STT worker or engine descendant
+survives game exit. The default gate never downloads a model or requires an audio device.
 
 ## What automated plans prove
 
@@ -95,6 +103,9 @@ The development Mac has previously proven:
 - direct logical framebuffer PNG capture;
 - packaged local dialogue and eSpeak speech without environment-variable discovery;
 - child-process cleanup after package exit.
+
+This list predates Moonshine integration and is not evidence of a packaged real-microphone STT
+run. Native STT rows remain unchecked until dated logs and package hashes are attached.
 
 Alacritty required Screen Recording and Accessibility permissions for host automation. Starting the
 game through Alacritty avoided a blank or occluded Metal window. yabai has intermittently held the

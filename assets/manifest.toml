@@ -1226,6 +1226,29 @@ terms = "PixelLab Terms of Use, accessed 2026-08-15"
 human_modifications = "cropped the authored status pearl and resized it to 20x20 with nearest-neighbor sampling"
 
 [[asset]]
+id = "ui/button-microphone"
+kind = "sprite"
+width = 20
+height = 20
+transparent = true
+palette = "style/ui-polish.hex"
+max_colors = 10
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+
+[asset.provenance]
+generator = "openai-imagegen"
+job_id = "exec-eab8b961-b8b3-4ee4-a888-96fa1356de5e"
+generated_at = "2026-08-15"
+prompt = "Single vintage microphone icon matching the existing aquarium UI sprites, with a dark navy outline, pearl pink and cream highlights, restrained coral accent, hard pixel edges, no text, and a removable green background."
+seed = "provider-controlled"
+terms = "OpenAI Service Terms, accessed 2026-08-15"
+references = ["generated/ui/button-food.png", "generated/ui/button-settings.png", "generated/ui/button-send.png"]
+human_modifications = "removed the chroma key, cropped the opaque silhouette, resized to 18 pixels inside a 20x20 canvas with nearest-neighbor sampling, and mapped colors to the established UI icon palette"
+
+[[asset]]
 id = "ui/button-food"
 kind = "sprite"
 width = 20

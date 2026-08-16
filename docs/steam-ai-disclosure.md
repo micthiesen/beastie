@@ -29,6 +29,14 @@ Model output is expression, not game truth. It cannot mutate creature state, cre
 change preferences, unlock concepts, or award progress. Those outcomes come only from the
 deterministic Rust simulation.
 
+Optional spoken player input is transcribed locally by bundled Moonshine Voice and the bundled
+Tiny Streaming English model. Audio, recognition, dialogue, and speech synthesis do not contact a
+cloud service. Raw microphone audio is written only as a bounded temporary WAV owned by the STT
+worker and is deleted after recognition, cancellation, timeout, and failure. Raw audio is never
+saved as game history. Recognized text follows the same bounded input rules as typed text and is
+not persisted by default. Transcript retention is opt-in and transcript export is an explicit,
+local player action.
+
 ## Intended mature content
 
 The creature may learn profanity, crude jokes, non-graphic sexual innuendo, personal insults,
@@ -73,8 +81,10 @@ fallback, permitted-content, and prohibited-content results.
 - `models/manifest.toml` pins the model source, immutable upstream and quantization revisions,
   byte count, SHA-256, license snapshot SHA-256, and model-card snapshot SHA-256.
 - `THIRD_PARTY_NOTICES` records the shipped model and runtime licenses.
-- `cargo xtask package` requires the exact model, model license, model card, llama.cpp runtime and
-  license, eSpeak NG runtime and data, GPLv3 license, and corresponding source archive.
+- `cargo xtask package` requires the exact dialogue model, model license, model card, llama.cpp
+  runtime and license, eSpeak NG runtime and data, GPLv3 license and corresponding source archive,
+  plus the STT worker, Moonshine engine runtime closure, licenses/notices/model card, and exact
+  seven-file STT model.
 - `package-manifest.json` records the byte count and SHA-256 of every packaged file and declares
   network access disabled. `cargo xtask package --check` rejects missing, stale, extra, tampered,
   wrong-platform, oversized, or development-only contents.

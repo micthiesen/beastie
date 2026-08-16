@@ -104,6 +104,9 @@ pub enum UiAction {
     CycleSpeechVolume,
     ToggleVoice,
     ToggleSubtitles,
+    ToggleMicrophone,
+    /// Starts push-to-talk on press. The shell ends capture on release or focus loss.
+    PushToTalk,
     CycleTextSpeed,
     OpenBindings,
     BeginRebind(BindableAction),
@@ -121,11 +124,24 @@ pub enum UiAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BindableAction {
+    PushToTalk,
     Food,
     Play,
     Comfort,
     Settings,
     Cancel,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MicrophoneState {
+    Disabled,
+    #[default]
+    Idle,
+    Listening,
+    Recognizing,
+    Unavailable,
+    Error,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -216,6 +232,10 @@ pub struct ViewState {
     pub voice_enabled: bool,
     #[serde(default = "default_true")]
     pub subtitles: bool,
+    #[serde(default)]
+    pub microphone_enabled: bool,
+    #[serde(default)]
+    pub microphone_state: MicrophoneState,
     /// 0 = instant, 1 = normal, 2 = slow.
     #[serde(default = "default_text_speed")]
     pub text_speed: u8,
@@ -239,6 +259,7 @@ pub struct ViewState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingLabels {
+    pub push_to_talk: String,
     pub food: String,
     pub play: String,
     pub comfort: String,
@@ -249,10 +270,11 @@ pub struct BindingLabels {
 impl Default for BindingLabels {
     fn default() -> Self {
         Self {
-            food: "F1".to_owned(),
-            play: "F2".to_owned(),
-            comfort: "F3".to_owned(),
-            settings: "F10".to_owned(),
+            push_to_talk: "F1".to_owned(),
+            food: "F2".to_owned(),
+            play: "F3".to_owned(),
+            comfort: "F4".to_owned(),
+            settings: "F5".to_owned(),
             cancel: "Escape".to_owned(),
         }
     }
@@ -280,6 +302,8 @@ impl Default for ViewState {
             speech_volume: default_volume(),
             voice_enabled: true,
             subtitles: true,
+            microphone_enabled: false,
+            microphone_state: MicrophoneState::Disabled,
             text_speed: default_text_speed(),
             binding_labels: BindingLabels::default(),
             controller_active: false,
@@ -1240,7 +1264,13 @@ fn add_persistent_bar(
     let input_rect = Rect {
         x: 5,
         y: 153,
-        w: 230,
+        w: 203,
+        h: 23,
+    };
+    let microphone_rect = Rect {
+        x: 213,
+        y: 153,
+        w: 23,
         h: 23,
     };
     let food_rect = Rect {
@@ -1262,15 +1292,11 @@ fn add_persistent_bar(
         h: 23,
     };
     add_inset("compose/input", input_rect, 31, rects);
-    let input_value = if view.pending {
-        format!("{} is thinking...", summary.name)
-    } else if view.text_buffer.is_empty() {
-        format!("Talk to {}...", summary.name)
+    let input_capacity = usize::try_from((input_rect.w - 17) / glyph_width).unwrap_or(1);
+    let input_value = if view.text_buffer.is_empty() {
+        head_fit(&format!("Talk to {}...", summary.name), input_capacity)
     } else {
-        tail_fit(
-            &view.text_buffer,
-            usize::try_from((input_rect.w - 11) / glyph_width).unwrap_or(1),
-        )
+        tail_fit(&view.text_buffer, input_capacity)
     };
     text.push(label("compose/input-text", &input_value, 11, 160, 34));
     hits.push(hit(
@@ -1278,18 +1304,48 @@ fn add_persistent_bar(
         Some(UiTarget::ComposeField),
         UiAction::FocusCompose,
         input_rect,
-        !view.pending,
+        true,
         "Message",
+    ));
+    let microphone_available = view.microphone_enabled
+        && !matches!(
+            view.microphone_state,
+            MicrophoneState::Disabled | MicrophoneState::Unavailable | MicrophoneState::Error
+        );
+    hits.push(hit(
+        "compose/microphone",
+        Some(UiTarget::Actions),
+        UiAction::PushToTalk,
+        microphone_rect,
+        microphone_available,
+        microphone_label(view.microphone_state),
+    ));
+    add_button_chrome(
+        "compose/microphone",
+        microphone_rect,
+        microphone_available,
+        matches!(
+            view.microphone_state,
+            MicrophoneState::Listening | MicrophoneState::Recognizing
+        ),
+        31,
+        rects,
+    );
+    sprites.push(ui_sprite(
+        "ui/button-microphone",
+        microphone_rect.x + 2,
+        microphone_rect.y + 2,
+        35,
     ));
     hits.push(hit(
         "compose/food",
         Some(UiTarget::Actions),
         UiAction::OpenFoodChoice,
         food_rect,
-        !view.pending,
+        true,
         "Food",
     ));
-    add_button_chrome("compose/food", food_rect, !view.pending, false, 31, rects);
+    add_button_chrome("compose/food", food_rect, true, false, 31, rects);
     sprites.push(ui_sprite(
         "ui/button-food",
         food_rect.x + 2,
@@ -1301,17 +1357,10 @@ fn add_persistent_bar(
         Some(UiTarget::Actions),
         UiAction::OpenSettings,
         settings_rect,
-        !view.pending,
+        true,
         "Settings",
     ));
-    add_button_chrome(
-        "compose/settings",
-        settings_rect,
-        !view.pending,
-        false,
-        31,
-        rects,
-    );
+    add_button_chrome("compose/settings", settings_rect, true, false, 31, rects);
     sprites.push(ui_sprite(
         "ui/button-settings",
         settings_rect.x + 2,
@@ -1535,6 +1584,12 @@ fn add_settings(
             UiAction::ToggleSubtitles,
         ),
         (
+            "microphone",
+            "Microphone",
+            on_off(view.microphone_enabled),
+            UiAction::ToggleMicrophone,
+        ),
+        (
             "text-speed",
             "Text speed",
             text_speed_label(view.text_speed),
@@ -1754,6 +1809,11 @@ fn add_bindings(
     text.push(label("bindings/title", "Input bindings", 46, 20, 29));
     let rows = [
         (
+            BindableAction::PushToTalk,
+            "Push to talk",
+            view.binding_labels.push_to_talk.as_str(),
+        ),
+        (
             BindableAction::Food,
             "Food",
             view.binding_labels.food.as_str(),
@@ -1780,7 +1840,7 @@ fn add_bindings(
         ),
     ];
     for (index, (action, name, binding)) in rows.into_iter().enumerate() {
-        let y = 35 + i32::try_from(index).unwrap_or_default() * 17;
+        let y = 32 + i32::try_from(index).unwrap_or_default() * 14;
         text.push(label(
             &format!("bindings/{}-name", bindable_id(action)),
             name,
@@ -1885,8 +1945,20 @@ fn text_speed_label(speed: u8) -> &'static str {
     }
 }
 
+fn microphone_label(state: MicrophoneState) -> &'static str {
+    match state {
+        MicrophoneState::Disabled => "Microphone disabled in Settings",
+        MicrophoneState::Idle => "Hold to talk",
+        MicrophoneState::Listening => "Listening; release to send",
+        MicrophoneState::Recognizing => "Recognizing speech",
+        MicrophoneState::Unavailable => "Microphone unavailable",
+        MicrophoneState::Error => "Microphone error; text remains available",
+    }
+}
+
 fn bindable_id(action: BindableAction) -> &'static str {
     match action {
+        BindableAction::PushToTalk => "push-to-talk",
         BindableAction::Food => "food",
         BindableAction::Play => "play",
         BindableAction::Comfort => "comfort",
@@ -1897,6 +1969,7 @@ fn bindable_id(action: BindableAction) -> &'static str {
 
 fn bindable_name(action: BindableAction) -> &'static str {
     match action {
+        BindableAction::PushToTalk => "push to talk",
         BindableAction::Food => "food",
         BindableAction::Play => "play",
         BindableAction::Comfort => "comfort",
@@ -2177,6 +2250,13 @@ fn visible_status(view: &ViewState, now_ms: u64) -> Option<&str> {
     view.status_message
         .as_deref()
         .or(view.transcript_status.as_deref())
+        .or(match view.microphone_state {
+            MicrophoneState::Listening => Some("Listening... release to send."),
+            MicrophoneState::Recognizing => Some("Working out what you said..."),
+            MicrophoneState::Unavailable => Some("Microphone unavailable. Text still works."),
+            MicrophoneState::Error => Some("Speech input failed. Text still works."),
+            MicrophoneState::Disabled | MicrophoneState::Idle => None,
+        })
         .or_else(|| {
             matches!(
                 view.active_cue(now_ms),
@@ -4098,6 +4178,61 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn microphone_states_are_legible_without_freezing_shared_space() {
+        let state = WorldState::new(81, "Muck");
+        let listening = plan(
+            &state,
+            &ViewState {
+                pending: true,
+                microphone_enabled: true,
+                microphone_state: MicrophoneState::Listening,
+                ..ViewState::default()
+            },
+        )
+        .0;
+        for id in [
+            "compose/input",
+            "compose/microphone",
+            "compose/food",
+            "compose/settings",
+        ] {
+            assert!(
+                listening
+                    .hit_regions
+                    .iter()
+                    .find(|region| region.id == id)
+                    .expect("persistent control")
+                    .enabled,
+                "{id} should remain usable while cognition is pending"
+            );
+        }
+        assert!(listening.text.iter().any(|command| {
+            command.id == "status/message" && command.text.contains("Listening")
+        }));
+
+        let unavailable = plan(
+            &state,
+            &ViewState {
+                microphone_enabled: true,
+                microphone_state: MicrophoneState::Unavailable,
+                ..ViewState::default()
+            },
+        )
+        .0;
+        assert!(
+            !unavailable
+                .hit_regions
+                .iter()
+                .find(|region| region.id == "compose/microphone")
+                .expect("microphone control")
+                .enabled
+        );
+        assert!(unavailable.text.iter().any(|command| {
+            command.id == "status/message" && command.text.contains("Text still works")
+        }));
     }
 
     #[test]

@@ -62,9 +62,12 @@ cat > "$contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$version</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><false/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Beastie uses the microphone only while you hold push-to-talk, for local speech recognition.</string>
 </dict>
 </plist>
 PLIST
+plutil -lint "$contents/Info.plist" >/dev/null
 
 # Remove quarantine metadata copied from downloaded inputs. This does not sign the app.
 xattr -dr com.apple.quarantine "$app_root" 2>/dev/null || true

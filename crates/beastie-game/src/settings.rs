@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub const SETTINGS_VERSION: u32 = 2;
+pub const SETTINGS_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -64,6 +64,7 @@ impl BindingKey {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct KeyBindings {
+    pub push_to_talk: BindingKey,
     pub food: BindingKey,
     pub play: BindingKey,
     pub comfort: BindingKey,
@@ -74,6 +75,7 @@ pub struct KeyBindings {
 impl Default for KeyBindings {
     fn default() -> Self {
         Self {
+            push_to_talk: BindingKey::F1,
             food: BindingKey::F2,
             play: BindingKey::F3,
             comfort: BindingKey::F4,
@@ -87,6 +89,7 @@ impl KeyBindings {
     #[must_use]
     pub fn has_conflict(&self) -> bool {
         let bindings = [
+            self.push_to_talk,
             self.food,
             self.play,
             self.comfort,
@@ -101,6 +104,7 @@ impl KeyBindings {
 
     pub fn key_for(&self, action: beastie_view::BindableAction) -> BindingKey {
         match action {
+            beastie_view::BindableAction::PushToTalk => self.push_to_talk,
             beastie_view::BindableAction::Food => self.food,
             beastie_view::BindableAction::Play => self.play,
             beastie_view::BindableAction::Comfort => self.comfort,
@@ -111,6 +115,7 @@ impl KeyBindings {
 
     pub fn set_key(&mut self, action: beastie_view::BindableAction, key: BindingKey) {
         match action {
+            beastie_view::BindableAction::PushToTalk => self.push_to_talk = key,
             beastie_view::BindableAction::Food => self.food = key,
             beastie_view::BindableAction::Play => self.play = key,
             beastie_view::BindableAction::Comfort => self.comfort = key,
@@ -122,6 +127,7 @@ impl KeyBindings {
     pub fn action_for(&self, key: BindingKey) -> Option<beastie_view::BindableAction> {
         use beastie_view::BindableAction;
         [
+            BindableAction::PushToTalk,
             BindableAction::Food,
             BindableAction::Play,
             BindableAction::Comfort,
@@ -153,6 +159,8 @@ pub struct UserSettings {
     pub effects_volume: u8,
     pub speech_volume: u8,
     pub voice_enabled: bool,
+    /// Opt-in only. Loading any older settings version leaves microphone capture disabled.
+    pub microphone_enabled: bool,
     pub transcript_enabled: bool,
     pub subtitles: bool,
     pub text_scale: TextScale,
@@ -173,6 +181,7 @@ impl Default for UserSettings {
             effects_volume: 70,
             speech_volume: 70,
             voice_enabled: true,
+            microphone_enabled: false,
             transcript_enabled: false,
             subtitles: true,
             text_scale: TextScale::Medium,
@@ -188,10 +197,13 @@ impl Default for UserSettings {
 
 impl UserSettings {
     fn sanitize(mut self) -> Self {
-        if self.version < SETTINGS_VERSION {
+        if self.version == 1 {
             // Version 1 scaled the 320x180 logical buffer. Preserve the
             // closest discrete size when moving to the 640x360 presentation.
             self.window_scale = self.window_scale.saturating_add(1) / 2;
+        }
+        if self.version < 3 {
+            self.microphone_enabled = false;
         }
         self.version = SETTINGS_VERSION;
         self.window_scale = self.window_scale.clamp(1, 6);
@@ -331,6 +343,8 @@ mod tests {
         assert_eq!(settings, UserSettings::default());
         assert!(settings.subtitles);
         assert_eq!(settings.window_scale, 2);
+        assert!(!settings.microphone_enabled);
+        assert_eq!(settings.bindings.push_to_talk, BindingKey::F1);
     }
 
     #[test]
@@ -364,6 +378,25 @@ mod tests {
         .sanitize();
         assert_eq!(settings.version, SETTINGS_VERSION);
         assert_eq!(settings.window_scale, 2);
+    }
+
+    #[test]
+    fn older_settings_never_opt_the_player_into_microphone_capture() {
+        let migrated = UserSettings {
+            version: 2,
+            microphone_enabled: true,
+            ..UserSettings::default()
+        }
+        .sanitize();
+        assert_eq!(migrated.version, SETTINGS_VERSION);
+        assert!(!migrated.microphone_enabled);
+
+        let missing_field = serde_json::from_str::<UserSettings>(
+            r#"{"version":2,"window_scale":2,"fullscreen":false}"#,
+        )
+        .expect("old settings use defaults")
+        .sanitize();
+        assert!(!missing_field.microphone_enabled);
     }
 
     #[test]

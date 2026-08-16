@@ -45,6 +45,7 @@ creature-v1/effect/sleep
 aquarium/wake
 aquarium/sand-puff
 ui/status-pearl
+ui/button-microphone
 ui/button-food
 ui/button-settings
 ui/button-send

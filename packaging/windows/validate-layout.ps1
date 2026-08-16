@@ -13,9 +13,13 @@ if ($ConfigOnly) {
     exit 0
 }
 $required = @(
-    'beastie.exe', 'beastie-ai-worker.exe', 'assets\manifest.toml',
+    'beastie.exe', 'beastie-ai-worker.exe', 'beastie-stt.exe', 'assets\manifest.toml',
     'models\manifest.toml', 'models\LICENSE', 'models\README.md',
-    'runtime\llama-server.exe', 'runtime\LICENSE', 'package-manifest.json'
+    'runtime\llama-server.exe', 'runtime\LICENSE',
+    'runtime\stt\beastie-moonshine-engine.exe', 'runtime\stt\LICENSE',
+    'runtime\stt\THIRD_PARTY_NOTICES',
+    'models\moonshine-tiny-streaming-en\LICENSE',
+    'models\moonshine-tiny-streaming-en\README.md', 'package-manifest.json'
 )
 foreach ($relative in $required) {
     $path = Join-Path $PackageRoot $relative

@@ -32,7 +32,9 @@ fn backend(mode: &str, record: &Path, maximum: usize) -> LlamaServerBackend {
     LlamaServerBackend::new(LlamaServerConfig {
         executable: PathBuf::from("python3"),
         model: PathBuf::from("ignored-test-model.gguf"),
-        timeout: Duration::from_millis(300),
+        // Full-workspace verification compiles and runs several process-heavy suites in parallel.
+        // Leave enough headroom that scheduler contention is not mistaken for a sidecar failure.
+        timeout: Duration::from_secs(1),
         max_output_bytes: maximum,
         cpu_only: true,
         threads: 3,

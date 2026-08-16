@@ -242,6 +242,7 @@ dependencies = [
  "beastie-session",
  "beastie-view",
  "clap",
+ "cpal",
  "font8x8",
  "ggez",
  "image",
@@ -252,6 +253,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 2.0.20",
+ "toml",
  "windows-sys 0.61.2",
 ]
 
@@ -4159,6 +4161,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "sha2",
  "toml",
  "ureq",
  "windows-sys 0.61.2",

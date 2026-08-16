@@ -130,6 +130,7 @@ mod tests {
             desired_social_act: None,
             input_rejection: None,
             context: DialogueContext::default(),
+            interpretation: Default::default(),
             player_said: "private player words".to_owned(),
             constraints: DialogueConstraints {
                 max_words: 4,

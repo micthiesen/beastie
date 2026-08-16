@@ -6,6 +6,7 @@ mod llama_cpp;
 mod llama_server;
 mod process;
 mod prompt;
+pub mod stt;
 pub mod tts;
 
 use std::ffi::OsString;
@@ -279,7 +280,23 @@ mod tests {
             ("creature_initiated_notice", "berry"),
             ("grudge_continuity", "grudge"),
         ] {
-            let request = eval_request(id);
+            let mut request = eval_request(id);
+            match id {
+                "creature_initiated_notice" => {
+                    request.interpretation.is_question = true;
+                    request
+                        .interpretation
+                        .referenced_objects
+                        .push(beastie_protocol::DialogueObjectKind::Food);
+                }
+                "grudge_continuity" => {
+                    request
+                        .interpretation
+                        .understood_concepts
+                        .insert(beastie_protocol::Concept::Again);
+                }
+                _ => {}
+            }
             let line = serde_json::to_string(&request).expect("request should serialize");
             let reply = process_line(&line, &mut BrokenBackend);
             assert!(reply.say.contains(required), "{id}: {}", reply.say);

@@ -1,7 +1,8 @@
 # Spoken-input foundation
 
-This is the implemented technical seam beneath the product direction in [v2-plan.md](v2-plan.md).
-It does not choose a recognizer, microphone activation design, or player-facing transcription UI.
+This is the technical seam beneath the implemented product direction in
+[v2-plan.md](v2-plan.md). The recognizer, activation, and player-facing states now built on this
+seam are documented in [stt-runtime.md](stt-runtime.md).
 
 ## Lifecycle
 
@@ -37,10 +38,11 @@ lifetime, bounded one-line replies, cancellation polling, unsolicited-output det
 tree termination. Dialogue and TTS retain their own protocol validation, correlation, fallback,
 and recovery rules.
 
-A future STT adapter should reuse this transport if its process protocol is request/reply JSONL. It
-must keep microphone capture and recognition details outside `beastie-core`, translate backend
-confidence into `AcousticConfidence`, and emit only the typed lifecycle above. Audio bytes and raw
-partial transcripts must not enter saves or authoritative memory.
+The implemented STT path keeps microphone capture and recognition details outside `beastie-core`,
+translates backend confidence into `AcousticConfidence`, and emits only the typed lifecycle above.
+Audio bytes and raw partial transcripts never enter saves or authoritative memory. The game owns
+capture and resampling; `beastie-stt` validates a private content-addressed WAV and supervises the
+persistent native recognizer sidecar.
 
 ## Deterministic evidence
 
@@ -65,12 +67,11 @@ durable state.
 
 ## Deliberately deferred
 
-- recognizer and model selection;
-- microphone permissions, device selection, activation, and input-level UI;
-- partial-result timing, overlap, interruption, and timeout policy;
-- acoustic fixtures once a recognizer consumes PCM;
-- richer attention, habituation, salience, and delayed-response behavior;
-- player-facing recovery for unsupported language or unavailable input.
+- shipping acceptance of the provisional recognizer on real human voices;
+- open-microphone, wake-word, or partial-result activation beyond bounded push-to-talk;
+- learned pronunciation and per-player vocabulary adaptation;
+- prosody, laughter, and other nonverbal acoustic cues;
+- deeper habituation, salience, and interruption beyond current attend, glance/defer, ignore, and
+  visible refusal.
 
-Those choices belong to the STT implementation batch. They should extend this boundary rather than
-bypassing it.
+Future additions must extend this boundary rather than bypassing it.

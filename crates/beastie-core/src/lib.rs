@@ -1,11 +1,16 @@
 //! Authoritative, deterministic creature simulation.
 
+mod language;
 mod memory;
 mod model;
 mod random;
 mod save;
 mod simulation;
 
+pub use language::{
+    GroundedUtterance, UtteranceInterpretation, UtteranceReference, ground_utterance,
+    interpret_utterance,
+};
 pub use memory::{MemoryCue, MemoryQuery, select_candidate_memories};
 pub use model::{
     ActionPhase, ActionTimeline, AquariumCreatureState, AquariumPosition, AquariumState, Belief,
@@ -21,7 +26,7 @@ pub use random::{RandomDomain, RandomSource, SeededRandom, deterministic_unit};
 pub use save::{SaveError, SaveGame};
 pub use simulation::{
     GameEvent, MAX_OFFLINE_MS, OfflineProgress, PlayerEvent, SIMULATION_TICK_MS, SpeechAttention,
-    TALK_COOLDOWN_MS, advance_offline, step,
+    TALK_COOLDOWN_MS, advance_offline, speech_attention, step,
 };
 
 pub const SAVE_VERSION: u32 = 3;

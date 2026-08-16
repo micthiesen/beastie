@@ -91,6 +91,14 @@ impl DerefMut for ContainedChild {
     }
 }
 
+impl Drop for ContainedChild {
+    fn drop(&mut self) {
+        // Process containment is a lifetime guarantee, not something each manager must remember
+        // to reimplement. `terminate_tree` is idempotent for an already-exited child.
+        self.terminate_tree();
+    }
+}
+
 /// Persistent, bounded JSONL transport for local worker processes.
 ///
 /// It owns only process lifetime and one-request/one-line reply exchange. Callers retain their
