@@ -19,6 +19,7 @@ pub const CREATURE_CANVAS_SIZE: i32 = 160;
 pub const CREATURE_HIT_WIDTH: i32 = 108;
 pub const CREATURE_HIT_HEIGHT: i32 = 84;
 pub const SPEECH_LIFETIME_MS: u64 = 8_000;
+pub const SPEECH_RELEASE_MS: u64 = 500;
 pub const CUE_QUEUE_LIMIT: usize = 8;
 
 /// Presentation cadence is deliberately independent from fixed simulation ticks.
@@ -31,6 +32,12 @@ const AMBIENT_BOB_STEP_MS: u64 = 100;
 const ACTION_SWIM_FRAME_MS: u64 = 160;
 const ACTION_GESTURE_FRAME_MS: u64 = 240;
 const ACTION_SLEEP_FRAME_MS: u64 = 1_200;
+// The 80x80 side-facing body contract has a 55x47 maximum opaque envelope. At 2x, these
+// presentation bounds keep that envelope visible even when simulation destinations sit at an edge.
+const CREATURE_BODY_MIN_X: i32 = -22;
+const CREATURE_BODY_MAX_X: i32 = 182;
+const CREATURE_BODY_MIN_Y: i32 = -32;
+const CREATURE_BODY_MAX_Y: i32 = 3;
 
 const UI_SHADOW: [u8; 4] = [4, 10, 16, 220];
 const UI_EDGE: [u8; 4] = [129, 112, 76, 255];
@@ -325,6 +332,18 @@ impl ViewState {
         self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_LIFETIME_MS));
     }
 
+    pub fn clear_speech(&mut self) {
+        self.speech = None;
+        self.speech_expires_at_ms = None;
+        if self
+            .focused_region
+            .as_deref()
+            .is_some_and(|region| region.starts_with("reaction/"))
+        {
+            self.focused_region = Some("compose/input".to_owned());
+        }
+    }
+
     pub fn show_status(&mut self, status: impl Into<String>, now_ms: u64, duration_ms: u64) {
         self.status_message = Some(status.into());
         self.status_expires_at_ms = Some(now_ms.saturating_add(duration_ms.max(1)));
@@ -351,8 +370,11 @@ impl ViewState {
             .speech_expires_at_ms
             .is_some_and(|expires| now_ms >= expires)
         {
-            self.speech = None;
-            self.speech_expires_at_ms = None;
+            if self.speaking && self.speech.is_some() {
+                self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_RELEASE_MS));
+            } else {
+                self.clear_speech();
+            }
         }
         if self
             .status_expires_at_ms
@@ -1024,9 +1046,9 @@ fn add_creature(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCo
         state.simulation_remainder_ms,
     );
     let mut x =
-        (center_x - CREATURE_CANVAS_SIZE / 2).clamp(-52, LOGICAL_WIDTH - CREATURE_CANVAS_SIZE + 52);
-    let mut y = (center_y - CREATURE_CANVAS_SIZE / 2)
-        .clamp(-50, AQUARIUM_BOTTOM - CREATURE_CANVAS_SIZE + 50);
+        (center_x - CREATURE_CANVAS_SIZE / 2).clamp(CREATURE_BODY_MIN_X, CREATURE_BODY_MAX_X);
+    let mut y =
+        (center_y - CREATURE_CANVAS_SIZE / 2).clamp(CREATURE_BODY_MIN_Y, CREATURE_BODY_MAX_Y);
     let cue = view.active_cue(state.elapsed_ms);
     if dialogue_active(view) {
         x = if center_x >= LOGICAL_WIDTH / 2 {
@@ -2517,6 +2539,10 @@ fn behavior_name(state: &WorldState) -> &'static str {
     }
     match state.creature.current_intention {
         Intention::Sleep => "sleeping",
+        Intention::Play => match state.creature.aquarium.steering {
+            SteeringMode::Approach => "swimming to a toy",
+            _ => "playing",
+        },
         Intention::SeekComfort => "seeking comfort",
         Intention::ApproachPlayer => "watching you",
         Intention::RefuseAndStare => "staring",
@@ -2525,6 +2551,7 @@ fn behavior_name(state: &WorldState) -> &'static str {
             SteeringMode::Drift => "drifting",
             SteeringMode::Flee => "avoiding you",
             SteeringMode::Orbit => "circling",
+            SteeringMode::Approach => "swimming over",
             SteeringMode::Inspect => "investigating",
             SteeringMode::Settle => "settling",
             _ => "hovering",
@@ -3418,6 +3445,25 @@ mod tests {
     }
 
     #[test]
+    fn active_speech_keeps_its_caption_and_expiry_restores_compose_focus() {
+        let mut view = ViewState::default();
+        view.show_speech("hm. rude giant.".to_owned(), 1_000);
+        view.focused_region = Some("reaction/laugh".to_owned());
+        view.speaking = true;
+
+        view.expire(9_000);
+        assert_eq!(view.speech.as_deref(), Some("hm. rude giant."));
+        assert_eq!(view.speech_expires_at_ms, Some(9_500));
+        assert_eq!(view.focused_region.as_deref(), Some("reaction/laugh"));
+
+        view.speaking = false;
+        view.expire(9_500);
+        assert!(view.speech.is_none());
+        assert!(view.speech_expires_at_ms.is_none());
+        assert_eq!(view.focused_region.as_deref(), Some("compose/input"));
+    }
+
+    #[test]
     fn audible_speech_gets_attention_without_faking_a_reaction_when_ignored() {
         let mut view = ViewState::default();
         view.observe_events(
@@ -3811,6 +3857,49 @@ mod tests {
         assert!(side.id.ends_with("-east"));
         assert!(front.id.ends_with("-south"));
         assert_eq!(front.flip, SpriteFlip::None);
+    }
+
+    #[test]
+    fn autonomous_travel_and_play_have_matching_behavior_labels() {
+        let mut state = WorldState::new(7, "Mop");
+        state.creature.current_intention = Intention::Play;
+        state.creature.aquarium.steering = SteeringMode::Approach;
+        assert_eq!(
+            plan(&state, &ViewState::default()).0.summary.behavior,
+            "swimming to a toy"
+        );
+
+        state.creature.aquarium.steering = SteeringMode::Hover;
+        assert_eq!(
+            plan(&state, &ViewState::default()).0.summary.behavior,
+            "playing"
+        );
+
+        state.creature.current_intention = Intention::Idle;
+        state.creature.aquarium.steering = SteeringMode::Approach;
+        assert_eq!(
+            plan(&state, &ViewState::default()).0.summary.behavior,
+            "swimming over"
+        );
+    }
+
+    #[test]
+    fn ordinary_body_keeps_its_authored_opaque_envelope_inside_the_water() {
+        for position in [
+            NormalizedPosition::new(0, 0),
+            NormalizedPosition::new(10_000, 10_000),
+        ] {
+            let mut state = WorldState::new(7, "Mop");
+            state.creature.aquarium.position = position;
+            let body = plan(&state, &ViewState::default())
+                .0
+                .sprites
+                .into_iter()
+                .find(|command| command.layer == 12)
+                .expect("creature body");
+            assert!((CREATURE_BODY_MIN_X..=CREATURE_BODY_MAX_X).contains(&body.x));
+            assert!((CREATURE_BODY_MIN_Y..=CREATURE_BODY_MAX_Y).contains(&body.y));
+        }
     }
 
     #[test]

@@ -398,10 +398,17 @@ pub fn speech_attention(state: &WorldState) -> SpeechAttention {
     // A chosen toy destination may project `Play` while the creature is merely travelling or
     // hovering. Authored play has an action timeline; the destination check also preserves old
     // saves whose active play predates that timeline.
-    let autonomous_toy_interest = matches!(
+    let travelling_to_toy = matches!(
         creature.aquarium.destination,
         Some(SemanticDestination::Toy(_))
-    ) && creature.aquarium.action.is_none();
+    );
+    let settled_at_toy = matches!(
+        creature.idle_life.last_arrived_destination,
+        Some(SemanticDestination::Toy(_))
+    ) && state.elapsed_ms < creature.idle_life.settled_until_ms;
+    let autonomous_toy_interest = creature.aquarium.action.is_none()
+        && (travelling_to_toy
+            || (matches!(creature.current_intention, Intention::Play) && settled_at_toy));
     let occupied = creature.aquarium.action.is_some()
         || (matches!(creature.current_intention, Intention::Play) && !autonomous_toy_interest);
     if occupied {
@@ -494,7 +501,7 @@ fn assign_name(
 
 fn advance_aquarium(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     if state.creature.current_intention != Intention::Sleep {
-        advance_creature_motion(state);
+        advance_creature_motion(state, events);
     }
     let mut settled = Vec::new();
     let mut expired = Vec::new();
@@ -586,7 +593,7 @@ fn advance_aquarium(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     });
 }
 
-fn advance_creature_motion(state: &mut WorldState) {
+fn advance_creature_motion(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     let action_target =
         state
             .creature
@@ -603,7 +610,7 @@ fn advance_creature_motion(state: &mut WorldState) {
                     }),
                 _ => None,
             });
-    let target = action_target.or_else(|| steering_target(state));
+    let target = action_target.or_else(|| steering_target(state, events));
     if let Some(target) = target {
         steer_toward(state, target);
     } else if state.creature.aquarium.action.is_none() {
@@ -627,7 +634,10 @@ fn food_arrived_and_braked(state: &WorldState, food_id: Option<u64>) -> bool {
         && state.creature.aquarium.velocity.y.abs() <= ARRIVAL_DISTANCE
 }
 
-fn steering_target(state: &mut WorldState) -> Option<NormalizedPosition> {
+fn steering_target(
+    state: &mut WorldState,
+    events: &mut Vec<GameEvent>,
+) -> Option<NormalizedPosition> {
     if state.creature.aquarium.action.is_some() {
         return None;
     }
@@ -657,7 +667,7 @@ fn steering_target(state: &mut WorldState) -> Option<NormalizedPosition> {
     let target = destination_position(state, destination)?;
     if manhattan_distance(state.creature.aquarium.position, target) <= ARRIVAL_DISTANCE {
         state.creature.aquarium.velocity = NormalizedVelocity::default();
-        record_genuine_arrival(state, destination);
+        record_genuine_arrival(state, destination, events);
         state.creature.aquarium.destination = None;
         state.creature.aquarium.steering = SteeringMode::Hover;
         return None;
@@ -874,13 +884,30 @@ fn avoid_immediate_repeat(
         SemanticDestination::Toy(ToyId::Bell),
         SemanticDestination::Bottom,
     ];
-    alternatives
-        .into_iter()
+    // Rotate the fallback from accumulated visits instead of consuming another random draw. The
+    // requested destination was already selected randomly; advancing the environment stream again
+    // here would make an immediate-repeat guard perturb unrelated future behavior.
+    let completed_visits = state
+        .creature
+        .favorite_locations
+        .values()
+        .copied()
+        .sum::<u32>() as usize;
+    let identity_bias = ((state.creature.traits.boldness * 7.0) as usize
+        + (state.creature.traits.sociability * 5.0) as usize)
+        % alternatives.len();
+    let start = (completed_visits + identity_bias) % alternatives.len();
+    (0..alternatives.len())
+        .map(|offset| alternatives[(start + offset) % alternatives.len()])
         .find(|candidate| *candidate != requested)
         .unwrap_or(requested)
 }
 
-fn record_genuine_arrival(state: &mut WorldState, destination: SemanticDestination) {
+fn record_genuine_arrival(
+    state: &mut WorldState,
+    destination: SemanticDestination,
+    events: &mut Vec<GameEvent>,
+) {
     if !matches!(
         destination,
         SemanticDestination::Cave
@@ -897,6 +924,9 @@ fn record_genuine_arrival(state: &mut WorldState, destination: SemanticDestinati
         + (state.domain_draw(RandomDomain::Environment) * spans as f32) as u64 * SIMULATION_TICK_MS;
     state.creature.idle_life.settled_until_ms = state.elapsed_ms.saturating_add(duration);
     record_routine_visit(state, destination);
+    if let SemanticDestination::Toy(toy) = destination {
+        events.push(GameEvent::ToyPlayed(toy));
+    }
 }
 
 fn record_routine_visit(state: &mut WorldState, destination: SemanticDestination) {

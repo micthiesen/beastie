@@ -717,14 +717,19 @@ impl GameSession {
 ///
 /// `NeedChanged` means "read the current authoritative needs" rather than describing a
 /// historical delta, so one notification represents the final state just as well as hundreds.
-/// All transition and identity-bearing events retain their original order and multiplicity.
+/// Autonomous `ToyPlayed` events are presentation beats rather than history; an accelerated span
+/// retains the first arrival for each toy instead of replaying minutes of obsolete impacts. All
+/// other transition and identity-bearing events retain their original order and multiplicity.
 fn compact_advance_events(events: &mut Vec<GameEvent>) {
     let mut emitted_need_change = false;
+    let mut emitted_toy_arrivals = BTreeSet::new();
     events.retain(|event| {
         if matches!(event, GameEvent::NeedChanged) {
             let keep = !emitted_need_change;
             emitted_need_change = true;
             keep
+        } else if let GameEvent::ToyPlayed(toy) = event {
+            emitted_toy_arrivals.insert(*toy)
         } else {
             true
         }
@@ -952,18 +957,16 @@ mod tests {
             1
         );
 
-        let raw_semantic = raw_events
-            .into_iter()
-            .filter(|event| !matches!(event, GameEvent::NeedChanged))
-            .collect::<Vec<_>>();
-        let aggregated_semantic = observation
-            .events
-            .iter()
-            .filter(|event| !matches!(event, GameEvent::NeedChanged))
-            .cloned()
-            .collect::<Vec<_>>();
-        assert_eq!(aggregated_semantic, raw_semantic);
-        assert_eq!(observation.events.len(), aggregated_semantic.len() + 1);
+        compact_advance_events(&mut raw_events);
+        assert_eq!(observation.events, raw_events);
+        assert!(
+            observation
+                .events
+                .iter()
+                .filter(|event| matches!(event, GameEvent::ToyPlayed(_)))
+                .count()
+                <= 3
+        );
         assert!(
             observation.events.len() <= 96,
             "accelerated output must stay bounded"
@@ -995,8 +998,11 @@ mod tests {
         let memory = GameEvent::MemoryCreated(beastie_core::MemoryId(7));
         let mut events = vec![
             GameEvent::NeedChanged,
+            GameEvent::ToyPlayed(ToyId::Sock),
             phase.clone(),
             GameEvent::NeedChanged,
+            GameEvent::ToyPlayed(ToyId::Sock),
+            GameEvent::ToyPlayed(ToyId::Ball),
             memory.clone(),
             phase.clone(),
             GameEvent::NeedChanged,
@@ -1004,7 +1010,14 @@ mod tests {
         compact_advance_events(&mut events);
         assert_eq!(
             events,
-            vec![GameEvent::NeedChanged, phase.clone(), memory, phase]
+            vec![
+                GameEvent::NeedChanged,
+                GameEvent::ToyPlayed(ToyId::Sock),
+                phase.clone(),
+                GameEvent::ToyPlayed(ToyId::Ball),
+                memory,
+                phase,
+            ]
         );
     }
 

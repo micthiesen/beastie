@@ -213,6 +213,16 @@ mod tests {
             events,
             vec![GameEvent::SpeechPerceived(SpeechAttention::Attended)]
         );
+
+        world.creature.aquarium.destination = None;
+        world.creature.idle_life.last_arrived_destination =
+            Some(SemanticDestination::Toy(ToyId::Ball));
+        world.creature.idle_life.settled_until_ms = world.elapsed_ms + 5_000;
+        let events = step(&mut world, &[PlayerEvent::SpeechStarted], 0, &mut rng);
+        assert_eq!(
+            events,
+            vec![GameEvent::SpeechPerceived(SpeechAttention::Attended)]
+        );
     }
 
     #[test]
@@ -475,11 +485,16 @@ mod tests {
         let mut replay_rng = SeededRandom::new(42);
         let mut bouts = Vec::new();
         let mut previous_visits = 0_u32;
+        let mut autonomous_toy_arrivals = 0_u32;
 
         for _ in 0..180 {
             let first_events = step(&mut first, &[], SIMULATION_TICK_MS, &mut first_rng);
             let replay_events = step(&mut replay, &[], SIMULATION_TICK_MS, &mut replay_rng);
             assert_eq!(first_events, replay_events);
+            autonomous_toy_arrivals += first_events
+                .iter()
+                .filter(|event| matches!(event, GameEvent::ToyPlayed(_)))
+                .count() as u32;
             let visits = first.creature.favorite_locations.values().sum::<u32>();
             if visits > previous_visits {
                 bouts.push(
@@ -504,6 +519,10 @@ mod tests {
         }));
         assert!(first.creature.favorite_locations.len() > 1);
         assert!(first.creature.favorite_locations.values().sum::<u32>() <= bouts.len() as u32);
+        assert!(
+            autonomous_toy_arrivals > 0,
+            "toy visits should have a legible arrival beat"
+        );
         SaveGame::capture(&first, &first_rng)
             .to_json()
             .expect("idle life with toy visits remains JSON serializable");

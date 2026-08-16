@@ -12,8 +12,8 @@ use beastie_session::{
     SpokenInputStatus,
 };
 use beastie_view::{
-    BindableAction, BindingLabels, CursorKind, MicrophoneState, RenderPlan, UiAction, UiMode,
-    ViewState, audio_plan_for_events, logical_to_world, plan,
+    BindableAction, BindingLabels, CursorKind, MicrophoneState, RenderPlan, SPEECH_RELEASE_MS,
+    UiAction, UiMode, ViewState, audio_plan_for_events, logical_to_world, plan,
 };
 use ggez::conf::{FullscreenType, WindowMode};
 use ggez::event::{Button, EventHandler, GamepadId};
@@ -813,8 +813,7 @@ impl Game {
                 self.settings.subtitles = !self.settings.subtitles;
                 self.view.subtitles = self.settings.subtitles;
                 if !self.settings.subtitles {
-                    self.view.speech = None;
-                    self.view.speech_expires_at_ms = None;
+                    self.view.clear_speech();
                     self.speech_reveal = None;
                 }
                 self.persist_settings()?;
@@ -986,8 +985,7 @@ impl Game {
     }
 
     fn clear_speech(&mut self) {
-        self.view.speech = None;
-        self.view.speech_expires_at_ms = None;
+        self.view.clear_speech();
         self.audio.stop_speech();
         self.pending_mouth_timing = None;
         self.speech_animation = None;
@@ -1153,8 +1151,12 @@ impl EventHandler for Game {
             }
         }
         if self.audio.speech_active() && self.view.speech.is_some() {
-            self.view.speech_expires_at_ms =
-                Some(self.session.world().elapsed_ms.saturating_add(500));
+            self.view.speech_expires_at_ms = Some(
+                self.session
+                    .world()
+                    .elapsed_ms
+                    .saturating_add(SPEECH_RELEASE_MS),
+            );
         }
         self.view.expire(self.session.world().elapsed_ms);
         self.update_speech_reveal();
@@ -1746,8 +1748,7 @@ fn show_dialogue_caption(
     text_speed: TextSpeed,
 ) -> Option<SpeechReveal> {
     if !subtitles {
-        view.speech = None;
-        view.speech_expires_at_ms = None;
+        view.clear_speech();
         return None;
     }
     view.show_speech(text.to_owned(), elapsed_ms);

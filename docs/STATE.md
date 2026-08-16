@@ -2,7 +2,7 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-16** (Linux portability proof complete; Windows next).
+Last updated: **2026-08-16** (second feel pass complete; Windows validation parked).
 
 ## Now
 
@@ -42,6 +42,13 @@ Last updated: **2026-08-16** (Linux portability proof complete; Windows next).
   Same-seed replays and real macOS pointer/keyboard evidence are recorded in
   [feel-review-baseline.md](feel-review-baseline.md); the repeatable method is in
   [feel-review-loop.md](feel-review-loop.md).
+- A second same-seed review fixed caption/audio separation and stale reaction focus across normal,
+  fallback, and multi-day dialogue. Autonomous toy visits now land with an authoritative authored
+  play beat, repeat avoidance no longer biases the first fixed fallback, behavior labels describe
+  travel and play honestly, and normal body placement respects the authored opaque envelope at
+  aquarium edges. The new evidence also isolates the next feel problem: relationship state grows,
+  but ordinary arrivals and dialogue barely express shared history. See
+  [feel-review-second-pass.md](feel-review-second-pass.md).
 - The selected local mouth is Qwen3.5 0.8B Q4 behind one authenticated loopback llama.cpp sidecar.
   The expanded V1 corpus passed 26/26 with no fallback, permitted refusal, or prohibited escape;
   the portable CPU corpus remains 18/18. Exact model evidence and limitations are in
@@ -108,7 +115,7 @@ Last updated: **2026-08-16** (Linux portability proof complete; Windows next).
   the creature or wake. The first scripted background launch again stalled before acquiring a
   Metal drawable; activating and clicking the same build through Alacritty rendered normally.
   Deterministic capture state and all semantic hover paths remain covered by the game/view suites.
-- Installer wrappers, CI configuration, Steam inputs, achievements, and store-asset tooling exist.
+- Installer wrappers, CI configuration, achievements, and distribution tooling exist.
   A fresh ad hoc signed macOS app and DMG passed the 473-file, 666,289,145-byte offline package
   audit; its packaged Qwen warm server returned two grounded replies, packaged eSpeak generated a
   validated cache entry, and all children exited. The prior bundle of the same game shell completed
@@ -117,8 +124,7 @@ Last updated: **2026-08-16** (Linux portability proof complete; Windows next).
   disabled. Its packaged worker loaded the embedded model and returned the correlated transcript
   "I cleaned your aquarium yesterday." An earlier ad hoc signed `.app` contains the microphone
   purpose string and passes strict code-signature verification. Signing identities, notarization credentials, Steam IDs/credentials, native
-  Windows/Linux runs, physical-controller smoke, final store screenshots, and trailer remain
-  release prerequisites.
+  Windows native validation and physical-controller smoke remain open portability checks.
 - Three independent V2 review lenses covered general correctness, process/privacy boundaries, and
   semantic/test completeness. Surviving findings were fixed: interrupted microphone files are
   cleaned on startup, deferred speech rechecks sleep and resentment, packaged STT executables are
@@ -128,12 +134,12 @@ Last updated: **2026-08-16** (Linux portability proof complete; Windows next).
 
 ## Next
 
-Linux portability evidence is complete. Produce the Windows x64 bundle next: package and install it
-in the existing Windows VM, run it offline from a clean profile, exercise local dialogue and the
-packaged speech workers, verify save and cache paths, and prove every worker exits. These bundles
-are portability and development evidence only. After Windows passes, return to game-feel and feature
-iteration unless the user explicitly schedules publishing work. See
-[distribution-checklist.md](acceptance/distribution-checklist.md) and [packaging.md](packaging.md).
+Make accumulated relationship history perceptible during ordinary play. Use bounded familiar
+routines, remembered-object responses, or compact callbacks at arrivals, and suppress accidental
+consecutive dialogue duplicates. Preserve the creature-first reading: no relationship meters,
+progress dashboards, or model-authored facts. Prove the result with the same-seed
+`relationship-over-time` experience and a final inspect hold long enough to review. See
+[feel-review-second-pass.md](feel-review-second-pass.md).
 
 ## Candidates Not Chosen
 
@@ -141,9 +147,10 @@ iteration unless the user explicitly schedules publishing work. See
   comfort, push-to-talk, rebinding, and glyph behavior through the native shell. Expect two to four
   hours once hardware is available; deterministic semantic coverage exists, but feel and native
   delivery require the device and human judgment.
-- **Next feel or feature pass:** choose it from a fresh feel bundle and the user's product direction
-  after both portability bundles work. This will likely mix deterministic fixture coverage with
-  native renderer, audio, and human judgment.
+- **Windows native validation:** when the Windows host is available and another portability
+  checkpoint is useful, package and install the x64 bundle, run offline from a clean profile,
+  exercise local dialogue and packaged speech workers, verify save/cache paths, and prove every
+  worker exits. Keep it outside the routine feel iteration loop.
 
 ## Durable pointers
 
