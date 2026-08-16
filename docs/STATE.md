@@ -125,28 +125,27 @@ Last updated: **2026-08-16** (repeatable feel observatory and first full polish 
 
 ## Next
 
-Close native release evidence on Windows and Linux, then complete signing, notarization, final store
-captures, and trailer work. STT no longer blocks this: the selected package is local, hash-pinned,
-model-free in the normal gate, and exercised through the real runtime on macOS. Native platform
-runs should prove model loading, microphone permission fallback, one spoken turn, private-audio
-cleanup, and worker termination alongside the existing save and launch checks.
+Produce one complete native Linux release-evidence bundle: package and extract the shipped artifact
+on a real Linux host, run it offline from a clean profile, exercise typed and spoken turns, verify
+the save path and private-audio cleanup, and prove every worker exits. This is the smallest
+independently finishable release gate and will expose cross-platform packaging, audio, microphone,
+and process-lifecycle defects before the more variable Windows installer pass. See
+[distribution-checklist.md](acceptance/distribution-checklist.md) and [packaging.md](packaging.md).
 
 ## Candidates Not Chosen
 
-- **Open-microphone or wake-word activation:** bounded push-to-talk is intentionally the V2
-  activation model. Background capture would materially widen privacy, endpointing, and accidental
-  activation risk before recognition quality is accepted. Expect two to four days plus sustained
-  real-device and human judgment.
-- **Prosody, laughter, and nonverbal acoustic cues:** useful future perception signals, but they
-  must not infer player emotion as fact or bypass the shared language path. Expect one to three
-  days for a fixture-backed signal boundary, with model/device evaluation as the main unknown.
-- **Broader speech-quality corpus:** valuable after release-platform closure, especially for more
-  accents and noisy rooms, but no longer an unautomated product gate. The deterministic corpus and
-  Handy comparison are the repeatable selection evidence.
-- **Release-platform closure:** several days plus external credentials and Windows/Linux hardware.
-  Required evidence still includes native Windows/Linux install and
-  launch, a physical controller, signing, notarization, final store captures, trailer, and Steam
-  credentials.
+- **Windows native release evidence:** the same independently finishable acceptance bundle is
+  required and likely takes one to two days on a real Windows host. It follows Linux so any shared
+  package, runtime, or cleanup defects are fixed once before adding Inno Setup, Windows audio, and
+  microphone-permission variables; cross-compilation and headless fixtures cannot supply the proof.
+- **Physical-controller acceptance:** attach a real controller and verify focus, compose, food,
+  comfort, push-to-talk, rebinding, and glyph behavior through the native shell. Expect two to four
+  hours once hardware is available; deterministic semantic coverage exists, but feel and native
+  delivery require the device and human judgment.
+- **Signing, store captures, and trailer:** finish release identity and public media after native
+  behavior is stable, approximately one to two days plus credential availability and a short taste
+  pass. These require the final renderer, audio, platform artifacts, Apple/Steam credentials, and
+  human visual judgment, so doing them before platform closure risks recapturing and resigning.
 
 ## Durable pointers
 
