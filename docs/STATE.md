@@ -139,6 +139,7 @@ routines, remembered-object responses, or compact callbacks at arrivals, and sup
 consecutive dialogue duplicates. Preserve the creature-first reading: no relationship meters,
 progress dashboards, or model-authored facts. Prove the result with the same-seed
 `relationship-over-time` experience and a final inspect hold long enough to review. See
+[relationship-expression-design.md](relationship-expression-design.md) and
 [feel-review-second-pass.md](feel-review-second-pass.md).
 
 ## Candidates Not Chosen
@@ -162,6 +163,8 @@ progress dashboards, or model-authored facts. Prove the result with the same-see
 - Test and capture commands: [development-harness.md](development-harness.md)
 - Repeatable subjective playtest workflow: [feel-review-loop.md](feel-review-loop.md)
 - First adjudicated feel baseline: [feel-review-baseline.md](feel-review-baseline.md)
+- Chosen relationship-expression architecture:
+  [relationship-expression-design.md](relationship-expression-design.md)
 - Model and voice evidence: [local-mouth.md](local-mouth.md),
   [tooling-preflight.md](tooling-preflight.md)
 - Release assembly and prerequisites: [packaging.md](packaging.md)
