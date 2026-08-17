@@ -2,7 +2,7 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-16** (relationship expression implemented; Windows validation parked).
+Last updated: **2026-08-17** (relationship breadth feel review complete; Windows validation parked).
 
 ## Now
 
@@ -60,6 +60,13 @@ Last updated: **2026-08-16** (relationship expression implemented; Windows valid
   Native AI-on and AI-off evidence proves embodied callbacks, direct interruption, cross-day
   variety, and no-speech operation. See
   [relationship-expression-design.md](relationship-expression-design.md).
+- The relationship breadth review found that history is grounded but present-moment selection is
+  too permissive: berry consumption can evoke a ball memory, and mushroom rejection can evoke trust
+  in berry because object motifs accept generic completed actions. Mature motif presentation also
+  leans too heavily on the same notice/curious vocabulary, and the run did not establish enough
+  genuine visits to judge familiar-place recognition. The corrected breadth suite now names its
+  observed checkpoints honestly and includes direct food-trigger checkpoints. See
+  [feel-review-third-pass.md](feel-review-third-pass.md).
 - The selected local mouth is Qwen3.5 0.8B Q4 behind one authenticated loopback llama.cpp sidecar.
   The expanded V1 corpus passed 26/26 with no fallback, permitted refusal, or prohibited escape;
   the portable CPU corpus remains 18/18. Exact model evidence and limitations are in
@@ -145,11 +152,13 @@ Last updated: **2026-08-16** (relationship expression implemented; Windows valid
 
 ## Next
 
-Run the next targeted feel-tuning pass against trusted food, food grudges, and familiar places at
-native scale. Judge whether each reads from body, gaze, movement, timing, cue, and sound without
-needing trace labels; prefer tuning existing authored vocabulary before commissioning bespoke art.
-Keep the normal debug build and `cargo xtask verify` as the iteration loop. See
-[relationship-expression-design.md](relationship-expression-design.md) and
+Rework relationship triggers around exact semantic subjects so the current berry, mushroom, or toy
+can select only its own history. Then tune trusted food, food grudges, and familiar places with the
+existing authored body and audio vocabulary, including explicit replacement of contradictory cue
+residue. Add a deterministic genuine-visit setup before claiming familiar-place presentation is
+proven. Use the corrected `relationship-breadth` debug suite and `cargo xtask verify`; do not add a
+release build to the normal iteration loop. See [feel-review-third-pass.md](feel-review-third-pass.md),
+[relationship-expression-design.md](relationship-expression-design.md), and
 [feel-review-loop.md](feel-review-loop.md).
 
 ## Candidates Not Chosen
@@ -173,6 +182,7 @@ Keep the normal debug build and `cargo xtask verify` as the iteration loop. See
 - Test and capture commands: [development-harness.md](development-harness.md)
 - Repeatable subjective playtest workflow: [feel-review-loop.md](feel-review-loop.md)
 - First adjudicated feel baseline: [feel-review-baseline.md](feel-review-baseline.md)
+- Relationship breadth feel review: [feel-review-third-pass.md](feel-review-third-pass.md)
 - Chosen relationship-expression architecture:
   [relationship-expression-design.md](relationship-expression-design.md)
 - Model and voice evidence: [local-mouth.md](local-mouth.md),

@@ -24,6 +24,7 @@ pub enum FeelSuite {
     InteractionChain,
     BadConditions,
     RelationshipOverTime,
+    RelationshipBreadth,
 }
 
 #[derive(Debug)]
@@ -75,6 +76,12 @@ const RELATIONSHIP_OVER_TIME: Experience = Experience {
 const RELATIONSHIP_OVER_TIME_NO_AI: Experience = Experience {
     id: "relationship-over-time-no-ai",
     scenario: "fixtures/scenarios/feel/relationship-over-time-no-ai.jsonl",
+    fake_ai: false,
+    tts_requested: false,
+};
+const RELATIONSHIP_BREADTH: Experience = Experience {
+    id: "relationship-breadth",
+    scenario: "fixtures/scenarios/feel/relationship-breadth.jsonl",
     fake_ai: false,
     tts_requested: false,
 };
@@ -165,6 +172,7 @@ fn experiences(suite: FeelSuite) -> Vec<Experience> {
         FeelSuite::RelationshipOverTime => {
             vec![RELATIONSHIP_OVER_TIME, RELATIONSHIP_OVER_TIME_NO_AI]
         }
+        FeelSuite::RelationshipBreadth => vec![RELATIONSHIP_BREADTH],
     }
 }
 
@@ -1069,6 +1077,14 @@ mod tests {
         assert_eq!(experiences.len(), 2);
         assert!(experiences[0].fake_ai && experiences[0].tts_requested);
         assert!(!experiences[1].fake_ai && !experiences[1].tts_requested);
+    }
+
+    #[test]
+    fn relationship_breadth_is_a_separate_nonverbal_taste_pass() {
+        let experiences = experiences(FeelSuite::RelationshipBreadth);
+        assert_eq!(experiences.len(), 1);
+        assert_eq!(experiences[0].id, "relationship-breadth");
+        assert!(!experiences[0].fake_ai && !experiences[0].tts_requested);
     }
 
     #[test]
