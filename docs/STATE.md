@@ -184,6 +184,8 @@ release build to the normal iteration loop. See [feel-review-third-pass.md](feel
 - Runtime boundaries: [architecture.md](architecture.md)
 - Test and capture commands: [development-harness.md](development-harness.md)
 - Repeatable subjective playtest workflow: [feel-review-loop.md](feel-review-loop.md)
+- Complete Codex review-to-implementation workflow:
+  [feel-pass skill](../.claude/skills/feel-pass/SKILL.md)
 - First adjudicated feel baseline: [feel-review-baseline.md](feel-review-baseline.md)
 - Relationship breadth feel review: [feel-review-third-pass.md](feel-review-third-pass.md)
 - Recommended relationship causality rework:

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Feel Pass"
+  short_description: "Review game feel, document it, then finish the pass"
+  default_prompt: "Use $feel-pass to run a complete Beastie feel pass and prepare its Codex project goal."
