@@ -66,7 +66,9 @@ Last updated: **2026-08-17** (relationship breadth feel review complete; Windows
   leans too heavily on the same notice/curious vocabulary, and the run did not establish enough
   genuine visits to judge familiar-place recognition. The corrected breadth suite now names its
   observed checkpoints honestly and includes direct food-trigger checkpoints. See
-  [feel-review-third-pass.md](feel-review-third-pass.md).
+  [feel-review-third-pass.md](feel-review-third-pass.md). The recommended correction splits expression
+  into exact-subject context bound to an active interaction and sparse standalone callbacks. See
+  [relationship-causality-rework.md](relationship-causality-rework.md).
 - The selected local mouth is Qwen3.5 0.8B Q4 behind one authenticated loopback llama.cpp sidecar.
   The expanded V1 corpus passed 26/26 with no fallback, permitted refusal, or prohibited escape;
   the portable CPU corpus remains 18/18. Exact model evidence and limitations are in
@@ -158,6 +160,7 @@ existing authored body and audio vocabulary, including explicit replacement of c
 residue. Add a deterministic genuine-visit setup before claiming familiar-place presentation is
 proven. Use the corrected `relationship-breadth` debug suite and `cargo xtask verify`; do not add a
 release build to the normal iteration loop. See [feel-review-third-pass.md](feel-review-third-pass.md),
+[relationship-causality-rework.md](relationship-causality-rework.md),
 [relationship-expression-design.md](relationship-expression-design.md), and
 [feel-review-loop.md](feel-review-loop.md).
 
@@ -183,6 +186,8 @@ release build to the normal iteration loop. See [feel-review-third-pass.md](feel
 - Repeatable subjective playtest workflow: [feel-review-loop.md](feel-review-loop.md)
 - First adjudicated feel baseline: [feel-review-baseline.md](feel-review-baseline.md)
 - Relationship breadth feel review: [feel-review-third-pass.md](feel-review-third-pass.md)
+- Recommended relationship causality rework:
+  [relationship-causality-rework.md](relationship-causality-rework.md)
 - Chosen relationship-expression architecture:
   [relationship-expression-design.md](relationship-expression-design.md)
 - Model and voice evidence: [local-mouth.md](local-mouth.md),
