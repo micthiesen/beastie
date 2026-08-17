@@ -2,8 +2,8 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-17** (interaction continuity implemented and natively verified; Windows
-validation parked).
+Last updated: **2026-08-17** (fifth creature-life feel review completed; implementation contract
+proposed; Windows validation parked).
 
 ## Now
 
@@ -84,6 +84,16 @@ validation parked).
   and rapid-speech races and validates all five exact relationship fixtures. See
   [interaction-continuity-rework.md](interaction-continuity-rework.md) and
   [feel-review-interaction-continuity.md](feel-review-interaction-continuity.md).
+- A fifth full baseline review confirms those continuity repairs and isolates the next lived
+  experience gap. Hungry talking frames still replace Mop with a brown, pawed non-fish; quiet life
+  becomes five near-identical sock commutes; static toy props, generic heart callbacks, one shared
+  timing grid, and one curious cue compress exact activities and memories into interchangeable
+  receipts. Microphone startup failure also triggers false creature hearing, and deferred speech
+  can abort the action it promised to wait through. The proposed rework gives private life typed,
+  repetition-aware activities; embodies places, toys, and relationship motifs; restores canonical
+  talking art; and repairs perception and action-boundary arbitration. See
+  [feel-review-creature-life.md](feel-review-creature-life.md) and
+  [creature-life-expression-rework.md](creature-life-expression-rework.md).
 - The selected local mouth is Qwen3.5 0.8B Q4 behind one authenticated loopback llama.cpp sidecar.
   The expanded V1 corpus passed 26/26 with no fallback, permitted refusal, or prohibited escape;
   the portable CPU corpus remains 18/18. Exact model evidence and limitations are in
@@ -169,9 +179,11 @@ validation parked).
 
 ## Next
 
-Use `/next` to choose the next feature or feel problem from the implemented, natively verified
-state. Keep Windows native validation parked until the user asks to resume it. Normal iteration
-remains the debug build plus the headless gate.
+Fully implement [creature-life-expression-rework.md](creature-life-expression-rework.md) through
+`$feel-pass`, including repeated normal-speed native review until no known material creature-life,
+identity, relationship-expression, perception, or action-arbitration improvements remain. Keep
+Windows native validation parked until the user asks to resume it. Normal iteration remains the
+debug build plus the headless gate.
 
 ## Candidates Not Chosen
 
@@ -205,6 +217,10 @@ remains the debug build plus the headless gate.
   [feel-review-interaction-continuity.md](feel-review-interaction-continuity.md)
 - Implemented interaction-continuity contract:
   [interaction-continuity-rework.md](interaction-continuity-rework.md)
+- Fifth feel review, creature life and expression:
+  [feel-review-creature-life.md](feel-review-creature-life.md)
+- Proposed creature-life implementation contract:
+  [creature-life-expression-rework.md](creature-life-expression-rework.md)
 - Chosen relationship-expression architecture:
   [relationship-expression-design.md](relationship-expression-design.md)
 - Model and voice evidence: [local-mouth.md](local-mouth.md),
