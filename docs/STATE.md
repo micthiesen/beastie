@@ -2,7 +2,8 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-17** (relationship causality rework complete; Windows validation parked).
+Last updated: **2026-08-17** (interaction-continuity feel review complete; implementation next;
+Windows validation parked).
 
 ## Now
 
@@ -33,7 +34,7 @@ Last updated: **2026-08-17** (relationship causality rework complete; Windows va
   `aquarium-v1-visible.jsonl`, captures eight aquarium checkpoints through the real ggez shell. The
   berry-grudge, Stage 5, and room-shell fixtures remain regression and migration evidence. See
   [development-harness.md](development-harness.md).
-- `cargo xtask feel --suite baseline` now runs five deterministic subjective experiences through
+- `cargo xtask feel --suite baseline` now runs six deterministic subjective experiences through
   the real game shell and produces synchronized 60 fps video, marker filmstrips, privacy-safe
   input/event/state/audio traces, retained speech WAVs, a reference audio mix and waveform, review
   scaffolding, and hash-pinned manifests. The first adjudicated pass fixed collapsed idle rhythm,
@@ -70,6 +71,13 @@ Last updated: **2026-08-17** (relationship causality rework complete; Windows va
   native experiences prove trusted berry, mushroom grudge, and current settled cave, plant, and
   ball familiarity. See [relationship-causality-rework.md](relationship-causality-rework.md) and
   [feel-review-relationship-causality-final.md](feel-review-relationship-causality-final.md).
+- A fresh whole-loop feel review found one coherent continuity seam after that rework. Rejected toy
+  travel can incorrectly resolve as authoritative play and delight; a superseded dialogue turn can
+  start queued TTS after its caption and body response are gone; spoken receipt and acceptance
+  repeat the same curious cue into TTS; and the delight/affection/comfort art changes the gold fish
+  into a brown mammal-like silhouette. Trusted food, food grudges, player-return growth, base
+  movement, direct food response, global layout, ambience, and AI-off continuity remain strong. See
+  [feel-review-interaction-continuity.md](feel-review-interaction-continuity.md).
 - The selected local mouth is Qwen3.5 0.8B Q4 behind one authenticated loopback llama.cpp sidecar.
   The expanded V1 corpus passed 26/26 with no fallback, permitted refusal, or prohibited escape;
   the portable CPU corpus remains 18/18. Exact model evidence and limitations are in
@@ -155,9 +163,14 @@ Last updated: **2026-08-17** (relationship causality rework complete; Windows va
 
 ## Next
 
-Use `/next` to choose the next feature or focused feel slice from the current game state. Keep
-Windows native validation parked until the user asks to resume it. Normal iteration remains debug
-build plus the headless gate; release/final builds are not part of the loop.
+Implement [interaction-continuity-rework.md](interaction-continuity-rework.md) completely. Give
+travel an explicit purpose, make toy reward resolve only at truthful contact, bind dialogue through
+TTS and mouth animation to one cancelable owner, remove the duplicate speech receipt, replace the
+identity-breaking delight/affection/comfort frames, and make zero-frame native capture fail fast
+with retained diagnostics and bounded retry. Re-run the exact feel evidence until no known material
+continuity issue remains. Keep Windows native validation parked until the user asks to resume it.
+Normal iteration remains debug build plus the headless gate; release/final builds are not part of
+the loop.
 
 ## Candidates Not Chosen
 
@@ -187,6 +200,10 @@ build plus the headless gate; release/final builds are not part of the loop.
   [feel-review-relationship-causality-final.md](feel-review-relationship-causality-final.md)
 - Implemented relationship causality contract:
   [relationship-causality-rework.md](relationship-causality-rework.md)
+- Fourth feel review, interaction continuity:
+  [feel-review-interaction-continuity.md](feel-review-interaction-continuity.md)
+- Next implementation contract:
+  [interaction-continuity-rework.md](interaction-continuity-rework.md)
 - Chosen relationship-expression architecture:
   [relationship-expression-design.md](relationship-expression-design.md)
 - Model and voice evidence: [local-mouth.md](local-mouth.md),
