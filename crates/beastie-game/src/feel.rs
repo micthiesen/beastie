@@ -126,21 +126,20 @@ impl FeelRecorder {
 
     pub fn record_audio(
         &mut self,
+        commands: &[beastie_view::AudioCommand],
         cue_ids: &[&str],
         speech_active: bool,
         one_shot_active: bool,
         ambience_duck: f32,
         simulation_ms: u64,
     ) -> Result<(), FeelError> {
-        // Motif/reason stays in the synchronized events trace. Adding it here would require the
-        // app-owned audio queue to carry the authoritative beat alongside each sound ID; keeping
-        // this method cue-only avoids fabricating a relationship association at recording time.
         self.audio.write(&json!({
             "version": FORMAT_VERSION,
             "playback_ms": self.playback_ms(),
             "simulation_ms": simulation_ms,
             "kind": "cues",
             "cue_ids": cue_ids,
+            "commands": commands,
             "speech_active": speech_active,
             "one_shot_active": one_shot_active,
             "ambience_duck": ambience_duck,
@@ -197,7 +196,7 @@ impl FeelRecorder {
                 steering: world.creature.aquarium.steering,
                 destination: world.creature.aquarium.destination,
                 intention: world.creature.current_intention,
-                action: world.creature.aquarium.action,
+                action: world.creature.aquarium.action.clone(),
                 mood: world.mood(),
                 needs: &world.creature.needs,
                 relationship: &world.creature.relationship,
@@ -213,6 +212,8 @@ impl FeelRecorder {
                         count: *count,
                     })
                     .collect(),
+                last_arrived_destination: world.creature.idle_life.last_arrived_destination,
+                settled_until_ms: world.creature.idle_life.settled_until_ms,
                 initiated_behavior: world.creature.initiated_behavior.as_ref(),
                 memory_count: world.creature.memories.len(),
             },
@@ -285,6 +286,8 @@ struct CreatureFrame<'a> {
     development: &'a beastie_core::Development,
     routines: &'a [beastie_core::Routine],
     favorite_locations: Vec<FavoriteLocationFrame>,
+    last_arrived_destination: Option<beastie_core::SemanticDestination>,
+    settled_until_ms: u64,
     initiated_behavior: Option<&'a beastie_core::InitiatedBehavior>,
     memory_count: usize,
 }

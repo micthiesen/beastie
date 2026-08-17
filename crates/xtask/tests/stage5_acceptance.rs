@@ -118,7 +118,7 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
             .creature
             .beliefs
             .iter()
-            .any(|belief| belief.kind == BeliefKind::RedFoodIsATrick)
+            .any(|belief| belief.kind == BeliefKind::FoodIsATrick)
     );
 
     let first_talk = &observations[4];

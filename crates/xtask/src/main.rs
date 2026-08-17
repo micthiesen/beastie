@@ -65,6 +65,9 @@ enum Task {
     Feel {
         #[arg(long, value_enum, default_value = "baseline")]
         suite: feel::FeelSuite,
+        /// Run one named experience from the selected suite in an isolated game process.
+        #[arg(long)]
+        experience: Option<String>,
         /// New or empty evidence directory. Defaults beneath target/feel.
         #[arg(long)]
         output: Option<PathBuf>,
@@ -386,10 +389,12 @@ fn main() -> Result<()> {
         }),
         Task::Feel {
             suite,
+            experience,
             output,
             game,
         } => feel::run(feel::FeelOptions {
             suite,
+            experience: experience.as_deref(),
             output: output.as_deref(),
             game: game.as_deref(),
         }),

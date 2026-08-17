@@ -30,6 +30,11 @@ seed and compare the synchronized before and after evidence.
 
 Focused suites use the same command with `first-five-minutes`, `quiet-observation`,
 `interaction-chain`, `bad-conditions`, or `relationship-over-time` in place of `baseline`.
+`relationship-breadth` provides the fixture-backed trusted-food, food-grudge, and familiar-place
+coverage. On macOS, if repeated AppKit/Metal window lifecycles stall within a multi-experience
+suite, run each named experience in a separate invocation with `--experience <id>` and give each a
+new output directory. This preserves the complete validator and manifest while isolating the game
+process lifecycle; never accept the partial directory from a timed-out suite.
 The command builds the game and fake workers, verifies FFmpeg and FFprobe, launches each visible
 experience, validates its video, generates filmstrips, and hashes the evidence.
 Pass `--game <executable>` to record an exact copied, packaged, or release executable while still

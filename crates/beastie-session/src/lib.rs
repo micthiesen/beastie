@@ -144,8 +144,23 @@ pub struct GameSession {
 struct PendingDialogue {
     request_id: u64,
     motif: beastie_protocol::RelationshipMotifKey,
+    subject: beastie_protocol::RelationshipSubject,
+    mode: beastie_protocol::RelationshipExpressionMode,
     expression_kind: beastie_protocol::RelationshipExpressionKind,
+    action_id: Option<u64>,
     invalidated: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RelationshipDialogueSelection {
+    motif: beastie_protocol::RelationshipMotifKey,
+    subject: beastie_protocol::RelationshipSubject,
+    mode: beastie_protocol::RelationshipExpressionMode,
+    expression_kind: beastie_protocol::RelationshipExpressionKind,
+    phase: Option<beastie_protocol::RelationshipBeatPhase>,
+    evidence: Vec<beastie_protocol::RelationshipEvidence>,
+    target: Option<beastie_core::SemanticDestination>,
+    action_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -889,8 +904,8 @@ impl GameSession {
             .rev()
             .take(beastie_protocol::MAX_REPLY_PROHIBITIONS)
             .collect();
-        if let Some(beat) = self.world.creature.relationship_expression.active.as_ref() {
-            let evidence = beat
+        if let Some(selected) = self.relationship_dialogue_selection() {
+            let evidence = selected
                 .evidence
                 .iter()
                 .filter(|evidence| match evidence {
@@ -907,16 +922,18 @@ impl GameSession {
                 .cloned()
                 .collect();
             request.context.relationship = Some(RelationshipDialogueContext {
-                motif: beat.motif,
-                expression_kind: beat.expression_kind,
+                motif: selected.motif,
+                subject: selected.subject,
+                mode: selected.mode,
+                expression_kind: selected.expression_kind,
                 recently_expressed: self
                     .dialogue_history
                     .recent
                     .iter()
-                    .any(|turn| turn.motif == Some(beat.motif)),
-                phase: Some(beat.phase),
+                    .any(|turn| turn.motif == Some(selected.motif)),
+                phase: selected.phase,
                 evidence,
-                target: beat.target,
+                target: selected.target,
             });
             if request.context.recent_turns.last().is_none() {
                 request.context.recent_turns.push(RecentTurn {
@@ -939,13 +956,69 @@ impl GameSession {
             }
             self.pending_dialogue = Some(PendingDialogue {
                 request_id: request.request_id,
-                motif: beat.motif,
-                expression_kind: beat.expression_kind,
+                motif: selected.motif,
+                subject: selected.subject,
+                mode: selected.mode,
+                expression_kind: selected.expression_kind,
+                action_id: selected.action_id,
                 invalidated: false,
             });
         } else {
             self.pending_dialogue = None;
         }
+    }
+
+    fn relationship_dialogue_selection(&self) -> Option<RelationshipDialogueSelection> {
+        if let Some(action) = self.world.creature.aquarium.action.as_ref()
+            && let Some(context) = action.relationship.as_ref()
+        {
+            return Some(RelationshipDialogueSelection {
+                motif: context.motif,
+                subject: context.subject,
+                mode: beastie_protocol::RelationshipExpressionMode::ActionBound,
+                expression_kind: context.expression_kind,
+                phase: Some(action_relationship_phase(action.phase)),
+                evidence: context.evidence.clone(),
+                target: relationship_dialogue_target(context.motif),
+                action_id: Some(action.action_id),
+            });
+        }
+        if let Some(moment) = self
+            .world
+            .creature
+            .interaction_state
+            .relationship_moment
+            .as_ref()
+        {
+            return Some(RelationshipDialogueSelection {
+                motif: moment.context.motif,
+                subject: moment.context.subject,
+                mode: beastie_protocol::RelationshipExpressionMode::ActionBound,
+                expression_kind: moment.context.expression_kind,
+                phase: Some(beastie_protocol::RelationshipBeatPhase::Act),
+                evidence: moment.context.evidence.clone(),
+                target: relationship_dialogue_target(moment.context.motif),
+                action_id: Some(moment.action_id),
+            });
+        }
+        let beat = self
+            .world
+            .creature
+            .relationship_expression
+            .active
+            .as_ref()?;
+        Some(RelationshipDialogueSelection {
+            motif: beat.motif,
+            subject: beat
+                .subject
+                .expect("validated relationship beat has a subject"),
+            mode: beastie_protocol::RelationshipExpressionMode::Standalone,
+            expression_kind: beat.expression_kind,
+            phase: Some(beat.phase),
+            evidence: beat.evidence.clone(),
+            target: beat.target,
+            action_id: None,
+        })
     }
 
     fn observe_dialogue_events(&mut self, events: &[GameEvent], created_request_id: Option<u64>) {
@@ -958,6 +1031,12 @@ impl GameSession {
                 *motif == pending.motif && !request_created_here
             }
             GameEvent::RelationshipBeatStarted { .. } => !request_created_here,
+            GameEvent::ActionRelationshipInterrupted { action_id, .. } => {
+                pending.action_id == Some(*action_id) && !request_created_here
+            }
+            GameEvent::ActionRelationshipStarted { action_id, .. } => {
+                pending.action_id != Some(*action_id) && !request_created_here
+            }
             _ => false,
         }) {
             pending.invalidated = true;
@@ -965,14 +1044,18 @@ impl GameSession {
     }
 
     fn ensure_relationship_evidence_offered(&self, request: &mut DialogueRequest) {
-        let Some(beat) = self.world.creature.relationship_expression.active.as_ref() else {
+        let Some(selected) = self.relationship_dialogue_selection() else {
             return;
         };
-        for id in beat.evidence.iter().filter_map(|evidence| match evidence {
-            beastie_core::RelationshipEvidence::Memory { id } => Some(*id),
-            beastie_core::RelationshipEvidence::Belief { .. } => None,
-            beastie_core::RelationshipEvidence::Visit { .. } => None,
-        }) {
+        for id in selected
+            .evidence
+            .iter()
+            .filter_map(|evidence| match evidence {
+                beastie_core::RelationshipEvidence::Memory { id } => Some(*id),
+                beastie_core::RelationshipEvidence::Belief { .. } => None,
+                beastie_core::RelationshipEvidence::Visit { .. } => None,
+            })
+        {
             if request
                 .candidate_memories
                 .iter()
@@ -1018,13 +1101,18 @@ impl GameSession {
             if pending.invalidated
                 || pending.request_id != request.request_id
                 || pending.motif != selected.motif
+                || pending.subject != selected.subject
+                || pending.mode != selected.mode
                 || pending.expression_kind != selected.expression_kind
             {
                 return false;
             }
-            if let Some(active) = self.world.creature.relationship_expression.active.as_ref()
-                && (active.motif != selected.motif
-                    || active.expression_kind != selected.expression_kind)
+            if let Some(current) = self.relationship_dialogue_selection()
+                && (current.motif != selected.motif
+                    || current.subject != selected.subject
+                    || current.mode != selected.mode
+                    || current.expression_kind != selected.expression_kind
+                    || current.action_id != pending.action_id)
             {
                 return false;
             }
@@ -1064,6 +1152,41 @@ impl GameSession {
     #[must_use]
     pub fn dialogue_history(&self) -> &DialogueHistory {
         &self.dialogue_history
+    }
+}
+
+const fn action_relationship_phase(
+    phase: beastie_core::ActionPhase,
+) -> beastie_protocol::RelationshipBeatPhase {
+    match phase {
+        beastie_core::ActionPhase::Notice | beastie_core::ActionPhase::Gaze => {
+            beastie_protocol::RelationshipBeatPhase::Notice
+        }
+        beastie_core::ActionPhase::Brake
+        | beastie_core::ActionPhase::Turn
+        | beastie_core::ActionPhase::Approach
+        | beastie_core::ActionPhase::Inspect => beastie_protocol::RelationshipBeatPhase::Anticipate,
+        beastie_core::ActionPhase::Act => beastie_protocol::RelationshipBeatPhase::Act,
+        beastie_core::ActionPhase::Recover => beastie_protocol::RelationshipBeatPhase::Recover,
+    }
+}
+
+const fn relationship_dialogue_target(
+    motif: beastie_protocol::RelationshipMotifKey,
+) -> Option<beastie_core::SemanticDestination> {
+    match motif {
+        beastie_protocol::RelationshipMotifKey::SharedToy(toy) => {
+            Some(beastie_core::SemanticDestination::Toy(toy))
+        }
+        beastie_protocol::RelationshipMotifKey::ComfortRitual
+        | beastie_protocol::RelationshipMotifKey::PlayerReturns => {
+            Some(beastie_core::SemanticDestination::Player)
+        }
+        beastie_protocol::RelationshipMotifKey::TrustedFood(_)
+        | beastie_protocol::RelationshipMotifKey::FoodGrudge(_) => {
+            Some(beastie_core::SemanticDestination::Bottom)
+        }
+        beastie_protocol::RelationshipMotifKey::FamiliarPlace(destination) => Some(destination),
     }
 }
 
@@ -1460,6 +1583,7 @@ mod tests {
                 .creature
                 .aquarium
                 .action
+                .as_ref()
                 .map(|action| action.phase),
             Some(beastie_core::ActionPhase::Approach)
         );
@@ -1484,6 +1608,59 @@ mod tests {
             .expect("resumed continuation");
         assert_eq!(actual.events, expected.events);
         assert_eq!(resumed.world(), original.world());
+    }
+
+    #[test]
+    fn dialogue_projects_the_current_action_bound_subject_and_evidence() {
+        let source = include_str!("../../../fixtures/saves/feel/trusted-berry.json");
+        let save = SessionSave::from_json(source).expect("trusted fixture");
+        let resumed_at = save.saved_at_ms;
+        let (mut session, progress) =
+            GameSession::resume(save, resumed_at).expect("resume fixture");
+        assert_eq!(progress.applied_ms, 0);
+        session
+            .apply(command(SessionCommand::DropFood {
+                food: FoodId::Berry,
+                position: NormalizedPosition::new(5_000, 3_000),
+            }))
+            .expect("drop trusted berry");
+
+        let mut request = build_dialogue_request(
+            session.world(),
+            &MemoryQuery {
+                cues: BTreeSet::from([MemoryCue::Food(FoodId::Berry)]),
+                limit: 8,
+            },
+            DialogueRequestContext {
+                request_id: 77,
+                mood: "content",
+                player_said: "berry",
+                desired_social_act: None,
+                max_words: 8,
+                allowed_gestures: BTreeSet::from([Gesture::None]),
+            },
+        );
+        session.ensure_relationship_evidence_offered(&mut request);
+        session.attach_dialogue_context(&mut request, DialogueTopic::Food);
+        let relationship = request
+            .context
+            .relationship
+            .as_ref()
+            .expect("action-bound relationship dialogue context");
+        assert_eq!(
+            relationship.motif,
+            beastie_protocol::RelationshipMotifKey::TrustedFood(FoodId::Berry)
+        );
+        assert_eq!(
+            relationship.subject,
+            beastie_protocol::RelationshipSubject::Food(FoodId::Berry)
+        );
+        assert_eq!(
+            relationship.mode,
+            beastie_protocol::RelationshipExpressionMode::ActionBound
+        );
+        assert!(relationship.evidence.len() >= 2);
+        assert!(validate_request(&request).is_ok());
     }
 
     #[test]

@@ -2,18 +2,23 @@ use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail, ensure};
+use beastie_core::{
+    FoodId, RelationshipExpressionMode, RelationshipMotifKey, RelationshipSubject,
+    SemanticDestination, ToyId,
+};
+use beastie_session::SessionSave;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const FEEL_SCHEMA_VERSION: u32 = 1;
-const MANIFEST_VERSION: u32 = 2;
-const RUN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const MANIFEST_VERSION: u32 = 3;
+const RUN_TIMEOUT_GRACE: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -30,6 +35,7 @@ pub enum FeelSuite {
 #[derive(Debug)]
 pub struct FeelOptions<'a> {
     pub suite: FeelSuite,
+    pub experience: Option<&'a str>,
     pub output: Option<&'a Path>,
     pub game: Option<&'a Path>,
 }
@@ -38,31 +44,50 @@ pub struct FeelOptions<'a> {
 struct Experience {
     id: &'static str,
     scenario: &'static str,
+    initial_save: Option<&'static str>,
+    required_motifs: &'static [RequiredMotifMarker],
     fake_ai: bool,
     tts_requested: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RequiredMotifMarker {
+    name: &'static str,
+    motif: RelationshipMotifKey,
+    subject: RelationshipSubject,
+    mode: RelationshipExpressionMode,
+    minimum_evidence: usize,
 }
 
 const FIRST_FIVE_MINUTES: Experience = Experience {
     id: "first-five-minutes",
     scenario: "fixtures/scenarios/feel/first-five-minutes.jsonl",
+    initial_save: None,
+    required_motifs: &[],
     fake_ai: true,
     tts_requested: true,
 };
 const QUIET_OBSERVATION: Experience = Experience {
     id: "quiet-observation",
     scenario: "fixtures/scenarios/feel/quiet-observation.jsonl",
+    initial_save: None,
+    required_motifs: &[],
     fake_ai: true,
     tts_requested: false,
 };
 const INTERACTION_CHAIN: Experience = Experience {
     id: "interaction-chain",
     scenario: "fixtures/scenarios/feel/interaction-chain.jsonl",
+    initial_save: None,
+    required_motifs: &[],
     fake_ai: true,
     tts_requested: true,
 };
 const BAD_CONDITIONS: Experience = Experience {
     id: "bad-conditions",
     scenario: "fixtures/scenarios/feel/bad-conditions.jsonl",
+    initial_save: None,
+    required_motifs: &[],
     // Deliberately omit the worker so dialogue exercises the authored technical fallback.
     fake_ai: false,
     tts_requested: true,
@@ -70,18 +95,92 @@ const BAD_CONDITIONS: Experience = Experience {
 const RELATIONSHIP_OVER_TIME: Experience = Experience {
     id: "relationship-over-time",
     scenario: "fixtures/scenarios/feel/relationship-over-time.jsonl",
+    initial_save: None,
+    required_motifs: &[],
     fake_ai: true,
     tts_requested: true,
 };
 const RELATIONSHIP_OVER_TIME_NO_AI: Experience = Experience {
     id: "relationship-over-time-no-ai",
     scenario: "fixtures/scenarios/feel/relationship-over-time-no-ai.jsonl",
+    initial_save: None,
+    required_motifs: &[],
     fake_ai: false,
     tts_requested: false,
 };
-const RELATIONSHIP_BREADTH: Experience = Experience {
-    id: "relationship-breadth",
-    scenario: "fixtures/scenarios/feel/relationship-breadth.jsonl",
+const TRUSTED_BERRY_MARKERS: &[RequiredMotifMarker] = &[RequiredMotifMarker {
+    name: "trusted-berry",
+    motif: RelationshipMotifKey::TrustedFood(FoodId::Berry),
+    subject: RelationshipSubject::Food(FoodId::Berry),
+    mode: RelationshipExpressionMode::ActionBound,
+    minimum_evidence: 2,
+}];
+const MUSHROOM_GRUDGE_MARKERS: &[RequiredMotifMarker] = &[RequiredMotifMarker {
+    name: "mushroom-grudge",
+    motif: RelationshipMotifKey::FoodGrudge(FoodId::Mushroom),
+    subject: RelationshipSubject::Food(FoodId::Mushroom),
+    mode: RelationshipExpressionMode::ActionBound,
+    minimum_evidence: 3,
+}];
+const FAMILIAR_CAVE_MARKERS: &[RequiredMotifMarker] = &[RequiredMotifMarker {
+    name: "familiar-cave",
+    motif: RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
+    subject: RelationshipSubject::Place(SemanticDestination::Cave),
+    mode: RelationshipExpressionMode::Standalone,
+    minimum_evidence: 1,
+}];
+const FAMILIAR_PLANT_MARKERS: &[RequiredMotifMarker] = &[RequiredMotifMarker {
+    name: "familiar-plant",
+    motif: RelationshipMotifKey::FamiliarPlace(SemanticDestination::Plant),
+    subject: RelationshipSubject::Place(SemanticDestination::Plant),
+    mode: RelationshipExpressionMode::Standalone,
+    minimum_evidence: 1,
+}];
+const FAMILIAR_BALL_MARKERS: &[RequiredMotifMarker] = &[RequiredMotifMarker {
+    name: "familiar-ball",
+    motif: RelationshipMotifKey::FamiliarPlace(SemanticDestination::Toy(ToyId::Ball)),
+    subject: RelationshipSubject::Place(SemanticDestination::Toy(ToyId::Ball)),
+    mode: RelationshipExpressionMode::Standalone,
+    minimum_evidence: 1,
+}];
+
+const TRUSTED_BERRY: Experience = Experience {
+    id: "trusted-berry",
+    scenario: "fixtures/scenarios/feel/relationship-breadth/trusted-berry.jsonl",
+    initial_save: Some("fixtures/saves/feel/trusted-berry.json"),
+    required_motifs: TRUSTED_BERRY_MARKERS,
+    fake_ai: false,
+    tts_requested: false,
+};
+const MUSHROOM_GRUDGE: Experience = Experience {
+    id: "mushroom-grudge",
+    scenario: "fixtures/scenarios/feel/relationship-breadth/mushroom-grudge.jsonl",
+    initial_save: Some("fixtures/saves/feel/mushroom-grudge.json"),
+    required_motifs: MUSHROOM_GRUDGE_MARKERS,
+    fake_ai: false,
+    tts_requested: false,
+};
+const FAMILIAR_CAVE: Experience = Experience {
+    id: "familiar-cave",
+    scenario: "fixtures/scenarios/feel/relationship-breadth/familiar-cave.jsonl",
+    initial_save: Some("fixtures/saves/feel/familiar-cave.json"),
+    required_motifs: FAMILIAR_CAVE_MARKERS,
+    fake_ai: false,
+    tts_requested: false,
+};
+const FAMILIAR_PLANT: Experience = Experience {
+    id: "familiar-plant",
+    scenario: "fixtures/scenarios/feel/relationship-breadth/familiar-plant.jsonl",
+    initial_save: Some("fixtures/saves/feel/familiar-plant.json"),
+    required_motifs: FAMILIAR_PLANT_MARKERS,
+    fake_ai: false,
+    tts_requested: false,
+};
+const FAMILIAR_BALL: Experience = Experience {
+    id: "familiar-ball",
+    scenario: "fixtures/scenarios/feel/relationship-breadth/familiar-ball.jsonl",
+    initial_save: Some("fixtures/saves/feel/familiar-ball.json"),
+    required_motifs: FAMILIAR_BALL_MARKERS,
     fake_ai: false,
     tts_requested: false,
 };
@@ -108,6 +207,8 @@ struct Manifest<'a> {
     suite: FeelSuite,
     scenario: &'a str,
     scenario_sha256: String,
+    initial_save: Option<&'a str>,
+    initial_save_sha256: Option<String>,
     commit: String,
     working_tree_dirty: bool,
     game_binary_sha256: String,
@@ -146,7 +247,21 @@ pub fn run(options: FeelOptions<'_>) -> Result<()> {
     };
     ensure_new_directory(&output)?;
 
-    let experiences = experiences(options.suite);
+    let experiences = match options.experience {
+        Some(id) => {
+            let selected = experiences(options.suite)
+                .into_iter()
+                .filter(|experience| experience.id == id)
+                .collect::<Vec<_>>();
+            ensure!(
+                selected.len() == 1,
+                "feel suite {:?} has no experience named {id}",
+                options.suite
+            );
+            selected
+        }
+        None => experiences(options.suite),
+    };
     for experience in experiences.iter().copied() {
         run_experience(experience, options.suite, &game, &output)?;
     }
@@ -172,7 +287,13 @@ fn experiences(suite: FeelSuite) -> Vec<Experience> {
         FeelSuite::RelationshipOverTime => {
             vec![RELATIONSHIP_OVER_TIME, RELATIONSHIP_OVER_TIME_NO_AI]
         }
-        FeelSuite::RelationshipBreadth => vec![RELATIONSHIP_BREADTH],
+        FeelSuite::RelationshipBreadth => vec![
+            TRUSTED_BERRY,
+            MUSHROOM_GRUDGE,
+            FAMILIAR_CAVE,
+            FAMILIAR_PLANT,
+            FAMILIAR_BALL,
+        ],
     }
 }
 
@@ -188,6 +309,17 @@ fn run_experience(
         "feel scenario is missing: {}",
         scenario.display()
     );
+    let initial_save = experience
+        .initial_save
+        .map(Path::new)
+        .map(|path| {
+            let source = fs::read_to_string(path)
+                .with_context(|| format!("feel initial save is missing: {}", path.display()))?;
+            let save = SessionSave::from_json(&source)
+                .with_context(|| format!("feel initial save is invalid: {}", path.display()))?;
+            Ok::<_, anyhow::Error>((path, save))
+        })
+        .transpose()?;
     let directory = output.join(experience.id);
     fs::create_dir_all(directory.join("captures"))
         .with_context(|| format!("failed to create {}", directory.display()))?;
@@ -200,6 +332,9 @@ fn run_experience(
         .arg(directory.join("captures"))
         .arg("--feel-dir")
         .arg(&directory);
+    if let Some((path, _)) = &initial_save {
+        command.arg("--feel-initial-save").arg(path);
+    }
     if experience.tts_requested {
         command
             .arg("--tts")
@@ -215,19 +350,72 @@ fn run_experience(
         command.env_remove("BEASTIE_AI_WORKER");
     }
 
+    let runtime_stderr_path = directory.join("runtime-stderr.log");
+    let runtime_stderr = File::create(&runtime_stderr_path)
+        .with_context(|| format!("failed to create {}", runtime_stderr_path.display()))?;
+    command.stderr(Stdio::from(runtime_stderr));
+
+    let expected_duration = Duration::from_millis(authored_scenario_duration_ms(scenario)?);
     let mut child = command
         .spawn()
         .with_context(|| format!("failed to launch feel experience {}", experience.id))?;
-    focus_macos_process(child.id());
-    wait_for_child(&mut child, experience.id)?;
+    wait_for_child(
+        &mut child,
+        experience.id,
+        expected_duration.saturating_add(RUN_TIMEOUT_GRACE),
+    )?;
+    let runtime_stderr = fs::read_to_string(&runtime_stderr_path)
+        .with_context(|| format!("failed to read {}", runtime_stderr_path.display()))?;
+    ensure!(
+        !runtime_stderr.contains("Error on EventHandler"),
+        "feel experience {} stopped on a game update error; see {}",
+        experience.id,
+        runtime_stderr_path.display()
+    );
     verify_video(&directory.join("session.mp4"))?;
+    verify_scenario_duration(scenario, &directory.join("session.mp4"))?;
     generate_reference_mix(&directory)?;
     let markers = read_markers(&directory.join("markers.jsonl"))?;
+    validate_required_motifs(&directory, experience, &markers)?;
+    validate_relationship_breadth_causality(&directory, experience)?;
     validate_relationship_evidence(&directory, experience, &markers)?;
     generate_filmstrips(&directory, &markers)?;
     write_review(&directory, experience, &markers)?;
     write_manifest(&directory, experience, suite, game)?;
     Ok(())
+}
+
+fn verify_scenario_duration(scenario: &Path, video: &Path) -> Result<()> {
+    let expected_ms = authored_scenario_duration_ms(scenario)?;
+    let actual_ms = video_duration_seconds(video)?
+        .parse::<f64>()
+        .context("feel video duration is not numeric")?
+        .mul_add(1_000.0, 0.0) as u64;
+    ensure!(
+        actual_ms.saturating_add(100) >= expected_ms,
+        "feel video ended early: authored scenario requires {expected_ms} ms, recorded {actual_ms} ms"
+    );
+    Ok(())
+}
+
+fn authored_scenario_duration_ms(scenario: &Path) -> Result<u64> {
+    BufReader::new(File::open(scenario)?)
+        .lines()
+        .try_fold(0_u64, |total, line| -> Result<u64> {
+            let value: serde_json::Value = serde_json::from_str(&line?)?;
+            let command = value
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let duration = match command {
+                "wait" | "inspect_hold" => value
+                    .get("milliseconds")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or_default(),
+                _ => 0,
+            };
+            Ok(total.saturating_add(duration))
+        })
 }
 
 fn build_binaries() -> Result<()> {
@@ -308,8 +496,8 @@ fn preflight_tool(tool: &str) -> Result<()> {
     require_success(tool, status)
 }
 
-fn wait_for_child(child: &mut std::process::Child, name: &str) -> Result<()> {
-    let deadline = Instant::now() + RUN_TIMEOUT;
+fn wait_for_child(child: &mut std::process::Child, name: &str, timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
     loop {
         if let Some(status) = child.try_wait().context("failed to poll beastie-game")? {
             return require_success(name, status);
@@ -319,7 +507,7 @@ fn wait_for_child(child: &mut std::process::Child, name: &str) -> Result<()> {
             let _ = child.wait();
             bail!(
                 "feel experience {name} did not finish within {} seconds",
-                RUN_TIMEOUT.as_secs()
+                timeout.as_secs()
             );
         }
         thread::sleep(Duration::from_millis(50));
@@ -504,6 +692,225 @@ fn read_markers(path: &Path) -> Result<Vec<Marker>> {
     }
     ensure!(!markers.is_empty(), "feel experience contains no markers");
     Ok(markers)
+}
+
+fn validate_required_motifs(
+    directory: &Path,
+    experience: Experience,
+    markers: &[Marker],
+) -> Result<()> {
+    if experience.required_motifs.is_empty() {
+        return Ok(());
+    }
+    let events = read_jsonl(&directory.join("events.jsonl"))?;
+    let state = read_jsonl(&directory.join("state.jsonl"))?;
+    for required in experience.required_motifs {
+        let matching_markers = markers
+            .iter()
+            .filter(|marker| marker.name == required.name)
+            .collect::<Vec<_>>();
+        ensure!(
+            matching_markers.len() == 1,
+            "required motif marker {} must occur exactly once",
+            required.name
+        );
+        let marker = matching_markers[0];
+        let motif = serde_json::to_value(required.motif)?;
+        let subject = serde_json::to_value(required.subject)?;
+        let event = events
+            .iter()
+            .filter(|record| {
+                record["playback_ms"]
+                    .as_u64()
+                    .unwrap_or_default()
+                    .abs_diff(marker.playback_ms)
+                    <= 2_000
+            })
+            .flat_map(|record| record["events"].as_array().into_iter().flatten())
+            .find(|event| required_event(event, required.mode, &motif, &subject))
+            .with_context(|| {
+                format!(
+                    "required marker {} has no exact {:?} authoritative event",
+                    required.name, required.mode
+                )
+            })?;
+        let event_evidence = event
+            .get("value")
+            .and_then(|value| value.get("evidence"))
+            .and_then(serde_json::Value::as_array)
+            .context("required relationship event has no evidence")?;
+        ensure!(
+            event_evidence.len() >= required.minimum_evidence,
+            "required marker {} has too little authoritative evidence",
+            required.name
+        );
+        ensure!(
+            state.iter().any(|record| {
+                let playback_ms = record["playback_ms"].as_u64().unwrap_or_default();
+                playback_ms >= marker.playback_ms
+                    && playback_ms <= marker.playback_ms.saturating_add(6_000)
+                    && required_state_context(record, required.mode).is_some_and(|context| {
+                        context.get("motif") == Some(&motif)
+                            && context.get("subject") == Some(&subject)
+                            && context
+                                .get("evidence")
+                                .and_then(serde_json::Value::as_array)
+                                == Some(event_evidence)
+                    })
+            }),
+            "required marker {} has no contemporaneous state with matching motif, subject, mode, and evidence",
+            required.name
+        );
+    }
+    Ok(())
+}
+
+fn required_event(
+    event: &serde_json::Value,
+    mode: RelationshipExpressionMode,
+    motif: &serde_json::Value,
+    subject: &serde_json::Value,
+) -> bool {
+    let expected_kind = match mode {
+        RelationshipExpressionMode::ActionBound => "action_relationship_started",
+        RelationshipExpressionMode::Standalone => "relationship_beat_started",
+    };
+    event.get("kind").and_then(serde_json::Value::as_str) == Some(expected_kind)
+        && event.get("value").and_then(|value| value.get("motif")) == Some(motif)
+        && event.get("value").and_then(|value| value.get("subject")) == Some(subject)
+}
+
+fn required_state_context(
+    record: &serde_json::Value,
+    mode: RelationshipExpressionMode,
+) -> Option<&serde_json::Value> {
+    let context = match mode {
+        RelationshipExpressionMode::ActionBound => {
+            record.get("creature")?.get("action")?.get("relationship")?
+        }
+        RelationshipExpressionMode::Standalone => record
+            .get("creature")?
+            .get("relationship_expression")?
+            .get("active")?,
+    };
+    context.is_object().then_some(context)
+}
+
+fn validate_relationship_breadth_causality(directory: &Path, experience: Experience) -> Result<()> {
+    let (expected_outcome, expected_direct_event) = match experience.id {
+        "trusted-berry" => (Some("consumed"), Some("food_consumed")),
+        "mushroom-grudge" => (Some("rejected"), Some("food_rejected")),
+        "familiar-cave" | "familiar-plant" | "familiar-ball" => (None, None),
+        _ => return Ok(()),
+    };
+    let events = read_jsonl(&directory.join("events.jsonl"))?;
+    let state = read_jsonl(&directory.join("state.jsonl"))?;
+
+    if let (Some(outcome), Some(direct_event)) = (expected_outcome, expected_direct_event) {
+        let started_at = event_playback_ms(&events, "action_relationship_started")
+            .context("relationship food experience has no start event")?;
+        let direct_at = event_playback_ms(&events, direct_event)
+            .with_context(|| format!("relationship food experience has no {direct_event}"))?;
+        let resolved_at = events
+            .iter()
+            .find_map(|record| {
+                let playback_ms = record.get("playback_ms")?.as_u64()?;
+                record
+                    .get("events")?
+                    .as_array()?
+                    .iter()
+                    .any(|event| {
+                        event.get("kind").and_then(serde_json::Value::as_str)
+                            == Some("action_relationship_resolved")
+                            && event
+                                .get("value")
+                                .and_then(|value| value.get("outcome"))
+                                .and_then(serde_json::Value::as_str)
+                                == Some(outcome)
+                    })
+                    .then_some(playback_ms)
+            })
+            .with_context(|| format!("relationship food experience has no {outcome} resolution"))?;
+        ensure!(
+            started_at < direct_at && started_at < resolved_at,
+            "relationship recognition did not precede its authoritative food outcome"
+        );
+        ensure!(
+            state.iter().any(|record| {
+                let playback_ms = record["playback_ms"].as_u64().unwrap_or_default();
+                playback_ms >= resolved_at
+                    && playback_ms <= resolved_at.saturating_add(1_000)
+                    && record
+                        .get("creature")
+                        .and_then(|creature| creature.get("action"))
+                        .and_then(|action| action.get("food_outcome"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some(outcome)
+            }),
+            "relationship food outcome was not retained through action recovery"
+        );
+        return Ok(());
+    }
+
+    let act_at = events
+        .iter()
+        .find_map(|record| {
+            let playback_ms = record.get("playback_ms")?.as_u64()?;
+            record
+                .get("events")?
+                .as_array()?
+                .iter()
+                .any(|event| {
+                    event.get("kind").and_then(serde_json::Value::as_str)
+                        == Some("relationship_beat_phase_changed")
+                        && event
+                            .get("value")
+                            .and_then(|value| value.get("to"))
+                            .and_then(serde_json::Value::as_str)
+                            == Some("act")
+                })
+                .then_some(playback_ms)
+        })
+        .context("familiar-place experience never reached Act")?;
+    let required = experience
+        .required_motifs
+        .first()
+        .context("familiar-place experience has no required subject")?;
+    let destination = serde_json::to_value(match required.subject {
+        RelationshipSubject::Place(destination) => destination,
+        _ => bail!("familiar-place experience has a non-place subject"),
+    })?;
+    ensure!(
+        state.iter().any(|record| {
+            record["playback_ms"].as_u64() == Some(act_at)
+                && record["creature"]["steering"].as_str() == Some("hover")
+                && record["creature"]["gaze"] == destination
+                && record["creature"]["last_arrived_destination"] == destination
+                && record["simulation_ms"]
+                    .as_u64()
+                    .is_some_and(|simulation_ms| {
+                        record["creature"]["settled_until_ms"]
+                            .as_u64()
+                            .is_some_and(|settled_until_ms| simulation_ms < settled_until_ms)
+                    })
+                && record["creature"]["relationship_expression"]["active"]["phase"].as_str()
+                    == Some("act")
+        }),
+        "familiar-place Act was not contemporaneously anchored by exact gaze and hover"
+    );
+    Ok(())
+}
+
+fn event_playback_ms(records: &[serde_json::Value], kind: &str) -> Option<u64> {
+    records.iter().find_map(|record| {
+        record
+            .get("events")?
+            .as_array()?
+            .iter()
+            .any(|event| event.get("kind").and_then(serde_json::Value::as_str) == Some(kind))
+            .then(|| record.get("playback_ms")?.as_u64())
+            .flatten()
+    })
 }
 
 fn validate_relationship_evidence(
@@ -913,6 +1320,15 @@ fn write_manifest(
     suite: FeelSuite,
     game: &Path,
 ) -> Result<()> {
+    let initial_save = experience
+        .initial_save
+        .map(Path::new)
+        .map(|path| {
+            let source = fs::read_to_string(path)?;
+            let save = SessionSave::from_json(&source)?;
+            Ok::<_, anyhow::Error>((path, save))
+        })
+        .transpose()?;
     let mut names = vec![
         "session.mp4".to_owned(),
         "session-audio-reference.mp4".to_owned(),
@@ -954,6 +1370,11 @@ fn write_manifest(
         suite,
         scenario: experience.scenario,
         scenario_sha256: sha256_file(Path::new(experience.scenario))?,
+        initial_save: experience.initial_save,
+        initial_save_sha256: initial_save
+            .as_ref()
+            .map(|(path, _)| sha256_file(path))
+            .transpose()?,
         commit,
         working_tree_dirty: working_tree_dirty()?,
         game_binary_sha256: sha256_file(game)?,
@@ -961,7 +1382,9 @@ fn write_manifest(
         build_profile: "debug",
         fake_ai: experience.fake_ai,
         tts_requested: experience.tts_requested,
-        seed: 42,
+        seed: initial_save
+            .as_ref()
+            .map_or(42, |(_, save)| save.world.seed),
         video_fps: 60,
         presentation: "640x360 exact 2x logical framebuffer",
         audible_mix_captured: false,
@@ -1037,19 +1460,11 @@ fn require_success(name: &str, status: ExitStatus) -> Result<()> {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn focus_macos_process(pid: u32) {
-    let script = format!(
-        "tell application \"System Events\"\nrepeat 20 times\nset matches to every process whose unix id is {pid}\nif (count of matches) > 0 then\nset frontmost of item 1 of matches to true\nreturn\nend if\ndelay 0.1\nend repeat\nend tell"
-    );
-    let _ = Command::new("osascript").args(["-e", &script]).status();
-}
-
-#[cfg(not(target_os = "macos"))]
-fn focus_macos_process(_pid: u32) {}
-
 #[cfg(test)]
 mod tests {
+    use beastie_core::{GameEvent, NormalizedPosition};
+    use beastie_session::{CommandEnvelope, SESSION_PROTOCOL_VERSION, SessionCommand};
+
     use super::*;
 
     #[test]
@@ -1082,9 +1497,168 @@ mod tests {
     #[test]
     fn relationship_breadth_is_a_separate_nonverbal_taste_pass() {
         let experiences = experiences(FeelSuite::RelationshipBreadth);
-        assert_eq!(experiences.len(), 1);
-        assert_eq!(experiences[0].id, "relationship-breadth");
-        assert!(!experiences[0].fake_ai && !experiences[0].tts_requested);
+        assert_eq!(experiences.len(), 5);
+        assert_eq!(
+            experiences
+                .iter()
+                .map(|experience| experience.id)
+                .collect::<Vec<_>>(),
+            [
+                "trusted-berry",
+                "mushroom-grudge",
+                "familiar-cave",
+                "familiar-plant",
+                "familiar-ball"
+            ]
+        );
+        assert!(experiences.iter().all(|experience| {
+            experience.initial_save.is_some()
+                && !experience.required_motifs.is_empty()
+                && !experience.fake_ai
+                && !experience.tts_requested
+        }));
+    }
+
+    #[test]
+    fn relationship_scenario_duration_includes_wait_and_final_hold() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for experience in experiences(FeelSuite::RelationshipBreadth) {
+            let duration = authored_scenario_duration_ms(&root.join(experience.scenario))
+                .expect("scenario duration");
+            let expected = if experience.id.starts_with("familiar-") {
+                12_000
+            } else {
+                16_000
+            };
+            assert_eq!(duration, expected, "{}", experience.id);
+        }
+    }
+
+    #[test]
+    fn relationship_breadth_starting_saves_are_valid_and_derive_the_required_motif() {
+        for experience in experiences(FeelSuite::RelationshipBreadth) {
+            let path = experience.initial_save.expect("starting save");
+            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(path);
+            let source = fs::read_to_string(fixture).expect("fixture exists");
+            let save = SessionSave::from_json(&source).expect("fixture validates");
+            assert_eq!(save.saved_at_ms, save.world.elapsed_ms);
+            assert!(save.world.creature.aquarium.action.is_none());
+            assert!(save.world.creature.relationship_expression.active.is_none());
+            let motifs = beastie_core::derive_relationship_motifs(&save.world);
+            for required in experience.required_motifs {
+                assert!(motifs.iter().any(|motif| {
+                    motif.key == required.motif && motif.evidence.len() >= required.minimum_evidence
+                }));
+            }
+        }
+    }
+
+    #[test]
+    fn relationship_breadth_scenarios_start_the_exact_required_context() {
+        for experience in experiences(FeelSuite::RelationshipBreadth) {
+            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(experience.initial_save.expect("starting save"));
+            let source = fs::read_to_string(fixture).expect("fixture exists");
+            let save = SessionSave::from_json(&source).expect("fixture validates");
+            let resumed_at_ms = save.saved_at_ms;
+            let (mut session, progress) =
+                beastie_session::GameSession::resume(save, resumed_at_ms).expect("fixture resumes");
+            assert_eq!(progress.applied_ms, 0);
+            let required = experience.required_motifs[0];
+            let command = match required.subject {
+                RelationshipSubject::Food(food) => SessionCommand::DropFood {
+                    food,
+                    position: NormalizedPosition::new(5_000, 3_000),
+                },
+                RelationshipSubject::Place(_) => SessionCommand::Tick {
+                    milliseconds: 1_000,
+                },
+                RelationshipSubject::Toy(_) | RelationshipSubject::Player => {
+                    panic!("breadth fixture uses food or place subjects")
+                }
+            };
+            let observation = session
+                .apply(CommandEnvelope {
+                    version: SESSION_PROTOCOL_VERSION,
+                    command,
+                })
+                .expect("fixture scenario begins");
+            match required.mode {
+                RelationshipExpressionMode::ActionBound => {
+                    assert!(observation.events.iter().any(|event| matches!(
+                        event,
+                        GameEvent::ActionRelationshipStarted { motif, subject, evidence, .. }
+                            if *motif == required.motif
+                                && *subject == required.subject
+                                && evidence.len() >= required.minimum_evidence
+                    )));
+                    let context = session
+                        .world()
+                        .creature
+                        .aquarium
+                        .action
+                        .as_ref()
+                        .and_then(|action| action.relationship.as_ref())
+                        .expect("action relationship context");
+                    assert_eq!(context.motif, required.motif);
+                    assert_eq!(context.subject, required.subject);
+                }
+                RelationshipExpressionMode::Standalone => {
+                    assert!(observation.events.iter().any(|event| matches!(
+                        event,
+                        GameEvent::RelationshipBeatStarted { motif, subject, evidence, .. }
+                            if *motif == required.motif
+                                && *subject == required.subject
+                                && evidence.len() >= required.minimum_evidence
+                    )));
+                    let beat = session
+                        .world()
+                        .creature
+                        .relationship_expression
+                        .active
+                        .as_ref()
+                        .expect("standalone relationship beat");
+                    assert_eq!(beat.motif, required.motif);
+                    assert_eq!(beat.subject, Some(required.subject));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn required_motif_events_reject_wrong_subject_and_mode() {
+        let required = TRUSTED_BERRY_MARKERS[0];
+        let motif = serde_json::to_value(required.motif).unwrap();
+        let subject = serde_json::to_value(required.subject).unwrap();
+        let event = serde_json::json!({
+            "kind": "action_relationship_started",
+            "value": {
+                "motif": motif,
+                "subject": subject,
+                "evidence": [{"evidence_kind": "memory", "id": 1}]
+            }
+        });
+        assert!(required_event(
+            &event,
+            RelationshipExpressionMode::ActionBound,
+            &motif,
+            &subject
+        ));
+        assert!(!required_event(
+            &event,
+            RelationshipExpressionMode::Standalone,
+            &motif,
+            &subject
+        ));
+        assert!(!required_event(
+            &event,
+            RelationshipExpressionMode::ActionBound,
+            &motif,
+            &serde_json::to_value(RelationshipSubject::Food(FoodId::Mushroom)).unwrap()
+        ));
     }
 
     #[test]

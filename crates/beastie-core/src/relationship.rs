@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    ACTIVE_DAY_MS, BeliefKind, FoodId, Memory, MemoryId, MemoryKind, RelationshipBeat,
-    RelationshipBeatPhase, RelationshipEvidence, RelationshipExpressionKind, RelationshipMotif,
-    RelationshipMotifKey, RelationshipTrigger, RelationshipTriggerKind, SemanticDestination, ToyId,
-    WorldState,
+    ACTIVE_DAY_MS, ActionRelationshipContext, BeliefKind, FoodId, FoodOutcome, Memory, MemoryId,
+    MemoryKind, RelationshipBeat, RelationshipBeatPhase, RelationshipEvidence,
+    RelationshipExpressionKind, RelationshipMotif, RelationshipMotifKey, RelationshipSubject,
+    RelationshipTrigger, RelationshipTriggerKind, SemanticDestination, ToyId, WorldState,
 };
 
 pub const MAX_MOTIF_EVIDENCE: usize = 8;
@@ -93,34 +93,39 @@ fn triggers_for(key: RelationshipMotifKey) -> BTreeSet<RelationshipTriggerKind> 
     use RelationshipTriggerKind as Trigger;
     match key {
         RelationshipMotifKey::SharedToy(_) => [
-            Trigger::PlayerReturn,
-            Trigger::FamiliarObject,
+            Trigger::ToyEngaged,
             Trigger::RelevantUtterance,
-            Trigger::ActionCompleted,
+            Trigger::QuietMoment,
         ]
         .into_iter()
         .collect(),
         RelationshipMotifKey::ComfortRitual => [
-            Trigger::NeedState,
+            Trigger::ComfortCompleted,
+            Trigger::ComfortNeeded,
             Trigger::RelevantUtterance,
-            Trigger::ActionCompleted,
+            Trigger::QuietMoment,
         ]
         .into_iter()
         .collect(),
         RelationshipMotifKey::TrustedFood(_) | RelationshipMotifKey::FoodGrudge(_) => [
-            Trigger::FamiliarObject,
+            Trigger::FoodPresented,
+            Trigger::FoodResolved,
             Trigger::RelevantUtterance,
-            Trigger::ActionCompleted,
         ]
         .into_iter()
         .collect(),
-        RelationshipMotifKey::PlayerReturns => [Trigger::PlayerReturn, Trigger::RelevantUtterance]
-            .into_iter()
-            .collect(),
-        RelationshipMotifKey::FamiliarPlace(_) => [
+        RelationshipMotifKey::PlayerReturns => [
             Trigger::PlayerReturn,
-            Trigger::RoutineWindow,
             Trigger::RelevantUtterance,
+            Trigger::QuietMoment,
+        ]
+        .into_iter()
+        .collect(),
+        RelationshipMotifKey::FamiliarPlace(_) => [
+            Trigger::RoutineWindow,
+            Trigger::PlaceArrived,
+            Trigger::RelevantUtterance,
+            Trigger::QuietMoment,
         ]
         .into_iter()
         .collect(),
@@ -176,17 +181,17 @@ pub fn derive_relationship_motifs(state: &WorldState) -> Vec<RelationshipMotif> 
             .copied()
             .unwrap_or_default();
         let belief_supported = state.creature.beliefs.iter().any(|belief| {
-            belief.kind == BeliefKind::RedFoodIsATrick
+            belief.kind == BeliefKind::FoodIsATrick
                 && evidence
                     .ids
                     .iter()
                     .any(|id| belief.supporting_memories.contains(id))
         });
-        (preference <= -0.15 && belief_supported).then(|| {
+        (preference < -0.35 && belief_supported).then(|| {
             with_supporting_belief(
                 evidence.motif(RelationshipMotifKey::FoodGrudge(food)),
                 state,
-                BeliefKind::RedFoodIsATrick,
+                BeliefKind::FoodIsATrick,
             )
         })
     }));
@@ -246,31 +251,80 @@ pub fn derive_relationship_motifs(state: &WorldState) -> Vec<RelationshipMotif> 
     motifs
 }
 
-fn trigger_relevance(key: RelationshipMotifKey, trigger: RelationshipTrigger) -> u32 {
-    match (key, trigger) {
-        (RelationshipMotifKey::SharedToy(a), RelationshipTrigger::FamiliarToy { toy: b })
-        | (
-            RelationshipMotifKey::SharedToy(a),
-            RelationshipTrigger::ActionCompleted {
-                destination: SemanticDestination::Toy(b),
-            },
-        ) if a == b => 250,
-        (RelationshipMotifKey::TrustedFood(a), RelationshipTrigger::FamiliarFood { food: b })
-        | (RelationshipMotifKey::FoodGrudge(a), RelationshipTrigger::FamiliarFood { food: b })
-            if a == b =>
-        {
-            250
+fn subject_for_motif(key: RelationshipMotifKey) -> RelationshipSubject {
+    match key {
+        RelationshipMotifKey::SharedToy(toy) => RelationshipSubject::Toy(toy),
+        RelationshipMotifKey::TrustedFood(food) | RelationshipMotifKey::FoodGrudge(food) => {
+            RelationshipSubject::Food(food)
         }
+        RelationshipMotifKey::FamiliarPlace(destination) => RelationshipSubject::Place(destination),
+        RelationshipMotifKey::ComfortRitual | RelationshipMotifKey::PlayerReturns => {
+            RelationshipSubject::Player
+        }
+    }
+}
+
+fn trigger_matches_motif(key: RelationshipMotifKey, trigger: RelationshipTrigger) -> bool {
+    match (key, trigger) {
+        (RelationshipMotifKey::SharedToy(a), RelationshipTrigger::ToyEngaged { toy: b }) => a == b,
+        (RelationshipMotifKey::TrustedFood(a), RelationshipTrigger::FoodPresented { food: b })
+        | (
+            RelationshipMotifKey::TrustedFood(a),
+            RelationshipTrigger::FoodResolved {
+                food: b,
+                outcome: FoodOutcome::Consumed,
+            },
+        )
+        | (RelationshipMotifKey::FoodGrudge(a), RelationshipTrigger::FoodPresented { food: b })
+        | (
+            RelationshipMotifKey::FoodGrudge(a),
+            RelationshipTrigger::FoodResolved {
+                food: b,
+                outcome: FoodOutcome::Rejected,
+            },
+        ) => a == b,
         (
             RelationshipMotifKey::FamiliarPlace(a),
             RelationshipTrigger::RoutineWindow { destination: b, .. },
-        ) if a == b => 250,
-        (RelationshipMotifKey::ComfortRitual, RelationshipTrigger::NeedState) => 240,
-        (RelationshipMotifKey::PlayerReturns, RelationshipTrigger::PlayerReturn) => 250,
-        (_, RelationshipTrigger::RelevantUtterance) => 80,
-        (_, RelationshipTrigger::PlayerReturn) => 35,
-        (_, RelationshipTrigger::ActionCompleted { .. }) => 25,
-        _ => 0,
+        )
+        | (
+            RelationshipMotifKey::FamiliarPlace(a),
+            RelationshipTrigger::PlaceArrived { destination: b },
+        ) => a == b,
+        (RelationshipMotifKey::ComfortRitual, RelationshipTrigger::ComfortCompleted)
+        | (RelationshipMotifKey::ComfortRitual, RelationshipTrigger::ComfortNeeded) => true,
+        (RelationshipMotifKey::PlayerReturns, RelationshipTrigger::PlayerReturn) => true,
+        (
+            _,
+            RelationshipTrigger::RelevantUtterance {
+                subject: Some(subject),
+            },
+        ) => subject_for_motif(key) == subject,
+        (
+            RelationshipMotifKey::SharedToy(_)
+            | RelationshipMotifKey::ComfortRitual
+            | RelationshipMotifKey::PlayerReturns
+            | RelationshipMotifKey::FamiliarPlace(_),
+            RelationshipTrigger::QuietMoment,
+        ) => true,
+        _ => false,
+    }
+}
+
+fn trigger_relevance(key: RelationshipMotifKey, trigger: RelationshipTrigger) -> u32 {
+    if !trigger_matches_motif(key, trigger) {
+        return 0;
+    }
+    match trigger {
+        RelationshipTrigger::FoodPresented { .. }
+        | RelationshipTrigger::FoodResolved { .. }
+        | RelationshipTrigger::ToyEngaged { .. }
+        | RelationshipTrigger::RoutineWindow { .. }
+        | RelationshipTrigger::PlaceArrived { .. }
+        | RelationshipTrigger::PlayerReturn => 250,
+        RelationshipTrigger::ComfortCompleted | RelationshipTrigger::ComfortNeeded => 240,
+        RelationshipTrigger::RelevantUtterance { .. } => 180,
+        RelationshipTrigger::QuietMoment => 60,
     }
 }
 
@@ -283,7 +337,7 @@ fn expression_for(
             RelationshipExpressionKind::Ritual
         }
         RelationshipMotifKey::ComfortRitual
-            if motif.strength >= 2 && matches!(trigger, RelationshipTrigger::NeedState) =>
+            if motif.strength >= 2 && matches!(trigger, RelationshipTrigger::ComfortNeeded) =>
         {
             RelationshipExpressionKind::Seek
         }
@@ -325,12 +379,17 @@ pub(crate) fn relationship_beat_is_grounded(state: &WorldState, beat: &Relations
     else {
         return false;
     };
-    let relevant = trigger_relevance(motif.key, beat.trigger) > 0
-        || matches!(beat.trigger, RelationshipTrigger::RelevantUtterance);
-    relevant
+    trigger_matches_motif(motif.key, beat.trigger)
         && motif.eligible_triggers.contains(&beat.trigger.kind())
-        && beat.expression_kind == expression_for(&motif, beat.trigger)
-        && beat.evidence == motif.evidence
+        && beat.subject == Some(subject_for_motif(beat.motif))
+        && expression_rank(beat.expression_kind)
+            <= expression_rank(expression_for(&motif, beat.trigger))
+        && !beat.evidence.is_empty()
+        && beat.evidence.len() <= MAX_MOTIF_EVIDENCE
+        && beat
+            .evidence
+            .iter()
+            .all(|evidence| evidence_supports_motif(state, *evidence, beat.motif))
         && beat.target == target_for(motif.key)
 }
 
@@ -403,6 +462,162 @@ pub fn select_relationship_beat(
     state: &WorldState,
     trigger: RelationshipTrigger,
 ) -> Option<RelationshipBeat> {
+    if matches!(
+        trigger,
+        RelationshipTrigger::FoodPresented { .. }
+            | RelationshipTrigger::FoodResolved { .. }
+            | RelationshipTrigger::ToyEngaged { .. }
+            | RelationshipTrigger::ComfortCompleted
+    ) {
+        return None;
+    }
+    select_relationship_motif(state, trigger).map(|motif| RelationshipBeat {
+        motif: motif.key,
+        trigger,
+        subject: Some(subject_for_motif(motif.key)),
+        expression_kind: expression_for(&motif, trigger),
+        evidence: motif.evidence,
+        target: target_for(motif.key),
+        phase: RelationshipBeatPhase::Notice,
+        started_at_ms: state.elapsed_ms,
+        phase_started_at_ms: state.elapsed_ms,
+    })
+}
+
+/// Select an exact-subject relationship context that enriches an authoritative direct action.
+/// The caller owns scheduling and records the expression only when the action becomes visible.
+#[must_use]
+pub fn select_action_relationship_context(
+    state: &WorldState,
+    trigger: RelationshipTrigger,
+) -> Option<ActionRelationshipContext> {
+    if !matches!(
+        trigger,
+        RelationshipTrigger::FoodPresented { .. }
+            | RelationshipTrigger::FoodResolved { .. }
+            | RelationshipTrigger::ToyEngaged { .. }
+            | RelationshipTrigger::ComfortCompleted
+    ) {
+        return None;
+    }
+    if state.creature.aquarium.action.is_some() {
+        return None;
+    }
+    select_relationship_motif(state, trigger).map(|motif| ActionRelationshipContext {
+        motif: motif.key,
+        expression_kind: expression_for(&motif, trigger),
+        evidence: motif.evidence,
+        subject: subject_for_motif(motif.key),
+    })
+}
+
+pub(crate) fn action_relationship_context_is_grounded(
+    state: &WorldState,
+    context: &ActionRelationshipContext,
+) -> bool {
+    let Some(motif) = derive_relationship_motifs(state)
+        .into_iter()
+        .find(|motif| motif.key == context.motif)
+    else {
+        return false;
+    };
+    context.subject == subject_for_motif(context.motif)
+        && !context.evidence.is_empty()
+        && context.evidence.len() <= MAX_MOTIF_EVIDENCE
+        && context
+            .evidence
+            .iter()
+            .all(|evidence| evidence_supports_motif(state, *evidence, context.motif))
+        && expression_rank(context.expression_kind)
+            <= expression_rank(expression_for(
+                &motif,
+                match context.subject {
+                    RelationshipSubject::Food(food) => RelationshipTrigger::FoodPresented { food },
+                    RelationshipSubject::Toy(toy) => RelationshipTrigger::ToyEngaged { toy },
+                    RelationshipSubject::Player
+                        if context.motif == RelationshipMotifKey::ComfortRitual =>
+                    {
+                        RelationshipTrigger::ComfortCompleted
+                    }
+                    RelationshipSubject::Player => RelationshipTrigger::PlayerReturn,
+                    RelationshipSubject::Place(destination) => {
+                        RelationshipTrigger::PlaceArrived { destination }
+                    }
+                },
+            ))
+}
+
+fn evidence_supports_motif(
+    state: &WorldState,
+    evidence: RelationshipEvidence,
+    key: RelationshipMotifKey,
+) -> bool {
+    match evidence {
+        RelationshipEvidence::Memory { id } => state
+            .creature
+            .memories
+            .iter()
+            .find(|memory| memory.id == id)
+            .is_some_and(|memory| match (key, &memory.kind) {
+                (RelationshipMotifKey::SharedToy(expected), MemoryKind::PlayedWith { toy }) => {
+                    expected == *toy
+                }
+                (RelationshipMotifKey::ComfortRitual, MemoryKind::WasComforted)
+                | (RelationshipMotifKey::PlayerReturns, MemoryKind::PlayerReturnedAfterAbsence) => {
+                    true
+                }
+                (RelationshipMotifKey::TrustedFood(expected), MemoryKind::WasFed { food }) => {
+                    expected == *food
+                }
+                (
+                    RelationshipMotifKey::FoodGrudge(expected),
+                    MemoryKind::DislikedFood { food } | MemoryKind::RejectedFood { food },
+                ) => expected == *food,
+                _ => false,
+            }),
+        RelationshipEvidence::Belief { id, kind } => state.creature.beliefs.iter().any(|belief| {
+            belief.id == id
+                && belief.kind == kind
+                && matches!(
+                    (key, kind),
+                    (
+                        RelationshipMotifKey::FoodGrudge(_),
+                        BeliefKind::FoodIsATrick
+                    ) | (
+                        RelationshipMotifKey::PlayerReturns,
+                        BeliefKind::PlayerReturnsAfterSleep
+                    )
+                )
+        }),
+        RelationshipEvidence::Visit {
+            hour_start,
+            destination,
+            last_active_day,
+        } => {
+            key == RelationshipMotifKey::FamiliarPlace(destination)
+                && state.creature.idle_life.visit_evidence.iter().any(|visit| {
+                    visit.hour_start == hour_start
+                        && visit.destination == destination
+                        && visit.last_active_day >= last_active_day
+                })
+        }
+    }
+}
+
+const fn expression_rank(expression: RelationshipExpressionKind) -> u8 {
+    match expression {
+        RelationshipExpressionKind::Notice => 0,
+        RelationshipExpressionKind::Anticipate
+        | RelationshipExpressionKind::Seek
+        | RelationshipExpressionKind::Recognize => 1,
+        RelationshipExpressionKind::Ritual | RelationshipExpressionKind::Welcome => 2,
+    }
+}
+
+fn select_relationship_motif(
+    state: &WorldState,
+    trigger: RelationshipTrigger,
+) -> Option<RelationshipMotif> {
     let expression = &state.creature.relationship_expression;
     if expression.active.is_some() {
         return None;
@@ -433,7 +648,7 @@ pub fn select_relationship_beat(
         })
         .filter_map(|motif| {
             let relevance = trigger_relevance(motif.key, trigger);
-            if relevance == 0 && !matches!(trigger, RelationshipTrigger::RelevantUtterance) {
+            if relevance == 0 {
                 return None;
             }
             let score = u32::from(motif.strength) * 100
@@ -465,16 +680,7 @@ pub fn select_relationship_beat(
                 .cmp(right_score)
                 .then_with(|| right.key.cmp(&left.key))
         })
-        .map(|(_, motif)| RelationshipBeat {
-            motif: motif.key,
-            trigger,
-            expression_kind: expression_for(&motif, trigger),
-            evidence: motif.evidence,
-            target: target_for(motif.key),
-            phase: RelationshipBeatPhase::Notice,
-            started_at_ms: state.elapsed_ms,
-            phase_started_at_ms: state.elapsed_ms,
-        })
+        .map(|(_, motif)| motif)
 }
 
 #[must_use]

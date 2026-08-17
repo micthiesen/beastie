@@ -203,7 +203,7 @@ fn grounded_fallback_reply(request: &DialogueRequest) -> DialogueReply {
         if let Some(belief) = prompt::planned_belief(request) {
             let mut reply = constrained_fallback_reply(request);
             reply.say = match belief.proposition {
-                beastie_protocol::BeliefKind::RedFoodIsATrick => "red food is trick.",
+                beastie_protocol::BeliefKind::FoodIsATrick => "this food may be a trick.",
                 beastie_protocol::BeliefKind::PlayerReturnsAfterSleep => "sleep ends; you return.",
                 beastie_protocol::BeliefKind::ToyIsJealous => "toy is jealous.",
             }

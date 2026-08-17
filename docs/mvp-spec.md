@@ -257,7 +257,7 @@ pub struct Belief {
 }
 
 pub enum BeliefKind {
-    RedFoodIsATrick,
+    FoodIsATrick,
     WindowMakesRain,
     PlayerReturnsAfterSleep,
     ToyIsJealous,
@@ -652,7 +652,7 @@ A dialogue request might be:
   "candidate_beliefs": [
     {
       "id": 7,
-      "belief": "Red food is probably a trick.",
+      "belief": "This kind of food may be a trick.",
       "confidence": "high",
       "supporting_memories": [41]
     }

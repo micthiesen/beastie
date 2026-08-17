@@ -9,11 +9,12 @@ use beastie_protocol::{
 };
 use beastie_session::{
     CommandEnvelope, GameSession, SESSION_PROTOCOL_VERSION, SessionCommand, SessionError,
-    SpokenInputStatus,
+    SessionSave, SpokenInputStatus,
 };
 use beastie_view::{
-    BindableAction, BindingLabels, CursorKind, MicrophoneState, RenderPlan, SPEECH_RELEASE_MS,
-    UiAction, UiMode, ViewState, audio_plan_for_events, logical_to_world, plan,
+    AudioCommand, AudioCue, BindableAction, BindingLabels, CursorKind, MicrophoneState,
+    PresentationChannel, RenderPlan, SPEECH_RELEASE_MS, SemanticOwner, UiAction, UiMode, ViewState,
+    logical_to_world, plan,
 };
 use ggez::conf::{FullscreenType, WindowMode};
 use ggez::event::{Button, EventHandler, GamepadId};
@@ -25,7 +26,7 @@ use ggez::winit::window::CursorIcon;
 use ggez::{Context, GameError, GameResult};
 
 use crate::args::Args;
-use crate::audio::{AmbientBubbleSchedule, AudioBank, UI_CONFIRM, UI_SELECT, sound_for_cue};
+use crate::audio::{AmbientBubbleSchedule, AudioBank, sound_for_cue};
 use crate::dialogue::{DialogueManager, WorkerConfig};
 use crate::feel::FeelRecorder;
 use crate::input::{
@@ -59,7 +60,7 @@ pub struct Game {
     presentation_frame: Image,
     assets: AssetCatalog,
     audio: AudioBank,
-    queued_audio: Vec<&'static str>,
+    queued_audio: Vec<AudioCommand>,
     viewport: Viewport,
     dialogue: DialogueManager,
     recognition: RecognitionManager,
@@ -135,13 +136,24 @@ impl Game {
             args.moonshine_engine.as_deref(),
             args.stt_timeout_ms,
         ));
-        let (session, load_message, _resumed, save_enabled) = if args.script.is_some() {
-            (GameSession::new(42, "Mop"), None, false, false)
-        } else if args.new_game {
-            (GameSession::new(42, "Mop"), None, false, true)
-        } else {
-            load_session(&save_store)
-        };
+        let (session, load_message, _resumed, save_enabled) =
+            if let Some(path) = &args.feel_initial_save {
+                let source = std::fs::read_to_string(path)
+                    .map_err(|error| GameError::FilesystemError(error.to_string()))?;
+                let save = SessionSave::from_json(&source)
+                    .map_err(|error| GameError::ConfigError(error.to_string()))?;
+                let resumed_at_ms = save.saved_at_ms;
+                let (session, progress) = GameSession::resume(save, resumed_at_ms)
+                    .map_err(|error| GameError::ConfigError(error.to_string()))?;
+                debug_assert_eq!(progress.applied_ms, 0);
+                (session, None, false, false)
+            } else if args.script.is_some() {
+                (GameSession::new(42, "Mop"), None, false, false)
+            } else if args.new_game {
+                (GameSession::new(42, "Mop"), None, false, true)
+            } else {
+                load_session(&save_store)
+            };
         let scenario = args
             .script
             .as_deref()
@@ -309,14 +321,10 @@ impl Game {
                 command,
             })
             .map_err(session_error)?;
-        self.queued_audio.extend(
-            audio_plan_for_events(&observation.events)
-                .events
-                .into_iter()
-                .filter_map(sound_for_cue),
-        );
-        self.view
+        let audio = self
+            .view
             .observe_events(&observation.events, self.session.world().elapsed_ms);
+        self.queued_audio.extend(audio.events);
         if let Some(feel) = &mut self.feel {
             feel.record_observation(&observation, self.session.world().elapsed_ms)
                 .map_err(feel_error)?;
@@ -993,7 +1001,7 @@ impl Game {
 
     fn apply_confirmed_ui_action(&mut self, action: UiAction, controller: bool) -> GameResult {
         self.apply_ui_action(action, controller)?;
-        self.queued_audio.push(UI_CONFIRM);
+        self.queued_audio.push(ui_audio(AudioCue::UiConfirm));
         Ok(())
     }
 
@@ -1062,7 +1070,7 @@ impl Game {
         let previous = self.view.focused_region.clone();
         self.view.focused_region = move_focus(&plan, self.view.focused_region.as_deref(), delta);
         if self.view.focused_region != previous {
-            self.queued_audio.push(UI_SELECT);
+            self.queued_audio.push(ui_audio(AudioCue::UiReject));
         }
     }
 
@@ -1179,19 +1187,39 @@ impl EventHandler for Game {
         }
         self.view.expire(self.session.world().elapsed_ms);
         self.update_speech_reveal();
-        let had_one_shot = !self.queued_audio.is_empty();
+        let had_one_shot = self
+            .queued_audio
+            .iter()
+            .any(|command| matches!(command, AudioCommand::Play { .. }));
         if let Some(bubble) = self
             .bubble_schedule
             .poll(self.session.world().elapsed_ms, had_one_shot)
         {
-            self.queued_audio.push(bubble);
+            self.queued_audio.push(AudioCommand::play(
+                SemanticOwner::Ordinary,
+                PresentationChannel::Ambience,
+                bubble,
+                700,
+            ));
         }
+        let queued_one_shot = self
+            .queued_audio
+            .iter()
+            .any(|command| matches!(command, AudioCommand::Play { .. }));
         self.audio.ensure_ambience();
-        self.audio
-            .update_ducking(frame_delta_ms, !self.queued_audio.is_empty());
+        self.audio.update_ducking(frame_delta_ms, queued_one_shot);
         if let Some(feel) = &mut self.feel {
+            let cue_ids = self
+                .queued_audio
+                .iter()
+                .filter_map(|command| match command {
+                    AudioCommand::Play { cue, .. } => sound_for_cue(*cue),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
             feel.record_audio(
                 &self.queued_audio,
+                &cue_ids,
                 self.audio.speech_active(),
                 self.audio.one_shot_active(),
                 self.audio.ambience_duck(),
@@ -1300,7 +1328,7 @@ impl EventHandler for Game {
                 self.cursor_world = Some(position);
                 self.apply_command(SessionCommand::DropFood { food, position }, true)?;
                 self.close_menu();
-                self.queued_audio.push(UI_CONFIRM);
+                self.queued_audio.push(ui_audio(AudioCue::UiConfirm));
             } else {
                 self.apply_confirmed_ui_action(action, false)?;
             }
@@ -1878,6 +1906,10 @@ fn feel_error(error: crate::feel::FeelError) -> GameError {
 
 fn play_command(toy: ToyId) -> SessionCommand {
     SessionCommand::Play { toy }
+}
+
+const fn ui_audio(cue: AudioCue) -> AudioCommand {
+    AudioCommand::play(SemanticOwner::Ordinary, PresentationChannel::Ui, cue, 450)
 }
 
 fn clears_speech(command: &SessionCommand) -> bool {

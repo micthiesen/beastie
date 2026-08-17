@@ -342,6 +342,88 @@ required motif never occurs; a marker name alone is not evidence.
 Estimated effort is 8 to 12 focused hours if existing body vocabulary reads clearly, or 12 to 18
 hours if one new food-anticipation effect is required.
 
+## Implementation ledger
+
+Status: implemented and native-reviewed 2026-08-17
+
+This ledger is the durable scope for the implementation round. It grows when code inspection or
+native evidence reveals another worthwhile improvement to the existing game experience.
+
+### Completed checkpoints
+
+1. Replace broad trigger relevance with a hard typed subject matcher. Food recognition becomes an
+   optional context owned by the existing food action from Notice through Recover; the context
+   retains food kind, resolved outcome, evidence, and expression after the physical object is
+   consumed. Toy and comfort history enrich their direct authoritative receipts without starting a
+   competing standalone beat.
+2. Keep `RelationshipBeat` exclusively for standalone behavior. Add explicit player-return,
+   comfort-need, routine/arrival, relevant-subject utterance, and quiet-moment routes. Quiet moments
+   are eligible only during genuinely unoccupied creature time and never disguise recollection as
+   feedback for a direct action.
+3. Bump and migrate the save contract. Preserve history and the bounded expression ledger, default
+   new action context for older saves, cancel legacy active beats whose broad trigger is no longer
+   representable, and validate exact subject, motif, outcome, and evidence agreement.
+4. Give action-bound and standalone expression distinct trace events and semantic presentation
+   ownership. Implement trusted-food, food-grudge, and familiar-place phase recipes, clear
+   incompatible visual residue on ownership changes, and cancel or attenuate superseded
+   relationship audio without weakening direct feedback.
+5. Split relationship breadth evidence into validated fixture-backed experiences for trusted berry,
+   mushroom grudge, and familiar cave, plant, and toy destinations. Required markers must prove the
+   exact motif, subject, mode, and evidence in synchronized event and state, and the manifest must
+   hash the initial save and its real deterministic seed.
+6. After implementation, run the corrected native debug evidence at full speed with labels hidden,
+   fix every surviving material feel issue found anywhere in the existing game experience, then
+   complete two clean native review passes after the final material change.
+
+### Improvements discovered during implementation
+
+- Grudge derivation currently becomes eligible at preference `-0.15`, while authoritative food
+  rejection begins below `-0.35`. Action binding must use the real outcome boundary so remembered
+  resentment cannot visually predict a rejection that the simulation will not perform.
+- A food object can disappear before a long approach resolves. The action and its relationship
+  context need an explicit coherent cancellation instead of silently reaching recovery without an
+  outcome.
+- Direct toy selection currently records the current play before selecting familiarity, allowing
+  an interaction to present itself as prior history. Toy and comfort contexts must be selected from
+  pre-action evidence.
+- `FoodIsATrick` now grounds grudges for any exact food subject, and legacy
+  `red_food_is_a_trick` saves decode into it. Keep model-facing summaries food-generic so a
+  mushroom grudge never speaks as a berry-specific belief.
+- The view has two audio projections, but the real shell discards the audio returned by `plan()`.
+  Consolidate runtime and tested audio decisions behind one owned command path so a passing view
+  test proves the sound the player actually receives.
+- Familiar-place phases currently advance on time even when the creature has not arrived, and cave
+  settle can sound on generic beat completion. Gate the act phase and destination audio on the
+  authoritative arrival rather than elapsed time alone.
+- Presentation interruption currently clears the entire visual cue queue while already playing
+  relationship sounds cannot be cancelled. Replace global clearing and unowned FIFO behavior with
+  per-channel semantic ownership that preserves UI, ambience, and unrelated physical effects.
+- Fixture saves must resume at their own `saved_at_ms`. Using wall time would apply offline
+  progression before the first recorded frame and invalidate same-seed comparison. Feel manifests
+  therefore record the initial-save hash and decoded world seed, not the old hard-coded seed.
+- Relationship breadth uses five isolated starting saves rather than one accumulated-history run.
+  This prevents the global and per-motif ledgers from suppressing later evidence and gives cave,
+  plant, and ball familiarity independent native clips.
+- Existing player-return selection treated any remembered toy as a return-linked ritual. Until
+  return-specific evidence is authored, only `PlayerReturns` is eligible for `PlayerReturn`;
+  ordinary toy memories remain available through exact toy input or an explicit quiet moment.
+- Familiar-place act gating must require a current bounded settlement, not merely a stale
+  `last_arrived_destination` from an earlier visit to the same place.
+- An active familiar-place callback can create a newer visit record while it is unfolding. Save
+  validation must accept its canonical evidence as-of selection rather than demand byte-for-byte
+  equality with the newly expanded motif, just as action-bound recovery already does.
+- The first native pass proved that a game update error could still yield a successful feel command
+  and complete-looking two-second bundles. Evidence collection must fail closed when the game exits
+  early or the recorded duration does not cover the authored scenario.
+- Sequential native macOS captures can leave a later Metal surface unable to acquire a drawable,
+  and forcing the child frontmost during initialization can itself trigger the stall. The feel
+  runner bounds every child by authored duration plus grace and supports one named experience per
+  invocation so macOS review can isolate AppKit lifecycles without weakening validation.
+- Relationship breadth validation now proves more than the recognition marker. Food recognition
+  must precede the exact consumed/rejected result and retain that result through recovery. A
+  familiar-place beat may enter Act only while the trace proves a current, unexpired settlement at
+  the exact destination with matching gaze and hover steering.
+
 ## Acceptance
 
 ### Causality

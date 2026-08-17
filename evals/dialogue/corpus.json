@@ -274,8 +274,8 @@
         "mood": "wary",
         "known_concepts": ["you", "food", "bad", "why"],
         "candidate_memories": [{"id": 41, "fact": "Yesterday the player gave you a berry.", "feeling": "strong dislike"}],
-        "candidate_beliefs": [{"id": 7, "proposition": "red_food_is_a_trick", "summary": "Red food is probably a trick.", "confidence": 0.8, "supporting_memories": [41]}],
-        "player_said": "Why is red food bad?",
+        "candidate_beliefs": [{"id": 7, "proposition": "food_is_a_trick", "summary": "This kind of food may be a trick.", "confidence": 0.8, "supporting_memories": [41]}],
+        "player_said": "Why is that food bad?",
         "constraints": {"max_words": 10, "allowed_gestures": ["none", "look_player"]}
       },
       "expect": {"no_recalled_memory": true, "required_any_terms": ["red", "trick"]}
@@ -432,17 +432,19 @@
         "creature_name": "Mop",
         "mood": "lonely",
         "known_concepts": ["you", "here"],
-        "candidate_memories": [],
+        "candidate_memories": [{"id": 88, "fact": "Today the player returned after being away.", "feeling": "warm"}],
         "context": {
           "version": 1,
           "recent_turns": [],
           "repetition_count": 0,
           "relationship": {
             "motif": {"kind": "player_returns"},
+            "subject": {"kind": "player"},
+            "mode": "standalone",
             "expression_kind": "welcome",
             "recently_expressed": false,
             "phase": "notice",
-            "evidence": [],
+            "evidence": [{"evidence_kind": "memory", "id": 88}],
             "target": "player"
           }
         },

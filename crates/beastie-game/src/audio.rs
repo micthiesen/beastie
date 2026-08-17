@@ -4,7 +4,7 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
-use beastie_view::AudioCue;
+use beastie_view::{AudioCommand, AudioCue, PresentationChannel, SemanticOwner};
 use rodio::Player;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Source};
 
@@ -65,6 +65,8 @@ struct ActiveOneShot {
     id: &'static str,
     player: Player,
     base_gain: f32,
+    owner: SemanticOwner,
+    channel: PresentationChannel,
 }
 
 impl AudioBank {
@@ -113,39 +115,72 @@ impl AudioBank {
         }
     }
 
-    pub fn play_queued(&mut self, queued: &mut Vec<&'static str>) {
-        let Some(output) = &self.output else {
-            queued.clear();
-            return;
-        };
-        for id in queued.drain(..) {
-            if id == SWIM_WAKE
-                && self
-                    .one_shots
-                    .iter()
-                    .any(|sound| sound.id == SWIM_WAKE && !sound.player.empty())
-            {
-                continue;
-            }
-            let Some(bytes) = self.sounds.get(id) else {
-                continue;
-            };
-            if let Ok(player) = rodio::play(output.mixer(), Cursor::new(Arc::clone(bytes))) {
-                let base = if id.starts_with("ui/") {
-                    0.45
-                } else if id == SWIM_WAKE {
-                    0.54
-                } else {
-                    0.7
-                };
-                player.set_volume(base * self.effects_gain);
-                self.one_shots.push(ActiveOneShot {
-                    id,
-                    player,
-                    base_gain: base,
-                });
+    pub fn play_queued(&mut self, queued: &mut Vec<AudioCommand>) {
+        reduce_audio_commands(queued);
+        let mut plays = Vec::new();
+        for command in queued.drain(..) {
+            match command {
+                AudioCommand::CancelOwner { owner } => {
+                    self.cancel_where(|sound| sound.owner == owner);
+                }
+                AudioCommand::CancelLowerPriority { owner, channel } => {
+                    self.cancel_where(|sound| {
+                        sound.channel == channel
+                            && owner_priority(sound.owner) < owner_priority(owner)
+                    });
+                }
+                AudioCommand::Play { .. } => plays.push(command),
             }
         }
+        let Some(output) = &self.output else {
+            return;
+        };
+        for command in plays {
+            if let AudioCommand::Play {
+                owner,
+                channel,
+                cue,
+                gain_milli,
+            } = command
+            {
+                let Some(id) = sound_for_cue(cue) else {
+                    continue;
+                };
+                if id == SWIM_WAKE
+                    && self
+                        .one_shots
+                        .iter()
+                        .any(|sound| sound.id == SWIM_WAKE && !sound.player.empty())
+                {
+                    continue;
+                }
+                let Some(bytes) = self.sounds.get(id) else {
+                    continue;
+                };
+                if let Ok(player) = rodio::play(output.mixer(), Cursor::new(Arc::clone(bytes))) {
+                    let base = f32::from(gain_milli.min(1_000)) / 1_000.0;
+                    player.set_volume(base * self.effects_gain);
+                    self.one_shots.push(ActiveOneShot {
+                        id,
+                        player,
+                        base_gain: base,
+                        owner,
+                        channel,
+                    });
+                }
+            }
+        }
+    }
+
+    fn cancel_where(&mut self, predicate: impl Fn(&ActiveOneShot) -> bool) {
+        self.one_shots.retain(|sound| {
+            if predicate(sound) {
+                sound.player.stop();
+                false
+            } else {
+                true
+            }
+        });
     }
 
     pub fn play_speech(&mut self, wav: Arc<[u8]>) {
@@ -205,6 +240,37 @@ impl AudioBank {
     }
 }
 
+const fn owner_priority(owner: SemanticOwner) -> u8 {
+    match owner {
+        SemanticOwner::Ordinary => 0,
+        SemanticOwner::StandaloneRelationship(_) => 1,
+        SemanticOwner::ActionRelationship(_) => 2,
+        SemanticOwner::DirectOutcome => 3,
+    }
+}
+
+pub fn reduce_audio_commands(commands: &mut Vec<AudioCommand>) {
+    let mut reduced = Vec::with_capacity(commands.len());
+    for command in commands.drain(..) {
+        match command {
+            AudioCommand::CancelOwner { owner } => {
+                reduced.retain(|queued| {
+                    !matches!(queued, AudioCommand::Play { owner: queued_owner, .. } if *queued_owner == owner)
+                });
+                reduced.push(command);
+            }
+            AudioCommand::CancelLowerPriority { owner, channel } => {
+                reduced.retain(|queued| {
+                    !matches!(queued, AudioCommand::Play { owner: queued_owner, channel: queued_channel, .. } if *queued_channel == channel && owner_priority(*queued_owner) < owner_priority(owner))
+                });
+                reduced.push(command);
+            }
+            AudioCommand::Play { .. } => reduced.push(command),
+        }
+    }
+    *commands = reduced;
+}
+
 #[derive(Debug, Clone)]
 pub struct AmbientBubbleSchedule {
     seed: u64,
@@ -224,7 +290,7 @@ impl AmbientBubbleSchedule {
         schedule
     }
 
-    pub fn poll(&mut self, now_ms: u64, busy: bool) -> Option<&'static str> {
+    pub fn poll(&mut self, now_ms: u64, busy: bool) -> Option<AudioCue> {
         if now_ms < self.next_at_ms {
             return None;
         }
@@ -233,9 +299,9 @@ impl AmbientBubbleSchedule {
             return None;
         }
         let sound = if self.sequence.is_multiple_of(2) {
-            BUBBLES_1
+            AudioCue::Bubble
         } else {
-            BUBBLES_2
+            AudioCue::BubbleAlternate
         };
         self.schedule_after(now_ms);
         Some(sound)
@@ -311,6 +377,8 @@ pub const fn sound_for_cue(cue: AudioCue) -> Option<&'static str> {
         AudioCue::Annoyed => Some(CREATURE_ANNOYED),
         AudioCue::Sleep => Some(CREATURE_SLEEP),
         AudioCue::UiReject => Some(UI_SELECT),
+        AudioCue::UiConfirm => Some(UI_CONFIRM),
+        AudioCue::BubbleAlternate => Some(BUBBLES_2),
         AudioCue::CaveSettle => Some(CAVE_SETTLE),
     }
 }
@@ -334,6 +402,92 @@ mod tests {
         assert_eq!(sound_for_cue(AudioCue::Sleep), Some(CREATURE_SLEEP));
         assert_eq!(sound_for_cue(AudioCue::Curious), Some(CREATURE_CURIOUS));
         assert_eq!(sound_for_cue(AudioCue::CaveSettle), Some(CAVE_SETTLE));
+    }
+
+    #[test]
+    fn queued_relationship_cancellation_preserves_ui_and_physical_audio() {
+        let relationship = SemanticOwner::ActionRelationship(9);
+        let mut commands = vec![
+            AudioCommand::play(
+                relationship,
+                PresentationChannel::CreatureVoice,
+                AudioCue::Mrr,
+                450,
+            ),
+            AudioCommand::play(
+                SemanticOwner::Ordinary,
+                PresentationChannel::Ui,
+                AudioCue::UiConfirm,
+                450,
+            ),
+            AudioCommand::play(
+                SemanticOwner::DirectOutcome,
+                PresentationChannel::Physical,
+                AudioCue::FoodEat,
+                700,
+            ),
+            AudioCommand::CancelOwner {
+                owner: relationship,
+            },
+        ];
+        reduce_audio_commands(&mut commands);
+        assert!(!commands.iter().any(|command| matches!(
+            command,
+            AudioCommand::Play { owner, .. } if *owner == relationship
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            AudioCommand::Play {
+                channel: PresentationChannel::Ui,
+                ..
+            }
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            AudioCommand::Play {
+                channel: PresentationChannel::Physical,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn direct_outcome_removes_only_lower_priority_creature_voice() {
+        let mut commands = vec![
+            AudioCommand::play(
+                SemanticOwner::StandaloneRelationship(
+                    beastie_core::RelationshipMotifKey::PlayerReturns,
+                ),
+                PresentationChannel::CreatureVoice,
+                AudioCue::Affection,
+                600,
+            ),
+            AudioCommand::play(
+                SemanticOwner::Ordinary,
+                PresentationChannel::Ambience,
+                AudioCue::Bubble,
+                700,
+            ),
+            AudioCommand::CancelLowerPriority {
+                owner: SemanticOwner::DirectOutcome,
+                channel: PresentationChannel::CreatureVoice,
+            },
+        ];
+        reduce_audio_commands(&mut commands);
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| matches!(command, AudioCommand::Play { .. }))
+                .count(),
+            1
+        );
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            AudioCommand::Play {
+                channel: PresentationChannel::Ambience,
+                ..
+            }
+        )));
     }
 
     #[test]

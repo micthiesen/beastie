@@ -94,7 +94,7 @@ fn turn_plan(request: &DialogueRequest) -> Result<TurnPlan, serde_json::Error> {
     }
 
     if let Some(relationship) = &request.context.relationship {
-        let directive = match relationship.motif {
+        let motif_directive = match relationship.motif {
             beastie_protocol::RelationshipMotifKey::SharedToy(_) => {
                 "Express the shared toy motif. Say toy, play, or remembers; use only supplied evidence."
             }
@@ -114,8 +114,14 @@ fn turn_plan(request: &DialogueRequest) -> Result<TurnPlan, serde_json::Error> {
                 "Express the familiar place motif. Say place, stay, or familiar; use only supplied evidence."
             }
         };
+        let directive = format!(
+            "{} This is a {:?} expression about exactly {}; do not substitute another food, toy, person, or place.",
+            motif_directive,
+            relationship.mode,
+            relationship_subject_label(relationship.subject)
+        );
         return Ok(TurnPlan {
-            directive: directive.to_owned(),
+            directive,
             recalled_memory: relationship
                 .evidence
                 .iter()
@@ -227,6 +233,39 @@ fn turn_plan(request: &DialogueRequest) -> Result<TurnPlan, serde_json::Error> {
         recalled_memory: None,
         recalled_belief: None,
     })
+}
+
+fn relationship_subject_label(subject: beastie_protocol::RelationshipSubject) -> &'static str {
+    match subject {
+        beastie_protocol::RelationshipSubject::Food(beastie_protocol::FoodId::Berry) => "berry",
+        beastie_protocol::RelationshipSubject::Food(beastie_protocol::FoodId::Mushroom) => {
+            "mushroom"
+        }
+        beastie_protocol::RelationshipSubject::Food(beastie_protocol::FoodId::Pellet) => "pellet",
+        beastie_protocol::RelationshipSubject::Toy(beastie_protocol::ToyId::Ball) => "ball",
+        beastie_protocol::RelationshipSubject::Toy(beastie_protocol::ToyId::Bell) => "bell",
+        beastie_protocol::RelationshipSubject::Toy(beastie_protocol::ToyId::Sock) => "sock",
+        beastie_protocol::RelationshipSubject::Place(
+            beastie_protocol::SemanticDestination::Cave,
+        ) => "cave",
+        beastie_protocol::RelationshipSubject::Place(
+            beastie_protocol::SemanticDestination::Plant,
+        ) => "plant",
+        beastie_protocol::RelationshipSubject::Place(
+            beastie_protocol::SemanticDestination::Bottom,
+        ) => "aquarium bottom",
+        beastie_protocol::RelationshipSubject::Place(
+            beastie_protocol::SemanticDestination::Toy(beastie_protocol::ToyId::Ball),
+        ) => "ball's place",
+        beastie_protocol::RelationshipSubject::Place(
+            beastie_protocol::SemanticDestination::Toy(beastie_protocol::ToyId::Bell),
+        ) => "bell's place",
+        beastie_protocol::RelationshipSubject::Place(
+            beastie_protocol::SemanticDestination::Toy(beastie_protocol::ToyId::Sock),
+        ) => "sock's place",
+        beastie_protocol::RelationshipSubject::Place(_) => "the selected place",
+        beastie_protocol::RelationshipSubject::Player => "the player",
+    }
 }
 
 pub(crate) fn required_output_terms(request: &DialogueRequest) -> Option<Vec<String>> {
@@ -367,7 +406,7 @@ pub(crate) fn planned_belief(
 ) -> Option<&beastie_protocol::CandidateBelief> {
     request.candidate_beliefs.iter().find(|belief| {
         let relevant = match belief.proposition {
-            BeliefKind::RedFoodIsATrick => beastie_protocol::Concept::Food,
+            BeliefKind::FoodIsATrick => beastie_protocol::Concept::Food,
             BeliefKind::PlayerReturnsAfterSleep => beastie_protocol::Concept::Sleep,
             BeliefKind::ToyIsJealous => beastie_protocol::Concept::Toy,
         };
@@ -603,12 +642,12 @@ mod tests {
         }]);
         value["candidate_beliefs"] = serde_json::json!([{
             "id": 7,
-            "proposition": "red_food_is_a_trick",
-            "summary": "Red food is probably a trick.",
+            "proposition": "food_is_a_trick",
+            "summary": "This kind of food may be a trick.",
             "confidence": 0.8,
             "supporting_memories": [41]
         }]);
-        value["player_said"] = serde_json::json!("Why is red food bad?");
+        value["player_said"] = serde_json::json!("Why is that food bad?");
         value["desired_social_act"] = serde_json::Value::Null;
         value["interpretation"] = serde_json::json!({
             "understood_concepts": ["food", "why"],
@@ -620,7 +659,7 @@ mod tests {
         let request: DialogueRequest = serde_json::from_value(value).expect("valid request");
         let plan = turn_plan(&request).expect("plan should build");
         assert_eq!(plan.recalled_belief, Some(7));
-        assert!(plan.directive.contains("Red food is probably a trick"));
+        assert!(plan.directive.contains("This kind of food may be a trick"));
     }
 
     #[test]

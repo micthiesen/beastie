@@ -321,7 +321,8 @@ pub enum NonverbalAct {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BeliefKind {
-    RedFoodIsATrick,
+    #[serde(alias = "red_food_is_a_trick")]
+    FoodIsATrick,
     PlayerReturnsAfterSleep,
     ToyIsJealous,
 }
@@ -483,14 +484,64 @@ pub enum ActionPhase {
     Recover,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum RelationshipSubject {
+    Food(FoodId),
+    Toy(ToyId),
+    Place(SemanticDestination),
+    Player,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FoodOutcome {
+    Consumed,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationshipExpressionMode {
+    ActionBound,
+    Standalone,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionRelationshipContext {
+    pub motif: RelationshipMotifKey,
+    pub expression_kind: RelationshipExpressionKind,
+    #[serde(default)]
+    pub evidence: Vec<RelationshipEvidence>,
+    pub subject: RelationshipSubject,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionRelationshipMoment {
+    pub action_id: u64,
+    pub context: ActionRelationshipContext,
+    pub started_at_ms: u64,
+    pub expires_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActionTimeline {
+    #[serde(default)]
+    pub action_id: u64,
     pub phase: ActionPhase,
     pub elapsed_ms: u64,
     pub phase_duration_ms: u64,
     pub destination: SemanticDestination,
     pub food_id: Option<u64>,
+    #[serde(default)]
+    pub food: Option<FoodId>,
+    #[serde(default)]
+    pub food_outcome: Option<FoodOutcome>,
+    #[serde(default)]
+    pub relationship: Option<ActionRelationshipContext>,
 }
 
 impl ActionTimeline {
@@ -643,13 +694,32 @@ pub struct IdleLifeState {
     pub visit_evidence: Vec<VisitEvidence>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InteractionState {
     /// A short embodied aftermath of comfort, after which the creature returns to its own life.
     pub affectionate_until_ms: u64,
     /// Kept so a sleeping save can resume restoring energy with a bounded wake-up.
     pub sleep_started_at_ms: Option<u64>,
+    #[serde(default = "first_action_id")]
+    pub next_action_id: u64,
+    #[serde(default)]
+    pub relationship_moment: Option<ActionRelationshipMoment>,
+}
+
+const fn first_action_id() -> u64 {
+    1
+}
+
+impl Default for InteractionState {
+    fn default() -> Self {
+        Self {
+            affectionate_until_ms: 0,
+            sleep_started_at_ms: None,
+            next_action_id: first_action_id(),
+            relationship_moment: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -707,32 +777,44 @@ pub enum RelationshipExpressionKind {
 #[serde(rename_all = "snake_case")]
 pub enum RelationshipTriggerKind {
     PlayerReturn,
-    FamiliarObject,
+    FoodPresented,
+    FoodResolved,
+    ToyEngaged,
+    ComfortCompleted,
+    ComfortNeeded,
     RoutineWindow,
-    NeedState,
+    PlaceArrived,
     RelevantUtterance,
-    ActionCompleted,
+    QuietMoment,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RelationshipTrigger {
     PlayerReturn,
-    FamiliarToy {
-        toy: ToyId,
-    },
-    FamiliarFood {
+    FoodPresented {
         food: FoodId,
     },
+    FoodResolved {
+        food: FoodId,
+        outcome: FoodOutcome,
+    },
+    ToyEngaged {
+        toy: ToyId,
+    },
+    ComfortCompleted,
+    ComfortNeeded,
     RoutineWindow {
         hour_start: u8,
         destination: SemanticDestination,
     },
-    NeedState,
-    RelevantUtterance,
-    ActionCompleted {
+    PlaceArrived {
         destination: SemanticDestination,
     },
+    RelevantUtterance {
+        subject: Option<RelationshipSubject>,
+    },
+    QuietMoment,
 }
 
 impl RelationshipTrigger {
@@ -740,13 +822,33 @@ impl RelationshipTrigger {
     pub const fn kind(self) -> RelationshipTriggerKind {
         match self {
             Self::PlayerReturn => RelationshipTriggerKind::PlayerReturn,
-            Self::FamiliarToy { .. } | Self::FamiliarFood { .. } => {
-                RelationshipTriggerKind::FamiliarObject
-            }
+            Self::FoodPresented { .. } => RelationshipTriggerKind::FoodPresented,
+            Self::FoodResolved { .. } => RelationshipTriggerKind::FoodResolved,
+            Self::ToyEngaged { .. } => RelationshipTriggerKind::ToyEngaged,
+            Self::ComfortCompleted => RelationshipTriggerKind::ComfortCompleted,
+            Self::ComfortNeeded => RelationshipTriggerKind::ComfortNeeded,
             Self::RoutineWindow { .. } => RelationshipTriggerKind::RoutineWindow,
-            Self::NeedState => RelationshipTriggerKind::NeedState,
-            Self::RelevantUtterance => RelationshipTriggerKind::RelevantUtterance,
-            Self::ActionCompleted { .. } => RelationshipTriggerKind::ActionCompleted,
+            Self::PlaceArrived { .. } => RelationshipTriggerKind::PlaceArrived,
+            Self::RelevantUtterance { .. } => RelationshipTriggerKind::RelevantUtterance,
+            Self::QuietMoment => RelationshipTriggerKind::QuietMoment,
+        }
+    }
+
+    #[must_use]
+    pub const fn subject(self) -> Option<RelationshipSubject> {
+        match self {
+            Self::FoodPresented { food } | Self::FoodResolved { food, .. } => {
+                Some(RelationshipSubject::Food(food))
+            }
+            Self::ToyEngaged { toy } => Some(RelationshipSubject::Toy(toy)),
+            Self::ComfortCompleted | Self::ComfortNeeded | Self::PlayerReturn => {
+                Some(RelationshipSubject::Player)
+            }
+            Self::RoutineWindow { destination, .. } | Self::PlaceArrived { destination } => {
+                Some(RelationshipSubject::Place(destination))
+            }
+            Self::RelevantUtterance { subject } => subject,
+            Self::QuietMoment => None,
         }
     }
 }
@@ -765,6 +867,7 @@ pub enum RelationshipBeatPhase {
 pub struct RelationshipBeat {
     pub motif: RelationshipMotifKey,
     pub trigger: RelationshipTrigger,
+    pub subject: Option<RelationshipSubject>,
     pub expression_kind: RelationshipExpressionKind,
     #[serde(default)]
     pub evidence: Vec<RelationshipEvidence>,
@@ -885,7 +988,7 @@ pub struct Creature {
     pub initiated_behavior: Option<InitiatedBehavior>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AquariumCreatureState {
     pub position: NormalizedPosition,
@@ -1368,8 +1471,85 @@ impl WorldState {
                     })
             }
         };
+        let interaction = &self.creature.interaction_state;
+        let action = self.creature.aquarium.action.as_ref();
+        let action_invalid = action.is_some_and(|action| {
+            let food_identity = action.food.zip(action.food_id);
+            let object_matches = food_identity.is_some_and(|(food, id)| {
+                self.aquarium.objects.get(&id).is_some_and(|object| {
+                    matches!(object, WorldObject::Food(candidate) if candidate.food == food)
+                })
+            });
+            let outcome_matches_phase = match action.food_outcome {
+                None => action.phase != ActionPhase::Recover && object_matches,
+                Some(FoodOutcome::Consumed) => {
+                    action.phase == ActionPhase::Recover
+                        && action
+                            .food_id
+                            .is_some_and(|id| !self.aquarium.objects.contains_key(&id))
+                }
+                Some(FoodOutcome::Rejected) => {
+                    action.phase == ActionPhase::Recover
+                        && action.food_id.is_some_and(|id| {
+                            matches!(
+                                self.aquarium.objects.get(&id),
+                                Some(WorldObject::Food(food))
+                                    if food.disposition == FoodDisposition::Rejected
+                            )
+                        })
+                }
+            };
+            let relationship_matches = action.relationship.as_ref().is_none_or(|context| {
+                action.food.is_some_and(|food| {
+                    context.subject == RelationshipSubject::Food(food)
+                        && matches!(
+                            context.motif,
+                            RelationshipMotifKey::TrustedFood(candidate)
+                                | RelationshipMotifKey::FoodGrudge(candidate)
+                                if candidate == food
+                        )
+                        && !matches!(
+                            (context.motif, action.food_outcome),
+                            (
+                                RelationshipMotifKey::TrustedFood(_),
+                                Some(FoodOutcome::Rejected)
+                            ) | (
+                                RelationshipMotifKey::FoodGrudge(_),
+                                Some(FoodOutcome::Consumed)
+                            )
+                        )
+                        && crate::relationship::action_relationship_context_is_grounded(
+                            self, context,
+                        )
+                })
+            });
+            action.action_id == 0
+                || action.action_id >= interaction.next_action_id
+                || action.food.is_none()
+                || action.food_id.is_none()
+                || !outcome_matches_phase
+                || !relationship_matches
+        });
+        let relationship_moment_invalid =
+            interaction
+                .relationship_moment
+                .as_ref()
+                .is_some_and(|moment| {
+                    moment.action_id == 0
+                        || moment.action_id >= interaction.next_action_id
+                        || moment.started_at_ms > self.elapsed_ms
+                        || moment.expires_at_ms <= moment.started_at_ms
+                        || moment.expires_at_ms <= self.elapsed_ms
+                        || !crate::relationship::action_relationship_context_is_grounded(
+                            self,
+                            &moment.context,
+                        )
+                });
         let expression = &self.creature.relationship_expression;
-        if expression.schema_version != crate::RELATIONSHIP_EXPRESSION_SCHEMA_VERSION
+        if interaction.next_action_id == 0
+            || action_invalid
+            || relationship_moment_invalid
+            || expression.schema_version != crate::RELATIONSHIP_EXPRESSION_SCHEMA_VERSION
             || expression.recent.len() > 8
             || expression
                 .last_expressed_at_ms

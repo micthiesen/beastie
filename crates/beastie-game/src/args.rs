@@ -45,6 +45,14 @@ pub struct Args {
     /// Directory for a 60 fps feel-review evidence bundle.
     #[arg(long, requires = "script")]
     pub feel_dir: Option<PathBuf>,
+    /// Validated deterministic starting state used only by scripted feel evidence.
+    #[arg(
+        long,
+        hide = true,
+        requires_all = ["script", "feel_dir"],
+        conflicts_with = "new_game"
+    )]
+    pub feel_initial_save: Option<PathBuf>,
     /// Keep a completed visible scenario open for native input inspection.
     #[arg(long, requires = "script")]
     pub stay_open: bool,
@@ -75,6 +83,30 @@ mod tests {
                 "fixtures/scenarios/aquarium-v1-visible.jsonl",
                 "--feel-dir",
                 "target/feel/run",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn feel_initial_save_requires_the_full_evidence_path() {
+        assert!(
+            Args::try_parse_from([
+                "beastie-game",
+                "--feel-initial-save",
+                "fixtures/saves/feel/trusted-berry.json",
+            ])
+            .is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "beastie-game",
+                "--script",
+                "fixtures/scenarios/feel/relationship-breadth/trusted-berry.jsonl",
+                "--feel-dir",
+                "target/feel/run",
+                "--feel-initial-save",
+                "fixtures/saves/feel/trusted-berry.json",
             ])
             .is_ok()
         );

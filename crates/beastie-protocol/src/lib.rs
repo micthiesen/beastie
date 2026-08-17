@@ -10,12 +10,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
 pub use beastie_core::{
-    BeliefId, BeliefKind, Concept, Idiolect, IdiolectQuirk, UtteranceInterpretation,
-    UtteranceReference,
+    BeliefId, BeliefKind, Concept, FoodId, Idiolect, IdiolectQuirk, SemanticDestination, ToyId,
+    UtteranceInterpretation, UtteranceReference,
 };
 pub use beastie_core::{
-    RelationshipBeatPhase, RelationshipEvidence, RelationshipExpressionKind, RelationshipMotif,
-    RelationshipMotifKey,
+    RelationshipBeatPhase, RelationshipEvidence, RelationshipExpressionKind,
+    RelationshipExpressionMode, RelationshipMotif, RelationshipMotifKey, RelationshipSubject,
 };
 
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -315,6 +315,8 @@ pub struct RecentTurn {
 #[serde(deny_unknown_fields)]
 pub struct RelationshipDialogueContext {
     pub motif: RelationshipMotifKey,
+    pub subject: RelationshipSubject,
+    pub mode: RelationshipExpressionMode,
     pub expression_kind: RelationshipExpressionKind,
     #[serde(default)]
     pub recently_expressed: bool,
@@ -1061,7 +1063,8 @@ fn validate_dialogue_context(request: &DialogueRequest) -> Result<(), Validation
         return Err(ValidationError::ReplyProhibition);
     }
     if let Some(relationship) = &context.relationship
-        && (relationship.evidence.len() > MAX_RELATIONSHIP_EVIDENCE
+        && (relationship.evidence.is_empty()
+            || relationship.evidence.len() > MAX_RELATIONSHIP_EVIDENCE
             || relationship
                 .evidence
                 .iter()
@@ -1124,6 +1127,16 @@ fn validate_dialogue_context(request: &DialogueRequest) -> Result<(), Validation
 }
 
 fn relationship_target_is_canonical(context: &RelationshipDialogueContext) -> bool {
+    let expected_subject = match context.motif {
+        RelationshipMotifKey::SharedToy(toy) => RelationshipSubject::Toy(toy),
+        RelationshipMotifKey::TrustedFood(food) | RelationshipMotifKey::FoodGrudge(food) => {
+            RelationshipSubject::Food(food)
+        }
+        RelationshipMotifKey::FamiliarPlace(destination) => RelationshipSubject::Place(destination),
+        RelationshipMotifKey::ComfortRitual | RelationshipMotifKey::PlayerReturns => {
+            RelationshipSubject::Player
+        }
+    };
     let expected = match context.motif {
         RelationshipMotifKey::SharedToy(toy) => Some(beastie_core::SemanticDestination::Toy(toy)),
         RelationshipMotifKey::ComfortRitual | RelationshipMotifKey::PlayerReturns => {
@@ -1134,7 +1147,8 @@ fn relationship_target_is_canonical(context: &RelationshipDialogueContext) -> bo
         }
         RelationshipMotifKey::FamiliarPlace(destination) => Some(destination),
     };
-    context.target == expected
+    context.subject == expected_subject
+        && context.target == expected
         && context.evidence.iter().all(|evidence| {
             !matches!(
                 evidence,
@@ -1291,7 +1305,7 @@ fn mix_identity(mut value: u64) -> u64 {
 
 fn belief_summary(kind: BeliefKind) -> &'static str {
     match kind {
-        BeliefKind::RedFoodIsATrick => "Red food is probably a trick.",
+        BeliefKind::FoodIsATrick => "This kind of food may be a trick.",
         BeliefKind::PlayerReturnsAfterSleep => "The player returns after sleep.",
         BeliefKind::ToyIsJealous => "The toy is jealous.",
     }
@@ -1430,7 +1444,9 @@ pub fn validate_reply(
         }) {
             return Err(ValidationError::Memory);
         }
-        if !relationship_reply_grounded(relationship.motif, &reply.say) {
+        if !relationship_reply_grounded(relationship.motif, &reply.say)
+            || !relationship_reply_matches_subject(relationship.subject, &reply.say)
+        {
             return Err(ValidationError::UngroundedRelationship);
         }
     }
@@ -1453,6 +1469,30 @@ fn relationship_reply_grounded(motif: RelationshipMotifKey, say: &str) -> bool {
     terms
         .iter()
         .any(|term| words.iter().any(|word| word == term))
+}
+
+fn relationship_reply_matches_subject(subject: RelationshipSubject, say: &str) -> bool {
+    let words = normalized_words(say);
+    let has = |candidate: &str| words.iter().any(|word| word == candidate);
+    match subject {
+        RelationshipSubject::Food(expected) => [FoodId::Berry, FoodId::Mushroom, FoodId::Pellet]
+            .into_iter()
+            .all(|food| food == expected || !has(food_name(food))),
+        RelationshipSubject::Toy(expected) => [ToyId::Ball, ToyId::Bell, ToyId::Sock]
+            .into_iter()
+            .all(|toy| toy == expected || !has(toy_name(toy))),
+        RelationshipSubject::Place(expected) => {
+            let forbidden = [
+                (SemanticDestination::Cave, "cave"),
+                (SemanticDestination::Plant, "plant"),
+                (SemanticDestination::Bottom, "bottom"),
+            ];
+            forbidden
+                .into_iter()
+                .all(|(place, name)| place == expected || !has(name))
+        }
+        RelationshipSubject::Player => true,
+    }
 }
 
 /// Removes prohibited player text before any prompt is serialized, retaining only its category.
@@ -1693,7 +1733,7 @@ pub fn is_reply_fingerprint(value: &str) -> bool {
 fn belief_is_grounded(proposition: BeliefKind, say: &str) -> bool {
     let words = normalized_words(say);
     match proposition {
-        BeliefKind::RedFoodIsATrick => words.iter().any(|word| word == "red" || word == "trick"),
+        BeliefKind::FoodIsATrick => words.iter().any(|word| word == "food" || word == "trick"),
         BeliefKind::PlayerReturnsAfterSleep => words
             .iter()
             .any(|word| matches!(word.as_str(), "return" | "returns" | "sleep")),
@@ -1994,6 +2034,53 @@ mod tests {
     }
 
     #[test]
+    fn relationship_dialogue_keeps_exact_subject_and_mode() {
+        let mut request = request();
+        request.context.relationship = Some(RelationshipDialogueContext {
+            motif: RelationshipMotifKey::TrustedFood(FoodId::Berry),
+            subject: RelationshipSubject::Food(FoodId::Berry),
+            mode: RelationshipExpressionMode::ActionBound,
+            expression_kind: RelationshipExpressionKind::Recognize,
+            recently_expressed: false,
+            phase: None,
+            evidence: vec![RelationshipEvidence::Memory { id: MemoryId(41) }],
+            target: Some(SemanticDestination::Bottom),
+        });
+        assert_eq!(validate_request(&request), Ok(()));
+
+        let berry = DialogueReply {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: request.request_id,
+            say: "trusted berry food.".to_owned(),
+            gesture: Gesture::None,
+            recalled_memory: Some(MemoryId(41)),
+            recalled_belief: None,
+            worker_fallback: None,
+        };
+        assert_eq!(validate_reply(&request, berry.clone()), Ok(berry));
+        let mushroom = DialogueReply {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: request.request_id,
+            say: "trusted mushroom food.".to_owned(),
+            gesture: Gesture::None,
+            recalled_memory: None,
+            recalled_belief: None,
+            worker_fallback: None,
+        };
+        assert_eq!(
+            validate_reply(&request, mushroom),
+            Err(ValidationError::UngroundedRelationship)
+        );
+
+        request.context.relationship.as_mut().unwrap().subject =
+            RelationshipSubject::Food(FoodId::Mushroom);
+        assert_eq!(
+            validate_request(&request),
+            Err(ValidationError::RelationshipShape)
+        );
+    }
+
+    #[test]
     fn rejects_invented_memory_references() {
         let reply = DialogueReply {
             protocol_version: PROTOCOL_VERSION,
@@ -2146,8 +2233,8 @@ mod tests {
         let mut request = request();
         request.candidate_beliefs.push(CandidateBelief {
             id: BeliefId(7),
-            proposition: BeliefKind::RedFoodIsATrick,
-            summary: "Red food is probably a trick.".to_owned(),
+            proposition: BeliefKind::FoodIsATrick,
+            summary: "This kind of food may be a trick.".to_owned(),
             confidence: 0.8,
             supporting_memories: BTreeSet::from([MemoryId(41)]),
         });
@@ -2205,8 +2292,7 @@ mod tests {
             validate_request(&request),
             Err(ValidationError::CandidateBelief)
         );
-        request.candidate_beliefs[0].summary =
-            belief_summary(BeliefKind::RedFoodIsATrick).to_owned();
+        request.candidate_beliefs[0].summary = belief_summary(BeliefKind::FoodIsATrick).to_owned();
         request.candidate_beliefs[0].supporting_memories = BTreeSet::from([MemoryId(999)]);
         assert_eq!(
             validate_request(&request),

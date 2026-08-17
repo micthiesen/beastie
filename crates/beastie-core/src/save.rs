@@ -11,7 +11,8 @@ use crate::{
 
 const LEGACY_SAVE_VERSION: u32 = 1;
 const AQUARIUM_SAVE_VERSION: u32 = 2;
-const PREVIOUS_SAVE_VERSION: u32 = 3;
+const PRE_RELATIONSHIP_SAVE_VERSION: u32 = 3;
+const RELATIONSHIP_SAVE_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,7 +44,7 @@ impl SaveGame {
         }
         if matches!(
             header.save_version,
-            AQUARIUM_SAVE_VERSION | PREVIOUS_SAVE_VERSION
+            AQUARIUM_SAVE_VERSION | PRE_RELATIONSHIP_SAVE_VERSION | RELATIONSHIP_SAVE_VERSION
         ) {
             return PreviousSaveGame::from_json(source, header.save_version);
         }
@@ -115,6 +116,21 @@ impl PreviousSaveGame {
                 creature.remove("movement");
             }
         }
+        if source_version == RELATIONSHIP_SAVE_VERSION
+            && let Some(expression) = value
+                .get_mut("world")
+                .and_then(|world| world.get_mut("creature"))
+                .and_then(|creature| creature.get_mut("relationship_expression"))
+                .and_then(serde_json::Value::as_object_mut)
+        {
+            // V4 persisted broad triggers that no longer have an exact semantic subject. The
+            // expression ledger is history-safe to retain, but the transient active beat is not.
+            expression.insert("active".into(), serde_json::Value::Null);
+            expression.insert(
+                "schema_version".into(),
+                crate::RELATIONSHIP_EXPRESSION_SCHEMA_VERSION.into(),
+            );
+        }
         let mut previous = serde_json::from_value::<Self>(value).map_err(SaveError::Json)?;
         if previous.save_version != source_version || previous.world.save_version != source_version
         {
@@ -122,6 +138,9 @@ impl PreviousSaveGame {
         }
         previous.save_version = SAVE_VERSION;
         previous.world.save_version = SAVE_VERSION;
+        if source_version == RELATIONSHIP_SAVE_VERSION {
+            migrate_v4_action(&mut previous.world);
+        }
         let save = SaveGame {
             save_version: SAVE_VERSION,
             world: previous.world,
@@ -130,6 +149,31 @@ impl PreviousSaveGame {
         save.validate()?;
         Ok(save)
     }
+}
+
+fn migrate_v4_action(world: &mut WorldState) {
+    world.creature.interaction_state.next_action_id = 1;
+    world.creature.interaction_state.relationship_moment = None;
+    let Some(mut action) = world.creature.aquarium.action.take() else {
+        return;
+    };
+    let Some(object_id) = action.food_id else {
+        return;
+    };
+    let Some(crate::WorldObject::Food(food)) = world.aquarium.objects.get(&object_id) else {
+        // A consumed V4 action no longer carries its semantic FoodId, so its transient recovery
+        // cannot be represented exactly. Canonical memories and outcomes are already retained.
+        return;
+    };
+    action.action_id = 1;
+    action.food = Some(food.food);
+    action.food_outcome = match food.disposition {
+        crate::FoodDisposition::Rejected => Some(crate::FoodOutcome::Rejected),
+        _ => None,
+    };
+    action.relationship = None;
+    world.creature.interaction_state.next_action_id = 2;
+    world.creature.aquarium.action = Some(action);
 }
 
 #[derive(Deserialize)]

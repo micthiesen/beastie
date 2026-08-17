@@ -183,6 +183,9 @@ pub enum CursorKind {
 #[serde(rename_all = "snake_case")]
 pub enum PresentationCueKind {
     Notice,
+    PositiveNotice,
+    FoodSuspicion,
+    PlaceNotice,
     Recoil,
     Delight,
     Suspicion,
@@ -196,9 +199,41 @@ pub enum PresentationCueKind {
     AquariumFull,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum SemanticOwner {
+    Ordinary,
+    StandaloneRelationship(RelationshipMotifKey),
+    ActionRelationship(u64),
+    DirectOutcome,
+}
+
+impl SemanticOwner {
+    const fn priority(self) -> u8 {
+        match self {
+            Self::Ordinary => 0,
+            Self::StandaloneRelationship(_) => 1,
+            Self::ActionRelationship(_) => 2,
+            Self::DirectOutcome => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresentationChannel {
+    CreatureExpression,
+    CreatureVoice,
+    Physical,
+    Ui,
+    Ambience,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PresentationCue {
+    pub owner: SemanticOwner,
+    pub channel: PresentationChannel,
     pub kind: PresentationCueKind,
     pub starts_at_ms: u64,
     pub expires_at_ms: u64,
@@ -355,21 +390,37 @@ impl ViewState {
         self.status_expires_at_ms = None;
     }
 
-    /// Appends important reactions instead of replacing the cue currently on screen.
-    pub fn observe_events(&mut self, events: &[GameEvent], now_ms: u64) {
+    /// Projects an authoritative event batch and returns its owned audio commands.
+    pub fn observe_events(&mut self, events: &[GameEvent], now_ms: u64) -> AudioPlan {
         self.expire(now_ms);
         for event in events {
-            if matches!(event, GameEvent::RelationshipBeatInterrupted(_)) {
-                // A relationship beat is presentation-only. It must not outlive an
-                // authoritative interruption or mask the next simulation event.
-                self.cue_queue.clear();
-                continue;
+            match event {
+                GameEvent::RelationshipBeatInterrupted(motif)
+                | GameEvent::RelationshipBeatCompleted(motif) => {
+                    self.cancel_owner(SemanticOwner::StandaloneRelationship(*motif));
+                }
+                GameEvent::ActionRelationshipInterrupted { action_id, .. } => {
+                    self.cancel_owner(SemanticOwner::ActionRelationship(*action_id));
+                }
+                GameEvent::ActionRelationshipCompleted { action_id, .. } => {
+                    self.cancel_owner(SemanticOwner::ActionRelationship(*action_id));
+                    self.cancel_owner(SemanticOwner::DirectOutcome);
+                }
+                GameEvent::RelationshipBeatPhaseChanged {
+                    motif: motif @ RelationshipMotifKey::FamiliarPlace(_),
+                    to,
+                    ..
+                } if *to != RelationshipBeatPhase::Notice => {
+                    self.cancel_owner(SemanticOwner::StandaloneRelationship(*motif));
+                }
+                _ => {}
             }
             let cue = cue_for_event(event);
-            if let Some((kind, duration_ms)) = cue {
-                self.enqueue_cue(kind, duration_ms, now_ms);
+            if let Some((owner, kind, duration_ms)) = cue {
+                self.enqueue_owned_cue(owner, kind, duration_ms, now_ms);
             }
         }
+        audio_plan_for_events(events)
     }
 
     pub fn expire(&mut self, now_ms: u64) {
@@ -393,29 +444,36 @@ impl ViewState {
     }
 
     pub fn enqueue_cue(&mut self, kind: PresentationCueKind, duration_ms: u64, now_ms: u64) {
+        self.enqueue_owned_cue(SemanticOwner::Ordinary, kind, duration_ms, now_ms);
+    }
+
+    pub fn enqueue_owned_cue(
+        &mut self,
+        owner: SemanticOwner,
+        kind: PresentationCueKind,
+        duration_ms: u64,
+        now_ms: u64,
+    ) {
         self.cue_queue.retain(|cue| cue.expires_at_ms > now_ms);
         if let Some(last) = self
             .cue_queue
             .last_mut()
-            .filter(|cue| cue.kind == kind && cue.expires_at_ms > now_ms)
+            .filter(|cue| cue.owner == owner && cue.kind == kind && cue.expires_at_ms > now_ms)
         {
             last.expires_at_ms = last
                 .expires_at_ms
                 .max(now_ms.saturating_add(duration_ms.max(1)));
             return;
         }
-        if matches!(
-            kind,
-            PresentationCueKind::Affection
-                | PresentationCueKind::Comfort
-                | PresentationCueKind::Delight
-                | PresentationCueKind::Suspicion
-                | PresentationCueKind::Spit
-                | PresentationCueKind::AquariumFull
-        ) {
-            // Direct player feedback must be legible when it happens. Do not make comfort or a
-            // forceful refusal wait behind seconds of low-priority ambient/action punctuation.
-            self.cue_queue.clear();
+        self.cue_queue.retain(|cue| {
+            cue.channel != PresentationChannel::CreatureExpression
+                || cue.owner.priority() > owner.priority()
+        });
+        if self.cue_queue.iter().any(|cue| {
+            cue.channel == PresentationChannel::CreatureExpression
+                && cue.owner.priority() > owner.priority()
+        }) {
+            return;
         }
         if self.cue_queue.len() >= CUE_QUEUE_LIMIT {
             return;
@@ -425,10 +483,16 @@ impl ViewState {
             .last()
             .map_or(now_ms, |cue| cue.expires_at_ms.max(now_ms));
         self.cue_queue.push(PresentationCue {
+            owner,
+            channel: PresentationChannel::CreatureExpression,
             kind,
             starts_at_ms,
             expires_at_ms: starts_at_ms.saturating_add(duration_ms.max(1)),
         });
+    }
+
+    fn cancel_owner(&mut self, owner: SemanticOwner) {
+        self.cue_queue.retain(|cue| cue.owner != owner);
     }
 
     #[must_use]
@@ -598,15 +662,53 @@ pub enum AudioCue {
     Annoyed,
     Sleep,
     UiReject,
+    UiConfirm,
+    BubbleAlternate,
     /// Recovery sound for a creature completing a retreat into the authored cave asset.
     CaveSettle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AudioCommand {
+    Play {
+        owner: SemanticOwner,
+        channel: PresentationChannel,
+        cue: AudioCue,
+        /// Per-command gain in thousandths, before the user's effects setting.
+        gain_milli: u16,
+    },
+    CancelOwner {
+        owner: SemanticOwner,
+    },
+    CancelLowerPriority {
+        owner: SemanticOwner,
+        channel: PresentationChannel,
+    },
+}
+
+impl AudioCommand {
+    #[must_use]
+    pub const fn play(
+        owner: SemanticOwner,
+        channel: PresentationChannel,
+        cue: AudioCue,
+        gain_milli: u16,
+    ) -> Self {
+        Self::Play {
+            owner,
+            channel,
+            cue,
+            gain_milli,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AudioPlan {
     pub ambience: Vec<AudioCue>,
-    pub events: Vec<AudioCue>,
+    pub events: Vec<AudioCommand>,
 }
 
 #[must_use]
@@ -618,56 +720,160 @@ pub fn audio_plan_for_events(events: &[GameEvent]) -> AudioPlan {
         .iter()
         .any(|event| matches!(event, GameEvent::ToyRejected(_)));
     let comforted = events.contains(&GameEvent::Comforted);
-    let mut cues = Vec::new();
+    let mut commands = Vec::new();
     for event in events {
-        let cue = match event {
-            GameEvent::FoodDropped { .. } => Some(AudioCue::FoodDrop),
-            GameEvent::FoodDropRejected(_) => Some(AudioCue::UiReject),
-            GameEvent::FoodConsumed(_) => Some(AudioCue::FoodEat),
-            GameEvent::FoodRejected(_) => Some(AudioCue::FoodReject),
-            GameEvent::FoodSettled(_) => Some(AudioCue::Sand),
-            GameEvent::FoodExpired(_) => Some(AudioCue::Bubble),
-            GameEvent::ToyPlayed(_) => Some(AudioCue::ToyImpact),
-            GameEvent::ToyRejected(_) | GameEvent::UtteranceRefused => Some(AudioCue::Annoyed),
-            GameEvent::Comforted => Some(AudioCue::Affection),
-            GameEvent::SleepStarted => Some(AudioCue::Sleep),
-            GameEvent::SleepEnded => Some(AudioCue::Wake),
+        let ordinary = SemanticOwner::Ordinary;
+        let physical = PresentationChannel::Physical;
+        let voice = PresentationChannel::CreatureVoice;
+        let play = match event {
+            GameEvent::FoodDropped { .. } => Some((ordinary, physical, AudioCue::FoodDrop, 700)),
+            GameEvent::FoodDropRejected(_) => {
+                Some((ordinary, PresentationChannel::Ui, AudioCue::UiReject, 450))
+            }
+            GameEvent::FoodConsumed(_) => Some((
+                SemanticOwner::DirectOutcome,
+                physical,
+                AudioCue::FoodEat,
+                700,
+            )),
+            GameEvent::FoodRejected(_) => Some((
+                SemanticOwner::DirectOutcome,
+                physical,
+                AudioCue::FoodReject,
+                700,
+            )),
+            GameEvent::FoodSettled(_) => Some((ordinary, physical, AudioCue::Sand, 700)),
+            GameEvent::FoodExpired(_) => Some((
+                ordinary,
+                PresentationChannel::Ambience,
+                AudioCue::Bubble,
+                700,
+            )),
+            GameEvent::ToyPlayed(_) => Some((
+                SemanticOwner::DirectOutcome,
+                physical,
+                AudioCue::ToyImpact,
+                700,
+            )),
+            GameEvent::ToyRejected(_) | GameEvent::UtteranceRefused => {
+                Some((SemanticOwner::DirectOutcome, voice, AudioCue::Annoyed, 700))
+            }
+            GameEvent::Comforted => Some((
+                SemanticOwner::DirectOutcome,
+                voice,
+                AudioCue::Affection,
+                700,
+            )),
+            GameEvent::SleepStarted => {
+                Some((SemanticOwner::DirectOutcome, voice, AudioCue::Sleep, 700))
+            }
+            GameEvent::SleepEnded => {
+                Some((SemanticOwner::DirectOutcome, voice, AudioCue::Wake, 700))
+            }
             GameEvent::ActionPhaseChanged {
                 to: ActionPhase::Approach,
                 ..
-            } => Some(AudioCue::SwimWake),
+            } => Some((ordinary, physical, AudioCue::SwimWake, 540)),
             GameEvent::SpeechPerceived(SpeechAttention::Glanced | SpeechAttention::Attended)
-            | GameEvent::TalkAccepted { .. } => Some(AudioCue::Curious),
+            | GameEvent::TalkAccepted { .. } => Some((ordinary, voice, AudioCue::Curious, 700)),
             GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer) if !comforted => {
-                Some(AudioCue::Mrr)
+                Some((ordinary, voice, AudioCue::Mrr, 700))
             }
-            GameEvent::NonverbalAct(NonverbalAct::RefuseAndStare) => Some(AudioCue::Annoyed),
+            GameEvent::NonverbalAct(NonverbalAct::RefuseAndStare) => {
+                Some((ordinary, voice, AudioCue::Annoyed, 700))
+            }
             GameEvent::NonverbalAct(NonverbalAct::PushFoodAway(_) | NonverbalAct::RefuseToEat)
                 if !food_rejected =>
             {
-                Some(AudioCue::FoodReject)
+                Some((
+                    SemanticOwner::DirectOutcome,
+                    physical,
+                    AudioCue::FoodReject,
+                    700,
+                ))
             }
             GameEvent::NonverbalAct(NonverbalAct::TakeToyAway(_)) if !toy_rejected => {
-                Some(AudioCue::Annoyed)
+                Some((SemanticOwner::DirectOutcome, voice, AudioCue::Annoyed, 700))
             }
-            GameEvent::NonverbalAct(NonverbalAct::UndoTidy) => Some(AudioCue::Sand),
+            GameEvent::NonverbalAct(NonverbalAct::UndoTidy) => {
+                Some((ordinary, physical, AudioCue::Sand, 700))
+            }
+            GameEvent::ActionRelationshipStarted {
+                action_id, motif, ..
+            } => match motif {
+                RelationshipMotifKey::TrustedFood(_) => Some((
+                    SemanticOwner::ActionRelationship(*action_id),
+                    voice,
+                    AudioCue::Mrr,
+                    450,
+                )),
+                RelationshipMotifKey::FoodGrudge(_) => Some((
+                    SemanticOwner::ActionRelationship(*action_id),
+                    voice,
+                    AudioCue::Annoyed,
+                    400,
+                )),
+                _ => None,
+            },
             GameEvent::RelationshipBeatStarted {
                 motif, expression, ..
-            } => Some(relationship_audio_cue(*motif, *expression)),
-            GameEvent::RelationshipBeatCompleted(RelationshipMotifKey::FamiliarPlace(
-                SemanticDestination::Cave,
-            )) => Some(AudioCue::CaveSettle),
+            } if !matches!(motif, RelationshipMotifKey::FamiliarPlace(_)) => Some((
+                SemanticOwner::StandaloneRelationship(*motif),
+                voice,
+                relationship_audio_cue(*motif, *expression),
+                600,
+            )),
+            GameEvent::RelationshipBeatPhaseChanged {
+                motif: RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
+                to: RelationshipBeatPhase::Act,
+                ..
+            } => Some((
+                SemanticOwner::StandaloneRelationship(RelationshipMotifKey::FamiliarPlace(
+                    SemanticDestination::Cave,
+                )),
+                physical,
+                AudioCue::CaveSettle,
+                700,
+            )),
             _ => None,
         };
-        if let Some(cue) = cue
-            && !cues.contains(&cue)
-        {
-            cues.push(cue);
+        match event {
+            GameEvent::RelationshipBeatInterrupted(motif)
+            | GameEvent::RelationshipBeatCompleted(motif) => {
+                commands.push(AudioCommand::CancelOwner {
+                    owner: SemanticOwner::StandaloneRelationship(*motif),
+                })
+            }
+            GameEvent::ActionRelationshipInterrupted { action_id, .. }
+            | GameEvent::ActionRelationshipCompleted { action_id, .. } => {
+                commands.push(AudioCommand::CancelOwner {
+                    owner: SemanticOwner::ActionRelationship(*action_id),
+                })
+            }
+            GameEvent::ActionRelationshipResolved { action_id, .. } => {
+                commands.push(AudioCommand::CancelOwner {
+                    owner: SemanticOwner::ActionRelationship(*action_id),
+                })
+            }
+            GameEvent::FoodConsumed(_)
+            | GameEvent::FoodRejected(_)
+            | GameEvent::ToyPlayed(_)
+            | GameEvent::Comforted => commands.push(AudioCommand::CancelLowerPriority {
+                owner: SemanticOwner::DirectOutcome,
+                channel: PresentationChannel::CreatureVoice,
+            }),
+            _ => {}
+        }
+        if let Some((owner, channel, cue, gain_milli)) = play {
+            let command = AudioCommand::play(owner, channel, cue, gain_milli);
+            if !commands.contains(&command) {
+                commands.push(command);
+            }
         }
     }
     AudioPlan {
         ambience: Vec::new(),
-        events: cues,
+        events: commands,
     }
 }
 
@@ -738,7 +944,6 @@ pub fn logical_to_world(x: i32, y: i32) -> NormalizedPosition {
 
 #[must_use]
 pub fn plan(state: &WorldState, view: &ViewState) -> (RenderPlan, AudioPlan) {
-    let now_ms = state.elapsed_ms;
     let mut sprites = environment_sprites(state, view);
     let mut rects = environment_rects(state, view);
     let mut text = Vec::new();
@@ -776,8 +981,6 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (RenderPlan, AudioPlan) {
     sprites.sort_by_key(|command| command.layer);
     rects.sort_by_key(|command| command.layer);
     text.sort_by_key(|command| command.layer);
-    let active_cue = view.active_cue(now_ms);
-    let events = active_cue.into_iter().map(audio_for_cue).collect();
     (
         RenderPlan {
             sprites,
@@ -788,7 +991,7 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (RenderPlan, AudioPlan) {
         },
         AudioPlan {
             ambience: vec![AudioCue::AquariumHum],
-            events,
+            events: Vec::new(),
         },
     )
 }
@@ -1076,7 +1279,7 @@ fn add_objects(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCom
 }
 
 fn add_creature(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCommand>) {
-    let creature = state.creature.aquarium;
+    let creature = &state.creature.aquarium;
     let (center_x, center_y) = world_to_logical(creature.position);
     let (motion_offset_x, motion_offset_y) = presentation_offset_for(
         view,
@@ -1088,7 +1291,7 @@ fn add_creature(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCo
         (center_x - CREATURE_CANVAS_SIZE / 2).clamp(CREATURE_BODY_MIN_X, CREATURE_BODY_MAX_X);
     let mut y =
         (center_y - CREATURE_CANVAS_SIZE / 2).clamp(CREATURE_BODY_MIN_Y, CREATURE_BODY_MAX_Y);
-    let cue = view.active_cue(state.elapsed_ms);
+    let cue = effective_cue_timing(state, view).map(|(kind, _)| kind);
     if dialogue_active(view) {
         x = if center_x >= LOGICAL_WIDTH / 2 {
             x.clamp(168, 184)
@@ -1119,7 +1322,7 @@ fn add_creature(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCo
     let creature_offset_y = motion_offset_y.saturating_add(bob_offset_y);
     if !view.reduced_shake
         && matches!(
-            view.active_cue(state.elapsed_ms),
+            effective_cue_timing(state, view).map(|(kind, _)| kind),
             Some(PresentationCueKind::Recoil | PresentationCueKind::Spit)
         )
     {
@@ -1163,14 +1366,14 @@ fn add_creature(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCo
             creature_offset_y,
         ));
     }
-    if let Some(cue) = view.active_cue(state.elapsed_ms) {
+    if let Some((cue, cue_elapsed_ms)) = effective_cue_timing(state, view) {
         sprites.push(with_presentation_offset(
             effect_sprite(
                 cue,
                 x,
                 y,
                 body_flip,
-                u8::try_from((elapsed_ms / 180) % 4).unwrap_or_default(),
+                u8::try_from((cue_elapsed_ms / 180) % 4).unwrap_or_default(),
             ),
             motion_offset_x,
             creature_offset_y,
@@ -2529,7 +2732,7 @@ fn discovered_fact(state: &WorldState) -> Option<String> {
 }
 
 fn creature_pose(state: &WorldState) -> &'static str {
-    if let Some(action) = state.creature.aquarium.action {
+    if let Some(action) = state.creature.aquarium.action.as_ref() {
         return match action.phase {
             ActionPhase::Notice | ActionPhase::Gaze | ActionPhase::Inspect => "inspect",
             ActionPhase::Brake | ActionPhase::Turn => "turn",
@@ -2559,7 +2762,7 @@ fn creature_pose(state: &WorldState) -> &'static str {
 }
 
 fn behavior_name(state: &WorldState) -> &'static str {
-    if let Some(action) = state.creature.aquarium.action {
+    if let Some(action) = state.creature.aquarium.action.as_ref() {
         return match action.phase {
             ActionPhase::Notice => "noticed something",
             ActionPhase::Brake => "stopping",
@@ -2598,32 +2801,63 @@ fn behavior_name(state: &WorldState) -> &'static str {
     }
 }
 
-fn cue_for_event(event: &GameEvent) -> Option<(PresentationCueKind, u64)> {
+fn cue_for_event(event: &GameEvent) -> Option<(SemanticOwner, PresentationCueKind, u64)> {
+    let ordinary = SemanticOwner::Ordinary;
+    let direct = SemanticOwner::DirectOutcome;
     match event {
-        GameEvent::FoodDropped { .. } => Some((PresentationCueKind::Notice, 700)),
-        GameEvent::FoodConsumed(_) => Some((PresentationCueKind::Crumbs, 900)),
-        GameEvent::FoodRejected(_) => Some((PresentationCueKind::Spit, 1_100)),
-        GameEvent::ToyPlayed(_) => Some((PresentationCueKind::Delight, 900)),
-        GameEvent::ToyRejected(_) => Some((PresentationCueKind::Suspicion, 1_100)),
+        GameEvent::FoodDropped { .. } => Some((ordinary, PresentationCueKind::Notice, 700)),
+        GameEvent::FoodConsumed(_) => Some((direct, PresentationCueKind::Crumbs, 900)),
+        GameEvent::FoodRejected(_) => Some((direct, PresentationCueKind::Spit, 1_100)),
+        GameEvent::ToyPlayed(_) => Some((direct, PresentationCueKind::Delight, 900)),
+        GameEvent::ToyRejected(_) => Some((direct, PresentationCueKind::Suspicion, 1_100)),
         GameEvent::FoodDropRejected(FoodDropRejectionReason::AquariumFull) => {
-            Some((PresentationCueKind::AquariumFull, 1_300))
+            Some((direct, PresentationCueKind::AquariumFull, 1_300))
         }
-        GameEvent::Comforted => Some((PresentationCueKind::Comfort, 1_200)),
-        GameEvent::SleepStarted => Some((PresentationCueKind::Sleep, 1_000)),
-        GameEvent::FoodSettled(_) => Some((PresentationCueKind::SandPuff, 700)),
-        GameEvent::NonverbalAct(act) => Some((cue_for_nonverbal(*act), 1_100)),
+        GameEvent::Comforted => Some((direct, PresentationCueKind::Comfort, 1_200)),
+        GameEvent::SleepStarted => Some((direct, PresentationCueKind::Sleep, 1_000)),
+        GameEvent::FoodSettled(_) => Some((ordinary, PresentationCueKind::SandPuff, 700)),
+        GameEvent::NonverbalAct(act) => Some((direct, cue_for_nonverbal(*act), 1_100)),
         GameEvent::ActionPhaseChanged {
             to: ActionPhase::Approach,
             ..
-        } => Some((PresentationCueKind::Wake, 650)),
+        } => Some((ordinary, PresentationCueKind::Wake, 650)),
         GameEvent::SpeechPerceived(SpeechAttention::Glanced | SpeechAttention::Attended) => {
-            Some((PresentationCueKind::Notice, 900))
+            Some((ordinary, PresentationCueKind::Notice, 900))
         }
-        GameEvent::TalkAccepted { .. } => Some((PresentationCueKind::Notice, 700)),
+        GameEvent::TalkAccepted { .. } => Some((ordinary, PresentationCueKind::Notice, 700)),
+        GameEvent::ActionRelationshipStarted {
+            action_id, motif, ..
+        } => Some((
+            SemanticOwner::ActionRelationship(*action_id),
+            match motif {
+                RelationshipMotifKey::TrustedFood(_) => PresentationCueKind::PositiveNotice,
+                RelationshipMotifKey::FoodGrudge(_) => PresentationCueKind::FoodSuspicion,
+                _ => relationship_cue(*motif, RelationshipExpressionKind::Notice),
+            },
+            1_400,
+        )),
         GameEvent::RelationshipBeatStarted {
             motif, expression, ..
-        } => Some((relationship_cue(*motif, *expression), 1_400)),
+        } => Some((
+            SemanticOwner::StandaloneRelationship(*motif),
+            relationship_cue(*motif, *expression),
+            1_400,
+        )),
+        GameEvent::RelationshipBeatPhaseChanged {
+            motif: motif @ RelationshipMotifKey::FamiliarPlace(_),
+            to: RelationshipBeatPhase::Notice,
+            ..
+        } => Some((
+            SemanticOwner::StandaloneRelationship(*motif),
+            PresentationCueKind::PlaceNotice,
+            relationship_phase_duration(RelationshipBeatPhase::Notice),
+        )),
+        GameEvent::RelationshipBeatPhaseChanged {
+            motif: RelationshipMotifKey::FamiliarPlace(_),
+            ..
+        } => None,
         GameEvent::RelationshipBeatPhaseChanged { motif, to, .. } => Some((
+            SemanticOwner::StandaloneRelationship(*motif),
             relationship_phase_cue(*motif, *to),
             relationship_phase_duration(*to),
         )),
@@ -2660,7 +2894,7 @@ fn relationship_cue(
             PresentationCueKind::Notice
         }
         RelationshipMotifKey::PlayerReturns => PresentationCueKind::Affection,
-        RelationshipMotifKey::FamiliarPlace(_) => PresentationCueKind::Notice,
+        RelationshipMotifKey::FamiliarPlace(_) => PresentationCueKind::PlaceNotice,
     }
 }
 
@@ -2696,21 +2930,6 @@ fn cue_for_nonverbal(act: NonverbalAct) -> PresentationCueKind {
     }
 }
 
-fn audio_for_cue(cue: PresentationCueKind) -> AudioCue {
-    match cue {
-        PresentationCueKind::Notice | PresentationCueKind::Wake => AudioCue::Wake,
-        PresentationCueKind::Recoil
-        | PresentationCueKind::Suspicion
-        | PresentationCueKind::Spit => AudioCue::FoodReject,
-        PresentationCueKind::AquariumFull => AudioCue::UiReject,
-        PresentationCueKind::Delight => AudioCue::ToyImpact,
-        PresentationCueKind::Crumbs => AudioCue::FoodEat,
-        PresentationCueKind::Affection | PresentationCueKind::Comfort => AudioCue::Affection,
-        PresentationCueKind::SandPuff => AudioCue::Sand,
-        PresentationCueKind::Sleep => AudioCue::Sleep,
-    }
-}
-
 fn animation_frame(pose: &str, elapsed_ms: u64) -> u8 {
     let frame_ms = match pose {
         "swim" => ACTION_SWIM_FRAME_MS,
@@ -2722,6 +2941,46 @@ fn animation_frame(pose: &str, elapsed_ms: u64) -> u8 {
     u8::try_from((elapsed_ms / frame_ms) % frame_count).unwrap_or_default()
 }
 
+fn action_relationship_cue(
+    state: &WorldState,
+) -> Option<(SemanticOwner, PresentationCueKind, u64)> {
+    let action = state.creature.aquarium.action.as_ref()?;
+    let context = action.relationship.as_ref()?;
+    if matches!(action.phase, ActionPhase::Act | ActionPhase::Recover) {
+        return None;
+    }
+    let kind = match context.motif {
+        RelationshipMotifKey::TrustedFood(_) => PresentationCueKind::PositiveNotice,
+        RelationshipMotifKey::FoodGrudge(_) => PresentationCueKind::FoodSuspicion,
+        _ => return None,
+    };
+    Some((
+        SemanticOwner::ActionRelationship(action.action_id),
+        kind,
+        action.elapsed_ms,
+    ))
+}
+
+fn effective_cue_timing(
+    state: &WorldState,
+    view: &ViewState,
+) -> Option<(PresentationCueKind, u64)> {
+    let queued = view
+        .cue_queue
+        .iter()
+        .filter(|cue| state.elapsed_ms >= cue.starts_at_ms && state.elapsed_ms < cue.expires_at_ms)
+        .max_by_key(|cue| cue.owner.priority());
+    let action = action_relationship_cue(state);
+    match (queued, action) {
+        (Some(cue), Some((owner, kind, elapsed))) if owner.priority() > cue.owner.priority() => {
+            Some((kind, elapsed))
+        }
+        (Some(cue), _) => Some((cue.kind, state.elapsed_ms.saturating_sub(cue.starts_at_ms))),
+        (None, Some((_, kind, elapsed))) => Some((kind, elapsed)),
+        (None, None) => None,
+    }
+}
+
 fn body_sprite(
     state: &WorldState,
     view: &ViewState,
@@ -2729,7 +2988,7 @@ fn body_sprite(
     elapsed_ms: u64,
     side_flip: SpriteFlip,
 ) -> (String, SpriteFlip, u8) {
-    let cue_timing = view.active_cue_timing(state.elapsed_ms);
+    let cue_timing = effective_cue_timing(state, view);
     let cue = cue_timing.map(|(kind, _)| kind);
     let mood = visual_mood_name(state, cue);
     let faces_player = view.speaking
@@ -2773,6 +3032,7 @@ fn body_sprite(
             .creature
             .aquarium
             .action
+            .as_ref()
             .map_or(elapsed_ms, |action| action.elapsed_ms);
         return (
             asset.to_owned(),
@@ -2835,6 +3095,9 @@ fn reaction_body_asset(
     side_flip: SpriteFlip,
 ) -> Option<(&'static str, SpriteFlip)> {
     match cue {
+        PresentationCueKind::PositiveNotice
+        | PresentationCueKind::FoodSuspicion
+        | PresentationCueKind::PlaceNotice => None,
         PresentationCueKind::Notice => {
             Some(("creature-v1/reaction/notice-south", SpriteFlip::None))
         }
@@ -2870,6 +3133,9 @@ fn action_body_asset(pose: &str) -> Option<&'static str> {
 
 fn visual_mood_name(state: &WorldState, cue: Option<PresentationCueKind>) -> &'static str {
     match cue {
+        Some(PresentationCueKind::PositiveNotice) => "content",
+        Some(PresentationCueKind::FoodSuspicion) => "resentful",
+        Some(PresentationCueKind::PlaceNotice) => "curious",
         Some(PresentationCueKind::Recoil)
         | Some(PresentationCueKind::Spit)
         | Some(PresentationCueKind::AquariumFull) => "resentful",
@@ -2936,7 +3202,10 @@ fn effect_sprite(
 ) -> SpriteCommand {
     let left = matches!(flip, SpriteFlip::Horizontal);
     let (id, x, y) = match cue {
-        PresentationCueKind::Notice
+        PresentationCueKind::PositiveNotice
+        | PresentationCueKind::FoodSuspicion
+        | PresentationCueKind::PlaceNotice
+        | PresentationCueKind::Notice
         | PresentationCueKind::Suspicion
         | PresentationCueKind::Recoil
         | PresentationCueKind::AquariumFull => (
@@ -3386,9 +3655,19 @@ mod tests {
 
     use super::*;
     use beastie_core::{
-        ActionTimeline, FoodBuoyancy, FoodObject, NormalizedVelocity, RelationshipTrigger,
-        SemanticDestination,
+        ActionRelationshipContext, ActionTimeline, FoodBuoyancy, FoodObject, NormalizedVelocity,
+        RelationshipSubject, RelationshipTrigger, SemanticDestination,
     };
+
+    fn played_cues(plan: AudioPlan) -> Vec<AudioCue> {
+        plan.events
+            .into_iter()
+            .filter_map(|command| match command {
+                AudioCommand::Play { cue, .. } => Some(cue),
+                _ => None,
+            })
+            .collect()
+    }
 
     #[test]
     fn coordinate_projection_rounds_to_whole_pixels_and_clamps() {
@@ -3512,11 +3791,15 @@ mod tests {
     fn action_phases_are_legible_in_pose_and_behavior_without_debug_progress() {
         let mut state = WorldState::new(7, "Mop");
         state.creature.aquarium.action = Some(ActionTimeline {
+            action_id: 1,
             phase: ActionPhase::Inspect,
             elapsed_ms: 500,
             phase_duration_ms: 1_000,
             destination: SemanticDestination::Food(1),
             food_id: Some(1),
+            food: Some(FoodId::Berry),
+            food_outcome: None,
+            relationship: None,
         });
         let (render, _) = plan(&state, &ViewState::default());
         assert!(
@@ -3535,13 +3818,12 @@ mod tests {
     }
 
     #[test]
-    fn cue_queue_preserves_order_and_does_not_overwrite() {
+    fn same_channel_cues_replace_instead_of_leaving_residue() {
         let mut view = ViewState::default();
         view.enqueue_cue(PresentationCueKind::Crumbs, 900, 1_000);
         view.enqueue_cue(PresentationCueKind::Sleep, 1_000, 1_000);
-        assert_eq!(view.active_cue(1_000), Some(PresentationCueKind::Crumbs));
-        assert_eq!(view.active_cue(1_899), Some(PresentationCueKind::Crumbs));
-        assert_eq!(view.active_cue(1_900), Some(PresentationCueKind::Sleep));
+        assert_eq!(view.cue_queue.len(), 1);
+        assert_eq!(view.active_cue(1_000), Some(PresentationCueKind::Sleep));
         view.expire(3_100);
         assert!(view.cue_queue.is_empty());
     }
@@ -3593,7 +3875,7 @@ mod tests {
     }
 
     #[test]
-    fn cue_queue_is_bounded() {
+    fn repeated_same_channel_cues_do_not_accumulate() {
         let mut view = ViewState::default();
         for index in 0..20 {
             let cue = if index % 2 == 0 {
@@ -3603,7 +3885,7 @@ mod tests {
             };
             view.enqueue_cue(cue, 100, 0);
         }
-        assert_eq!(view.cue_queue.len(), CUE_QUEUE_LIMIT);
+        assert_eq!(view.cue_queue.len(), 1);
     }
 
     #[test]
@@ -3785,11 +4067,15 @@ mod tests {
         let mut state = WorldState::new(7, "Mop");
         state.elapsed_ms = 9_999;
         state.creature.aquarium.action = Some(ActionTimeline {
+            action_id: 1,
             phase: ActionPhase::Approach,
             elapsed_ms: 0,
             phase_duration_ms: 1_000,
             destination: SemanticDestination::Position(NormalizedPosition::new(5_000, 5_000)),
             food_id: None,
+            food: None,
+            food_outcome: None,
+            relationship: None,
         });
         let frame_zero = plan(&state, &ViewState::default())
             .0
@@ -3822,11 +4108,15 @@ mod tests {
         state.simulation_remainder_ms = 500;
         state.creature.aquarium.velocity = NormalizedVelocity { x: 1_000, y: 1_000 };
         state.creature.aquarium.action = Some(ActionTimeline {
+            action_id: 1,
             phase: ActionPhase::Approach,
             elapsed_ms: 350,
             phase_duration_ms: 1_000,
             destination: SemanticDestination::Player,
             food_id: None,
+            food: None,
+            food_outcome: None,
+            relationship: None,
         });
         assert_eq!(
             plan(&state, &ViewState::default()),
@@ -4009,11 +4299,15 @@ mod tests {
         let mut state = WorldState::new(7, "Mop");
         state.creature.aquarium.position = NormalizedPosition::new(10_000, 10_000);
         state.creature.aquarium.action = Some(ActionTimeline {
+            action_id: 1,
             phase: ActionPhase::Act,
             elapsed_ms: 400,
             phase_duration_ms: 1_000,
             destination: SemanticDestination::Player,
             food_id: None,
+            food: None,
+            food_outcome: None,
+            relationship: None,
         });
         let mut view = ViewState::default();
         view.enqueue_cue(PresentationCueKind::Affection, 1_000, state.elapsed_ms);
@@ -4231,6 +4525,8 @@ mod tests {
                 reduced_flashes: true,
                 reduced_shake: true,
                 cue_queue: vec![PresentationCue {
+                    owner: SemanticOwner::DirectOutcome,
+                    channel: PresentationChannel::CreatureExpression,
                     kind: PresentationCueKind::Spit,
                     starts_at_ms: 0,
                     expires_at_ms: 2_000,
@@ -4337,12 +4633,11 @@ mod tests {
             Some(PresentationCueKind::AquariumFull)
         );
         let (render, audio) = plan(&state, &view);
-        assert!(audio.events.contains(&AudioCue::UiReject));
+        assert!(audio.events.is_empty());
         assert_eq!(
-            audio_plan_for_events(&[GameEvent::FoodDropRejected(
+            played_cues(audio_plan_for_events(&[GameEvent::FoodDropRejected(
                 FoodDropRejectionReason::AquariumFull,
-            )])
-            .events,
+            )])),
             vec![AudioCue::UiReject]
         );
         assert!(
@@ -4384,7 +4679,7 @@ mod tests {
             (
                 RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
                 RelationshipExpressionKind::Recognize,
-                PresentationCueKind::Notice,
+                PresentationCueKind::PlaceNotice,
             ),
         ];
         for (motif, expression, expected) in cases {
@@ -4393,13 +4688,103 @@ mod tests {
                 &[GameEvent::RelationshipBeatStarted {
                     motif,
                     expression,
-                    trigger: RelationshipTrigger::RelevantUtterance,
+                    trigger: RelationshipTrigger::RelevantUtterance {
+                        subject: Some(RelationshipSubject::Player),
+                    },
+                    subject: RelationshipSubject::Player,
                     evidence: Vec::new(),
                 }],
                 1_000,
             );
             assert_eq!(view.active_cue(1_000), Some(expected), "{motif:?}");
         }
+    }
+
+    #[test]
+    fn action_relationship_context_drives_food_recognition_until_the_direct_outcome() {
+        let mut state = WorldState::new(7, "Mop");
+        let relationship = |motif| ActionRelationshipContext {
+            motif,
+            expression_kind: RelationshipExpressionKind::Anticipate,
+            evidence: Vec::new(),
+            subject: RelationshipSubject::Food(FoodId::Berry),
+        };
+        state.creature.aquarium.action = Some(ActionTimeline {
+            action_id: 41,
+            phase: ActionPhase::Gaze,
+            elapsed_ms: 240,
+            phase_duration_ms: 1_000,
+            destination: SemanticDestination::Food(9),
+            food_id: Some(9),
+            food: Some(FoodId::Berry),
+            food_outcome: None,
+            relationship: Some(relationship(RelationshipMotifKey::TrustedFood(
+                FoodId::Berry,
+            ))),
+        });
+        let view = ViewState::default();
+        assert_eq!(
+            effective_cue_timing(&state, &view),
+            Some((PresentationCueKind::PositiveNotice, 240))
+        );
+
+        state
+            .creature
+            .aquarium
+            .action
+            .as_mut()
+            .unwrap()
+            .relationship = Some(relationship(RelationshipMotifKey::FoodGrudge(
+            FoodId::Berry,
+        )));
+        assert_eq!(
+            effective_cue_timing(&state, &view),
+            Some((PresentationCueKind::FoodSuspicion, 240))
+        );
+
+        let mut direct = ViewState::default();
+        direct.observe_events(&[GameEvent::FoodRejected(FoodId::Berry)], state.elapsed_ms);
+        assert_eq!(
+            effective_cue_timing(&state, &direct),
+            Some((PresentationCueKind::Spit, 0))
+        );
+        direct.observe_events(
+            &[GameEvent::ActionRelationshipCompleted {
+                action_id: 41,
+                motif: RelationshipMotifKey::FoodGrudge(FoodId::Berry),
+                subject: RelationshipSubject::Food(FoodId::Berry),
+            }],
+            1_000,
+        );
+        state.creature.aquarium.action = None;
+        assert_eq!(effective_cue_timing(&state, &direct), None);
+    }
+
+    #[test]
+    fn direct_food_outcome_cancels_bound_voice_before_playing_physical_sound() {
+        let plan = audio_plan_for_events(&[
+            GameEvent::ActionRelationshipStarted {
+                action_id: 41,
+                motif: RelationshipMotifKey::FoodGrudge(FoodId::Berry),
+                expression: RelationshipExpressionKind::Anticipate,
+                subject: RelationshipSubject::Food(FoodId::Berry),
+                evidence: Vec::new(),
+            },
+            GameEvent::ActionRelationshipResolved {
+                action_id: 41,
+                motif: RelationshipMotifKey::FoodGrudge(FoodId::Berry),
+                subject: RelationshipSubject::Food(FoodId::Berry),
+                outcome: beastie_core::FoodOutcome::Rejected,
+            },
+            GameEvent::FoodRejected(FoodId::Berry),
+        ]);
+        assert!(plan.events.contains(&AudioCommand::CancelOwner {
+            owner: SemanticOwner::ActionRelationship(41),
+        }));
+        assert_eq!(
+            played_cues(plan),
+            vec![AudioCue::Annoyed, AudioCue::FoodReject]
+        );
     }
 
     #[test]
@@ -4410,6 +4795,7 @@ mod tests {
                 motif: RelationshipMotifKey::PlayerReturns,
                 expression: RelationshipExpressionKind::Welcome,
                 trigger: RelationshipTrigger::PlayerReturn,
+                subject: RelationshipSubject::Player,
                 evidence: Vec::new(),
             }],
             0,
@@ -4421,21 +4807,55 @@ mod tests {
             100,
         );
         assert_eq!(view.active_cue(100), None);
+        let mut place = ViewState::default();
+        place.observe_events(
+            &[GameEvent::RelationshipBeatStarted {
+                motif: RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
+                expression: RelationshipExpressionKind::Recognize,
+                trigger: RelationshipTrigger::QuietMoment,
+                subject: RelationshipSubject::Place(SemanticDestination::Cave),
+                evidence: Vec::new(),
+            }],
+            0,
+        );
+        assert_eq!(place.active_cue(0), Some(PresentationCueKind::PlaceNotice));
+        place.observe_events(
+            &[GameEvent::RelationshipBeatPhaseChanged {
+                motif: RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
+                from: Some(RelationshipBeatPhase::Notice),
+                to: RelationshipBeatPhase::Anticipate,
+            }],
+            1_000,
+        );
+        assert_eq!(place.active_cue(1_000), None);
+        assert!(
+            played_cues(audio_plan_for_events(&[
+                GameEvent::RelationshipBeatCompleted(RelationshipMotifKey::FamiliarPlace(
+                    SemanticDestination::Cave
+                ),)
+            ]))
+            .is_empty()
+        );
         assert_eq!(
-            audio_plan_for_events(&[GameEvent::RelationshipBeatCompleted(
-                RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
-            )])
-            .events,
+            played_cues(audio_plan_for_events(&[
+                GameEvent::RelationshipBeatPhaseChanged {
+                    motif: RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
+                    from: Some(RelationshipBeatPhase::Anticipate),
+                    to: RelationshipBeatPhase::Act,
+                }
+            ])),
             vec![AudioCue::CaveSettle]
         );
         assert_eq!(
-            audio_plan_for_events(&[GameEvent::RelationshipBeatStarted {
-                motif: RelationshipMotifKey::SharedToy(ToyId::Ball),
-                expression: RelationshipExpressionKind::Anticipate,
-                trigger: RelationshipTrigger::FamiliarToy { toy: ToyId::Ball },
-                evidence: Vec::new(),
-            }])
-            .events,
+            played_cues(audio_plan_for_events(&[
+                GameEvent::RelationshipBeatStarted {
+                    motif: RelationshipMotifKey::SharedToy(ToyId::Ball),
+                    expression: RelationshipExpressionKind::Anticipate,
+                    trigger: RelationshipTrigger::QuietMoment,
+                    subject: RelationshipSubject::Toy(ToyId::Ball),
+                    evidence: Vec::new(),
+                }
+            ])),
             vec![AudioCue::Curious]
         );
         let motifs = [
@@ -4447,43 +4867,44 @@ mod tests {
             RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
         ];
         for motif in motifs {
-            assert!(
-                !audio_plan_for_events(&[GameEvent::RelationshipBeatStarted {
-                    motif,
-                    expression: RelationshipExpressionKind::Notice,
-                    trigger: RelationshipTrigger::RelevantUtterance,
-                    evidence: Vec::new(),
-                }])
-                .events
-                .is_empty()
-            );
+            let plan = audio_plan_for_events(&[GameEvent::RelationshipBeatStarted {
+                motif,
+                expression: RelationshipExpressionKind::Notice,
+                trigger: RelationshipTrigger::RelevantUtterance {
+                    subject: Some(RelationshipSubject::Player),
+                },
+                subject: RelationshipSubject::Player,
+                evidence: Vec::new(),
+            }]);
+            if matches!(motif, RelationshipMotifKey::FamiliarPlace(_)) {
+                assert!(played_cues(plan).is_empty());
+                continue;
+            }
+            assert!(!played_cues(plan).is_empty());
         }
     }
 
     #[test]
     fn paired_rejections_and_comfort_emit_one_semantic_sound_each() {
         assert_eq!(
-            audio_plan_for_events(&[
+            played_cues(audio_plan_for_events(&[
                 GameEvent::FoodRejected(FoodId::Berry),
                 GameEvent::NonverbalAct(NonverbalAct::PushFoodAway(FoodId::Berry)),
-            ])
-            .events,
+            ])),
             vec![AudioCue::FoodReject]
         );
         assert_eq!(
-            audio_plan_for_events(&[
+            played_cues(audio_plan_for_events(&[
                 GameEvent::ToyRejected(ToyId::Bell),
                 GameEvent::NonverbalAct(NonverbalAct::TakeToyAway(ToyId::Bell)),
-            ])
-            .events,
+            ])),
             vec![AudioCue::Annoyed]
         );
         assert_eq!(
-            audio_plan_for_events(&[
+            played_cues(audio_plan_for_events(&[
                 GameEvent::Comforted,
                 GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer),
-            ])
-            .events,
+            ])),
             vec![AudioCue::Affection]
         );
     }
