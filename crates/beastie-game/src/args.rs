@@ -8,6 +8,14 @@ pub struct Args {
     /// Use the deterministic fixture-backed dialogue worker.
     #[arg(long)]
     pub fake_ai: bool,
+    /// Capture-only simulation-time delay before fixture dialogue acceptance.
+    #[arg(
+        long,
+        hide = true,
+        requires_all = ["fake_ai", "script", "feel_dir"],
+        value_parser = parse_feel_dialogue_delay_ms
+    )]
+    pub feel_dialogue_delay_ms: Option<u64>,
     /// Watchdog for one reply from the long-lived outer AI worker.
     #[arg(long)]
     pub ai_timeout_ms: Option<u64>,
@@ -67,6 +75,16 @@ pub struct Args {
     pub export_transcript: Option<PathBuf>,
 }
 
+fn parse_feel_dialogue_delay_ms(value: &str) -> Result<u64, String> {
+    let milliseconds = value
+        .parse::<u64>()
+        .map_err(|_| "feel dialogue delay must be an integer".to_owned())?;
+    if !(1..=5_000).contains(&milliseconds) {
+        return Err("feel dialogue delay must be within 1..=5000 ms".to_owned());
+    }
+    Ok(milliseconds)
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -109,6 +127,43 @@ mod tests {
                 "fixtures/saves/feel/trusted-berry.json",
             ])
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn feel_dialogue_delay_is_bounded_and_capture_only() {
+        let complete = [
+            "beastie-game",
+            "--fake-ai",
+            "--script",
+            "fixtures/scenarios/feel/dialogue-races.jsonl",
+            "--feel-dir",
+            "target/feel/run",
+            "--feel-dialogue-delay-ms",
+            "800",
+        ];
+        assert!(Args::try_parse_from(complete).is_ok());
+        assert!(
+            Args::try_parse_from([
+                "beastie-game",
+                "--fake-ai",
+                "--feel-dialogue-delay-ms",
+                "800",
+            ])
+            .is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "beastie-game",
+                "--fake-ai",
+                "--script",
+                "fixtures/scenarios/feel/dialogue-races.jsonl",
+                "--feel-dir",
+                "target/feel/run",
+                "--feel-dialogue-delay-ms",
+                "5001",
+            ])
+            .is_err()
         );
     }
 }

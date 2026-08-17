@@ -25,21 +25,23 @@ pub use model::{
     RelationshipBeatPhase, RelationshipEvidence, RelationshipExpressionKind,
     RelationshipExpressionMode, RelationshipExpressionState, RelationshipMotif,
     RelationshipMotifKey, RelationshipSubject, RelationshipTrigger, RelationshipTriggerKind,
-    Routine, SemanticDestination, SocialAct, SocialHabits, StateValidationError, SteeringMode,
-    ToyId, Traits, VisitEvidence, WorldObject, WorldState,
+    ResolvedToyInteraction, Routine, SemanticDestination, SocialAct, SocialHabits,
+    StateValidationError, SteeringMode, ToyId, ToyInteraction, ToyInteractionOutcome,
+    ToyInteractionPhase, ToyOrigin, Traits, TravelPurpose, TravelTarget, VisitEvidence,
+    WorldObject, WorldState,
 };
 pub use random::{RandomDomain, RandomSource, SeededRandom, deterministic_unit};
 pub use relationship::{
     derive_relationship_motifs, select_action_relationship_context, select_relationship_beat,
 };
-pub use save::{SaveError, SaveGame};
+pub use save::{SaveError, SaveGame, migrate_world};
 pub use simulation::{
     GameEvent, MAX_OFFLINE_MS, OfflineProgress, PlayerEvent, SIMULATION_TICK_MS, SpeechAttention,
     TALK_COOLDOWN_MS, advance_offline, apply_grounded_utterance, speech_attention, step,
     trigger_relationship_beat,
 };
 
-pub const SAVE_VERSION: u32 = 5;
+pub const SAVE_VERSION: u32 = 6;
 pub const ACTIVE_DAY_MS: u64 = 15 * 60_000;
 pub const RELATIONSHIP_EXPRESSION_SCHEMA_VERSION: u32 = 2;
 
@@ -222,16 +224,37 @@ mod tests {
         let mut world = WorldState::new(10, "Listener");
         world.creature.current_intention = Intention::Play;
         world.creature.aquarium.destination = Some(SemanticDestination::Toy(ToyId::Ball));
+        let interaction_id = std::num::NonZeroU64::new(1).unwrap();
+        world.creature.aquarium.travel_purpose =
+            Some(TravelPurpose::ToyInteraction { interaction_id });
+        world.creature.interaction_state.next_toy_interaction_id = 2;
+        world.creature.interaction_state.toy_interaction = Some(ToyInteraction {
+            id: interaction_id,
+            toy: ToyId::Ball,
+            origin: ToyOrigin::Autonomous,
+            outcome: ToyInteractionOutcome::Accepted,
+            phase: ToyInteractionPhase::Approach,
+            relationship: None,
+        });
         let mut rng = SeededRandom::new(10);
 
         let events = step(&mut world, &[PlayerEvent::SpeechStarted], 0, &mut rng);
 
         assert_eq!(
             events,
-            vec![GameEvent::SpeechPerceived(SpeechAttention::Attended)]
+            vec![
+                GameEvent::ToyInteractionInterrupted {
+                    toy: ToyId::Ball,
+                    interaction_id,
+                    origin: ToyOrigin::Autonomous,
+                },
+                GameEvent::SpeechPerceived(SpeechAttention::Attended),
+            ]
         );
 
         world.creature.aquarium.destination = None;
+        world.creature.aquarium.travel_purpose = None;
+        world.creature.interaction_state.toy_interaction = None;
         world.creature.idle_life.last_arrived_destination =
             Some(SemanticDestination::Toy(ToyId::Ball));
         world.creature.idle_life.settled_until_ms = world.elapsed_ms + 5_000;
@@ -510,7 +533,7 @@ mod tests {
             assert_eq!(first_events, replay_events);
             autonomous_toy_arrivals += first_events
                 .iter()
-                .filter(|event| matches!(event, GameEvent::ToyPlayed(_)))
+                .filter(|event| matches!(event, GameEvent::ToyPlayed { .. }))
                 .count() as u32;
             let visits = first.creature.favorite_locations.values().sum::<u32>();
             if visits > previous_visits {
@@ -685,6 +708,9 @@ mod tests {
             world.elapsed_ms = day * ACTIVE_DAY_MS;
             world.creature.aquarium.position = cave;
             world.creature.aquarium.destination = Some(SemanticDestination::Cave);
+            world.creature.aquarium.travel_purpose = Some(TravelPurpose::IdleVisit {
+                visit_id: std::num::NonZeroU64::new(day + 1).unwrap(),
+            });
             world.creature.aquarium.steering = SteeringMode::Approach;
             step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
         }
@@ -1140,8 +1166,31 @@ mod tests {
         let mut world = WorldState::new(95, "Actions");
         let mut rng = SeededRandom::new(95);
         world.creature.toy_preferences.insert(ToyId::Bell, 0.8);
-        let played_toy = step(&mut world, &[PlayerEvent::Play(ToyId::Bell)], 0, &mut rng);
-        assert!(played_toy.contains(&GameEvent::ToyPlayed(ToyId::Bell)));
+        let receipt = step(&mut world, &[PlayerEvent::Play(ToyId::Bell)], 0, &mut rng);
+        assert!(receipt.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyPlayAccepted {
+                toy: ToyId::Bell,
+                origin: ToyOrigin::Player,
+                ..
+            }
+        )));
+        assert!(
+            !world
+                .creature
+                .memories
+                .iter()
+                .any(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Bell }))
+        );
+        let played_toy = step(&mut world, &[], 10_000, &mut rng);
+        assert!(played_toy.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyPlayed {
+                toy: ToyId::Bell,
+                origin: ToyOrigin::Player,
+                ..
+            }
+        )));
         assert_eq!(world.creature.current_intention, Intention::Play);
         assert_eq!(world.creature.aquarium.gaze, GazeTarget::Toy(ToyId::Bell));
         assert!(
@@ -1153,7 +1202,14 @@ mod tests {
         );
         world.creature.toy_preferences.insert(ToyId::Sock, -1.0);
         let rejected_toy = step(&mut world, &[PlayerEvent::Play(ToyId::Sock)], 0, &mut rng);
-        assert!(rejected_toy.contains(&GameEvent::ToyRejected(ToyId::Sock)));
+        assert!(rejected_toy.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyRejected {
+                toy: ToyId::Sock,
+                origin: ToyOrigin::Player,
+                ..
+            }
+        )));
         assert!(
             world
                 .creature
@@ -1483,7 +1539,7 @@ mod tests {
         let events = step(
             &mut first,
             &[PlayerEvent::Play(ToyId::Ball)],
-            0,
+            10_000,
             &mut SeededRandom::new(103),
         );
         assert!(
@@ -1897,7 +1953,12 @@ mod tests {
             0.7,
         );
         let mut rng = SeededRandom::new(113);
-        let events = step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        let events = step(
+            &mut world,
+            &[PlayerEvent::Play(ToyId::Ball)],
+            10_000,
+            &mut rng,
+        );
 
         assert!(events.iter().any(|event| matches!(
             event,
@@ -2251,5 +2312,646 @@ mod tests {
             }
         )));
         assert!(world.aquarium.player_present);
+    }
+
+    fn toy_position(world: &WorldState, toy: ToyId) -> NormalizedPosition {
+        world
+            .aquarium
+            .objects
+            .values()
+            .find_map(|object| match object {
+                WorldObject::Toy {
+                    toy: candidate,
+                    position,
+                } if *candidate == toy => Some(*position),
+                _ => None,
+            })
+            .expect("default toy exists")
+    }
+
+    #[test]
+    fn accepted_toy_mutates_only_once_at_physical_contact() {
+        let mut world = WorldState::new(201, "Contact");
+        let mut rng = SeededRandom::new(201);
+        world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        world.creature.aquarium.position = toy_position(&world, ToyId::Ball);
+        let curiosity = world.creature.needs.curiosity;
+        let relationship = world.creature.relationship;
+
+        let receipt = step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        let interaction_id = receipt
+            .iter()
+            .find_map(|event| match event {
+                GameEvent::ToyPlayAccepted { interaction_id, .. } => Some(*interaction_id),
+                _ => None,
+            })
+            .expect("accepted receipt");
+        assert!(!receipt.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyContacted { .. } | GameEvent::ToyPlayed { .. }
+        )));
+        assert_eq!(world.creature.needs.curiosity, curiosity);
+        assert_eq!(world.creature.relationship, relationship);
+        assert!(
+            !world
+                .creature
+                .memories
+                .iter()
+                .any(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Ball }))
+        );
+
+        let contact = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        assert!(contact.contains(&GameEvent::ToyContacted {
+            toy: ToyId::Ball,
+            interaction_id,
+            origin: ToyOrigin::Player,
+        }));
+        assert!(contact.contains(&GameEvent::ToyPlayed {
+            toy: ToyId::Ball,
+            interaction_id,
+            origin: ToyOrigin::Player,
+        }));
+        assert_eq!(
+            world
+                .creature
+                .memories
+                .iter()
+                .filter(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Ball }))
+                .count(),
+            1
+        );
+        let later = step(&mut world, &[], SIMULATION_TICK_MS * 4, &mut rng);
+        assert!(!later.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyContacted { interaction_id: candidate, .. }
+                | GameEvent::ToyPlayed { interaction_id: candidate, .. }
+                if *candidate == interaction_id
+        )));
+    }
+
+    #[test]
+    fn rejected_toy_arrival_never_becomes_positive_evidence() {
+        let mut world = WorldState::new(202, "Refusal");
+        let mut rng = SeededRandom::new(202);
+        world.creature.toy_preferences.insert(ToyId::Sock, -1.0);
+        world.creature.aquarium.position = toy_position(&world, ToyId::Sock);
+        let relationship = world.creature.relationship;
+
+        let first = step(
+            &mut world,
+            &[PlayerEvent::Play(ToyId::Sock)],
+            SIMULATION_TICK_MS,
+            &mut rng,
+        );
+        assert!(first.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyRejected {
+                toy: ToyId::Sock,
+                ..
+            }
+        )));
+        assert!(!first.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyContacted { .. } | GameEvent::ToyPlayed { .. }
+        )));
+        assert_eq!(world.creature.relationship, relationship);
+        assert!(
+            !world
+                .creature
+                .favorite_locations
+                .contains_key(&SemanticDestination::Toy(ToyId::Sock))
+        );
+        assert!(
+            !world
+                .creature
+                .memories
+                .iter()
+                .any(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Sock }))
+        );
+
+        let second = step(
+            &mut world,
+            &[PlayerEvent::Play(ToyId::Sock)],
+            SIMULATION_TICK_MS,
+            &mut rng,
+        );
+        assert_eq!(
+            second
+                .iter()
+                .filter(|event| matches!(event, GameEvent::ToyRejected { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            world
+                .creature
+                .memories
+                .iter()
+                .filter(|memory| matches!(
+                    memory.kind,
+                    MemoryKind::DislikedToy { toy: ToyId::Sock }
+                ))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn superseding_direct_action_interrupts_toy_without_payoff() {
+        let mut world = WorldState::new(203, "Interrupted");
+        let mut rng = SeededRandom::new(203);
+        world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        let accepted = step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        let interaction_id = accepted
+            .iter()
+            .find_map(|event| match event {
+                GameEvent::ToyPlayAccepted { interaction_id, .. } => Some(*interaction_id),
+                _ => None,
+            })
+            .unwrap();
+
+        let interrupted = step(
+            &mut world,
+            &[PlayerEvent::Comfort],
+            SIMULATION_TICK_MS * 12,
+            &mut rng,
+        );
+        assert!(interrupted.contains(&GameEvent::ToyInteractionInterrupted {
+            toy: ToyId::Ball,
+            interaction_id,
+            origin: ToyOrigin::Player,
+        }));
+        assert!(!interrupted.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyPlayed { interaction_id: candidate, .. } if *candidate == interaction_id
+        )));
+        assert!(
+            !world
+                .creature
+                .memories
+                .iter()
+                .any(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Ball }))
+        );
+    }
+
+    #[test]
+    fn later_toy_offer_cannot_resolve_the_superseded_offer() {
+        let mut world = WorldState::new(204, "Replacement");
+        let mut rng = SeededRandom::new(204);
+        world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        world.creature.toy_preferences.insert(ToyId::Bell, 0.8);
+        let first = step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        let first_id = first
+            .iter()
+            .find_map(|event| match event {
+                GameEvent::ToyPlayAccepted { interaction_id, .. } => Some(*interaction_id),
+                _ => None,
+            })
+            .unwrap();
+        world.creature.aquarium.position = toy_position(&world, ToyId::Bell);
+        let replacement = step(
+            &mut world,
+            &[PlayerEvent::Play(ToyId::Bell)],
+            SIMULATION_TICK_MS,
+            &mut rng,
+        );
+        assert!(replacement.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyInteractionInterrupted { interaction_id, .. } if *interaction_id == first_id
+        )));
+        assert!(replacement.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyPlayed {
+                toy: ToyId::Bell,
+                origin: ToyOrigin::Player,
+                ..
+            }
+        )));
+        assert!(
+            !world
+                .creature
+                .memories
+                .iter()
+                .any(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Ball }))
+        );
+    }
+
+    #[test]
+    fn autonomous_toy_arrival_has_no_player_social_reward() {
+        let mut world = WorldState::new(205, "Autonomous");
+        let mut rng = SeededRandom::new(205);
+        world.creature.aquarium.position = toy_position(&world, ToyId::Bell);
+        world.creature.aquarium.destination = Some(SemanticDestination::Toy(ToyId::Bell));
+        let interaction_id = std::num::NonZeroU64::new(1).unwrap();
+        world.creature.aquarium.travel_purpose =
+            Some(TravelPurpose::ToyInteraction { interaction_id });
+        world.creature.interaction_state.next_toy_interaction_id = 2;
+        world.creature.interaction_state.toy_interaction = Some(ToyInteraction {
+            id: interaction_id,
+            toy: ToyId::Bell,
+            origin: ToyOrigin::Autonomous,
+            outcome: ToyInteractionOutcome::Accepted,
+            phase: ToyInteractionPhase::Approach,
+            relationship: None,
+        });
+        world.creature.aquarium.steering = SteeringMode::Approach;
+        let relationship = world.creature.relationship;
+
+        let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyPlayed {
+                toy: ToyId::Bell,
+                origin: ToyOrigin::Autonomous,
+                ..
+            }
+        )));
+        assert_eq!(world.creature.relationship, relationship);
+        assert!(
+            !world
+                .creature
+                .memories
+                .iter()
+                .any(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Bell }))
+        );
+        assert!(
+            world
+                .creature
+                .idle_life
+                .visit_evidence
+                .iter()
+                .any(|visit| visit.destination == SemanticDestination::Toy(ToyId::Bell))
+        );
+    }
+
+    #[test]
+    fn pending_toy_save_and_offline_resume_resolve_exactly_once_without_old_cues() {
+        let mut world = WorldState::new(206, "Resume");
+        let mut rng = SeededRandom::new(206);
+        world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        let json = SaveGame::capture(&world, &rng).to_json().unwrap();
+
+        let (zero_world, _) = SaveGame::from_json(&json).unwrap().resume();
+        assert!(
+            zero_world
+                .creature
+                .interaction_state
+                .toy_interaction
+                .is_some()
+        );
+        assert!(
+            !zero_world
+                .creature
+                .memories
+                .iter()
+                .any(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Ball }))
+        );
+
+        let (mut resumed, mut resumed_rng) = SaveGame::from_json(&json).unwrap().resume();
+        let progress = advance_offline(&mut resumed, SIMULATION_TICK_MS, &mut resumed_rng);
+        assert!(!progress.events.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyPlayAccepted { .. }
+                | GameEvent::ToyContacted { .. }
+                | GameEvent::ToyPlayed { .. }
+        )));
+        assert_eq!(
+            resumed
+                .creature
+                .memories
+                .iter()
+                .filter(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Ball }))
+                .count(),
+            1
+        );
+        let resumed_json = SaveGame::capture(&resumed, &resumed_rng).to_json().unwrap();
+        let (mut again, mut again_rng) = SaveGame::from_json(&resumed_json).unwrap().resume();
+        advance_offline(&mut again, SIMULATION_TICK_MS, &mut again_rng);
+        assert_eq!(
+            again
+                .creature
+                .memories
+                .iter()
+                .filter(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Ball }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn v5_toy_travel_migrates_conservatively() {
+        let mut play = WorldState::new(207, "OldPlay");
+        let rng = SeededRandom::new(207);
+        play.remember(
+            MemoryKind::PlayedWith { toy: ToyId::Ball },
+            &[Concept::Good],
+            0.7,
+            0.6,
+        );
+        play.creature.current_intention = Intention::Play;
+        play.creature.aquarium.destination = Some(SemanticDestination::Toy(ToyId::Ball));
+        let mut value = serde_json::to_value(SaveGame::capture(&play, &rng)).unwrap();
+        value["save_version"] = 5.into();
+        value["world"]["save_version"] = 5.into();
+        value["world"]["creature"]["aquarium"]
+            .as_object_mut()
+            .unwrap()
+            .remove("travel_purpose");
+        let interaction = value["world"]["creature"]["interaction_state"]
+            .as_object_mut()
+            .unwrap();
+        interaction.remove("next_toy_interaction_id");
+        interaction.remove("toy_interaction");
+        interaction.remove("last_resolved_toy_interaction");
+        let embedded: WorldState = serde_json::from_value(value["world"].clone()).unwrap();
+        let embedded = migrate_world(embedded).expect("containing saves migrate embedded worlds");
+        assert_eq!(embedded.save_version, SAVE_VERSION);
+        assert!(embedded.creature.aquarium.destination.is_none());
+        let migrated = SaveGame::from_json(&serde_json::to_string(&value).unwrap()).unwrap();
+        assert!(migrated.world.creature.aquarium.destination.is_none());
+        assert_eq!(
+            migrated
+                .world
+                .creature
+                .memories
+                .iter()
+                .filter(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Ball }))
+                .count(),
+            1
+        );
+
+        let mut refusal = WorldState::new(208, "OldRefusal");
+        refusal.creature.current_intention = Intention::RefuseAndStare;
+        refusal.creature.aquarium.destination = Some(SemanticDestination::Toy(ToyId::Sock));
+        let mut value = serde_json::to_value(SaveGame::capture(&refusal, &rng)).unwrap();
+        value["save_version"] = 5.into();
+        value["world"]["save_version"] = 5.into();
+        value["world"]["creature"]["aquarium"]
+            .as_object_mut()
+            .unwrap()
+            .remove("travel_purpose");
+        let interaction = value["world"]["creature"]["interaction_state"]
+            .as_object_mut()
+            .unwrap();
+        interaction.remove("next_toy_interaction_id");
+        interaction.remove("toy_interaction");
+        interaction.remove("last_resolved_toy_interaction");
+        let embedded: WorldState = serde_json::from_value(value["world"].clone()).unwrap();
+        let embedded = migrate_world(embedded).expect("containing saves migrate embedded worlds");
+        assert!(matches!(
+            embedded.creature.aquarium.travel_purpose,
+            Some(TravelPurpose::RefusalStare { .. })
+        ));
+        let migrated = SaveGame::from_json(&serde_json::to_string(&value).unwrap()).unwrap();
+        assert!(matches!(
+            migrated.world.creature.aquarium.travel_purpose,
+            Some(TravelPurpose::RefusalStare { .. })
+        ));
+        assert!(
+            migrated
+                .world
+                .creature
+                .interaction_state
+                .toy_interaction
+                .is_some_and(|interaction| interaction.toy == ToyId::Sock)
+        );
+    }
+
+    #[test]
+    fn validation_rejects_unowned_and_mismatched_toy_travel() {
+        let mut unowned = WorldState::new(209, "Unowned");
+        unowned.creature.aquarium.destination = Some(SemanticDestination::Toy(ToyId::Ball));
+        assert_eq!(
+            unowned.validate(),
+            Err(StateValidationError::ToyInteraction)
+        );
+
+        let mut mismatch = WorldState::new(210, "Mismatch");
+        let mut rng = SeededRandom::new(210);
+        mismatch.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        step(
+            &mut mismatch,
+            &[PlayerEvent::Play(ToyId::Ball)],
+            0,
+            &mut rng,
+        );
+        mismatch.creature.aquarium.destination = Some(SemanticDestination::Toy(ToyId::Bell));
+        assert_eq!(
+            mismatch.validate(),
+            Err(StateValidationError::ToyInteraction)
+        );
+        mismatch.creature.interaction_state.next_toy_interaction_id = 0;
+        assert_eq!(
+            mismatch.validate(),
+            Err(StateValidationError::ToyInteraction)
+        );
+    }
+
+    #[test]
+    fn active_toy_blocks_standalone_relationship_and_requires_its_exact_travel() {
+        let mut world = WorldState::new(211, "Owned");
+        let mut rng = SeededRandom::new(211);
+        world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        world.remember(
+            MemoryKind::PlayedWith { toy: ToyId::Ball },
+            &[Concept::Toy],
+            0.7,
+            0.8,
+        );
+        step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+
+        let events = trigger_relationship_beat(&mut world, RelationshipTrigger::QuietMoment);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, GameEvent::RelationshipBeatStarted { .. }))
+        );
+        assert!(world.creature.relationship_expression.active.is_none());
+        assert!(world.validate().is_ok());
+
+        world.creature.aquarium.destination = None;
+        world.creature.aquarium.travel_purpose = None;
+        assert_eq!(world.validate(), Err(StateValidationError::ToyInteraction));
+    }
+
+    #[test]
+    fn replacing_idle_travel_emits_an_explicit_interruption() {
+        let mut world = WorldState::new(213, "ReplacementEvent");
+        let mut rng = SeededRandom::new(213);
+        world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        world.creature.aquarium.destination = Some(SemanticDestination::Cave);
+        world.creature.aquarium.travel_purpose = Some(TravelPurpose::IdleVisit {
+            visit_id: std::num::NonZeroU64::new(1).unwrap(),
+        });
+        world.creature.aquarium.steering = SteeringMode::Approach;
+
+        let events = step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        assert!(events.contains(&GameEvent::ActionAborted {
+            destination: SemanticDestination::Cave,
+        }));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyPlayAccepted {
+                toy: ToyId::Ball,
+                origin: ToyOrigin::Player,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn autonomous_toy_owner_is_allocated_before_travel_and_survives_resume() {
+        let mut first = WorldState::new(212, "AutonomousOwner");
+        first.creature.needs.curiosity = 0.9;
+        first.creature.traits.fussiness = 0.1;
+        let mut second = first.clone();
+        let mut first_rng = SeededRandom::new(212);
+        let mut second_rng = first_rng;
+
+        let first_events = step(&mut first, &[], SIMULATION_TICK_MS, &mut first_rng);
+        let second_events = step(&mut second, &[], SIMULATION_TICK_MS, &mut second_rng);
+        assert_eq!(first_events, second_events);
+        assert_eq!(first, second);
+        let interaction = first
+            .creature
+            .interaction_state
+            .toy_interaction
+            .as_ref()
+            .expect("autonomous toy owner is created with the visit");
+        assert_eq!(interaction.origin, ToyOrigin::Autonomous);
+        assert_eq!(interaction.outcome, ToyInteractionOutcome::Accepted);
+        assert_eq!(interaction.phase, ToyInteractionPhase::Approach);
+        let interaction_id = interaction.id;
+        assert_eq!(
+            first.creature.aquarium.travel_purpose,
+            Some(TravelPurpose::ToyInteraction { interaction_id })
+        );
+        assert!(first_events.contains(&GameEvent::ToyPlayAccepted {
+            toy: interaction.toy,
+            interaction_id,
+            origin: ToyOrigin::Autonomous,
+        }));
+
+        let json = SaveGame::capture(&first, &first_rng).to_json().unwrap();
+        let (zero_advance, _) = SaveGame::from_json(&json).unwrap().resume();
+        assert_eq!(
+            zero_advance
+                .creature
+                .interaction_state
+                .toy_interaction
+                .as_ref()
+                .map(|interaction| interaction.id),
+            Some(interaction_id)
+        );
+
+        let (mut resumed, mut resumed_rng) = SaveGame::from_json(&json).unwrap().resume();
+        let progress = advance_offline(&mut resumed, SIMULATION_TICK_MS, &mut resumed_rng);
+        assert!(!progress.events.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyPlayAccepted { .. }
+                | GameEvent::ToyContacted { .. }
+                | GameEvent::ToyPlayed { .. }
+        )));
+        assert_eq!(
+            resumed
+                .creature
+                .interaction_state
+                .last_resolved_toy_interaction
+                .map(|resolved| resolved.id),
+            Some(interaction_id)
+        );
+        assert!(
+            !resumed
+                .creature
+                .memories
+                .iter()
+                .any(|memory| matches!(memory.kind, MemoryKind::PlayedWith { .. }))
+        );
+    }
+
+    #[test]
+    fn shared_toy_context_survives_new_eligibility_and_save_before_contact() {
+        let mut world = WorldState::new(214, "ContextOwner");
+        let mut rng = SeededRandom::new(214);
+        world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        let original_evidence = world.remember(
+            MemoryKind::PlayedWith { toy: ToyId::Ball },
+            &[Concept::Toy],
+            0.7,
+            0.8,
+        );
+        let receipt = step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        let interaction_id = receipt
+            .iter()
+            .find_map(|event| match event {
+                GameEvent::ToyPlayAccepted { interaction_id, .. } => Some(*interaction_id),
+                _ => None,
+            })
+            .unwrap();
+        let stored_context = world
+            .creature
+            .interaction_state
+            .toy_interaction
+            .as_ref()
+            .and_then(|interaction| interaction.relationship.clone())
+            .expect("eligible context is captured at receipt");
+        assert_eq!(
+            stored_context.evidence,
+            vec![RelationshipEvidence::Memory {
+                id: original_evidence,
+            }]
+        );
+
+        world.remember(MemoryKind::WasComforted, &[Concept::You], 0.8, 0.8);
+        let newer_same_subject = world.remember(
+            MemoryKind::PlayedWith { toy: ToyId::Ball },
+            &[Concept::Toy],
+            0.9,
+            0.9,
+        );
+        let newly_selected = select_action_relationship_context(
+            &world,
+            RelationshipTrigger::ToyEngaged { toy: ToyId::Ball },
+        )
+        .expect("new evidence changes fresh selection");
+        assert!(
+            newly_selected
+                .evidence
+                .contains(&RelationshipEvidence::Memory {
+                    id: newer_same_subject,
+                })
+        );
+        assert_ne!(newly_selected.evidence, stored_context.evidence);
+
+        world.creature.aquarium.position = toy_position(&world, ToyId::Ball);
+        let json = SaveGame::capture(&world, &rng).to_json().unwrap();
+        let (mut resumed, mut resumed_rng) = SaveGame::from_json(&json).unwrap().resume();
+        assert_eq!(
+            resumed
+                .creature
+                .interaction_state
+                .toy_interaction
+                .as_ref()
+                .and_then(|interaction| interaction.relationship.as_ref()),
+            Some(&stored_context)
+        );
+
+        let contact = step(&mut resumed, &[], SIMULATION_TICK_MS, &mut resumed_rng);
+        assert!(contact.contains(&GameEvent::ToyContacted {
+            toy: ToyId::Ball,
+            interaction_id,
+            origin: ToyOrigin::Player,
+        }));
+        assert!(contact.iter().any(|event| matches!(
+            event,
+            GameEvent::ActionRelationshipStarted {
+                action_id,
+                motif: RelationshipMotifKey::SharedToy(ToyId::Ball),
+                subject: RelationshipSubject::Toy(ToyId::Ball),
+                evidence,
+                ..
+            } if *action_id == interaction_id.get() && *evidence == stored_context.evidence
+        )));
     }
 }

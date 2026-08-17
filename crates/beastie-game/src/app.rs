@@ -27,8 +27,10 @@ use ggez::{Context, GameError, GameResult};
 
 use crate::args::Args;
 use crate::audio::{AmbientBubbleSchedule, AudioBank, sound_for_cue};
-use crate::dialogue::{DialogueManager, WorkerConfig};
-use crate::feel::FeelRecorder;
+use crate::dialogue::{DialogueManager, DialogueOwner, DialogueTurn, WorkerConfig};
+use crate::feel::{
+    AudioTraceFrame, DialogueTraceOwner, FeelRecorder, PresentationTraceState, SpeechTraceOwner,
+};
 use crate::input::{
     action_at_with_assets, append_text, cursor_at_with_assets, focused_action, move_focus,
     region_at_with_assets,
@@ -45,13 +47,92 @@ use crate::transcript::TranscriptStore;
 use crate::tts::{TtsManager, TtsWorkerConfig};
 
 struct SpeechReveal {
+    owner: DialogueOwner,
     full_text: String,
     started_at_ms: u64,
 }
 
 struct SpeechAnimation {
+    owner: DialogueOwner,
     started_at_ms: u64,
     timing: MouthTiming,
+}
+
+struct PendingTts {
+    owner: DialogueOwner,
+    request_id: u64,
+    mouth_timing: MouthTiming,
+}
+
+struct DelayedCompletion<T> {
+    delay_ms: u64,
+    release_at_ms: Option<u64>,
+    completion: Option<T>,
+}
+
+impl<T> DelayedCompletion<T> {
+    const fn new(delay_ms: u64) -> Self {
+        Self {
+            delay_ms,
+            release_at_ms: None,
+            completion: None,
+        }
+    }
+
+    fn arm(&mut self, now_ms: u64) {
+        self.release_at_ms = Some(now_ms.saturating_add(self.delay_ms));
+        self.completion = None;
+    }
+
+    fn hold_or_release(&mut self, completion: T, now_ms: u64) -> Option<T> {
+        if self
+            .release_at_ms
+            .is_some_and(|release_at_ms| now_ms < release_at_ms)
+        {
+            self.completion = Some(completion);
+            None
+        } else {
+            self.release_at_ms = None;
+            Some(completion)
+        }
+    }
+
+    fn take_ready(&mut self, now_ms: u64) -> Option<T> {
+        if !self
+            .release_at_ms
+            .is_some_and(|release_at_ms| now_ms >= release_at_ms)
+        {
+            return None;
+        }
+        self.release_at_ms = None;
+        self.completion.take()
+    }
+
+    fn cancel(&mut self) {
+        self.release_at_ms = None;
+        self.completion = None;
+    }
+
+    const fn allows_scenario_progress(&self) -> bool {
+        self.delay_ms > 0 && self.release_at_ms.is_some()
+    }
+}
+
+impl PendingTts {
+    const fn trace_owner(&self) -> SpeechTraceOwner {
+        SpeechTraceOwner {
+            dialogue_generation: self.owner.generation,
+            dialogue_request_id: self.owner.request_id,
+            tts_request_id: self.request_id,
+        }
+    }
+}
+
+const fn dialogue_trace_owner(owner: DialogueOwner) -> DialogueTraceOwner {
+    DialogueTraceOwner {
+        dialogue_generation: owner.generation,
+        dialogue_request_id: owner.request_id,
+    }
 }
 
 pub struct Game {
@@ -63,6 +144,9 @@ pub struct Game {
     queued_audio: Vec<AudioCommand>,
     viewport: Viewport,
     dialogue: DialogueManager,
+    dialogue_generation: u64,
+    active_dialogue_owner: Option<DialogueOwner>,
+    delayed_dialogue: DelayedCompletion<DialogueTurn>,
     recognition: RecognitionManager,
     microphone: Option<MicrophoneCapture>,
     stt_audio_root: PrivateAudioRoot,
@@ -86,7 +170,9 @@ pub struct Game {
     window_settings_dirty: bool,
     speech_reveal: Option<SpeechReveal>,
     bubble_schedule: AmbientBubbleSchedule,
-    pending_mouth_timing: Option<MouthTiming>,
+    pending_tts: Option<PendingTts>,
+    active_speech_owner: Option<SpeechTraceOwner>,
+    turn_status_owner: Option<DialogueOwner>,
     speech_animation: Option<SpeechAnimation>,
     transcript_export_path: PathBuf,
     renaming_with_osk: bool,
@@ -230,6 +316,11 @@ impl Game {
                     Duration::from_millis,
                 ),
             )),
+            dialogue_generation: 1,
+            active_dialogue_owner: None,
+            delayed_dialogue: DelayedCompletion::new(
+                args.feel_dialogue_delay_ms.unwrap_or_default(),
+            ),
             recognition,
             microphone: None,
             stt_audio_root,
@@ -253,7 +344,9 @@ impl Game {
             window_settings_dirty: false,
             speech_reveal: None,
             bubble_schedule,
-            pending_mouth_timing: None,
+            pending_tts: None,
+            active_speech_owner: None,
+            turn_status_owner: None,
             speech_animation: None,
             transcript_export_path,
             renaming_with_osk: false,
@@ -312,7 +405,7 @@ impl Game {
 
     fn apply_command(&mut self, command: SessionCommand, persist: bool) -> GameResult {
         if clears_speech(&command) {
-            self.clear_speech();
+            self.supersede_dialogue_turn()?;
         }
         let observation = self
             .session
@@ -339,8 +432,12 @@ impl Game {
                 .show_status("Not interested right now.".to_owned(), now_ms, 4_000);
         }
         if let Some(request) = observation.dialogue_request
-            && self.dialogue.request(request)
+            && let Some(owner) = self
+                .dialogue
+                .request_owned(request, self.dialogue_generation)
         {
+            self.active_dialogue_owner = Some(owner);
+            self.delayed_dialogue.arm(self.session.world().elapsed_ms);
             self.view.pending = true;
             self.view.speech = None;
             self.view.mode = UiMode::Compose;
@@ -547,107 +644,177 @@ impl Game {
     }
 
     fn poll_dialogue(&mut self) -> GameResult {
-        if !self.dialogue.is_pending() {
-            return Ok(());
-        }
-        match self.dialogue.try_recv_turn() {
-            Ok(turn) => {
-                self.view.pending = false;
-                self.audio.stop_speech();
-                if !self.session.accept_dialogue_turn(
-                    &turn.request,
-                    &turn.reply,
-                    turn.retry_count,
-                    turn.fallback,
-                ) {
-                    // The player superseded the authoritative relationship beat while local
-                    // inference was pending. Never present, speak, or transcript stale wording.
-                    self.pending_mouth_timing = None;
-                    self.view.mode = UiMode::Compose;
+        let now_ms = self.session.world().elapsed_ms;
+        let turn = if let Some(turn) = self.delayed_dialogue.take_ready(now_ms) {
+            turn
+        } else {
+            if !self.dialogue.is_pending() {
+                return Ok(());
+            }
+            match self.dialogue.try_recv_turn() {
+                Ok(turn) => {
+                    let Some(turn) = self.delayed_dialogue.hold_or_release(turn, now_ms) else {
+                        return Ok(());
+                    };
+                    turn
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.delayed_dialogue.cancel();
+                    let owner = self.active_dialogue_owner;
+                    self.view.pending = false;
+                    self.active_dialogue_owner = None;
+                    let text_speed = effective_dialogue_text_speed(
+                        self.settings.text_speed,
+                        self.scenario.is_some(),
+                    );
+                    self.speech_reveal = owner.and_then(|owner| {
+                        show_dialogue_caption(
+                            &mut self.view,
+                            owner,
+                            "too many thought.",
+                            self.session.world().elapsed_ms,
+                            self.settings.subtitles,
+                            text_speed,
+                        )
+                    });
                     return Ok(());
                 }
-                self.persist()?;
-                let voice = identity_tts_voice_settings(self.session.world());
-                let text_speed = effective_dialogue_text_speed(
-                    self.settings.text_speed,
-                    self.scenario.is_some(),
-                );
-                if self.settings.voice_enabled {
-                    self.pending_mouth_timing = Some(voice.mouth_timing);
-                    let _ = self
-                        .tts
-                        .request(turn.reply.say.clone(), self.session.world());
-                }
-                self.speech_reveal = show_dialogue_caption(
-                    &mut self.view,
-                    &turn.reply.say,
-                    self.session.world().elapsed_ms,
-                    self.settings.subtitles,
-                    text_speed,
-                );
-                if turn.fallback {
-                    self.view.show_status(
-                        "Local thoughts unavailable. Using a simple response.".to_owned(),
-                        self.session.world().elapsed_ms,
-                        5_000,
-                    );
-                }
-                let mut transcript = TranscriptRecord::from_turn(
-                    self.session.world().elapsed_ms,
-                    &turn.request,
-                    Some(&turn.reply),
-                    turn.backend,
-                    turn.latency_ms,
-                    turn.fallback,
-                    false,
-                    Some(voice),
-                );
-                transcript.apply_dialogue_metadata(
-                    turn.retry_count,
-                    turn.duplicate_suppressed,
-                    turn.fallback_reason,
-                );
-                self.transcripts
-                    .append(&transcript)
-                    .map_err(|error| GameError::FilesystemError(error.to_string()))?;
-                self.view.mode = UiMode::Compose;
-                self.view.focused_region = Some("reaction/laugh".to_owned());
+                Err(TryRecvError::Empty) => return Ok(()),
             }
-            Err(TryRecvError::Disconnected) => {
-                self.view.pending = false;
-                let text_speed = effective_dialogue_text_speed(
-                    self.settings.text_speed,
-                    self.scenario.is_some(),
-                );
-                self.speech_reveal = show_dialogue_caption(
-                    &mut self.view,
-                    "too many thought.",
-                    self.session.world().elapsed_ms,
-                    self.settings.subtitles,
-                    text_speed,
-                );
-            }
-            Err(TryRecvError::Empty) => {}
+        };
+        if self.active_dialogue_owner != Some(turn.owner) {
+            return Ok(());
         }
+        self.view.pending = false;
+        self.audio.stop_speech();
+        if !self.session.accept_dialogue_turn(
+            &turn.request,
+            &turn.reply,
+            turn.retry_count,
+            turn.fallback,
+        ) {
+            // The player superseded the authoritative relationship beat while local
+            // inference was pending. Never present, speak, or transcript stale wording.
+            self.active_dialogue_owner = None;
+            self.pending_tts = None;
+            self.view.mode = UiMode::Compose;
+            return Ok(());
+        }
+        self.persist()?;
+        let voice = identity_tts_voice_settings(self.session.world());
+        let text_speed =
+            effective_dialogue_text_speed(self.settings.text_speed, self.scenario.is_some());
+        if self.settings.voice_enabled
+            && let Some(request_id) = self
+                .tts
+                .request(turn.reply.say.clone(), self.session.world())
+        {
+            self.pending_tts = Some(PendingTts {
+                owner: turn.owner,
+                request_id,
+                mouth_timing: voice.mouth_timing,
+            });
+            if let Some(feel) = &mut self.feel {
+                feel.record_tts_lifecycle(
+                    "tts_enqueued",
+                    self.pending_tts
+                        .as_ref()
+                        .expect("just installed pending TTS")
+                        .trace_owner(),
+                    None,
+                    self.session.world().elapsed_ms,
+                )
+                .map_err(feel_error)?;
+            }
+        }
+        self.speech_reveal = show_dialogue_caption(
+            &mut self.view,
+            turn.owner,
+            &turn.reply.say,
+            self.session.world().elapsed_ms,
+            self.settings.subtitles,
+            text_speed,
+        );
+        if turn.fallback {
+            self.view.show_status(
+                "Local thoughts unavailable. Using a simple response.".to_owned(),
+                self.session.world().elapsed_ms,
+                5_000,
+            );
+            self.turn_status_owner = Some(turn.owner);
+        }
+        let mut transcript = TranscriptRecord::from_turn(
+            self.session.world().elapsed_ms,
+            &turn.request,
+            Some(&turn.reply),
+            turn.backend,
+            turn.latency_ms,
+            turn.fallback,
+            false,
+            Some(voice),
+        );
+        transcript.apply_dialogue_metadata(
+            turn.retry_count,
+            turn.duplicate_suppressed,
+            turn.fallback_reason,
+        );
+        self.transcripts
+            .append(&transcript)
+            .map_err(|error| GameError::FilesystemError(error.to_string()))?;
+        self.view.mode = UiMode::Compose;
+        self.view.focused_region = Some("reaction/laugh".to_owned());
         Ok(())
     }
 
     fn poll_tts(&mut self) -> GameResult {
         match self.tts.try_recv() {
             Ok(completion) => {
-                let _ = completion.request_id;
+                let Some(pending) = self.pending_tts.take() else {
+                    return Ok(());
+                };
+                let trace_owner = pending.trace_owner();
+                if pending.request_id != completion.request_id
+                    || self.active_dialogue_owner != Some(pending.owner)
+                {
+                    if let Some(feel) = &mut self.feel {
+                        feel.record_tts_lifecycle(
+                            "tts_completion_discarded",
+                            trace_owner,
+                            Some(completion.wav.is_some()),
+                            self.session.world().elapsed_ms,
+                        )
+                        .map_err(feel_error)?;
+                    }
+                    return Ok(());
+                }
+                if let Some(feel) = &mut self.feel {
+                    feel.record_tts_lifecycle(
+                        "tts_completion_accepted",
+                        trace_owner,
+                        Some(completion.wav.is_some()),
+                        self.session.world().elapsed_ms,
+                    )
+                    .map_err(feel_error)?;
+                }
                 if let Some(wav) = completion.wav {
                     if let Some(feel) = &mut self.feel {
-                        feel.record_speech(&wav, self.session.world().elapsed_ms)
+                        feel.record_speech(&wav, trace_owner, self.session.world().elapsed_ms)
                             .map_err(feel_error)?;
+                        feel.record_tts_lifecycle(
+                            "speech_playback_started",
+                            trace_owner,
+                            Some(true),
+                            self.session.world().elapsed_ms,
+                        )
+                        .map_err(feel_error)?;
                     }
                     self.audio.play_speech(wav);
-                    if let Some(timing) = self.pending_mouth_timing.take() {
-                        self.speech_animation = Some(SpeechAnimation {
-                            started_at_ms: self.session.world().elapsed_ms,
-                            timing,
-                        });
-                    }
+                    self.active_speech_owner = Some(trace_owner);
+                    self.speech_animation = Some(SpeechAnimation {
+                        owner: pending.owner,
+                        started_at_ms: self.session.world().elapsed_ms,
+                        timing: pending.mouth_timing,
+                    });
                 }
             }
             Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
@@ -668,7 +835,7 @@ impl Game {
                 | UiAction::Inspect
                 | UiAction::Talk
         ) {
-            self.clear_speech();
+            self.supersede_dialogue_turn()?;
         }
         match action {
             UiAction::OpenContext(target) => {
@@ -726,7 +893,6 @@ impl Game {
             }
             UiAction::React(reaction) => {
                 self.apply_command(SessionCommand::React { reaction }, true)?;
-                self.clear_speech();
                 self.close_menu();
             }
             UiAction::TypeCharacter(character) => {
@@ -811,7 +977,7 @@ impl Game {
                 self.settings.voice_enabled = !self.settings.voice_enabled;
                 self.view.voice_enabled = self.settings.voice_enabled;
                 if !self.settings.voice_enabled {
-                    self.audio.stop_speech();
+                    self.stop_owned_voice()?;
                 }
                 self.persist_settings()?;
             }
@@ -878,12 +1044,12 @@ impl Game {
                 self.view.mode = UiMode::DataManagement;
                 self.reset_focus();
             }
-            UiAction::RecoverBackup => self.recover_backup(),
+            UiAction::RecoverBackup => self.recover_backup()?,
             UiAction::RequestReset => {
                 self.view.mode = UiMode::ConfirmReset;
                 self.reset_focus();
             }
-            UiAction::ConfirmReset => self.reset_save(),
+            UiAction::ConfirmReset => self.reset_save()?,
             UiAction::ToggleTranscript => {
                 self.settings.transcript_enabled = !self.view.transcript_enabled;
                 self.view.transcript_enabled = self.settings.transcript_enabled;
@@ -947,7 +1113,8 @@ impl Game {
         Ok(())
     }
 
-    fn recover_backup(&mut self) {
+    fn recover_backup(&mut self) -> GameResult {
+        self.supersede_dialogue_turn()?;
         let result = self
             .save_store
             .load_backup()
@@ -980,9 +1147,11 @@ impl Game {
         }
         self.view.mode = UiMode::DataManagement;
         self.reset_focus();
+        Ok(())
     }
 
-    fn reset_save(&mut self) {
+    fn reset_save(&mut self) -> GameResult {
+        self.supersede_dialogue_turn()?;
         match self.save_store.reset() {
             Ok(_) => {
                 self.session = GameSession::new(42, "Mop");
@@ -997,6 +1166,7 @@ impl Game {
         }
         self.view.mode = UiMode::DataManagement;
         self.reset_focus();
+        Ok(())
     }
 
     fn apply_confirmed_ui_action(&mut self, action: UiAction, controller: bool) -> GameResult {
@@ -1011,18 +1181,67 @@ impl Game {
         self.view.focused_region = Some("compose/input".to_owned());
     }
 
-    fn clear_speech(&mut self) {
+    fn clear_speech(&mut self) -> GameResult {
         self.view.clear_speech();
-        self.audio.stop_speech();
-        self.pending_mouth_timing = None;
-        self.speech_animation = None;
+        self.stop_owned_voice()?;
         self.speech_reveal = None;
+        Ok(())
+    }
+
+    fn stop_owned_voice(&mut self) -> GameResult {
+        self.audio.stop_speech();
+        self.speech_animation = None;
+        if let Some(pending) = self.pending_tts.take() {
+            let _ = self.tts.cancel(pending.request_id);
+            if let Some(feel) = &mut self.feel {
+                feel.record_tts_lifecycle(
+                    "tts_canceled",
+                    pending.trace_owner(),
+                    None,
+                    self.session.world().elapsed_ms,
+                )
+                .map_err(feel_error)?;
+            }
+        }
+        if let Some(owner) = self.active_speech_owner.take()
+            && let Some(feel) = &mut self.feel
+        {
+            feel.record_tts_lifecycle(
+                "speech_playback_stopped",
+                owner,
+                None,
+                self.session.world().elapsed_ms,
+            )
+            .map_err(feel_error)?;
+        }
+        Ok(())
+    }
+
+    fn supersede_dialogue_turn(&mut self) -> GameResult {
+        self.dialogue_generation = self.dialogue_generation.wrapping_add(1).max(1);
+        if let Some(owner) = self.active_dialogue_owner.take() {
+            let _ = self.dialogue.cancel(owner);
+        }
+        self.delayed_dialogue.cancel();
+        self.view.pending = false;
+        if self.turn_status_owner.take().is_some()
+            && self.view.status_message.as_deref()
+                == Some("Local thoughts unavailable. Using a simple response.")
+        {
+            self.view.status_message = None;
+            self.view.status_expires_at_ms = None;
+        }
+        self.clear_speech()
     }
 
     fn update_speech_reveal(&mut self) {
         let Some(reveal) = &self.speech_reveal else {
             return;
         };
+        if self.active_dialogue_owner != Some(reveal.owner) {
+            self.speech_reveal = None;
+            return;
+        }
         let elapsed = self
             .session
             .world()
@@ -1083,7 +1302,9 @@ impl Game {
     }
 
     fn drive_scenario(&mut self, ctx: &mut Context) -> GameResult {
-        if self.dialogue.is_pending() || self.capture.is_some() {
+        if (self.dialogue.is_pending() && !self.delayed_dialogue.allows_scenario_progress())
+            || self.capture.is_some()
+        {
             if self.capture.is_some() {
                 ctx.gfx.window().request_redraw();
             }
@@ -1115,6 +1336,22 @@ impl Game {
                         .map_err(feel_error)?;
                 }
                 self.apply_ui_action(action, false)?;
+            }
+            ScenarioStep::SetSubtitles(enabled) => {
+                if let Some(feel) = &mut self.feel {
+                    feel.record_native(
+                        "scenario_setting",
+                        serde_json::json!({"subtitles_enabled": enabled}),
+                        self.session.world().elapsed_ms,
+                    )
+                    .map_err(feel_error)?;
+                }
+                self.settings.subtitles = enabled;
+                self.view.subtitles = enabled;
+                if !enabled {
+                    self.view.clear_speech();
+                    self.speech_reveal = None;
+                }
             }
             ScenarioStep::Capture(name) => {
                 self.capture = Some(CaptureState::RenderPending(name));
@@ -1218,11 +1455,26 @@ impl EventHandler for Game {
                 })
                 .collect::<Vec<_>>();
             feel.record_audio(
-                &self.queued_audio,
-                &cue_ids,
-                self.audio.speech_active(),
-                self.audio.one_shot_active(),
-                self.audio.ambience_duck(),
+                AudioTraceFrame {
+                    commands: &self.queued_audio,
+                    cue_ids: &cue_ids,
+                    speech_active: self.audio.speech_active(),
+                    one_shot_active: self.audio.one_shot_active(),
+                    ambience_duck: self.audio.ambience_duck(),
+                    speech_owner: self.active_speech_owner,
+                    presentation: PresentationTraceState {
+                        subtitles_enabled: self.settings.subtitles,
+                        active_dialogue_owner: self.active_dialogue_owner.map(dialogue_trace_owner),
+                        caption_owner: self
+                            .view
+                            .speech
+                            .as_ref()
+                            .and(self.active_dialogue_owner)
+                            .map(dialogue_trace_owner),
+                        pending_mouth_owner: self.pending_tts.as_ref().map(PendingTts::trace_owner),
+                        active_mouth_owner: self.active_speech_owner,
+                    },
+                },
                 self.session.world().elapsed_ms,
             )
             .map_err(feel_error)?;
@@ -1230,16 +1482,36 @@ impl EventHandler for Game {
         self.audio.play_queued(&mut self.queued_audio);
         if !self.audio.speech_active() {
             self.speech_animation = None;
+            if let Some(owner) = self.active_speech_owner.take()
+                && let Some(feel) = &mut self.feel
+            {
+                feel.record_tts_lifecycle(
+                    "speech_playback_completed",
+                    owner,
+                    None,
+                    self.session.world().elapsed_ms,
+                )
+                .map_err(feel_error)?;
+            }
         }
         self.view.speaking = self.audio.speech_active();
         self.view.mouth_phase = self.speech_animation.as_ref().map_or(0, |animation| {
-            mouth_phase(
-                animation.timing,
-                self.session
-                    .world()
-                    .elapsed_ms
-                    .saturating_sub(animation.started_at_ms),
-            )
+            if self.active_dialogue_owner == Some(animation.owner)
+                && self.active_speech_owner.is_some_and(|owner| {
+                    owner.dialogue_generation == animation.owner.generation
+                        && owner.dialogue_request_id == animation.owner.request_id
+                })
+            {
+                mouth_phase(
+                    animation.timing,
+                    self.session
+                        .world()
+                        .elapsed_ms
+                        .saturating_sub(animation.started_at_ms),
+                )
+            } else {
+                0
+            }
         });
         Ok(())
     }
@@ -1269,8 +1541,24 @@ impl EventHandler for Game {
 
         if let Some(feel) = &mut self.feel {
             let rgba = presentation_rgba(ctx, &self.presentation_frame)?;
-            feel.record_frame(&rgba, self.session.world(), &self.view)
-                .map_err(feel_error)?;
+            feel.record_frame(
+                &rgba,
+                self.session.world(),
+                &self.view,
+                PresentationTraceState {
+                    subtitles_enabled: self.settings.subtitles,
+                    active_dialogue_owner: self.active_dialogue_owner.map(dialogue_trace_owner),
+                    caption_owner: self
+                        .view
+                        .speech
+                        .as_ref()
+                        .and(self.active_dialogue_owner)
+                        .map(dialogue_trace_owner),
+                    pending_mouth_owner: self.pending_tts.as_ref().map(PendingTts::trace_owner),
+                    active_mouth_owner: self.active_speech_owner,
+                },
+            )
+            .map_err(feel_error)?;
         }
 
         if mark_capture_rendered(&mut self.capture) {
@@ -1501,7 +1789,7 @@ impl EventHandler for Game {
             self.settings.voice_enabled = !self.settings.voice_enabled;
             self.view.voice_enabled = self.settings.voice_enabled;
             if !self.settings.voice_enabled {
-                self.audio.stop_speech();
+                self.stop_owned_voice()?;
             }
             return self.persist_settings();
         }
@@ -1789,6 +2077,7 @@ fn revealed_text(full_text: &str, elapsed_ms: u64, speed: TextSpeed) -> (String,
 
 fn show_dialogue_caption(
     view: &mut ViewState,
+    owner: DialogueOwner,
     text: &str,
     elapsed_ms: u64,
     subtitles: bool,
@@ -1800,6 +2089,7 @@ fn show_dialogue_caption(
     }
     view.show_speech(text.to_owned(), elapsed_ms);
     (text_speed != TextSpeed::Instant).then(|| SpeechReveal {
+        owner,
         full_text: text.to_owned(),
         started_at_ms: elapsed_ms,
     })
@@ -1920,6 +2210,7 @@ fn clears_speech(command: &SessionCommand) -> bool {
             | SessionCommand::Play { .. }
             | SessionCommand::Comfort
             | SessionCommand::Tidy
+            | SessionCommand::React { .. }
             | SessionCommand::Talk { .. }
     )
 }
@@ -2035,11 +2326,12 @@ mod tests {
     use beastie_view::{MicrophoneState, UiAction, ViewState};
 
     use super::{
-        CaptureState, apply_spoken_input_status, clears_speech, command_requires_persist,
-        effective_dialogue_text_speed, load_session, mark_capture_rendered, mouth_phase,
-        play_command, revealed_text, show_dialogue_caption, spoken_input_is_pending,
-        take_capture_for_readback,
+        CaptureState, DelayedCompletion, apply_spoken_input_status, clears_speech,
+        command_requires_persist, effective_dialogue_text_speed, load_session,
+        mark_capture_rendered, mouth_phase, play_command, revealed_text, show_dialogue_caption,
+        spoken_input_is_pending, take_capture_for_readback,
     };
+    use crate::dialogue::DialogueOwner;
     use crate::save_store::SaveStore;
     use crate::settings::TextSpeed;
 
@@ -2091,9 +2383,35 @@ mod tests {
         assert!(!clears_speech(&SessionCommand::Tick {
             milliseconds: 1_000,
         }));
-        assert!(!clears_speech(&SessionCommand::React {
+        assert!(clears_speech(&SessionCommand::React {
             reaction: Reaction::Laugh,
         }));
+    }
+
+    #[test]
+    fn direct_action_during_scripted_delay_discards_completion_before_accept_or_tts() {
+        let mut ordinary = DelayedCompletion::<&str>::new(0);
+        ordinary.arm(1_000);
+        assert!(!ordinary.allows_scenario_progress());
+
+        let mut delayed = DelayedCompletion::new(800);
+        delayed.arm(1_000);
+        assert!(delayed.allows_scenario_progress());
+        assert_eq!(delayed.hold_or_release("generated turn", 1_016), None);
+
+        // The authored direct action occurs after 150 ms of simulation, while the completion is
+        // still held. Supersession drops it without waiting for the 800 ms release deadline.
+        assert_eq!(delayed.take_ready(1_150), None);
+        delayed.cancel();
+        assert!(!delayed.allows_scenario_progress());
+        assert_eq!(delayed.take_ready(1_800), None);
+    }
+
+    #[test]
+    fn reaction_commands_use_the_late_dialogue_supersession_path() {
+        for reaction in [Reaction::Laugh, Reaction::Disapprove, Reaction::Comfort] {
+            assert!(clears_speech(&SessionCommand::React { reaction }));
+        }
     }
 
     #[test]
@@ -2204,20 +2522,36 @@ mod tests {
     #[test]
     fn subtitles_suppress_only_the_visible_dialogue_caption() {
         let mut view = ViewState::default();
-        let reveal =
-            show_dialogue_caption(&mut view, "audible rude fish", 42, false, TextSpeed::Normal);
+        let owner = DialogueOwner {
+            generation: 1,
+            request_id: 7,
+        };
+        let reveal = show_dialogue_caption(
+            &mut view,
+            owner,
+            "audible rude fish",
+            42,
+            false,
+            TextSpeed::Normal,
+        );
         assert!(reveal.is_none());
         assert!(view.speech.is_none());
         assert!(view.speech_expires_at_ms.is_none());
 
-        let reveal =
-            show_dialogue_caption(&mut view, "visible rude fish", 43, true, TextSpeed::Normal);
+        let reveal = show_dialogue_caption(
+            &mut view,
+            owner,
+            "visible rude fish",
+            43,
+            true,
+            TextSpeed::Normal,
+        );
         assert!(reveal.is_some());
         assert_eq!(view.speech.as_deref(), Some("visible rude fish"));
     }
 
     #[test]
-    fn genuine_v2_game_save_loads_continues_and_is_rewritten_as_v3() {
+    fn genuine_v2_game_save_loads_continues_and_is_rewritten_as_v4() {
         let directory =
             std::env::temp_dir().join(format!("beastie-v2-game-migration-{}", std::process::id()));
         let path = directory.join("main.json");

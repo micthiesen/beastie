@@ -1,7 +1,7 @@
 # Interaction continuity rework
 
 Date: 2026-08-17
-Status: proposed implementation contract, awaiting approval
+Status: implemented and verified
 
 ## Outcome
 
@@ -512,6 +512,161 @@ making it. For each entry record:
 
 The mandate includes cohesive improvements discovered while implementing or reviewing these
 changes. It does not include unrelated new features.
+
+### 2026-08-17: reaction identity source selection
+
+- Discovery and evidence: a fresh image-generation attempt preserved the broad fish concept but
+  changed eye scale, body mass, shading, and pixel density. The already approved play, notice, and
+  content frames remain exact runtime identity anchors and express the required emotional arc.
+- Why it belongs: accepting another attractive near-match would repeat the species-continuity
+  failure this pass exists to remove.
+- Owner: authored creature body presentation.
+- Test and native evidence: asset palette/alpha checks, explicit bounds/centroid diagnostics,
+  twelve-frame contact sheet, and the quiet/interaction/relationship native replays.
+- Disposition: curate distinct delight, affection, and comfort clips from the pinned canonical
+  runtime frames; retain the generated attempt only as a rejected provenance note.
+
+### 2026-08-17: toy travel owner conflicts discovered in code review
+
+- Discovery and evidence: standalone relationship scheduling could replace an active accepted-toy
+  travel target without ending the toy interaction. Autonomous toy travel also allocated its
+  interaction identity only on arrival, leaving mid-approach saves without an exact owner.
+- Why it belongs: both paths violate the same one-owner continuity rule and can orphan or recreate
+  a physical payoff.
+- Owner: authoritative simulation travel and toy interaction state.
+- Test and native evidence: focused relationship-preemption, autonomous mid-approach save/reload,
+  validation, and same-seed quiet/interaction replay.
+- Disposition: block standalone relationship beats while any toy interaction is active; create and
+  persist autonomous interaction identity at travel start; reject approach state without a matching
+  travel owner.
+
+### 2026-08-17: cancellation boundary and evidence integrity gaps
+
+- Discovery and evidence: the direct `React` UI path cleared visible speech without invalidating
+  pending dialogue. Runner timeout cleanup killed only the game PID, not its worker descendants.
+  Feel state also lacked subtitle mode and caption/mouth owners needed to prove speech continuity.
+- Why it belongs: late replies, surviving workers, and incomplete ownership traces can each make a
+  superseded turn appear current or contaminate the evidence used to judge it.
+- Owner: game-shell dialogue generation, feel process lifecycle, and feel trace schema.
+- Test and native evidence: late-reply-after-react regression, descendant cleanup test, owner-rich
+  rapid-interruption trace, and valid subtitle-on/off captures.
+- Disposition: route reactions through full turn supersession; contain and reap the whole game
+  process tree on every failed attempt; trace subtitle, dialogue, caption, TTS, speech, and mouth
+  owners explicitly.
+
+### 2026-08-17: nested worker process groups
+
+- Discovery and evidence: live native inspection showed the game and FFmpeg in the runner-owned
+  process group, but the dialogue and TTS workers intentionally created their own process groups.
+  Killing only the game group after a hard startup timeout could therefore bypass worker cleanup.
+- Why it belongs: retry isolation is false if workers from a failed attempt can survive into the
+  next evidence run.
+- Owner: feel-runner Unix process-tree containment.
+- Test and native evidence: recursive descendant-group termination test plus live PID/PPID/PGID
+  inspection during a retry-producing baseline capture.
+- Disposition: enumerate and terminate the full descendant tree, including nested process-group
+  leaders, before reaping the game group; keep the Windows Job Object path unchanged.
+
+### 2026-08-17: completed caption lost its trace owner
+
+- Discovery and evidence: final-candidate `first-five-minutes` frames at `00:26.216` onward showed
+  a visible caption and active owned speech, but `caption_owner` became null as soon as the
+  typewriter reveal completed.
+- Why it belongs: the caption remained correctly visible, but the evidence could no longer prove
+  that it belonged to the audible turn for the rest of playback.
+- Owner: game-shell caption presentation and feel trace projection.
+- Test and native evidence: trace assertion across reveal completion and the full audible duration,
+  followed by rapid-interruption recapture.
+- Disposition: retain or derive the caption owner for as long as the owned caption exists, not only
+  while its incremental reveal timer is active.
+
+### 2026-08-17: delight onset reversed current facing
+
+- Discovery and evidence: final relationship footage at `01:07.250` to `01:07.300` approaches the
+  ball with the tail on screen-right, then switches in one frame to the fixed delight pose with the
+  tail on screen-left. The contact sheet shows the same idle-to-delight reversal.
+- Why it belongs: species identity is repaired, but instantaneous facing reversal still breaks the
+  physical continuity of the exact contact payoff.
+- Owner: authored reaction projection and current-facing presentation.
+- Test and native evidence: focused facing-preservation render test, regenerated contact sheet, and
+  a fresh accepted-toy contact filmstrip.
+- Disposition: preserve or mirror the delight clip from current facing at cue onset without changing
+  its semantic owner or timing.
+
+### 2026-08-17: in-flight toy save proof was narrower than the contract
+
+- Discovery and evidence: core tests covered uninterrupted exact shared-toy context and accepted
+  offline resume separately, while session migration tests covered only ambiguous legacy play.
+  They did not combine unrelated eligibility change plus save/reload before shared-toy contact or
+  current session save/reload of both accepted approach and refusal stare.
+- Why it belongs: the persisted owner is only trustworthy if every current save layer preserves it
+  without reselection or outcome invention.
+- Owner: core toy interaction state and production session save migration/resume.
+- Test and native evidence: focused current-version core and session round trips asserting exact
+  interaction ID, toy, origin, outcome, travel purpose, relationship subject/evidence, and one
+  eventual payoff or refusal completion.
+- Disposition: add the complete round-trip matrix and make only the minimal implementation repair if
+  a test exposes a real gap.
+
+### 2026-08-17: final native dialogue races covered only pending TTS
+
+- Discovery and evidence: the final rapid interruption enqueued and canceled TTS in one frame, and
+  the interaction-chain speech completed normally. Focused tests covered slow pre-reply and active
+  playback cancellation, but the final native fixtures did not exercise those two boundaries.
+- Why it belongs: ownership must remain visible under the asynchronous timings that originally
+  produced the defect, not only in pure manager tests.
+- Owner: fixture dialogue timing, active speech owner, and feel scenario markers.
+- Test and native evidence: a bounded fixture-only reply delay superseded before acceptance, plus a
+  normal owned TTS playback interrupted by a direct action with zero later residue.
+- Disposition: add deterministic inactive-by-default fixture timing and explicit native markers for
+  both boundaries; keep production worker timing unchanged.
+
+### 2026-08-17: first dialogue-delay seam blocked the scenario thread
+
+- Discovery and evidence: the first `dialogue-races` capture requested talk at `00:01.033`, but its
+  authored 150 ms comfort did not execute until `00:02.083`; delayed reply and TTS had already
+  started at `00:01.933`. The runner rejected the bundle because the superseded owner reached TTS.
+- Why it belongs: a timing seam that freezes frame/scenario progress cannot reproduce a real slow
+  asynchronous worker and can certify the wrong race ordering.
+- Owner: capture-only dialogue completion scheduling.
+- Test and native evidence: frames and direct semantic commands continue during the delayed request,
+  comfort invalidates the owner before completion, and the late reply produces no acceptance or TTS.
+- Disposition: move fixture delay off the update/scenario thread into cancel-aware asynchronous
+  completion delivery; retain fail-closed race validation.
+
+## Completion evidence
+
+The rework is implemented across core save version 6, session save version 4, the game-shell
+dialogue/TTS boundary, owned view/audio projection, curated reaction art, and the native feel
+runner. The final debug-build evidence is:
+
+- `target/feel/interaction-continuity-final-interaction-v2/interaction-chain`: repeated bell refusal
+  uses interaction IDs 3 and 4 and never emits `ToyPlayed`; the spoken receipt emits one curious
+  cue; its final turn starts owned TTS and a direct comfort stops that exact playback at
+  `01:01.333` with no residue.
+- `target/feel/interaction-continuity-final-dialogue-races-v4/dialogue-races`: a delayed reply is
+  superseded at `00:01.216` before semantic acceptance or TTS; a later subtitles-off turn has an
+  audible speech/mouth owner and no caption, then restores subtitles.
+- `target/feel/interaction-continuity-final-relationship-v2/relationship-over-time`: the active
+  player-return beat is interrupted at `00:60.200`; dialogue turn generation 11/request 3 is
+  accepted at `00:60.233`, its TTS request 3 is enqueued and canceled at `00:60.250`, and that WAV
+  never starts. The later accepted ball contact preserves incoming facing through delight.
+- `target/feel/interaction-continuity-final-breadth-v2`: trusted berry, mushroom grudge, familiar
+  cave, familiar plant, and familiar ball all pass exact motif, subject, mode, and evidence
+  validation. The final binary also completed quiet observation, bad conditions, and the AI-off
+  relationship arc in their respective `interaction-continuity-final-*-v2` roots.
+- `target/feel/reaction-identity-contact-sheet.png`: delight, affection, and comfort retain the
+  approved gold fish across onset, progression, held pose, and exit while remaining distinct.
+
+Every accepted final bundle uses manifest version 5 and game binary SHA-256
+`18cbb2c303a8ddd7fdc7d78b699df7f83b43bcacca21fc99cb9f30e0f44bb1c4`. The full
+`cargo xtask verify` gate passes with 78 declared runtime assets. Real zero-frame failures during
+final dialogue, bad-conditions, AI-off, and relationship-breadth capture were classified within the
+startup bound, retained with diagnostics, and retried without contaminating the accepted bundle.
+No descendants remained after those attempts; focused process-tree tests additionally prove nested
+worker-group termination. Independent final visual, causality, and dialogue/audio adjudication
+found no remaining material continuity issue. Large recordings remain ignored review artifacts
+under `target/`; the contract, scenarios, tests, manifests, and tooling are the durable record.
 
 ## Non-goals
 

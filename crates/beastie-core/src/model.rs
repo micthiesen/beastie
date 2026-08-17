@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU64;
 use thiserror::Error;
 
 use crate::{
@@ -471,6 +472,87 @@ pub enum SemanticDestination {
     Position(NormalizedPosition),
 }
 
+/// The authoritative reason a creature is travelling to a semantic destination.
+///
+/// This is persisted separately from the projected intention because intentions may change while
+/// a journey is still active. Arrival code must dispatch on this owner, never infer meaning from
+/// proximity or the current intention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum TravelPurpose {
+    IdleVisit {
+        visit_id: NonZeroU64,
+    },
+    ToyInteraction {
+        interaction_id: NonZeroU64,
+    },
+    RefusalStare {
+        interaction_id: NonZeroU64,
+    },
+    CursorSocial {
+        action_id: NonZeroU64,
+    },
+    Relationship {
+        beat_id: NonZeroU64,
+    },
+    Initiative {
+        initiative_id: NonZeroU64,
+        requested_at_ms: u64,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TravelTarget {
+    pub destination: SemanticDestination,
+    pub purpose: TravelPurpose,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToyOrigin {
+    Player,
+    Autonomous,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToyInteractionPhase {
+    Approach,
+    Contact,
+    Resolved,
+    Recovery,
+    Interrupted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToyInteractionOutcome {
+    Accepted,
+    Rejected,
+    Interrupted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToyInteraction {
+    pub id: NonZeroU64,
+    pub toy: ToyId,
+    pub origin: ToyOrigin,
+    pub outcome: ToyInteractionOutcome,
+    pub phase: ToyInteractionPhase,
+    #[serde(default)]
+    pub relationship: Option<ActionRelationshipContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedToyInteraction {
+    pub id: NonZeroU64,
+    pub toy: ToyId,
+    pub origin: ToyOrigin,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionPhase {
@@ -703,6 +785,12 @@ pub struct InteractionState {
     pub sleep_started_at_ms: Option<u64>,
     #[serde(default = "first_action_id")]
     pub next_action_id: u64,
+    #[serde(default = "first_action_id")]
+    pub next_toy_interaction_id: u64,
+    #[serde(default)]
+    pub toy_interaction: Option<ToyInteraction>,
+    #[serde(default)]
+    pub last_resolved_toy_interaction: Option<ResolvedToyInteraction>,
     #[serde(default)]
     pub relationship_moment: Option<ActionRelationshipMoment>,
 }
@@ -717,6 +805,9 @@ impl Default for InteractionState {
             affectionate_until_ms: 0,
             sleep_started_at_ms: None,
             next_action_id: first_action_id(),
+            next_toy_interaction_id: first_action_id(),
+            toy_interaction: None,
+            last_resolved_toy_interaction: None,
             relationship_moment: None,
         }
     }
@@ -998,6 +1089,8 @@ pub struct AquariumCreatureState {
     pub depth_lane: DepthLane,
     pub steering: SteeringMode,
     pub destination: Option<SemanticDestination>,
+    #[serde(default)]
+    pub travel_purpose: Option<TravelPurpose>,
     pub action: Option<ActionTimeline>,
 }
 
@@ -1011,6 +1104,7 @@ impl Default for AquariumCreatureState {
             depth_lane: DepthLane::Middle,
             steering: SteeringMode::Hover,
             destination: None,
+            travel_purpose: None,
             action: None,
         }
     }
@@ -1472,6 +1566,87 @@ impl WorldState {
             }
         };
         let interaction = &self.creature.interaction_state;
+        let destination = self.creature.aquarium.destination;
+        let travel = self.creature.aquarium.travel_purpose;
+        let travel_invalid = destination.is_some() != travel.is_some()
+            || destination
+                .zip(travel)
+                .is_some_and(|(destination, purpose)| match purpose {
+                    TravelPurpose::IdleVisit { .. } => !has_valid_visit_destination(destination),
+                    TravelPurpose::ToyInteraction { interaction_id } => interaction
+                        .toy_interaction
+                        .as_ref()
+                        .is_none_or(|toy_interaction| {
+                            toy_interaction.id != interaction_id
+                                || toy_interaction.outcome != ToyInteractionOutcome::Accepted
+                                || toy_interaction.phase != ToyInteractionPhase::Approach
+                                || self.creature.current_intention != Intention::Play
+                                || destination != SemanticDestination::Toy(toy_interaction.toy)
+                        }),
+                    TravelPurpose::RefusalStare { interaction_id } => interaction
+                        .toy_interaction
+                        .as_ref()
+                        .is_none_or(|toy_interaction| {
+                            toy_interaction.id != interaction_id
+                                || toy_interaction.origin != ToyOrigin::Player
+                                || toy_interaction.outcome != ToyInteractionOutcome::Rejected
+                                || toy_interaction.phase != ToyInteractionPhase::Approach
+                                || self.creature.current_intention != Intention::RefuseAndStare
+                                || destination != SemanticDestination::Toy(toy_interaction.toy)
+                        }),
+                    TravelPurpose::CursorSocial { .. } => !matches!(
+                        destination,
+                        SemanticDestination::Player | SemanticDestination::Position(_)
+                    ),
+                    TravelPurpose::Relationship { .. } => {
+                        self.creature.relationship_expression.active.is_none()
+                    }
+                    TravelPurpose::Initiative {
+                        requested_at_ms, ..
+                    } => {
+                        requested_at_ms > self.elapsed_ms
+                            || self.creature.initiated_behavior.is_none()
+                    }
+                });
+        let toy_interaction_invalid = interaction.next_toy_interaction_id == 0
+            || interaction
+                .toy_interaction
+                .as_ref()
+                .is_some_and(|toy_interaction| {
+                    let expected_purpose = match toy_interaction.outcome {
+                        ToyInteractionOutcome::Accepted => TravelPurpose::ToyInteraction {
+                            interaction_id: toy_interaction.id,
+                        },
+                        ToyInteractionOutcome::Rejected => TravelPurpose::RefusalStare {
+                            interaction_id: toy_interaction.id,
+                        },
+                        ToyInteractionOutcome::Interrupted => return true,
+                    };
+                    toy_interaction.id.get() >= interaction.next_toy_interaction_id
+                        || matches!(
+                            toy_interaction.phase,
+                            ToyInteractionPhase::Contact
+                                | ToyInteractionPhase::Resolved
+                                | ToyInteractionPhase::Interrupted
+                        )
+                        || (toy_interaction.phase == ToyInteractionPhase::Approach
+                            && (destination
+                                != Some(SemanticDestination::Toy(toy_interaction.toy))
+                                || travel != Some(expected_purpose)))
+                        || toy_interaction.relationship.as_ref().is_some_and(|context| {
+                            toy_interaction.origin != ToyOrigin::Player
+                                || context.subject
+                                    != RelationshipSubject::Toy(toy_interaction.toy)
+                                || context.motif
+                                    != RelationshipMotifKey::SharedToy(toy_interaction.toy)
+                                || !crate::relationship::action_relationship_context_is_grounded(
+                                    self, context,
+                                )
+                        })
+                })
+            || interaction
+                .last_resolved_toy_interaction
+                .is_some_and(|resolved| resolved.id.get() >= interaction.next_toy_interaction_id);
         let action = self.creature.aquarium.action.as_ref();
         let action_invalid = action.is_some_and(|action| {
             let food_identity = action.food.zip(action.food_id);
@@ -1546,6 +1721,9 @@ impl WorldState {
                         )
                 });
         let expression = &self.creature.relationship_expression;
+        if travel_invalid || toy_interaction_invalid {
+            return Err(StateValidationError::ToyInteraction);
+        }
         if interaction.next_action_id == 0
             || action_invalid
             || relationship_moment_invalid
@@ -1674,4 +1852,6 @@ pub enum StateValidationError {
     IdleLife,
     #[error("relationship expression state is invalid")]
     RelationshipExpression,
+    #[error("toy interaction or travel ownership is invalid")]
+    ToyInteraction,
 }

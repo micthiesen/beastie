@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use beastie_core::{
     FoodId, GameEvent, LanguageExposure, MemoryCue, MemoryQuery, Mood, NamingTarget, NonverbalAct,
     NormalizedPosition, OfflineProgress, PlayerEvent, Reaction, SIMULATION_TICK_MS, SaveGame,
-    SeededRandom, SpeechAttention, ToyId, UtteranceInterpretation, UtteranceReference, WorldState,
-    advance_offline, ground_utterance, speech_attention, step,
+    SeededRandom, SpeechAttention, ToyId, ToyOrigin, UtteranceInterpretation, UtteranceReference,
+    WorldState, advance_offline, ground_utterance, speech_attention, step,
 };
 use beastie_protocol::{
     AcousticConfidence, DialogueActionPhase, DialogueContext, DialogueReply, DialogueRequest,
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const SESSION_PROTOCOL_VERSION: u32 = 1;
-pub const SESSION_SAVE_VERSION: u32 = 3;
+pub const SESSION_SAVE_VERSION: u32 = 4;
 const LEGACY_CORE_SAVE_VERSION: u32 = 1;
 pub const MAX_COMMAND_BYTES: usize = 4_096;
 pub const MAX_ADVANCE_MINUTES: u32 = 45;
@@ -283,31 +283,13 @@ impl SessionSave {
             .get("version")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
-        if version == 2
-            && let Some(world) = value
-                .get_mut("world")
-                .and_then(serde_json::Value::as_object_mut)
-        {
-            world.remove("room");
-            if let Some(aquarium) = world
-                .get_mut("aquarium")
-                .and_then(serde_json::Value::as_object_mut)
-            {
-                aquarium.remove("action");
-            }
-            if let Some(creature) = world
-                .get_mut("creature")
-                .and_then(serde_json::Value::as_object_mut)
-            {
-                creature.remove("position");
-                creature.remove("movement");
-            }
+        let version = u32::try_from(version).unwrap_or(u32::MAX);
+        if !matches!(version, 2 | 3 | SESSION_SAVE_VERSION) {
+            return Err(SessionError::SaveVersion(version));
         }
+        migrate_embedded_core_save(&mut value)?;
+        value["version"] = serde_json::Value::from(SESSION_SAVE_VERSION);
         let mut save = serde_json::from_value::<Self>(value).map_err(SessionError::Json)?;
-        if save.version == 2 {
-            save.version = SESSION_SAVE_VERSION;
-            save.world.save_version = beastie_core::SAVE_VERSION;
-        }
         if save.dialogue_history.version == 0 {
             save.dialogue_history.version = DIALOGUE_HISTORY_VERSION;
         }
@@ -326,6 +308,55 @@ impl SessionSave {
         self.dialogue_history.validate()?;
         Ok(())
     }
+}
+
+fn migrate_embedded_core_save(value: &mut serde_json::Value) -> Result<(), SessionError> {
+    let core_version = value
+        .get("world")
+        .and_then(|world| world.get("save_version"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|version| u32::try_from(version).ok())
+        .unwrap_or(0);
+    if core_version == beastie_core::SAVE_VERSION {
+        return Ok(());
+    }
+    if core_version == 2
+        && let Some(world) = value
+            .get_mut("world")
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        world.remove("room");
+        if let Some(aquarium) = world
+            .get_mut("aquarium")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            aquarium.remove("action");
+            aquarium.remove("creature_position");
+            aquarium.remove("creature_velocity");
+            aquarium.remove("facing");
+            aquarium.remove("gaze");
+            aquarium.remove("depth_lane");
+            aquarium.remove("steering");
+            aquarium.remove("destination");
+        }
+        if let Some(creature) = world
+            .get_mut("creature")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            creature.remove("position");
+            creature.remove("movement");
+        }
+    }
+    let world = serde_json::from_value::<WorldState>(
+        value
+            .get("world")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    )
+    .map_err(SessionError::Json)?;
+    let migrated = beastie_core::migrate_world(world).map_err(SessionError::LegacySave)?;
+    value["world"] = serde_json::to_value(migrated).map_err(SessionError::Json)?;
+    Ok(())
 }
 
 impl GameSession {
@@ -1206,7 +1237,12 @@ fn compact_advance_events(events: &mut Vec<GameEvent>) {
             let keep = !emitted_need_change;
             emitted_need_change = true;
             keep
-        } else if let GameEvent::ToyPlayed(toy) = event {
+        } else if let GameEvent::ToyPlayed {
+            toy,
+            origin: ToyOrigin::Autonomous,
+            ..
+        } = event
+        {
             emitted_toy_arrivals.insert(*toy)
         } else if let GameEvent::RelationshipBeatStarted { motif, .. } = event {
             emitted_relationship_starts.insert(*motif)
@@ -1404,12 +1440,29 @@ pub enum SessionError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use beastie_core::{ToyInteractionOutcome, ToyInteractionPhase};
 
     fn command(command: SessionCommand) -> CommandEnvelope {
         CommandEnvelope {
             version: SESSION_PROTOCOL_VERSION,
             command,
         }
+    }
+
+    fn toy_position(session: &GameSession, toy: ToyId) -> NormalizedPosition {
+        session
+            .world()
+            .aquarium
+            .objects
+            .values()
+            .find_map(|object| match object {
+                beastie_core::WorldObject::Toy {
+                    toy: candidate,
+                    position,
+                } if *candidate == toy => Some(*position),
+                _ => None,
+            })
+            .expect("default toy exists")
     }
 
     #[test]
@@ -1467,7 +1520,7 @@ mod tests {
             observation
                 .events
                 .iter()
-                .filter(|event| matches!(event, GameEvent::ToyPlayed(_)))
+                .filter(|event| matches!(event, GameEvent::ToyPlayed { .. }))
                 .count()
                 <= 3
         );
@@ -1502,11 +1555,11 @@ mod tests {
         let memory = GameEvent::MemoryCreated(beastie_core::MemoryId(7));
         let mut events = vec![
             GameEvent::NeedChanged,
-            GameEvent::ToyPlayed(ToyId::Sock),
+            autonomous_toy_played(ToyId::Sock, 1),
             phase.clone(),
             GameEvent::NeedChanged,
-            GameEvent::ToyPlayed(ToyId::Sock),
-            GameEvent::ToyPlayed(ToyId::Ball),
+            autonomous_toy_played(ToyId::Sock, 2),
+            autonomous_toy_played(ToyId::Ball, 3),
             memory.clone(),
             phase.clone(),
             GameEvent::NeedChanged,
@@ -1516,13 +1569,22 @@ mod tests {
             events,
             vec![
                 GameEvent::NeedChanged,
-                GameEvent::ToyPlayed(ToyId::Sock),
+                autonomous_toy_played(ToyId::Sock, 1),
                 phase.clone(),
-                GameEvent::ToyPlayed(ToyId::Ball),
+                autonomous_toy_played(ToyId::Ball, 3),
                 memory,
                 phase,
             ]
         );
+    }
+
+    fn autonomous_toy_played(toy: ToyId, interaction_id: u64) -> GameEvent {
+        GameEvent::ToyPlayed {
+            toy,
+            interaction_id: std::num::NonZeroU64::new(interaction_id)
+                .expect("test interaction ID is nonzero"),
+            origin: ToyOrigin::Autonomous,
+        }
     }
 
     #[test]
@@ -1816,6 +1878,191 @@ mod tests {
         save.version = SESSION_SAVE_VERSION;
         save.next_request_id = 0;
         assert!(matches!(save.to_json(), Err(SessionError::RequestId)));
+    }
+
+    #[test]
+    fn session_v3_migrates_embedded_core_v5_without_inventing_toy_payoff() {
+        let session = GameSession::new(9, "Legacy");
+        let mut value = serde_json::to_value(session.capture(500)).expect("current save value");
+        value["version"] = serde_json::Value::from(3);
+        value["world"]["save_version"] = serde_json::Value::from(5);
+        value["world"]["creature"]["current_intention"] =
+            serde_json::to_value(beastie_core::Intention::Play).expect("intention value");
+        value["world"]["creature"]["aquarium"]["destination"] =
+            serde_json::to_value(beastie_core::SemanticDestination::Toy(ToyId::Ball))
+                .expect("destination value");
+        let aquarium = value["world"]["creature"]["aquarium"]
+            .as_object_mut()
+            .expect("aquarium object");
+        aquarium.remove("travel_purpose");
+        let interaction = value["world"]["creature"]["interaction_state"]
+            .as_object_mut()
+            .expect("interaction object");
+        interaction.remove("next_toy_interaction_id");
+        interaction.remove("toy_interaction");
+        interaction.remove("last_resolved_toy_interaction");
+
+        let encoded = serde_json::to_string(&value).expect("legacy session JSON");
+        let migrated = SessionSave::from_json(&encoded).expect("v3 session should migrate");
+        assert_eq!(migrated.version, SESSION_SAVE_VERSION);
+        assert_eq!(migrated.world.save_version, beastie_core::SAVE_VERSION);
+        assert_eq!(migrated.world.creature.aquarium.destination, None);
+        assert_eq!(migrated.world.creature.aquarium.travel_purpose, None);
+        assert!(
+            migrated
+                .world
+                .creature
+                .interaction_state
+                .toy_interaction
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn current_session_save_resumes_accepted_toy_with_exact_outcome_and_id() {
+        let mut session = GameSession::new(405, "AcceptedResume");
+        session
+            .world
+            .creature
+            .toy_preferences
+            .insert(ToyId::Ball, 0.8);
+        session.world.creature.aquarium.position = toy_position(&session, ToyId::Ball);
+        let receipt = session
+            .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
+            .expect("accepted toy receipt");
+        let interaction_id = receipt
+            .events
+            .iter()
+            .find_map(|event| match event {
+                GameEvent::ToyPlayAccepted { interaction_id, .. } => Some(*interaction_id),
+                _ => None,
+            })
+            .expect("accepted interaction ID");
+        let saved_at = 50_000;
+        let json = session.capture(saved_at).to_json().unwrap();
+        let (mut resumed, progress) = GameSession::resume_json(&json, saved_at).unwrap();
+        assert_eq!(progress.applied_ms, 0);
+        assert!(progress.events.is_empty());
+        assert!(
+            resumed
+                .world()
+                .creature
+                .interaction_state
+                .toy_interaction
+                .as_ref()
+                .is_some_and(|interaction| interaction.id == interaction_id
+                    && interaction.toy == ToyId::Ball
+                    && interaction.origin == ToyOrigin::Player
+                    && interaction.outcome == ToyInteractionOutcome::Accepted
+                    && interaction.phase == ToyInteractionPhase::Approach)
+        );
+
+        let contact = resumed
+            .apply(command(SessionCommand::Tick {
+                milliseconds: SIMULATION_TICK_MS,
+            }))
+            .unwrap();
+        assert!(contact.events.contains(&GameEvent::ToyContacted {
+            toy: ToyId::Ball,
+            interaction_id,
+            origin: ToyOrigin::Player,
+        }));
+        assert!(contact.events.contains(&GameEvent::ToyPlayed {
+            toy: ToyId::Ball,
+            interaction_id,
+            origin: ToyOrigin::Player,
+        }));
+        assert_eq!(
+            resumed
+                .world()
+                .creature
+                .interaction_state
+                .last_resolved_toy_interaction
+                .map(|resolved| (resolved.id, resolved.toy, resolved.origin)),
+            Some((interaction_id, ToyId::Ball, ToyOrigin::Player))
+        );
+    }
+
+    #[test]
+    fn current_session_save_resumes_refusal_stare_without_positive_outcome() {
+        let mut session = GameSession::new(406, "RefusalResume");
+        session
+            .world
+            .creature
+            .toy_preferences
+            .insert(ToyId::Bell, -1.0);
+        session.world.creature.aquarium.position = toy_position(&session, ToyId::Bell);
+        let relationship = session.world().creature.relationship;
+        let receipt = session
+            .apply(command(SessionCommand::Play { toy: ToyId::Bell }))
+            .expect("rejected toy receipt");
+        let interaction_id = receipt
+            .events
+            .iter()
+            .find_map(|event| match event {
+                GameEvent::ToyRejected { interaction_id, .. } => Some(*interaction_id),
+                _ => None,
+            })
+            .expect("rejected interaction ID");
+        let saved_at = 60_000;
+        let json = session.capture(saved_at).to_json().unwrap();
+        let (mut resumed, progress) = GameSession::resume_json(&json, saved_at).unwrap();
+        assert_eq!(progress.applied_ms, 0);
+        assert!(progress.events.is_empty());
+        assert!(
+            resumed
+                .world()
+                .creature
+                .interaction_state
+                .toy_interaction
+                .as_ref()
+                .is_some_and(|interaction| interaction.id == interaction_id
+                    && interaction.toy == ToyId::Bell
+                    && interaction.origin == ToyOrigin::Player
+                    && interaction.outcome == ToyInteractionOutcome::Rejected
+                    && interaction.phase == ToyInteractionPhase::Approach)
+        );
+
+        let arrival = resumed
+            .apply(command(SessionCommand::Tick {
+                milliseconds: SIMULATION_TICK_MS,
+            }))
+            .unwrap();
+        assert!(!arrival.events.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyContacted { .. } | GameEvent::ToyPlayed { .. }
+        )));
+        assert_eq!(resumed.world().creature.relationship, relationship);
+        assert!(
+            resumed
+                .world()
+                .creature
+                .interaction_state
+                .toy_interaction
+                .as_ref()
+                .is_some_and(|interaction| interaction.id == interaction_id
+                    && interaction.outcome == ToyInteractionOutcome::Rejected
+                    && interaction.phase == ToyInteractionPhase::Recovery)
+        );
+        assert!(
+            resumed
+                .world()
+                .creature
+                .interaction_state
+                .last_resolved_toy_interaction
+                .is_none()
+        );
+        assert!(
+            !resumed
+                .world()
+                .creature
+                .memories
+                .iter()
+                .any(|memory| matches!(
+                    memory.kind,
+                    beastie_core::MemoryKind::PlayedWith { toy: ToyId::Bell }
+                ))
+        );
     }
 
     #[test]

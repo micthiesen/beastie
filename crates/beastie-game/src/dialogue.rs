@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -316,8 +316,28 @@ fn verify_model(
 }
 
 enum ManagerCommand {
-    Request(Box<DialogueRequest>),
+    Request {
+        owner: DialogueOwner,
+        request: Box<DialogueRequest>,
+        cancelled: Arc<AtomicBool>,
+        started_at: Instant,
+    },
     Shutdown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DialogueOwner {
+    pub generation: u64,
+    pub request_id: u64,
+}
+
+struct DialogueCompletion {
+    turn: DialogueTurn,
+}
+
+struct PendingDialogueRequest {
+    owner: DialogueOwner,
+    cancelled: Arc<AtomicBool>,
 }
 
 /// Owns a single long-lived worker process on a dedicated manager thread.
@@ -327,22 +347,9 @@ enum ManagerCommand {
 /// fresh worker process.
 pub struct DialogueManager {
     commands: SyncSender<ManagerCommand>,
-    replies: Receiver<DialogueReply>,
-    pending: bool,
-    pending_request: Option<DialogueRequest>,
-    pending_since: Option<Instant>,
-    backend: TranscriptBackend,
-    outcome: Arc<DialogueOutcomeState>,
-    cancelled: Arc<AtomicBool>,
+    replies: Receiver<DialogueCompletion>,
+    pending: Option<PendingDialogueRequest>,
     thread: Option<thread::JoinHandle<()>>,
-}
-
-#[derive(Debug, Default)]
-struct DialogueOutcomeState {
-    fallback: AtomicBool,
-    retry_count: AtomicU8,
-    duplicate_suppressed: AtomicBool,
-    fallback_reason: AtomicU8,
 }
 
 impl DialogueManager {
@@ -350,95 +357,90 @@ impl DialogueManager {
     pub fn new(config: Option<WorkerConfig>) -> Self {
         let (commands, command_receiver) = mpsc::sync_channel(1);
         let (reply_sender, replies) = mpsc::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let manager_cancelled = Arc::clone(&cancelled);
-        let outcome = Arc::new(DialogueOutcomeState::default());
-        let manager_outcome = Arc::clone(&outcome);
         let backend = config
             .as_ref()
             .map_or(TranscriptBackend::Unknown, |config| config.backend);
         let thread = thread::spawn(move || {
-            run_manager(
-                config,
-                command_receiver,
-                reply_sender,
-                &manager_cancelled,
-                &manager_outcome,
-            );
+            run_manager(config, command_receiver, reply_sender, backend);
         });
         Self {
             commands,
             replies,
-            pending: false,
-            pending_request: None,
-            pending_since: None,
-            backend,
-            outcome,
-            cancelled,
+            pending: None,
             thread: Some(thread),
         }
     }
 
     /// Queue one dialogue request. Returns false while another talk is pending.
+    #[cfg(test)]
     pub fn request(&mut self, request: DialogueRequest) -> bool {
-        if self.pending || validate_request(&request).is_err() {
+        self.request_owned(request, 1).is_some()
+    }
+
+    pub fn request_owned(
+        &mut self,
+        request: DialogueRequest,
+        generation: u64,
+    ) -> Option<DialogueOwner> {
+        if self.pending.is_some() || generation == 0 || validate_request(&request).is_err() {
+            return None;
+        }
+        let owner = DialogueOwner {
+            generation,
+            request_id: request.request_id,
+        };
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let command = ManagerCommand::Request {
+            owner,
+            request: Box::new(request),
+            cancelled: Arc::clone(&cancelled),
+            started_at: Instant::now(),
+        };
+        if self.commands.send(command).is_err() {
+            return None;
+        }
+        self.pending = Some(PendingDialogueRequest { owner, cancelled });
+        Some(owner)
+    }
+
+    pub fn cancel(&mut self, owner: DialogueOwner) -> bool {
+        let Some(pending) = self.pending.as_ref() else {
+            return false;
+        };
+        if pending.owner != owner {
             return false;
         }
-        if self
-            .commands
-            .send(ManagerCommand::Request(Box::new(request.clone())))
-            .is_err()
-        {
-            return false;
-        }
-        self.pending = true;
-        self.pending_request = Some(request);
-        self.pending_since = Some(Instant::now());
+        pending.cancelled.store(true, Ordering::Release);
+        self.pending = None;
         true
     }
 
     pub fn try_recv_turn(&mut self) -> Result<DialogueTurn, TryRecvError> {
-        let reply = self.try_recv()?;
-        let request = self
-            .pending_request
-            .take()
-            .expect("a reply is only produced for a pending request");
-        let latency_ms = self.pending_since.take().map_or(0, |started| {
-            started.elapsed().as_millis().try_into().unwrap_or(u32::MAX)
-        });
-        Ok(DialogueTurn {
-            request,
-            reply,
-            backend: self.backend,
-            latency_ms,
-            fallback: self.outcome.fallback.load(Ordering::Acquire),
-            retry_count: self.outcome.retry_count.load(Ordering::Acquire),
-            duplicate_suppressed: self.outcome.duplicate_suppressed.load(Ordering::Acquire),
-            fallback_reason: fallback_reason_from_code(
-                self.outcome.fallback_reason.load(Ordering::Acquire),
-            ),
-        })
+        loop {
+            let completion = match self.replies.try_recv() {
+                Ok(completion) => completion,
+                Err(TryRecvError::Disconnected) => {
+                    self.pending = None;
+                    return Err(TryRecvError::Disconnected);
+                }
+                Err(TryRecvError::Empty) => return Err(TryRecvError::Empty),
+            };
+            if self.pending.as_ref().map(|pending| pending.owner) != Some(completion.turn.owner) {
+                continue;
+            }
+            self.pending = None;
+            return Ok(completion.turn);
+        }
     }
 
+    #[cfg(test)]
     pub fn try_recv(&mut self) -> Result<DialogueReply, TryRecvError> {
-        match self.replies.try_recv() {
-            Ok(reply) => {
-                self.pending = false;
-                Ok(reply)
-            }
-            Err(TryRecvError::Disconnected) => {
-                self.pending = false;
-                self.pending_request = None;
-                self.pending_since = None;
-                Err(TryRecvError::Disconnected)
-            }
-            Err(TryRecvError::Empty) => Err(TryRecvError::Empty),
-        }
+        self.try_recv_turn().map(|turn| turn.reply)
     }
 
     #[must_use]
     pub const fn is_pending(&self) -> bool {
-        self.pending
+        self.pending.is_some()
     }
 
     #[cfg(test)]
@@ -451,17 +453,18 @@ impl DialogueManager {
 
     #[cfg(test)]
     fn recv_timeout(&mut self, timeout: Duration) -> DialogueReply {
-        let reply = self
+        let completion = self
             .replies
             .recv_timeout(timeout)
             .expect("reply should arrive");
-        self.pending = false;
-        reply
+        self.pending = None;
+        completion.turn.reply
     }
 }
 
 #[derive(Debug)]
 pub struct DialogueTurn {
+    pub owner: DialogueOwner,
     pub request: DialogueRequest,
     pub reply: DialogueReply,
     pub backend: TranscriptBackend,
@@ -474,7 +477,9 @@ pub struct DialogueTurn {
 
 impl Drop for DialogueManager {
     fn drop(&mut self) {
-        self.cancelled.store(true, Ordering::Release);
+        if let Some(pending) = self.pending.take() {
+            pending.cancelled.store(true, Ordering::Release);
+        }
         let _ = self.commands.send(ManagerCommand::Shutdown);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -485,16 +490,20 @@ impl Drop for DialogueManager {
 fn run_manager(
     config: Option<WorkerConfig>,
     commands: Receiver<ManagerCommand>,
-    replies: Sender<DialogueReply>,
-    cancelled: &AtomicBool,
-    outcome: &DialogueOutcomeState,
+    replies: Sender<DialogueCompletion>,
+    backend: TranscriptBackend,
 ) {
     let mut worker = None;
     let mut recent_fingerprints: std::collections::VecDeque<String> =
         std::collections::VecDeque::new();
     while let Ok(command) = commands.recv() {
         match command {
-            ManagerCommand::Request(request) => {
+            ManagerCommand::Request {
+                owner,
+                request,
+                cancelled,
+                started_at,
+            } => {
                 let mut retry_count = 0;
                 let mut duplicate_suppressed = false;
                 let mut generation_reason = if config.is_none() {
@@ -503,7 +512,7 @@ fn run_manager(
                     DialogueFallbackReason::GenerationFailed
                 };
                 let mut generated = config.as_ref().and_then(|config| {
-                    exchange_with_recovery(config, &mut worker, &request, cancelled).map_or_else(
+                    exchange_with_recovery(config, &mut worker, &request, &cancelled).map_or_else(
                         |reason| {
                             generation_reason = reason;
                             None
@@ -539,7 +548,7 @@ fn run_manager(
                         retry_request.context.avoid_reply_fingerprints = retry_fingerprints;
                         retry_request.context.avoid_reply_texts = vec![first.say.clone()];
                         generated = config.as_ref().and_then(|config| {
-                            exchange_with_recovery(config, &mut worker, &retry_request, cancelled)
+                            exchange_with_recovery(config, &mut worker, &retry_request, &cancelled)
                                 .map_or_else(
                                     |reason| {
                                         generation_reason = reason;
@@ -564,14 +573,7 @@ fn run_manager(
                         generated = Some(first);
                     }
                 }
-                outcome.fallback.store(
-                    generated.is_none() || worker_fallback_reason.is_some(),
-                    Ordering::Release,
-                );
-                outcome.retry_count.store(retry_count, Ordering::Release);
-                outcome
-                    .duplicate_suppressed
-                    .store(duplicate_suppressed, Ordering::Release);
+                let fallback = generated.is_none() || worker_fallback_reason.is_some();
                 let fallback_reason = if let Some(reason) = worker_fallback_reason {
                     fallback_reason_code(reason)
                 } else if generated.is_some() {
@@ -586,9 +588,9 @@ fn run_manager(
                         DialogueFallbackReason::DuplicateAfterRetry => 3,
                     }
                 };
-                outcome
-                    .fallback_reason
-                    .store(fallback_reason, Ordering::Release);
+                if cancelled.load(Ordering::Acquire) {
+                    continue;
+                }
                 if let Some(reply) = generated.as_ref() {
                     recent_fingerprints.push_back(reply_fingerprint(&reply.say));
                     while recent_fingerprints.len() > 4 {
@@ -596,10 +598,22 @@ fn run_manager(
                     }
                 }
                 let reply = generated.unwrap_or_else(|| constrained_fallback_reply(&request));
-                if cancelled.load(Ordering::Acquire) {
-                    break;
-                }
-                if replies.send(reply).is_err() {
+                let turn = DialogueTurn {
+                    owner,
+                    request: *request,
+                    reply,
+                    backend,
+                    latency_ms: started_at
+                        .elapsed()
+                        .as_millis()
+                        .try_into()
+                        .unwrap_or(u32::MAX),
+                    fallback,
+                    retry_count,
+                    duplicate_suppressed,
+                    fallback_reason: fallback_reason_from_code(fallback_reason),
+                };
+                if replies.send(DialogueCompletion { turn }).is_err() {
                     break;
                 }
             }
@@ -636,6 +650,9 @@ fn exchange_with_recovery(
     request: &DialogueRequest,
     cancelled: &AtomicBool,
 ) -> Result<DialogueReply, DialogueFallbackReason> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err(DialogueFallbackReason::GenerationFailed);
+    }
     if worker.is_none() {
         *worker =
             JsonlWorkerSession::spawn(&config.executable, &config.arguments, MAX_REPLY_BYTES).ok();
@@ -659,6 +676,9 @@ fn exchange_with_recovery(
 
     if let Some(mut failed) = worker.take() {
         failed.terminate();
+    }
+    if cancelled.load(Ordering::Acquire) {
+        return Err(reason);
     }
     Err(reason)
 }
@@ -760,10 +780,11 @@ mod tests {
         );
         let mut manager = DialogueManager::new(Some(config));
         assert!(manager.request(dialogue.clone()));
-        let reply = manager
+        let completion = manager
             .replies
             .recv_timeout(Duration::from_secs(1))
             .expect("fallback should arrive");
+        let reply = completion.turn.reply;
         assert_eq!(validate_reply(&dialogue, reply.clone()), Ok(reply));
     }
 
@@ -916,6 +937,51 @@ mod tests {
         let recovered = manager.recv_timeout(Duration::from_secs(1));
         assert_eq!(recovered.say, "reply 1");
         manager.shutdown();
+    }
+
+    #[test]
+    fn cancellation_releases_pending_state_and_discards_the_late_turn() {
+        let worker = compile_worker("cancel-pending");
+        let marker = std::env::temp_dir().join(format!(
+            "beastie-worker-cancel-marker-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let config = WorkerConfig::new(
+            worker,
+            vec![OsString::from("hang-once"), marker.clone().into_os_string()],
+            Duration::from_secs(2),
+        );
+        let mut manager = DialogueManager::new(Some(config));
+        let owner = manager
+            .request_owned(request(), 4)
+            .expect("first request should enqueue");
+        for _ in 0..100 {
+            if marker.exists() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(marker.exists(), "worker should enter the slow request");
+        assert!(manager.cancel(owner));
+        assert!(!manager.is_pending());
+
+        let next_owner = manager
+            .request_owned(request(), 5)
+            .expect("cancellation should release the next turn immediately");
+        let started = Instant::now();
+        let turn = loop {
+            match manager.try_recv_turn() {
+                Ok(turn) => break turn,
+                Err(TryRecvError::Empty) if started.elapsed() < Duration::from_secs(1) => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                outcome => panic!("next turn did not complete after cancellation: {outcome:?}"),
+            }
+        };
+        assert_eq!(turn.owner, next_owner);
+        manager.shutdown();
+        let _ = std::fs::remove_file(marker);
     }
 
     #[test]

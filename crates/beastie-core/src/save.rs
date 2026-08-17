@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU64;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -13,6 +14,7 @@ const LEGACY_SAVE_VERSION: u32 = 1;
 const AQUARIUM_SAVE_VERSION: u32 = 2;
 const PRE_RELATIONSHIP_SAVE_VERSION: u32 = 3;
 const RELATIONSHIP_SAVE_VERSION: u32 = 4;
+const PRE_TRAVEL_OWNERSHIP_SAVE_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,7 +46,10 @@ impl SaveGame {
         }
         if matches!(
             header.save_version,
-            AQUARIUM_SAVE_VERSION | PRE_RELATIONSHIP_SAVE_VERSION | RELATIONSHIP_SAVE_VERSION
+            AQUARIUM_SAVE_VERSION
+                | PRE_RELATIONSHIP_SAVE_VERSION
+                | RELATIONSHIP_SAVE_VERSION
+                | PRE_TRAVEL_OWNERSHIP_SAVE_VERSION
         ) {
             return PreviousSaveGame::from_json(source, header.save_version);
         }
@@ -137,10 +142,7 @@ impl PreviousSaveGame {
             return Err(SaveError::Version(previous.save_version));
         }
         previous.save_version = SAVE_VERSION;
-        previous.world.save_version = SAVE_VERSION;
-        if source_version == RELATIONSHIP_SAVE_VERSION {
-            migrate_v4_action(&mut previous.world);
-        }
+        previous.world = migrate_world(previous.world)?;
         let save = SaveGame {
             save_version: SAVE_VERSION,
             world: previous.world,
@@ -149,6 +151,75 @@ impl PreviousSaveGame {
         save.validate()?;
         Ok(save)
     }
+}
+
+/// Upgrade an embedded core world that was deserialized by a containing save format.
+///
+/// Production session saves embed `WorldState` directly rather than nesting `SaveGame`, so their
+/// loader must use this function instead of merely overwriting `save_version`.
+pub fn migrate_world(mut world: WorldState) -> Result<WorldState, SaveError> {
+    let source_version = world.save_version;
+    if source_version == SAVE_VERSION {
+        world.validate().map_err(SaveError::State)?;
+        return Ok(world);
+    }
+    if !matches!(
+        source_version,
+        AQUARIUM_SAVE_VERSION
+            | PRE_RELATIONSHIP_SAVE_VERSION
+            | RELATIONSHIP_SAVE_VERSION
+            | PRE_TRAVEL_OWNERSHIP_SAVE_VERSION
+    ) {
+        return Err(SaveError::Version(source_version));
+    }
+    world.save_version = SAVE_VERSION;
+    if source_version == RELATIONSHIP_SAVE_VERSION {
+        world.creature.relationship_expression.active = None;
+        world.creature.relationship_expression.schema_version =
+            crate::RELATIONSHIP_EXPRESSION_SCHEMA_VERSION;
+        migrate_v4_action(&mut world);
+    }
+    migrate_pre_travel_ownership(&mut world);
+    world.validate().map_err(SaveError::State)?;
+    Ok(world)
+}
+
+fn migrate_pre_travel_ownership(world: &mut WorldState) {
+    world.creature.interaction_state.next_toy_interaction_id = 1;
+    world.creature.interaction_state.toy_interaction = None;
+    world
+        .creature
+        .interaction_state
+        .last_resolved_toy_interaction = None;
+    world.creature.aquarium.travel_purpose = None;
+
+    let Some(destination) = world.creature.aquarium.destination else {
+        return;
+    };
+    if let crate::SemanticDestination::Toy(toy) = destination
+        && world.creature.current_intention == Intention::RefuseAndStare
+    {
+        let interaction_id = NonZeroU64::new(1).expect("one is nonzero");
+        world.creature.interaction_state.next_toy_interaction_id = 2;
+        world.creature.interaction_state.toy_interaction = Some(crate::ToyInteraction {
+            id: interaction_id,
+            toy,
+            origin: crate::ToyOrigin::Player,
+            outcome: crate::ToyInteractionOutcome::Rejected,
+            phase: crate::ToyInteractionPhase::Approach,
+            relationship: None,
+        });
+        world.creature.aquarium.travel_purpose =
+            Some(crate::TravelPurpose::RefusalStare { interaction_id });
+        return;
+    }
+
+    // V5's destination did not carry its causal owner. In particular, `Play` may already have
+    // eagerly applied its social mutation. Retain canonical history and clear the ambiguous trip
+    // rather than manufacturing a second outcome on load.
+    world.creature.aquarium.destination = None;
+    world.creature.aquarium.steering = crate::SteeringMode::Hover;
+    world.creature.aquarium.velocity = crate::NormalizedVelocity::default();
 }
 
 fn migrate_v4_action(world: &mut WorldState) {

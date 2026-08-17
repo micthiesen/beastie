@@ -35,6 +35,7 @@ creature-v1/talk/sleepy-south
 creature-v1/talk/lonely-south
 creature-v1/talk/resentful-south
 creature-v1/reaction/affection-south
+creature-v1/reaction/delight-south
 creature-v1/reaction/notice-south
 creature-v1/reaction/toy-refusal-east
 creature-v1/reaction/comfort-south

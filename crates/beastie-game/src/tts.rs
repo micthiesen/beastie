@@ -114,7 +114,10 @@ impl TtsWorkerConfig {
 }
 
 enum ManagerCommand {
-    Request(TtsRequest),
+    Request {
+        request: TtsRequest,
+        cancelled: Arc<AtomicBool>,
+    },
     Shutdown,
 }
 
@@ -127,12 +130,15 @@ pub struct TtsCompletion {
 pub struct TtsManager {
     commands: SyncSender<ManagerCommand>,
     completions: Receiver<TtsCompletion>,
-    pending: bool,
-    latest_request_id: u64,
+    pending: Option<PendingTtsRequest>,
     enabled: bool,
     next_request_id: u64,
-    cancelled: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
+}
+
+struct PendingTtsRequest {
+    request_id: u64,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl TtsManager {
@@ -141,61 +147,76 @@ impl TtsManager {
         let enabled = config.is_some();
         let (commands, command_receiver) = mpsc::sync_channel(1);
         let (completion_sender, completions) = mpsc::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let thread_cancelled = Arc::clone(&cancelled);
         let thread = thread::spawn(move || {
-            run_manager(
-                config,
-                command_receiver,
-                completion_sender,
-                &thread_cancelled,
-            );
+            run_manager(config, command_receiver, completion_sender);
         });
         Self {
             commands,
             completions,
-            pending: false,
-            latest_request_id: 0,
+            pending: None,
             enabled,
             next_request_id: 1,
-            cancelled,
             thread: Some(thread),
         }
     }
 
-    pub fn request(&mut self, text: String, world: &WorldState) -> bool {
+    pub fn request(&mut self, text: String, world: &WorldState) -> Option<u64> {
         if !self.enabled {
-            return false;
+            return None;
         }
         let request = build_request(self.next_request_id, text, world);
         if validate_tts_request(&request).is_err() {
-            return false;
+            return None;
         }
         let request_id = request.request_id;
         self.next_request_id = self.next_request_id.saturating_add(1);
-        self.latest_request_id = request_id;
+        let cancelled = Arc::new(AtomicBool::new(false));
         if self
             .commands
-            .try_send(ManagerCommand::Request(request))
+            .try_send(ManagerCommand::Request {
+                request,
+                cancelled: Arc::clone(&cancelled),
+            })
             .is_err()
         {
-            self.pending = false;
+            return None;
+        }
+        if let Some(previous) = self.pending.take() {
+            previous.cancelled.store(true, Ordering::Release);
+        }
+        self.pending = Some(PendingTtsRequest {
+            request_id,
+            cancelled,
+        });
+        Some(request_id)
+    }
+
+    pub fn cancel(&mut self, request_id: u64) -> bool {
+        let Some(pending) = self.pending.as_ref() else {
+            return false;
+        };
+        if pending.request_id != request_id {
             return false;
         }
-        self.pending = true;
+        pending.cancelled.store(true, Ordering::Release);
+        self.pending = None;
         true
     }
 
     pub fn try_recv(&mut self) -> Result<TtsCompletion, TryRecvError> {
         loop {
             match self.completions.try_recv() {
-                Ok(completion) if completion.request_id < self.latest_request_id => continue,
                 Ok(completion) => {
-                    self.pending = false;
+                    if self.pending.as_ref().map(|pending| pending.request_id)
+                        != Some(completion.request_id)
+                    {
+                        continue;
+                    }
+                    self.pending = None;
                     return Ok(completion);
                 }
                 Err(TryRecvError::Disconnected) => {
-                    self.pending = false;
+                    self.pending = None;
                     return Err(TryRecvError::Disconnected);
                 }
                 Err(TryRecvError::Empty) => return Err(TryRecvError::Empty),
@@ -209,7 +230,7 @@ impl TtsManager {
             .completions
             .recv_timeout(timeout)
             .expect("TTS completion should arrive");
-        self.pending = false;
+        self.pending = None;
         completion
     }
 }
@@ -225,7 +246,9 @@ fn build_request(request_id: u64, text: String, world: &WorldState) -> TtsReques
 
 impl Drop for TtsManager {
     fn drop(&mut self) {
-        self.cancelled.store(true, Ordering::Release);
+        if let Some(pending) = self.pending.take() {
+            pending.cancelled.store(true, Ordering::Release);
+        }
         let _ = self.commands.send(ManagerCommand::Shutdown);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -237,16 +260,18 @@ fn run_manager(
     config: Option<TtsWorkerConfig>,
     commands: Receiver<ManagerCommand>,
     completions: Sender<TtsCompletion>,
-    cancelled: &AtomicBool,
 ) {
     let mut worker = None;
     while let Ok(command) = commands.recv() {
         match command {
-            ManagerCommand::Request(request) => {
+            ManagerCommand::Request { request, cancelled } => {
                 let request_id = request.request_id;
                 let wav = config.as_ref().and_then(|config| {
-                    exchange_with_recovery(config, &mut worker, &request, cancelled)
+                    exchange_with_recovery(config, &mut worker, &request, &cancelled)
                 });
+                if cancelled.load(Ordering::Acquire) {
+                    continue;
+                }
                 if completions.send(TtsCompletion { request_id, wav }).is_err() {
                     break;
                 }
@@ -381,12 +406,12 @@ mod tests {
         );
         let mut manager = TtsManager::new(Some(config));
 
-        assert!(manager.request("hello".to_owned(), &world));
+        assert!(manager.request("hello".to_owned(), &world).is_some());
         let first = manager.recv_timeout(Duration::from_secs(2));
         assert_eq!(first.request_id, 1);
         assert_eq!(first.wav.as_deref().map(<[u8]>::len), Some(46));
 
-        assert!(manager.request("again".to_owned(), &world));
+        assert!(manager.request("again".to_owned(), &world).is_some());
         let second = manager.recv_timeout(Duration::from_secs(2));
         assert_eq!(second.request_id, 2);
         assert_eq!(second.wav.as_deref().map(<[u8]>::len), Some(46));
@@ -411,14 +436,18 @@ mod tests {
             root.clone(),
         );
         let mut manager = TtsManager::new(Some(config));
-        assert!(manager.request("old".to_owned(), &world));
+        assert!(manager.request("old".to_owned(), &world).is_some());
 
         let enqueue_started = Instant::now();
-        while !manager.request("new".to_owned(), &world) {
+        while manager.request("new".to_owned(), &world).is_none() {
             assert!(enqueue_started.elapsed() < Duration::from_secs(2));
             thread::sleep(Duration::from_millis(5));
         }
-        let expected_request_id = manager.latest_request_id;
+        let expected_request_id = manager
+            .pending
+            .as_ref()
+            .expect("new request should be pending")
+            .request_id;
 
         let started = Instant::now();
         let completion = loop {
@@ -439,6 +468,50 @@ mod tests {
     }
 
     #[test]
+    fn canceled_request_cannot_surface_a_wav() {
+        let world = WorldState::new(42, "Mop");
+        let root = temporary_path("cancel-cache");
+        fs::create_dir_all(&root).unwrap();
+        let (source, executable) = compile_worker();
+        let config = TtsWorkerConfig::new(
+            executable.clone(),
+            vec![root.clone().into_os_string()],
+            root.clone(),
+        );
+        let mut manager = TtsManager::new(Some(config));
+        let canceled_id = manager
+            .request("stale".to_owned(), &world)
+            .expect("request should enqueue");
+        assert!(manager.cancel(canceled_id));
+        assert!(!manager.cancel(canceled_id));
+
+        let started = Instant::now();
+        let current_id = loop {
+            if let Some(request_id) = manager.request("current".to_owned(), &world) {
+                break request_id;
+            }
+            assert!(started.elapsed() < Duration::from_secs(2));
+            thread::sleep(Duration::from_millis(5));
+        };
+        let completion = loop {
+            match manager.try_recv() {
+                Ok(completion) => break completion,
+                Err(TryRecvError::Empty) if started.elapsed() < Duration::from_secs(2) => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                outcome => panic!("current TTS did not complete: {outcome:?}"),
+            }
+        };
+        assert_eq!(completion.request_id, current_id);
+        assert_ne!(completion.request_id, canceled_id);
+
+        drop(manager);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(source).unwrap();
+        fs::remove_file(executable).unwrap();
+    }
+
+    #[test]
     fn unsolicited_worker_output_restarts_the_worker() {
         let world = WorldState::new(42, "Mop");
         let root = temporary_path("extra-output-cache");
@@ -451,13 +524,13 @@ mod tests {
         );
         let mut manager = TtsManager::new(Some(config));
 
-        assert!(manager.request("hello".to_owned(), &world));
+        assert!(manager.request("hello".to_owned(), &world).is_some());
         assert_eq!(manager.recv_timeout(Duration::from_secs(2)).request_id, 1);
-        assert!(manager.request("again".to_owned(), &world));
+        assert!(manager.request("again".to_owned(), &world).is_some());
         let second = manager.recv_timeout(Duration::from_secs(2));
         assert_eq!(second.request_id, 2);
         assert!(second.wav.is_none());
-        assert!(manager.request("recovered".to_owned(), &world));
+        assert!(manager.request("recovered".to_owned(), &world).is_some());
         assert!(manager.recv_timeout(Duration::from_secs(2)).wav.is_some());
 
         drop(manager);
@@ -467,7 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_newer_request_invalidates_older_completion() {
+    fn rejected_enqueue_preserves_the_last_accepted_request() {
         let world = WorldState::new(42, "Mop");
         let root = temporary_path("queue-cache");
         fs::create_dir_all(&root).unwrap();
@@ -478,20 +551,22 @@ mod tests {
             root.clone(),
         );
         let mut manager = TtsManager::new(Some(config));
-        assert!(manager.request("one".to_owned(), &world));
+        assert!(manager.request("one".to_owned(), &world).is_some());
         let mut rejected = false;
         for index in 0..100 {
-            if !manager.request(format!("queued-{index}"), &world) {
+            if manager.request(format!("queued-{index}"), &world).is_none() {
                 rejected = true;
                 break;
             }
         }
         assert!(rejected, "bounded queue should reject a newer request");
-        let started = Instant::now();
-        while started.elapsed() < Duration::from_secs(1) {
-            assert!(matches!(manager.try_recv(), Err(TryRecvError::Empty)));
-            thread::sleep(Duration::from_millis(5));
-        }
+        let accepted_request_id = manager
+            .pending
+            .as_ref()
+            .expect("an accepted request remains current")
+            .request_id;
+        let completion = manager.recv_timeout(Duration::from_secs(2));
+        assert_eq!(completion.request_id, accepted_request_id);
         drop(manager);
         fs::remove_dir_all(root).unwrap();
         fs::remove_file(source).unwrap();

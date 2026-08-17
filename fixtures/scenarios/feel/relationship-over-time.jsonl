@@ -15,7 +15,7 @@
 {"version":1,"command":"wait","milliseconds":10000}
 {"version":1,"command":"resume","elapsed_ms":900000}
 {"version":1,"command":"marker","name":"02-day-three-arrival"}
-{"version":1,"command":"wait","milliseconds":10000}
+{"version":1,"command":"wait","milliseconds":2000}
 {"version":1,"command":"play","toy":"ball"}
 {"version":1,"command":"comfort"}
 {"version":1,"command":"talk","text":"What do you remember from yesterday?"}

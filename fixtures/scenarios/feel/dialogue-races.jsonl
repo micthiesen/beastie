@@ -1,0 +1,20 @@
+{"version":1,"command":"marker","name":"00-dialogue-race-start"}
+{"version":1,"command":"wait","milliseconds":1000}
+{"version":1,"command":"marker","name":"01-delayed-talk-requested"}
+{"version":1,"command":"talk","text":"Are you still thinking about the berry?"}
+{"version":1,"command":"wait","milliseconds":150}
+{"version":1,"command":"comfort"}
+{"version":1,"command":"marker","name":"02-talk-superseded-before-reply"}
+{"version":1,"command":"wait","milliseconds":1200}
+{"version":1,"command":"marker","name":"03-late-reply-window-clear"}
+{"version":1,"command":"wait","milliseconds":30000}
+{"version":1,"command":"set_subtitles","enabled":false}
+{"version":1,"command":"marker","name":"04-subtitles-off-talk"}
+{"version":1,"command":"talk","text":"Can I hear you without words on screen?"}
+{"version":1,"command":"wait","milliseconds":1200}
+{"version":1,"command":"marker","name":"05-audible-without-subtitles"}
+{"version":1,"command":"wait","milliseconds":2000}
+{"version":1,"command":"set_subtitles","enabled":true}
+{"version":1,"command":"marker","name":"06-subtitles-restored"}
+{"version":1,"command":"wait","milliseconds":500}
+{"version":1,"command":"capture","name":"06-subtitles-restored"}

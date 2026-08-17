@@ -23,3 +23,10 @@
 {"version":1,"command":"wait","milliseconds":30000}
 {"version":1,"command":"marker","name":"07-return-to-life"}
 {"version":1,"command":"capture","name":"07-return-to-life"}
+{"version":1,"command":"talk","text":"Tell me one small thought."}
+{"version":1,"command":"wait","milliseconds":800}
+{"version":1,"command":"marker","name":"08-active-tts-before-direct-action"}
+{"version":1,"command":"comfort"}
+{"version":1,"command":"marker","name":"09-active-tts-superseded"}
+{"version":1,"command":"wait","milliseconds":1200}
+{"version":1,"command":"capture","name":"09-active-tts-superseded"}

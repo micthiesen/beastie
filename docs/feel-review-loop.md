@@ -31,10 +31,13 @@ seed and compare the synchronized before and after evidence.
 Focused suites use the same command with `first-five-minutes`, `quiet-observation`,
 `interaction-chain`, `bad-conditions`, or `relationship-over-time` in place of `baseline`.
 `relationship-breadth` provides the fixture-backed trusted-food, food-grudge, and familiar-place
-coverage. On macOS, if repeated AppKit/Metal window lifecycles stall within a multi-experience
-suite, run each named experience in a separate invocation with `--experience <id>` and give each a
-new output directory. This preserves the complete validator and manifest while isolating the game
-process lifecycle; never accept the partial directory from a timed-out suite.
+coverage. `interaction-chain` also includes a bounded `dialogue-races` experience that delays the
+fixture reply without blocking frames, proves pre-reply supersession, and exercises subtitles-off
+ownership. The runner gives frame zero a separate bounded deadline, retains diagnostics for a live
+zero-frame process, recursively terminates its complete worker tree, and retries that class in a
+fresh process up to two times by default. `--startup-timeout-ms` and `--startup-retries` are
+diagnostic overrides. Early exit, scenario errors, recorder errors, and validation errors are not
+retried. Only the promoted successful attempt is validated and hashed.
 The command builds the game and fake workers, verifies FFmpeg and FFprobe, launches each visible
 experience, validates its video, generates filmstrips, and hashes the evidence.
 Pass `--game <executable>` to record an exact copied, packaged, or release executable while still
@@ -49,6 +52,8 @@ Every run produces one self-contained directory:
 target/feel/<run>/
   README.md
   <experience>/
+    attempts.json
+    attempts/
     manifest.json
     session.mp4
     session-audio-reference.mp4
@@ -92,7 +97,7 @@ session. A stalled zero-frame run is invalid evidence.
 
 ## Baseline suite
 
-The baseline suite exercises five different kinds of lived experience:
+The baseline suite exercises seven lived experiences across six kinds of play:
 
 1. **First five minutes:** Start with no privileged knowledge. Observe initial attention, apparent
    affordances, first interaction, text entry, settings discovery, and recovery from mistakes.
@@ -106,6 +111,11 @@ The baseline suite exercises five different kinds of lived experience:
 5. **Relationship over time:** Accelerate between important states, then record normal-speed windows
    before and after meaningful changes. Judge whether history and development become visible without
    distorting the pacing of the moments themselves.
+6. **Relationship without AI:** Replay the relationship arc with generated language and TTS absent.
+   Judge whether the creature remains mechanically complete, emotionally readable, and truthful
+   without its optional mouth.
+7. **Dialogue races:** Reproduce slow pre-reply cancellation, subtitles-off speech ownership, and
+   active-playback interruption with deterministic fixture timing that leaves frame progress live.
 
 Use semantic replay for repeatability and native pointer, keyboard, microphone, and controller
 input for final host validation. Semantic replay cannot prove discoverability, hit-target comfort,

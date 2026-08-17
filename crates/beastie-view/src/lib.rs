@@ -718,7 +718,7 @@ pub fn audio_plan_for_events(events: &[GameEvent]) -> AudioPlan {
         .any(|event| matches!(event, GameEvent::FoodRejected(_)));
     let toy_rejected = events
         .iter()
-        .any(|event| matches!(event, GameEvent::ToyRejected(_)));
+        .any(|event| matches!(event, GameEvent::ToyRejected { .. }));
     let comforted = events.contains(&GameEvent::Comforted);
     let mut commands = Vec::new();
     for event in events {
@@ -749,13 +749,13 @@ pub fn audio_plan_for_events(events: &[GameEvent]) -> AudioPlan {
                 AudioCue::Bubble,
                 700,
             )),
-            GameEvent::ToyPlayed(_) => Some((
+            GameEvent::ToyPlayed { .. } => Some((
                 SemanticOwner::DirectOutcome,
                 physical,
                 AudioCue::ToyImpact,
                 700,
             )),
-            GameEvent::ToyRejected(_) | GameEvent::UtteranceRefused => {
+            GameEvent::ToyRejected { .. } | GameEvent::UtteranceRefused => {
                 Some((SemanticOwner::DirectOutcome, voice, AudioCue::Annoyed, 700))
             }
             GameEvent::Comforted => Some((
@@ -774,8 +774,9 @@ pub fn audio_plan_for_events(events: &[GameEvent]) -> AudioPlan {
                 to: ActionPhase::Approach,
                 ..
             } => Some((ordinary, physical, AudioCue::SwimWake, 540)),
-            GameEvent::SpeechPerceived(SpeechAttention::Glanced | SpeechAttention::Attended)
-            | GameEvent::TalkAccepted { .. } => Some((ordinary, voice, AudioCue::Curious, 700)),
+            GameEvent::SpeechPerceived(SpeechAttention::Glanced | SpeechAttention::Attended) => {
+                Some((ordinary, voice, AudioCue::Curious, 700))
+            }
             GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer) if !comforted => {
                 Some((ordinary, voice, AudioCue::Mrr, 700))
             }
@@ -857,7 +858,7 @@ pub fn audio_plan_for_events(events: &[GameEvent]) -> AudioPlan {
             }
             GameEvent::FoodConsumed(_)
             | GameEvent::FoodRejected(_)
-            | GameEvent::ToyPlayed(_)
+            | GameEvent::ToyPlayed { .. }
             | GameEvent::Comforted => commands.push(AudioCommand::CancelLowerPriority {
                 owner: SemanticOwner::DirectOutcome,
                 channel: PresentationChannel::CreatureVoice,
@@ -2808,8 +2809,8 @@ fn cue_for_event(event: &GameEvent) -> Option<(SemanticOwner, PresentationCueKin
         GameEvent::FoodDropped { .. } => Some((ordinary, PresentationCueKind::Notice, 700)),
         GameEvent::FoodConsumed(_) => Some((direct, PresentationCueKind::Crumbs, 900)),
         GameEvent::FoodRejected(_) => Some((direct, PresentationCueKind::Spit, 1_100)),
-        GameEvent::ToyPlayed(_) => Some((direct, PresentationCueKind::Delight, 900)),
-        GameEvent::ToyRejected(_) => Some((direct, PresentationCueKind::Suspicion, 1_100)),
+        GameEvent::ToyPlayed { .. } => Some((direct, PresentationCueKind::Delight, 900)),
+        GameEvent::ToyRejected { .. } => Some((direct, PresentationCueKind::Suspicion, 1_100)),
         GameEvent::FoodDropRejected(FoodDropRejectionReason::AquariumFull) => {
             Some((direct, PresentationCueKind::AquariumFull, 1_300))
         }
@@ -3107,7 +3108,8 @@ fn reaction_body_asset(
         PresentationCueKind::Suspicion => {
             Some(("creature-v1/reaction/toy-refusal-east", side_flip))
         }
-        PresentationCueKind::Delight | PresentationCueKind::Affection => {
+        PresentationCueKind::Delight => Some(("creature-v1/reaction/delight-south", side_flip)),
+        PresentationCueKind::Affection => {
             Some(("creature-v1/reaction/affection-south", SpriteFlip::None))
         }
         PresentationCueKind::Comfort => {
@@ -3895,7 +3897,11 @@ mod tests {
         view.enqueue_cue(PresentationCueKind::Wake, 2_000, state.elapsed_ms);
         view.observe_events(
             &[
-                GameEvent::ToyRejected(ToyId::Sock),
+                GameEvent::ToyRejected {
+                    toy: ToyId::Sock,
+                    interaction_id: std::num::NonZeroU64::MIN,
+                    origin: beastie_core::ToyOrigin::Player,
+                },
                 GameEvent::NonverbalAct(NonverbalAct::TakeToyAway(ToyId::Sock)),
             ],
             state.elapsed_ms,
@@ -4338,6 +4344,14 @@ mod tests {
                 PresentationCueKind::Comfort,
                 "creature-v1/reaction/comfort-south",
             ),
+            (
+                PresentationCueKind::Delight,
+                "creature-v1/reaction/delight-south",
+            ),
+            (
+                PresentationCueKind::Affection,
+                "creature-v1/reaction/affection-south",
+            ),
             (PresentationCueKind::Crumbs, "creature-v1/eat"),
         ];
         for (cue, expected_id) in cases {
@@ -4363,6 +4377,29 @@ mod tests {
                 .expect("held reaction body");
             assert_eq!(held.id, expected_id);
             assert_eq!(held.frame, 3);
+        }
+    }
+
+    #[test]
+    fn delight_mirrors_to_preserve_the_incoming_facing() {
+        for (facing, expected_flip) in [
+            (beastie_core::Facing::Right, SpriteFlip::None),
+            (beastie_core::Facing::Left, SpriteFlip::Horizontal),
+        ] {
+            let mut state = WorldState::new(7, "Mop");
+            state.creature.aquarium.facing = facing;
+            let mut view = ViewState::default();
+            view.enqueue_cue(PresentationCueKind::Delight, 900, state.elapsed_ms);
+
+            let body = plan(&state, &view)
+                .0
+                .sprites
+                .into_iter()
+                .find(|command| command.layer == 12)
+                .expect("delight body");
+
+            assert_eq!(body.id, "creature-v1/reaction/delight-south");
+            assert_eq!(body.flip, expected_flip);
         }
     }
 
@@ -4895,7 +4932,11 @@ mod tests {
         );
         assert_eq!(
             played_cues(audio_plan_for_events(&[
-                GameEvent::ToyRejected(ToyId::Bell),
+                GameEvent::ToyRejected {
+                    toy: ToyId::Bell,
+                    interaction_id: std::num::NonZeroU64::MIN,
+                    origin: beastie_core::ToyOrigin::Player,
+                },
                 GameEvent::NonverbalAct(NonverbalAct::TakeToyAway(ToyId::Bell)),
             ])),
             vec![AudioCue::Annoyed]
@@ -4906,6 +4947,25 @@ mod tests {
                 GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer),
             ])),
             vec![AudioCue::Affection]
+        );
+    }
+
+    #[test]
+    fn spoken_receipt_chirps_once_and_talk_acceptance_stays_visual() {
+        assert_eq!(
+            played_cues(audio_plan_for_events(&[
+                GameEvent::SpeechPerceived(SpeechAttention::Attended),
+                GameEvent::TalkAccepted {
+                    contextual_follow_up: false,
+                },
+            ])),
+            vec![AudioCue::Curious]
+        );
+        assert!(
+            played_cues(audio_plan_for_events(&[GameEvent::TalkAccepted {
+                contextual_follow_up: false,
+            }]))
+            .is_empty()
         );
     }
 

@@ -171,3 +171,48 @@ The acceptance loop uses the normal debug build. It replays the exact rejected-b
 talk/interruption sequences, the quiet and relationship sessions that exercise positive reactions,
 the trusted/grudge breadth fixtures, and a newly valid degraded-conditions run. Release or final
 builds are not part of this loop.
+
+## Resolution
+
+The cohesive implementation pass closed all four findings and the capture-infrastructure gap.
+Final same-seed debug evidence is retained under:
+
+- `target/feel/interaction-continuity-final-interaction-v2/interaction-chain`;
+- `target/feel/interaction-continuity-final-dialogue-races-v4/dialogue-races`;
+- `target/feel/interaction-continuity-final-relationship-v2/relationship-over-time`;
+- `target/feel/interaction-continuity-final-breadth-v2`;
+- `target/feel/interaction-continuity-final-quiet-v2/quiet-observation`;
+- `target/feel/interaction-continuity-final-bad-v2/bad-conditions`;
+- `target/feel/interaction-continuity-final-no-ai-v2/relationship-over-time-no-ai`;
+- `target/feel/reaction-identity-contact-sheet.png`.
+
+Rejected bell offers now receive exact nonzero interaction IDs and remain refusal-only through the
+old false-arrival window. The final trace contains no bell `ToyPlayed`, impact, delight, positive
+visit, or relationship payoff. Accepted player play defers social history and relationship reward
+until exact physical contact; autonomous play uses the same owned contact lifecycle without
+crediting the player.
+
+Dialogue, caption, TTS, mouth, status, and speech playback now share a composite turn owner. In the
+rapid relationship interruption at `00:60.233` to `00:60.250`, the independently numbered TTS request is
+enqueued and canceled in the same frame and never starts. Final interaction and relationship
+traces contain zero subtitle-on frames with speech but no caption, and zero speaking frames without
+a caption owner. Spoken input retains the perceptual curious cue at `00:21.633`; `TalkAccepted` no
+longer repeats it into TTS. The separate delayed fixture cancels before reply acceptance, and the
+extended interaction chain stops active owned playback at `01:01.333`. A subtitles-off turn remains
+audible and internally owned without manufacturing a hidden caption.
+
+Delight, affection, and comfort now use three distinct clips curated from approved gold-fish
+runtime frames. The exact 2x contact sheet and final native filmstrips preserve body mass, fins,
+tail, palette, and anchor through every transition. The AI-off identity proof remains valid in
+`target/feel/interaction-continuity-final-no-ai-v2/relationship-over-time-no-ai`.
+
+The runner now uses a flushed first-frame heartbeat, concurrent early-exit classification, bounded
+zero-frame retry, retained per-attempt diagnostics, and recursive process-tree cleanup. A valid
+degraded-condition bundle exists at `target/feel/interaction-continuity-final-bad-v2/bad-conditions`;
+the final dialogue-race run followed a fully diagnosed three-attempt invalid root, bad conditions
+and AI-off recovered on attempt 2, and the focused familiar-ball run recovered on attempt 3. Failed attempts
+remain clearly invalid and only the successful attempt is promoted and hashed.
+
+`cargo xtask verify` passes. Three independent final review lenses found no remaining material
+interaction-continuity regression. The previously accepted quiet rhythm, direct food response,
+relationship causality, layout, ambience, and graceful AI-off behavior remain closed strengths.

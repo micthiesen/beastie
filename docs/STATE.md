@@ -2,8 +2,8 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-17** (interaction-continuity feel review complete; implementation next;
-Windows validation parked).
+Last updated: **2026-08-17** (interaction continuity implemented and natively verified; Windows
+validation parked).
 
 ## Now
 
@@ -34,7 +34,7 @@ Windows validation parked).
   `aquarium-v1-visible.jsonl`, captures eight aquarium checkpoints through the real ggez shell. The
   berry-grudge, Stage 5, and room-shell fixtures remain regression and migration evidence. See
   [development-harness.md](development-harness.md).
-- `cargo xtask feel --suite baseline` now runs six deterministic subjective experiences through
+- `cargo xtask feel --suite baseline` now runs seven deterministic subjective experiences through
   the real game shell and produces synchronized 60 fps video, marker filmstrips, privacy-safe
   input/event/state/audio traces, retained speech WAVs, a reference audio mix and waveform, review
   scaffolding, and hash-pinned manifests. The first adjudicated pass fixed collapsed idle rhythm,
@@ -71,12 +71,18 @@ Windows validation parked).
   native experiences prove trusted berry, mushroom grudge, and current settled cave, plant, and
   ball familiarity. See [relationship-causality-rework.md](relationship-causality-rework.md) and
   [feel-review-relationship-causality-final.md](feel-review-relationship-causality-final.md).
-- A fresh whole-loop feel review found one coherent continuity seam after that rework. Rejected toy
-  travel can incorrectly resolve as authoritative play and delight; a superseded dialogue turn can
-  start queued TTS after its caption and body response are gone; spoken receipt and acceptance
-  repeat the same curious cue into TTS; and the delight/affection/comfort art changes the gold fish
-  into a brown mammal-like silhouette. Trusted food, food grudges, player-return growth, base
-  movement, direct food response, global layout, ambience, and AI-off continuity remain strong. See
+- Interaction continuity now has one truthful owner from receipt through movement, payoff, and
+  recovery. Core save version 6 persists exact toy interaction IDs, player/autonomous origin,
+  outcome, relationship context, and typed travel purpose; accepted social reward occurs once at
+  contact, while refusal can never become play through arrival. Session save version 4 migrates
+  embedded worlds through the core migrator. Dialogue, caption, turn-scoped status, independently
+  numbered TTS, active speech, and mouth animation share one cancelable composite turn owner, and
+  spoken receipt no longer repeats its curious cue at acceptance. Delight, affection, and comfort
+  are distinct curated clips of the same gold fish, protected by geometry diagnostics and a native
+  contact sheet. The feel runner has a flushed first-frame heartbeat, bounded selective retry,
+  retained attempts, and full descendant cleanup. Final native evidence closes the rejected-bell
+  and rapid-speech races and validates all five exact relationship fixtures. See
+  [interaction-continuity-rework.md](interaction-continuity-rework.md) and
   [feel-review-interaction-continuity.md](feel-review-interaction-continuity.md).
 - The selected local mouth is Qwen3.5 0.8B Q4 behind one authenticated loopback llama.cpp sidecar.
   The expanded V1 corpus passed 26/26 with no fallback, permitted refusal, or prohibited escape;
@@ -87,7 +93,7 @@ Windows validation parked).
   3.36-second mono PCM16 line at 22,050 Hz in under 10 ms and about 3.1 MB maximum RSS. Packaging
   must retain GPLv3 license and corresponding source. See
   [tooling-preflight.md](tooling-preflight.md).
-- Asset validation now checks 77 declared assets for provenance, palette policy, alpha, transparent
+- Asset validation now checks 78 declared assets for provenance, palette policy, alpha, transparent
   RGB, pixel density, dimensions, animation completeness, and final-over-generated resolution.
   Normal gate output is concise, with per-candidate diagnostics available through `--verbose`. The
   expression
@@ -163,14 +169,9 @@ Windows validation parked).
 
 ## Next
 
-Implement [interaction-continuity-rework.md](interaction-continuity-rework.md) completely. Give
-travel an explicit purpose, make toy reward resolve only at truthful contact, bind dialogue through
-TTS and mouth animation to one cancelable owner, remove the duplicate speech receipt, replace the
-identity-breaking delight/affection/comfort frames, and make zero-frame native capture fail fast
-with retained diagnostics and bounded retry. Re-run the exact feel evidence until no known material
-continuity issue remains. Keep Windows native validation parked until the user asks to resume it.
-Normal iteration remains debug build plus the headless gate; release/final builds are not part of
-the loop.
+Use `/next` to choose the next feature or feel problem from the implemented, natively verified
+state. Keep Windows native validation parked until the user asks to resume it. Normal iteration
+remains the debug build plus the headless gate.
 
 ## Candidates Not Chosen
 
@@ -202,7 +203,7 @@ the loop.
   [relationship-causality-rework.md](relationship-causality-rework.md)
 - Fourth feel review, interaction continuity:
   [feel-review-interaction-continuity.md](feel-review-interaction-continuity.md)
-- Next implementation contract:
+- Implemented interaction-continuity contract:
   [interaction-continuity-rework.md](interaction-continuity-rework.md)
 - Chosen relationship-expression architecture:
   [relationship-expression-design.md](relationship-expression-design.md)

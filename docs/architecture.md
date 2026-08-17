@@ -24,6 +24,14 @@ crops, and viewport scaling belong to presentation. Saves are human-readable, ve
 migrate historical room-era state into stable aquarium objects without retaining runtime room
 fields.
 
+Travel that can produce a semantic payoff carries a typed purpose rather than relying on intention
+or proximity. Toy interactions persist one nonzero identity, exact toy, player/autonomous origin,
+outcome, phase, and any selected relationship context from receipt through contact and recovery.
+Accepted play mutates social history and relationship state once at physical contact; rejection
+uses a refusal-stare owner and cannot resolve through idle arrival. Core save version 6 validates
+the interaction and travel owner in both directions and migrates ambiguous older toy travel
+conservatively without manufacturing another payoff.
+
 ## Session and harness boundary
 
 `GameSession` sits above core and below ggez. It owns authoritative state, RNG, semantic commands,
@@ -46,6 +54,12 @@ berry-grudge, Stage 5, and room-shell scenarios remain regression and migration 
 `spoken-input-foundation.jsonl` proves the same hearing lifecycle used by the microphone path
 without requiring a microphone or model. See
 [spoken-input-foundation.md](spoken-input-foundation.md).
+
+Native feel capture records the framebuffer, semantic input, authoritative events, presentation
+state, owned audio, and markers on one 60 fps timeline. A flushed heartbeat is emitted only after
+framebuffer and state are both recorded. The runner classifies early exit separately from a live
+zero-frame startup, retains per-attempt diagnostics, retries only the latter, and recursively
+reaps nested worker process groups before promotion. See [feel-review-loop.md](feel-review-loop.md).
 
 ## Declarative presentation
 
@@ -96,6 +110,12 @@ sidecar boundary. The release dialogue adapter keeps one authenticated loopback
 llama.cpp sidecar warm. eSpeak NG remains a separate offline executable,
 receives validated text plus authoritative voice settings, and returns cached WAV metadata and
 mouth timing. Fixture dialogue and silent speech fallbacks remain permanent test and failure modes.
+
+The game shell maps independently numbered dialogue and TTS requests through a composite dialogue
+owner containing shell generation and dialogue request ID. Caption, reveal, turn-scoped status,
+queued TTS, active speech, and mouth animation retain that owner. Direct semantic actions
+supersede the owner before applying their own response, so late worker completions are drained
+without creating new presentation while already accepted canonical dialogue history remains true.
 
 Durable save files, backups, settings, transcript export, wall-clock absence, worker lifecycle,
 windowing, input devices, and audio playback stay in `beastie-game`. Platform packages may differ,

@@ -8,6 +8,7 @@ use crate::{
     deterministic_unit,
 };
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU64;
 
 pub const SIMULATION_TICK_MS: u64 = 1_000;
 pub const MAX_OFFLINE_MS: u64 = crate::ACTIVE_DAY_MS * 8;
@@ -52,8 +53,31 @@ pub enum GameEvent {
     MemoryCreated(MemoryId),
     FoodConsumed(FoodId),
     FoodRejected(FoodId),
-    ToyPlayed(ToyId),
-    ToyRejected(ToyId),
+    ToyPlayAccepted {
+        toy: ToyId,
+        interaction_id: NonZeroU64,
+        origin: crate::ToyOrigin,
+    },
+    ToyRejected {
+        toy: ToyId,
+        interaction_id: NonZeroU64,
+        origin: crate::ToyOrigin,
+    },
+    ToyContacted {
+        toy: ToyId,
+        interaction_id: NonZeroU64,
+        origin: crate::ToyOrigin,
+    },
+    ToyPlayed {
+        toy: ToyId,
+        interaction_id: NonZeroU64,
+        origin: crate::ToyOrigin,
+    },
+    ToyInteractionInterrupted {
+        toy: ToyId,
+        interaction_id: NonZeroU64,
+        origin: crate::ToyOrigin,
+    },
     Comforted,
     SleepStarted,
     SleepEnded,
@@ -161,8 +185,10 @@ pub fn step(
     for event in input {
         let before = state.creature.memories.len();
         if should_interrupt_for_player_event(event) {
+            interrupt_toy_interaction(state, &mut events);
             interrupt_action_relationship_moment(state, &mut events);
             interrupt_relationship_beat(state, &mut events);
+            interrupt_travel(state, &mut events);
         }
         apply_player_event(state, event, &mut events);
         events.extend(
@@ -233,6 +259,7 @@ pub fn advance_offline(
         };
     }
     state.aquarium.player_present = false;
+    resolve_toy_interaction_offline(state);
     state.elapsed_ms = state.elapsed_ms.saturating_add(applied_ms);
     state.absence_days = state
         .absence_days
@@ -273,6 +300,20 @@ fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut
     state.creature.needs.energy -= 0.018 * minutes;
     state.creature.needs.comfort -= 0.008 * minutes;
     state.creature.needs.curiosity += 0.012 * minutes;
+    if state.creature.needs.energy < 0.1
+        && state.creature.current_intention != crate::Intention::Sleep
+    {
+        interrupt_toy_interaction(state, events);
+        interrupt_relationship_beat(state, events);
+        let previous = state.creature.current_intention;
+        state.creature.current_intention = crate::Intention::Sleep;
+        state.creature.interaction_state.sleep_started_at_ms = Some(state.elapsed_ms);
+        events.push(GameEvent::SleepStarted);
+        events.push(GameEvent::IntentionChanged {
+            from: previous,
+            to: crate::Intention::Sleep,
+        });
+    }
     advance_aquarium(state, events);
     clear_satisfied_or_expired_initiative(state);
     maybe_initiate(state, events);
@@ -284,22 +325,18 @@ fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut
     }
     events.push(GameEvent::NeedChanged);
     update_development(state, events);
-    if state.creature.needs.energy < 0.1
-        && state.creature.current_intention != crate::Intention::Sleep
-    {
-        interrupt_relationship_beat(state, events);
-        let previous = state.creature.current_intention;
-        state.creature.current_intention = crate::Intention::Sleep;
-        state.creature.interaction_state.sleep_started_at_ms = Some(state.elapsed_ms);
-        events.push(GameEvent::SleepStarted);
-        events.push(GameEvent::IntentionChanged {
-            from: previous,
-            to: crate::Intention::Sleep,
-        });
-    }
 }
 
 fn advance_embodied_state(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    if state
+        .creature
+        .interaction_state
+        .toy_interaction
+        .as_ref()
+        .is_some_and(|interaction| interaction.phase == crate::ToyInteractionPhase::Recovery)
+    {
+        state.creature.interaction_state.toy_interaction = None;
+    }
     if state
         .creature
         .interaction_state
@@ -327,7 +364,7 @@ fn advance_embodied_state(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         {
             state.creature.interaction_state.sleep_started_at_ms = None;
             set_intention(state, Intention::Idle, events);
-            state.creature.aquarium.destination = None;
+            clear_travel_target(state);
             state.creature.aquarium.steering = SteeringMode::Hover;
             events.push(GameEvent::SleepEnded);
         }
@@ -337,7 +374,7 @@ fn advance_embodied_state(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         && state.elapsed_ms >= state.creature.interaction_state.affectionate_until_ms
     {
         set_intention(state, Intention::Idle, events);
-        state.creature.aquarium.destination = None;
+        clear_travel_target(state);
         state.creature.aquarium.steering = SteeringMode::Hover;
     }
 }
@@ -364,18 +401,24 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
             if let Some(cursor) = state.aquarium.cursor {
                 if state.creature.relationship.resentment > 0.65 {
                     state.creature.aquarium.steering = SteeringMode::Flee;
-                    state.creature.aquarium.destination = None;
+                    clear_travel_target(state);
                 } else if state.creature.relationship.trust > 0.5
                     && state.creature.traits.sociability > 0.4
                 {
                     state.creature.aquarium.steering = SteeringMode::Approach;
-                    state.creature.aquarium.destination =
-                        Some(SemanticDestination::Position(cursor));
+                    let action_id = NonZeroU64::new(allocate_action_id(state))
+                        .expect("action IDs start at one");
+                    set_travel_target(
+                        state,
+                        SemanticDestination::Position(cursor),
+                        crate::TravelPurpose::CursorSocial { action_id },
+                        events,
+                    );
                 } else {
                     state.creature.aquarium.steering = SteeringMode::Hover;
                 }
             } else {
-                state.creature.aquarium.destination = None;
+                clear_travel_target(state);
             }
         }
         PlayerEvent::Name { target, name } => assign_name(state, *target, name, events),
@@ -393,11 +436,7 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
                 .interactions
                 .plays
                 .saturating_add(1);
-            if play_with_toy(state, *toy, events)
-                && let Some(context) = relationship
-            {
-                start_action_relationship_moment(state, context, events);
-            }
+            play_with_toy(state, *toy, relationship, events);
         }
         PlayerEvent::Comfort => {
             let relationship = crate::select_action_relationship_context(
@@ -422,8 +461,14 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
                 state.elapsed_ms.saturating_add(AFFECTION_DURATION_MS);
             set_intention(state, Intention::ShowAffection, events);
             state.creature.aquarium.gaze = GazeTarget::Player;
-            state.creature.aquarium.destination = Some(SemanticDestination::Player);
-            state.creature.aquarium.steering = SteeringMode::Approach;
+            let action_id =
+                NonZeroU64::new(allocate_action_id(state)).expect("action IDs start at one");
+            set_travel_target(
+                state,
+                SemanticDestination::Player,
+                crate::TravelPurpose::CursorSocial { action_id },
+                events,
+            );
             clear_satisfied_or_expired_initiative(state);
             events.push(GameEvent::Comforted);
             if let Some(context) = relationship {
@@ -456,6 +501,9 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
                 // Hearing may redirect the creature's eyes without replacing its intention,
                 // destination, steering, or in-progress action.
                 state.creature.aquarium.gaze = GazeTarget::Player;
+            }
+            if attention == SpeechAttention::Attended {
+                interrupt_toy_interaction(state, events);
             }
             events.push(GameEvent::SpeechPerceived(attention));
         }
@@ -531,10 +579,23 @@ pub fn speech_attention(state: &WorldState) -> SpeechAttention {
     // A chosen toy destination may project `Play` while the creature is merely travelling or
     // hovering. Authored play has an action timeline; the destination check also preserves old
     // saves whose active play predates that timeline.
-    let travelling_to_toy = matches!(
+    let travelling_to_toy = match (
         creature.aquarium.destination,
-        Some(SemanticDestination::Toy(_))
-    );
+        creature.aquarium.travel_purpose,
+    ) {
+        (
+            Some(SemanticDestination::Toy(_)),
+            Some(crate::TravelPurpose::ToyInteraction { interaction_id }),
+        ) => creature
+            .interaction_state
+            .toy_interaction
+            .as_ref()
+            .is_some_and(|interaction| {
+                interaction.id == interaction_id
+                    && interaction.origin == crate::ToyOrigin::Autonomous
+            }),
+        _ => false,
+    };
     let settled_at_toy = matches!(
         creature.idle_life.last_arrived_destination,
         Some(SemanticDestination::Toy(_))
@@ -569,6 +630,7 @@ fn maybe_start_relationship_beat(
 ) {
     if state.creature.current_intention == Intention::Sleep
         || state.creature.aquarium.action.is_some()
+        || state.creature.interaction_state.toy_interaction.is_some()
         || state.creature.relationship_expression.active.is_some()
     {
         return;
@@ -584,7 +646,7 @@ fn maybe_start_relationship_beat(
     let evidence = beat.evidence.clone();
     state.creature.relationship_expression.active = Some(beat.clone());
     record_relationship_expression(state, motif, expression);
-    apply_relationship_pose(state, &beat);
+    apply_relationship_pose(state, &beat, events);
     events.push(GameEvent::RelationshipBeatStarted {
         motif,
         expression,
@@ -647,12 +709,298 @@ fn allocate_action_id(state: &mut WorldState) -> u64 {
     id
 }
 
+fn allocate_toy_interaction_id(state: &mut WorldState) -> NonZeroU64 {
+    let raw = state
+        .creature
+        .interaction_state
+        .next_toy_interaction_id
+        .max(1);
+    state.creature.interaction_state.next_toy_interaction_id = raw.saturating_add(1).max(1);
+    NonZeroU64::new(raw).expect("toy interaction IDs start at one")
+}
+
+fn set_travel_target(
+    state: &mut WorldState,
+    destination: SemanticDestination,
+    purpose: crate::TravelPurpose,
+    events: &mut Vec<GameEvent>,
+) {
+    let previous_destination = state.creature.aquarium.destination;
+    let previous_purpose = state.creature.aquarium.travel_purpose;
+    let replacing = previous_destination.is_some() || previous_purpose.is_some();
+    let same = previous_destination == Some(destination) && previous_purpose == Some(purpose);
+    if replacing && !same {
+        let active_toy_owned_previous = state
+            .creature
+            .interaction_state
+            .toy_interaction
+            .as_ref()
+            .is_some_and(|interaction| {
+                matches!(
+                    previous_purpose,
+                    Some(crate::TravelPurpose::ToyInteraction { interaction_id }
+                        | crate::TravelPurpose::RefusalStare { interaction_id })
+                        if interaction_id == interaction.id
+                )
+            });
+        if active_toy_owned_previous {
+            interrupt_toy_interaction(state, events);
+        } else {
+            clear_travel_target(state);
+            if let Some(previous_destination) = previous_destination {
+                events.push(GameEvent::ActionAborted {
+                    destination: previous_destination,
+                });
+            }
+        }
+    }
+    state.creature.aquarium.destination = Some(destination);
+    state.creature.aquarium.travel_purpose = Some(purpose);
+    state.creature.aquarium.steering = SteeringMode::Approach;
+}
+
+fn clear_travel_target(state: &mut WorldState) {
+    state.creature.aquarium.destination = None;
+    state.creature.aquarium.travel_purpose = None;
+}
+
+fn interrupt_travel(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    let Some(destination) = state.creature.aquarium.destination else {
+        state.creature.aquarium.travel_purpose = None;
+        return;
+    };
+    clear_travel_target(state);
+    state.creature.aquarium.steering = SteeringMode::Hover;
+    events.push(GameEvent::ActionAborted { destination });
+}
+
+fn interrupt_toy_interaction(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    let Some(mut interaction) = state.creature.interaction_state.toy_interaction.take() else {
+        return;
+    };
+    if interaction.phase == crate::ToyInteractionPhase::Recovery {
+        return;
+    }
+    interaction.outcome = crate::ToyInteractionOutcome::Interrupted;
+    interaction.phase = crate::ToyInteractionPhase::Interrupted;
+    if matches!(
+        state.creature.aquarium.travel_purpose,
+        Some(crate::TravelPurpose::ToyInteraction { interaction_id }
+            | crate::TravelPurpose::RefusalStare { interaction_id }) if interaction_id == interaction.id
+    ) {
+        clear_travel_target(state);
+        state.creature.aquarium.steering = SteeringMode::Hover;
+    }
+    events.push(GameEvent::ToyInteractionInterrupted {
+        toy: interaction.toy,
+        interaction_id: interaction.id,
+        origin: interaction.origin,
+    });
+}
+
+fn resolve_toy_play(
+    state: &mut WorldState,
+    interaction_id: NonZeroU64,
+    events: &mut Vec<GameEvent>,
+) {
+    let Some(mut interaction) = state.creature.interaction_state.toy_interaction.take() else {
+        return;
+    };
+    if interaction.id != interaction_id
+        || interaction.outcome != crate::ToyInteractionOutcome::Accepted
+        || interaction.phase != crate::ToyInteractionPhase::Approach
+    {
+        state.creature.interaction_state.toy_interaction = Some(interaction);
+        return;
+    }
+    interaction.phase = crate::ToyInteractionPhase::Contact;
+    events.push(GameEvent::ToyContacted {
+        toy: interaction.toy,
+        interaction_id,
+        origin: interaction.origin,
+    });
+    state.creature.needs.curiosity = (state.creature.needs.curiosity - 0.18).max(0.0);
+    match interaction.origin {
+        crate::ToyOrigin::Player => {
+            let preference = state
+                .creature
+                .toy_preferences
+                .get(&interaction.toy)
+                .copied()
+                .unwrap_or(0.0);
+            improve_relationship(state, 0.01, 0.008, 0.012);
+            state.remember(
+                MemoryKind::PlayedWith {
+                    toy: interaction.toy,
+                },
+                &[Concept::Good],
+                preference,
+                0.6,
+            );
+            if let Some(context) = interaction.relationship.take() {
+                start_toy_relationship_moment(state, interaction_id, context, events);
+            }
+        }
+        crate::ToyOrigin::Autonomous => {
+            record_idle_arrival_state(state, SemanticDestination::Toy(interaction.toy));
+        }
+    }
+    interaction.phase = crate::ToyInteractionPhase::Resolved;
+    events.push(GameEvent::ToyPlayed {
+        toy: interaction.toy,
+        interaction_id,
+        origin: interaction.origin,
+    });
+    state
+        .creature
+        .interaction_state
+        .last_resolved_toy_interaction = Some(crate::ResolvedToyInteraction {
+        id: interaction.id,
+        toy: interaction.toy,
+        origin: interaction.origin,
+    });
+    interaction.phase = crate::ToyInteractionPhase::Recovery;
+    state.creature.interaction_state.toy_interaction = Some(interaction);
+}
+
+fn dispatch_travel_arrival(
+    state: &mut WorldState,
+    destination: SemanticDestination,
+    purpose: crate::TravelPurpose,
+    events: &mut Vec<GameEvent>,
+) {
+    match purpose {
+        crate::TravelPurpose::IdleVisit { .. } => {
+            record_idle_arrival_state(state, destination);
+            maybe_start_relationship_beat(
+                state,
+                RelationshipTrigger::PlaceArrived { destination },
+                events,
+            );
+        }
+        crate::TravelPurpose::ToyInteraction { interaction_id } => {
+            resolve_toy_play(state, interaction_id, events);
+        }
+        crate::TravelPurpose::RefusalStare { interaction_id } => {
+            if let Some(interaction) = state.creature.interaction_state.toy_interaction.as_mut()
+                && interaction.id == interaction_id
+                && interaction.phase == crate::ToyInteractionPhase::Approach
+            {
+                interaction.phase = crate::ToyInteractionPhase::Recovery;
+            }
+        }
+        crate::TravelPurpose::Relationship { .. } => {
+            state.creature.idle_life.last_arrived_destination = Some(destination);
+            state.creature.idle_life.settled_until_ms =
+                state.elapsed_ms.saturating_add(IDLE_BOUT_MIN_MS);
+        }
+        crate::TravelPurpose::CursorSocial { .. } | crate::TravelPurpose::Initiative { .. } => {}
+    }
+}
+
+fn resolve_toy_interaction_offline(state: &mut WorldState) {
+    let Some(mut interaction) = state.creature.interaction_state.toy_interaction.take() else {
+        return;
+    };
+    if interaction.phase == crate::ToyInteractionPhase::Recovery {
+        clear_travel_target(state);
+        return;
+    }
+    if interaction.phase == crate::ToyInteractionPhase::Approach
+        && interaction.origin == crate::ToyOrigin::Player
+        && matches!(
+            state.creature.aquarium.travel_purpose,
+            Some(crate::TravelPurpose::RefusalStare { interaction_id }) if interaction_id == interaction.id
+        )
+    {
+        clear_travel_target(state);
+        return;
+    }
+    if interaction.phase != crate::ToyInteractionPhase::Approach
+        || interaction.outcome != crate::ToyInteractionOutcome::Accepted
+        || !matches!(
+            state.creature.aquarium.travel_purpose,
+            Some(crate::TravelPurpose::ToyInteraction { interaction_id }) if interaction_id == interaction.id
+        )
+    {
+        state.creature.interaction_state.toy_interaction = Some(interaction);
+        return;
+    }
+    state.creature.needs.curiosity = (state.creature.needs.curiosity - 0.18).max(0.0);
+    match interaction.origin {
+        crate::ToyOrigin::Player => {
+            let preference = state
+                .creature
+                .toy_preferences
+                .get(&interaction.toy)
+                .copied()
+                .unwrap_or(0.0);
+            improve_relationship(state, 0.01, 0.008, 0.012);
+            state.remember(
+                MemoryKind::PlayedWith {
+                    toy: interaction.toy,
+                },
+                &[Concept::Good],
+                preference,
+                0.6,
+            );
+            if let Some(context) = interaction.relationship.take() {
+                record_relationship_expression(state, context.motif, context.expression_kind);
+            }
+        }
+        crate::ToyOrigin::Autonomous => {
+            record_idle_arrival_state(state, SemanticDestination::Toy(interaction.toy));
+        }
+    }
+    state
+        .creature
+        .interaction_state
+        .last_resolved_toy_interaction = Some(crate::ResolvedToyInteraction {
+        id: interaction.id,
+        toy: interaction.toy,
+        origin: interaction.origin,
+    });
+    interaction.phase = crate::ToyInteractionPhase::Recovery;
+    clear_travel_target(state);
+    state.creature.interaction_state.toy_interaction = Some(interaction);
+}
+
 fn start_action_relationship_moment(
     state: &mut WorldState,
     context: crate::ActionRelationshipContext,
     events: &mut Vec<GameEvent>,
 ) {
     let action_id = allocate_action_id(state);
+    record_relationship_expression(state, context.motif, context.expression_kind);
+    events.push(GameEvent::ActionRelationshipStarted {
+        action_id,
+        motif: context.motif,
+        expression: context.expression_kind,
+        subject: context.subject,
+        evidence: context.evidence.clone(),
+    });
+    state.creature.interaction_state.relationship_moment = Some(crate::ActionRelationshipMoment {
+        action_id,
+        context,
+        started_at_ms: state.elapsed_ms,
+        expires_at_ms: state
+            .elapsed_ms
+            .saturating_add(DIRECT_RELATIONSHIP_MOMENT_MS),
+    });
+}
+
+fn start_toy_relationship_moment(
+    state: &mut WorldState,
+    interaction_id: NonZeroU64,
+    context: crate::ActionRelationshipContext,
+    events: &mut Vec<GameEvent>,
+) {
+    let action_id = interaction_id.get();
+    state.creature.interaction_state.next_action_id = state
+        .creature
+        .interaction_state
+        .next_action_id
+        .max(action_id.saturating_add(1));
     record_relationship_expression(state, context.motif, context.expression_kind);
     events.push(GameEvent::ActionRelationshipStarted {
         action_id,
@@ -682,15 +1030,18 @@ fn interrupt_action_relationship_moment(state: &mut WorldState, events: &mut Vec
     });
 }
 
-fn apply_relationship_pose(state: &mut WorldState, beat: &crate::RelationshipBeat) {
+fn apply_relationship_pose(
+    state: &mut WorldState,
+    beat: &crate::RelationshipBeat,
+    events: &mut Vec<GameEvent>,
+) {
     match beat.motif {
         crate::RelationshipMotifKey::SharedToy(toy) => {
             state.creature.aquarium.gaze = GazeTarget::Toy(toy);
             if beat.expression_kind != crate::RelationshipExpressionKind::Notice
                 && beat.phase != crate::RelationshipBeatPhase::Notice
             {
-                state.creature.aquarium.destination = beat.target;
-                state.creature.aquarium.steering = SteeringMode::Approach;
+                set_relationship_travel(state, beat, events);
                 state.creature.current_intention = Intention::Play;
             }
         }
@@ -700,8 +1051,7 @@ fn apply_relationship_pose(state: &mut WorldState, beat: &crate::RelationshipBea
                 && beat.phase != crate::RelationshipBeatPhase::Notice
             {
                 state.creature.current_intention = Intention::SeekComfort;
-                state.creature.aquarium.destination = beat.target;
-                state.creature.aquarium.steering = SteeringMode::Approach;
+                set_relationship_travel(state, beat, events);
             }
         }
         crate::RelationshipMotifKey::TrustedFood(food) => {
@@ -713,8 +1063,7 @@ fn apply_relationship_pose(state: &mut WorldState, beat: &crate::RelationshipBea
             }
             state.creature.current_intention = Intention::WaitAtBowl;
             if beat.phase != crate::RelationshipBeatPhase::Notice {
-                state.creature.aquarium.destination = beat.target;
-                state.creature.aquarium.steering = SteeringMode::Approach;
+                set_relationship_travel(state, beat, events);
             }
         }
         crate::RelationshipMotifKey::FoodGrudge(food) => {
@@ -728,16 +1077,14 @@ fn apply_relationship_pose(state: &mut WorldState, beat: &crate::RelationshipBea
                 && beat.phase != crate::RelationshipBeatPhase::Notice
             {
                 state.creature.current_intention = Intention::RejectFood;
-                state.creature.aquarium.destination = beat.target;
-                state.creature.aquarium.steering = SteeringMode::Approach;
+                set_relationship_travel(state, beat, events);
             }
         }
         crate::RelationshipMotifKey::PlayerReturns => {
             state.creature.aquarium.gaze = GazeTarget::Player;
             if beat.expression_kind != crate::RelationshipExpressionKind::Notice {
                 state.creature.current_intention = Intention::ApproachPlayer;
-                state.creature.aquarium.destination = beat.target;
-                state.creature.aquarium.steering = SteeringMode::Approach;
+                set_relationship_travel(state, beat, events);
             }
         }
         crate::RelationshipMotifKey::FamiliarPlace(destination) => {
@@ -749,13 +1096,31 @@ fn apply_relationship_pose(state: &mut WorldState, beat: &crate::RelationshipBea
                 _ => GazeTarget::None,
             };
             if beat.phase == crate::RelationshipBeatPhase::Anticipate {
-                state.creature.aquarium.destination = Some(destination);
-                state.creature.aquarium.steering = SteeringMode::Approach;
+                set_relationship_travel(state, beat, events);
             } else {
-                state.creature.aquarium.destination = None;
+                clear_travel_target(state);
                 state.creature.aquarium.steering = SteeringMode::Hover;
             }
         }
+    }
+}
+
+fn set_relationship_travel(
+    state: &mut WorldState,
+    beat: &crate::RelationshipBeat,
+    events: &mut Vec<GameEvent>,
+) {
+    if let Some(destination) = beat.target {
+        let beat_id = NonZeroU64::new(beat.started_at_ms.saturating_add(1))
+            .expect("relationship beat IDs are offset from time");
+        set_travel_target(
+            state,
+            destination,
+            crate::TravelPurpose::Relationship { beat_id },
+            events,
+        );
+    } else {
+        clear_travel_target(state);
     }
 }
 
@@ -764,7 +1129,7 @@ fn interrupt_relationship_beat(state: &mut WorldState, events: &mut Vec<GameEven
         return;
     };
     if state.creature.aquarium.action.is_none() {
-        state.creature.aquarium.destination = None;
+        clear_travel_target(state);
         state.creature.aquarium.steering = SteeringMode::Hover;
     }
     events.push(GameEvent::RelationshipBeatInterrupted(beat.motif));
@@ -776,7 +1141,7 @@ fn advance_relationship_beat(state: &mut WorldState, events: &mut Vec<GameEvent>
     };
     let elapsed = state.elapsed_ms.saturating_sub(beat.phase_started_at_ms);
     if elapsed < crate::relationship::phase_duration_ms(beat.phase) {
-        apply_relationship_pose(state, &beat);
+        apply_relationship_pose(state, &beat, events);
         return;
     }
     let old = beat.phase;
@@ -787,7 +1152,7 @@ fn advance_relationship_beat(state: &mut WorldState, events: &mut Vec<GameEvent>
                 && (state.creature.idle_life.last_arrived_destination != Some(destination)
                     || state.elapsed_ms >= state.creature.idle_life.settled_until_ms)
             {
-                apply_relationship_pose(state, &beat);
+                apply_relationship_pose(state, &beat, events);
                 return;
             }
             crate::RelationshipBeatPhase::Act
@@ -796,7 +1161,7 @@ fn advance_relationship_beat(state: &mut WorldState, events: &mut Vec<GameEvent>
         crate::RelationshipBeatPhase::Recover => {
             state.creature.relationship_expression.active = None;
             if state.creature.aquarium.action.is_none() {
-                state.creature.aquarium.destination = None;
+                clear_travel_target(state);
                 state.creature.aquarium.steering = SteeringMode::Hover;
                 state.creature.current_intention = Intention::Idle;
             }
@@ -806,7 +1171,7 @@ fn advance_relationship_beat(state: &mut WorldState, events: &mut Vec<GameEvent>
     };
     beat.phase = next;
     beat.phase_started_at_ms = state.elapsed_ms;
-    apply_relationship_pose(state, &beat);
+    apply_relationship_pose(state, &beat, events);
     state.creature.relationship_expression.active = Some(beat.clone());
     events.push(GameEvent::RelationshipBeatPhaseChanged {
         motif: beat.motif,
@@ -1127,7 +1492,7 @@ fn steering_target(
         let position = state.creature.aquarium.position;
         if manhattan_distance(position, cursor) >= FLEE_DISTANCE {
             state.creature.aquarium.steering = SteeringMode::Hover;
-            state.creature.aquarium.destination = None;
+            clear_travel_target(state);
             state.creature.aquarium.velocity = NormalizedVelocity::default();
             return None;
         }
@@ -1144,17 +1509,13 @@ fn steering_target(
         );
     }
     let destination = state.creature.aquarium.destination?;
+    let purpose = state.creature.aquarium.travel_purpose?;
     let target = destination_position(state, destination)?;
     if manhattan_distance(state.creature.aquarium.position, target) <= ARRIVAL_DISTANCE {
         state.creature.aquarium.velocity = NormalizedVelocity::default();
-        record_genuine_arrival(state, destination, events);
-        state.creature.aquarium.destination = None;
+        dispatch_travel_arrival(state, destination, purpose, events);
+        clear_travel_target(state);
         state.creature.aquarium.steering = SteeringMode::Hover;
-        maybe_start_relationship_beat(
-            state,
-            RelationshipTrigger::PlaceArrived { destination },
-            events,
-        );
         return None;
     }
     Some(target)
@@ -1264,6 +1625,7 @@ fn drift_with_cause(state: &mut WorldState) {
 
 fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     if state.creature.aquarium.action.is_some()
+        || state.creature.interaction_state.toy_interaction.is_some()
         || state.creature.relationship_expression.active.is_some()
         || matches!(state.creature.aquarium.steering, SteeringMode::Flee)
     {
@@ -1348,8 +1710,40 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
             destination
         }
     }) {
-        state.creature.aquarium.destination = Some(destination);
-        state.creature.aquarium.steering = SteeringMode::Approach;
+        match destination {
+            SemanticDestination::Toy(toy) => {
+                let interaction_id = allocate_toy_interaction_id(state);
+                state.creature.interaction_state.toy_interaction = Some(crate::ToyInteraction {
+                    id: interaction_id,
+                    toy,
+                    origin: crate::ToyOrigin::Autonomous,
+                    outcome: crate::ToyInteractionOutcome::Accepted,
+                    phase: crate::ToyInteractionPhase::Approach,
+                    relationship: None,
+                });
+                set_travel_target(
+                    state,
+                    destination,
+                    crate::TravelPurpose::ToyInteraction { interaction_id },
+                    events,
+                );
+                events.push(GameEvent::ToyPlayAccepted {
+                    toy,
+                    interaction_id,
+                    origin: crate::ToyOrigin::Autonomous,
+                });
+            }
+            _ => {
+                let visit_id =
+                    NonZeroU64::new(allocate_action_id(state)).expect("action IDs start at one");
+                set_travel_target(
+                    state,
+                    destination,
+                    crate::TravelPurpose::IdleVisit { visit_id },
+                    events,
+                );
+            }
+        }
         state.creature.aquarium.gaze = match destination {
             SemanticDestination::Toy(toy) => GazeTarget::Toy(toy),
             SemanticDestination::Cave => GazeTarget::Cave,
@@ -1422,11 +1816,7 @@ fn avoid_immediate_repeat(
         .unwrap_or(requested)
 }
 
-fn record_genuine_arrival(
-    state: &mut WorldState,
-    destination: SemanticDestination,
-    events: &mut Vec<GameEvent>,
-) {
+fn record_idle_arrival_state(state: &mut WorldState, destination: SemanticDestination) {
     if !matches!(
         destination,
         SemanticDestination::Cave
@@ -1443,9 +1833,6 @@ fn record_genuine_arrival(
         + (state.domain_draw(RandomDomain::Environment) * spans as f32) as u64 * SIMULATION_TICK_MS;
     state.creature.idle_life.settled_until_ms = state.elapsed_ms.saturating_add(duration);
     record_routine_visit(state, destination);
-    if let SemanticDestination::Toy(toy) = destination {
-        events.push(GameEvent::ToyPlayed(toy));
-    }
 }
 
 fn record_routine_visit(state: &mut WorldState, destination: SemanticDestination) {
@@ -1493,9 +1880,14 @@ fn record_routine_visit(state: &mut WorldState, destination: SemanticDestination
     }
 }
 
-fn play_with_toy(state: &mut WorldState, toy: ToyId, events: &mut Vec<GameEvent>) -> bool {
+fn play_with_toy(
+    state: &mut WorldState,
+    toy: ToyId,
+    relationship: Option<crate::ActionRelationshipContext>,
+    events: &mut Vec<GameEvent>,
+) {
     if destination_position(state, SemanticDestination::Toy(toy)).is_none() {
-        return false;
+        return;
     }
     let preference = *state
         .creature
@@ -1506,27 +1898,52 @@ fn play_with_toy(state: &mut WorldState, toy: ToyId, events: &mut Vec<GameEvent>
                 .mul_add(2.0, -1.0)
         });
     state.creature.aquarium.gaze = GazeTarget::Toy(toy);
-    state.creature.aquarium.destination = Some(SemanticDestination::Toy(toy));
-    state.creature.aquarium.steering = SteeringMode::Approach;
+    let interaction_id = allocate_toy_interaction_id(state);
     if preference < -0.35 {
+        state.creature.interaction_state.toy_interaction = Some(crate::ToyInteraction {
+            id: interaction_id,
+            toy,
+            origin: crate::ToyOrigin::Player,
+            outcome: crate::ToyInteractionOutcome::Rejected,
+            phase: crate::ToyInteractionPhase::Approach,
+            relationship: None,
+        });
+        set_travel_target(
+            state,
+            SemanticDestination::Toy(toy),
+            crate::TravelPurpose::RefusalStare { interaction_id },
+            events,
+        );
         set_intention(state, Intention::RefuseAndStare, events);
         let memory = state.remember(MemoryKind::DislikedToy { toy }, &[Concept::Bad], -0.5, 0.7);
         state.revise_belief(BeliefKind::ToyIsJealous, memory, true);
-        events.push(GameEvent::ToyRejected(toy));
+        events.push(GameEvent::ToyRejected {
+            toy,
+            interaction_id,
+            origin: crate::ToyOrigin::Player,
+        });
         events.push(GameEvent::NonverbalAct(NonverbalAct::TakeToyAway(toy)));
-        false
     } else {
-        set_intention(state, Intention::Play, events);
-        state.creature.needs.curiosity = (state.creature.needs.curiosity - 0.18).max(0.0);
-        improve_relationship(state, 0.01, 0.008, 0.012);
-        state.remember(
-            MemoryKind::PlayedWith { toy },
-            &[Concept::Good],
-            preference,
-            0.6,
+        state.creature.interaction_state.toy_interaction = Some(crate::ToyInteraction {
+            id: interaction_id,
+            toy,
+            origin: crate::ToyOrigin::Player,
+            outcome: crate::ToyInteractionOutcome::Accepted,
+            phase: crate::ToyInteractionPhase::Approach,
+            relationship,
+        });
+        set_travel_target(
+            state,
+            SemanticDestination::Toy(toy),
+            crate::TravelPurpose::ToyInteraction { interaction_id },
+            events,
         );
-        events.push(GameEvent::ToyPlayed(toy));
-        true
+        set_intention(state, Intention::Play, events);
+        events.push(GameEvent::ToyPlayAccepted {
+            toy,
+            interaction_id,
+            origin: crate::ToyOrigin::Player,
+        });
     }
 }
 

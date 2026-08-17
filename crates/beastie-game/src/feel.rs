@@ -13,6 +13,40 @@ use crate::renderer::{PRESENTATION_HEIGHT, PRESENTATION_WIDTH};
 
 const FORMAT_VERSION: u32 = 1;
 const FRAME_RATE: u64 = 60;
+const FIRST_FRAME_HEARTBEAT: &str = "first-frame.json";
+const FIRST_FRAME_HEARTBEAT_TEMP: &str = ".first-frame.json.tmp";
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct SpeechTraceOwner {
+    pub dialogue_generation: u64,
+    pub dialogue_request_id: u64,
+    pub tts_request_id: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct DialogueTraceOwner {
+    pub dialogue_generation: u64,
+    pub dialogue_request_id: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PresentationTraceState {
+    pub subtitles_enabled: bool,
+    pub active_dialogue_owner: Option<DialogueTraceOwner>,
+    pub caption_owner: Option<DialogueTraceOwner>,
+    pub pending_mouth_owner: Option<SpeechTraceOwner>,
+    pub active_mouth_owner: Option<SpeechTraceOwner>,
+}
+
+pub struct AudioTraceFrame<'a> {
+    pub commands: &'a [beastie_view::AudioCommand],
+    pub cue_ids: &'a [&'a str],
+    pub speech_active: bool,
+    pub one_shot_active: bool,
+    pub ambience_duck: f32,
+    pub speech_owner: Option<SpeechTraceOwner>,
+    pub presentation: PresentationTraceState,
+}
 
 /// Streaming, privacy-safe evidence recorder for a visible scripted session.
 pub struct FeelRecorder {
@@ -126,11 +160,7 @@ impl FeelRecorder {
 
     pub fn record_audio(
         &mut self,
-        commands: &[beastie_view::AudioCommand],
-        cue_ids: &[&str],
-        speech_active: bool,
-        one_shot_active: bool,
-        ambience_duck: f32,
+        frame: AudioTraceFrame<'_>,
         simulation_ms: u64,
     ) -> Result<(), FeelError> {
         self.audio.write(&json!({
@@ -138,15 +168,26 @@ impl FeelRecorder {
             "playback_ms": self.playback_ms(),
             "simulation_ms": simulation_ms,
             "kind": "cues",
-            "cue_ids": cue_ids,
-            "commands": commands,
-            "speech_active": speech_active,
-            "one_shot_active": one_shot_active,
-            "ambience_duck": ambience_duck,
+            "cue_ids": frame.cue_ids,
+            "commands": frame.commands,
+            "speech_active": frame.speech_active,
+            "one_shot_active": frame.one_shot_active,
+            "ambience_duck": frame.ambience_duck,
+            "speech_owner": frame.speech_owner,
+            "subtitles_enabled": frame.presentation.subtitles_enabled,
+            "active_dialogue_owner": frame.presentation.active_dialogue_owner,
+            "caption_owner": frame.presentation.caption_owner,
+            "pending_mouth_owner": frame.presentation.pending_mouth_owner,
+            "active_mouth_owner": frame.presentation.active_mouth_owner,
         }))
     }
 
-    pub fn record_speech(&mut self, wav: &[u8], simulation_ms: u64) -> Result<(), FeelError> {
+    pub fn record_speech(
+        &mut self,
+        wav: &[u8],
+        owner: SpeechTraceOwner,
+        simulation_ms: u64,
+    ) -> Result<(), FeelError> {
         let name = format!("speech-{:03}.wav", self.speech_index);
         let path = self.directory.join(&name);
         fs::write(&path, wav).map_err(|source| FeelError::WriteTrace {
@@ -159,9 +200,27 @@ impl FeelRecorder {
             "simulation_ms": simulation_ms,
             "kind": "speech",
             "path": name,
+            "speech_owner": owner,
         }))?;
         self.speech_index = self.speech_index.saturating_add(1);
         Ok(())
+    }
+
+    pub fn record_tts_lifecycle(
+        &mut self,
+        kind: &str,
+        owner: SpeechTraceOwner,
+        wav_present: Option<bool>,
+        simulation_ms: u64,
+    ) -> Result<(), FeelError> {
+        self.audio.write(&json!({
+            "version": FORMAT_VERSION,
+            "playback_ms": self.playback_ms(),
+            "simulation_ms": simulation_ms,
+            "kind": kind,
+            "speech_owner": owner,
+            "wav_present": wav_present,
+        }))
     }
 
     pub fn record_frame(
@@ -169,6 +228,7 @@ impl FeelRecorder {
         rgba: &[u8],
         world: &beastie_core::WorldState,
         view: &ViewState,
+        presentation: PresentationTraceState,
     ) -> Result<(), FeelError> {
         let expected = PRESENTATION_WIDTH as usize * PRESENTATION_HEIGHT as usize * 4;
         if rgba.len() != expected {
@@ -229,8 +289,20 @@ impl FeelRecorder {
                 status: view.status_message.as_deref(),
                 status_expires_at_ms: view.status_expires_at_ms,
                 cue: view.active_cue(world.elapsed_ms),
+                subtitles_enabled: presentation.subtitles_enabled,
+                active_dialogue_owner: presentation.active_dialogue_owner,
+                caption_owner: presentation.caption_owner,
+                pending_mouth_owner: presentation.pending_mouth_owner,
+                active_mouth_owner: presentation.active_mouth_owner,
             },
         })?;
+        if frame_index == 0 {
+            // The runner may treat this file as proof that startup completed. Flush the matching
+            // state record first, then publish the heartbeat with an atomic rename so it can
+            // never observe a partial record or a heartbeat for a frame absent from state.jsonl.
+            self.state.flush()?;
+            write_first_frame_heartbeat(&self.directory, playback_ms, world.elapsed_ms)?;
+        }
         self.frame_index = self.frame_index.saturating_add(1);
         Ok(())
     }
@@ -246,6 +318,48 @@ impl FeelRecorder {
         self.audio.flush()?;
         Ok(())
     }
+}
+
+#[derive(Serialize)]
+struct FirstFrameHeartbeat {
+    version: u32,
+    frame_index: u64,
+    playback_ms: u64,
+    simulation_ms: u64,
+}
+
+fn write_first_frame_heartbeat(
+    directory: &Path,
+    playback_ms: u64,
+    simulation_ms: u64,
+) -> Result<(), FeelError> {
+    let temporary = directory.join(FIRST_FRAME_HEARTBEAT_TEMP);
+    let published = directory.join(FIRST_FRAME_HEARTBEAT);
+    let mut file = File::create(&temporary).map_err(|source| FeelError::WriteHeartbeat {
+        path: temporary.clone(),
+        source,
+    })?;
+    serde_json::to_writer(
+        &mut file,
+        &FirstFrameHeartbeat {
+            version: FORMAT_VERSION,
+            frame_index: 0,
+            playback_ms,
+            simulation_ms,
+        },
+    )
+    .map_err(FeelError::Serialize)?;
+    file.write_all(b"\n")
+        .and_then(|()| file.sync_all())
+        .map_err(|source| FeelError::WriteHeartbeat {
+            path: temporary.clone(),
+            source,
+        })?;
+    fs::rename(&temporary, &published).map_err(|source| FeelError::PublishHeartbeat {
+        from: temporary,
+        to: published,
+        source,
+    })
 }
 
 impl Drop for FeelRecorder {
@@ -311,6 +425,11 @@ struct ViewFrame<'a> {
     status: Option<&'a str>,
     status_expires_at_ms: Option<u64>,
     cue: Option<beastie_view::PresentationCueKind>,
+    subtitles_enabled: bool,
+    active_dialogue_owner: Option<DialogueTraceOwner>,
+    caption_owner: Option<DialogueTraceOwner>,
+    pending_mouth_owner: Option<SpeechTraceOwner>,
+    active_mouth_owner: Option<SpeechTraceOwner>,
 }
 
 struct JsonlWriter {
@@ -471,6 +590,17 @@ pub enum FeelError {
     },
     #[error("failed to encode feel trace JSON: {0}")]
     Serialize(serde_json::Error),
+    #[error("failed to write first-frame heartbeat {path}: {source}")]
+    WriteHeartbeat {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("failed to atomically publish first-frame heartbeat from {from} to {to}: {source}")]
+    PublishHeartbeat {
+        from: PathBuf,
+        to: PathBuf,
+        source: std::io::Error,
+    },
     #[error("failed to start ffmpeg: {0}")]
     SpawnFfmpeg(std::io::Error),
     #[error("ffmpeg did not expose its input pipe")]
@@ -490,8 +620,12 @@ pub enum FeelError {
 #[cfg(test)]
 mod tests {
     use beastie_session::{CommandEnvelope, SESSION_PROTOCOL_VERSION, SessionCommand};
+    use std::fs;
 
-    use super::{playback_ms_for_frame, redacted_command, redacted_events};
+    use super::{
+        FIRST_FRAME_HEARTBEAT, playback_ms_for_frame, redacted_command, redacted_events,
+        write_first_frame_heartbeat,
+    };
 
     #[test]
     fn frame_timestamps_follow_the_sixty_hertz_timeline() {
@@ -530,5 +664,22 @@ mod tests {
         .to_string();
         assert!(!encoded.contains("private pet name"));
         assert!(encoded.contains("<redacted>"));
+    }
+
+    #[test]
+    fn first_frame_heartbeat_is_published_as_complete_json() {
+        let directory = std::env::temp_dir().join(format!(
+            "beastie-first-frame-heartbeat-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).expect("temporary directory");
+        write_first_frame_heartbeat(&directory, 0, 250).expect("heartbeat");
+        let source = fs::read_to_string(directory.join(FIRST_FRAME_HEARTBEAT)).expect("published");
+        let value: serde_json::Value = serde_json::from_str(&source).expect("complete JSON");
+        assert_eq!(value["frame_index"], 0);
+        assert_eq!(value["simulation_ms"], 250);
+        assert!(!directory.join(".first-frame.json.tmp").exists());
+        fs::remove_dir_all(directory).expect("cleanup");
     }
 }

@@ -74,6 +74,12 @@ enum Task {
         /// Exact game executable to capture, useful for release builds or macOS launch-path issues.
         #[arg(long)]
         game: Option<PathBuf>,
+        /// Deadline for the first completed framebuffer and state record.
+        #[arg(long, default_value_t = 10_000)]
+        startup_timeout_ms: u64,
+        /// Fresh-process retries after a live process produces no first frame.
+        #[arg(long, default_value_t = 2)]
+        startup_retries: u8,
     },
     /// Run the game shell with fixture or environment-configured local AI.
     Dev {
@@ -288,6 +294,14 @@ enum AssetTask {
         /// Exact manifest asset id, or `all` for every hard-alpha runtime candidate.
         id: String,
     },
+    /// Render the three positive-reaction enter/exit sequences at exact 2x scale.
+    ReactionContactSheet {
+        #[arg(
+            long,
+            default_value = "target/feel/reaction-identity-contact-sheet.png"
+        )]
+        output: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -338,6 +352,9 @@ fn main() -> Result<()> {
         Task::Asset {
             command: AssetTask::NormalizeAlpha { id },
         } => asset::normalize_alpha(Path::new("assets/manifest.toml"), &id),
+        Task::Asset {
+            command: AssetTask::ReactionContactSheet { output },
+        } => asset::reaction_contact_sheet(Path::new("assets/manifest.toml"), &output),
         Task::StoreAssets {
             command: StoreAssetsTask::Build,
         } => store_assets::build(Path::new(".")),
@@ -392,11 +409,15 @@ fn main() -> Result<()> {
             experience,
             output,
             game,
+            startup_timeout_ms,
+            startup_retries,
         } => feel::run(feel::FeelOptions {
             suite,
             experience: experience.as_deref(),
             output: output.as_deref(),
             game: game.as_deref(),
+            startup_timeout_ms,
+            startup_retries,
         }),
         Task::Dev {
             fake_ai,

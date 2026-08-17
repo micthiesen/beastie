@@ -828,6 +828,31 @@ references = ["generated/creature-v1/base.png"]
 human_modifications = "selected the clean static south rotation; runtime buoyancy supplies motion without redrawing the fragile expression"
 
 [[asset]]
+id = "creature-v1/reaction/delight-south"
+kind = "animation"
+width = 80
+height = 80
+frames = 4
+transparent = true
+palette = "style/creature-v1-animation.hex"
+max_colors = 42
+palette_tolerance = 0
+alpha_policy = "hard"
+native_pixel_density = 1
+status = "runtime"
+identity_bounds_exception = "Reviewed in the 2026-08-17 exact-2x reaction contact sheet: the physical-play delight deliberately turns east toward the toy, shifting the opaque centroid while preserving the approved fish palette, anatomy, scale, and stable four-frame anchor."
+
+[asset.provenance]
+generator = "manual-curation of pinned PixelLab runtime assets"
+job_id = "f6fd2606-4ebf-4814-bb6d-01b2b080e429"
+generated_at = "2026-08-17"
+prompt = "Bright, alert delight at successful toy contact while preserving the exact canonical fish anatomy, palette, scale, and hard-pixel silhouette."
+seed = "source-assets"
+terms = "PixelLab Terms of Use, accessed 2026-08-15"
+references = ["generated/creature-v1/play-0.png", "generated/creature-v1/mood/content-south-0.png"]
+human_modifications = "promoted the four identity-stable play frames as the dedicated delight clip; rejected built-in image-generation variant d218f55e because its enlarged style, eyes, and body mass drifted from the canonical runtime fish"
+
+[[asset]]
 id = "creature-v1/reaction/affection-south"
 kind = "animation"
 width = 80
@@ -835,21 +860,21 @@ height = 80
 frames = 4
 transparent = true
 palette = "style/creature-v1-expression.hex"
-max_colors = 19
+max_colors = 27
 palette_tolerance = 0
 alpha_policy = "hard"
 native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
-generator = "pixellab"
-job_id = "79420bd3-4d20-49ef-a161-86f32b890375"
-generated_at = "2026-08-15"
-prompt = "Tender affectionate underwater lean toward the viewer, preserving warm half-lidded eyes, tiny smile, exact body identity, shading and palette."
-seed = "812737"
+generator = "manual-curation of pinned PixelLab runtime assets"
+job_id = "6cae3afa-091e-4dbd-94d3-765bcac9f0db"
+generated_at = "2026-08-17"
+prompt = "Tender affection expressed by the canonical fish through a warm, softly sleepy player-facing lean with stable anatomy, palette, scale, and anchor."
+seed = "source-assets"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
-references = ["generated/creature-v1/base.png"]
-human_modifications = "curated frames 0,1,2,1 from the five-frame result so the loop stays tender instead of changing into a generic wide-eyed smile"
+references = ["generated/creature-v1/mood/content-south-0.png"]
+human_modifications = "replaced the brown identity-drifting reaction with the four canonical content-south frames; the held eye-close reads as quiet affection while the separate heart effect supplies emphasis"
 
 [[asset]]
 id = "creature-v1/reaction/notice-south"
@@ -906,22 +931,22 @@ width = 80
 height = 80
 frames = 4
 transparent = true
-palette = "style/creature-v1-action-v2.hex"
-max_colors = 16
+palette = "style/creature-v1-expression.hex"
+max_colors = 34
 palette_tolerance = 0
 alpha_policy = "hard"
 native_pixel_density = 1
 status = "runtime"
 
 [asset.provenance]
-generator = "pixellab"
-job_id = "d561557e-7624-4516-90c8-f94568e7dab6"
-generated_at = "2026-08-15"
-prompt = "Polished affectionate comfort transition. Notice offered comfort, soften the eyes, lean toward the viewer, close the eyes briefly, and settle into a trusting pose while preserving exact identity and shading."
-seed = "service-generated"
+generator = "manual-curation of pinned PixelLab runtime assets"
+job_id = "31d63ec7-and-6cae3afa-curation"
+generated_at = "2026-08-17"
+prompt = "Comfort transition for the canonical fish: notice the player, soften, lean in, and settle with stable anatomy, palette, scale, and anchor."
+seed = "source-assets"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
-references = ["generated/creature-v1/reaction/affection-south-0.png"]
-human_modifications = "curated provider frames 0,1,2,4; symmetrically cropped 88x88 padding to 80x80 after verifying opaque bounds"
+references = ["generated/creature-v1/reaction/notice-south-0.png", "generated/creature-v1/mood/content-south-1.png"]
+human_modifications = "curated notice frames 0 and 1 into content frames 1 and 2 for a truthful notice-soften-settle arc; rejected the previous brown clip because it changed the creature's species"
 
 [[asset]]
 id = "creature-v1/effect/attention"

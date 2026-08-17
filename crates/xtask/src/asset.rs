@@ -9,7 +9,9 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, ImageReader, Rgba};
+use image::{
+    DynamicImage, GenericImageView, ImageBuffer, ImageFormat, ImageReader, Rgba, RgbaImage,
+};
 use serde::{Deserialize, Serialize};
 
 const PIXELLAB_API_URL: &str = "https://api.pixellab.ai/v2/create-image-pixflux";
@@ -62,6 +64,9 @@ struct Asset {
     status: Status,
     path: Option<String>,
     provenance: Option<Provenance>,
+    /// Reviewed escape hatch for an intentionally wider positive-reaction pose.
+    #[serde(default)]
+    identity_bounds_exception: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -217,6 +222,81 @@ pub(crate) fn check(manifest_path: &Path, require_runtime: bool, verbose: bool) 
         }
     );
     Ok(())
+}
+
+pub(crate) fn reaction_contact_sheet(manifest_path: &Path, output: &Path) -> Result<()> {
+    let source = fs::read_to_string(manifest_path)?;
+    let manifest: Manifest = toml::from_str(&source)?;
+    let asset_root = manifest_path
+        .parent()
+        .context("asset manifest must have a parent")?;
+    let reference = manifest
+        .asset
+        .iter()
+        .find(|asset| asset.id == "creature-v1/mood/content-south")
+        .context("manifest has no canonical content-south reference")?;
+    let reference_path = resolved_frame_path(asset_root, reference, 0)
+        .context("canonical content-south reference has no resolved frame")?;
+    let idle = ImageReader::open(reference_path)?.decode()?.to_rgba8();
+    let cell_width = idle.width() * 2;
+    let cell_height = idle.height() * 2;
+    let mut sheet =
+        ImageBuffer::from_pixel(cell_width * 6, cell_height * 3, Rgba([9, 17, 31, 255]));
+    for (row, (id, mirror_for_left_facing)) in [
+        ("creature-v1/reaction/delight-south", true),
+        ("creature-v1/reaction/affection-south", false),
+        ("creature-v1/reaction/comfort-south", false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let asset = manifest
+            .asset
+            .iter()
+            .find(|asset| asset.id == id)
+            .with_context(|| format!("manifest has no {id}"))?;
+        if asset.frames != 4 {
+            bail!("asset {id} must have four frames for identity review")
+        }
+        let mut sequence = vec![idle.clone()];
+        for frame in 0..4 {
+            let path = resolved_frame_path(asset_root, asset, frame)
+                .with_context(|| format!("asset {id} frame {frame} is unresolved"))?;
+            sequence.push(contact_sheet_frame(
+                ImageReader::open(path)?.decode()?.to_rgba8(),
+                mirror_for_left_facing,
+            ));
+        }
+        sequence.push(idle.clone());
+        for (column, frame) in sequence.into_iter().enumerate() {
+            let scaled = image::imageops::resize(
+                &frame,
+                cell_width,
+                cell_height,
+                image::imageops::FilterType::Nearest,
+            );
+            image::imageops::overlay(
+                &mut sheet,
+                &scaled,
+                i64::from(cell_width) * column as i64,
+                i64::from(cell_height) * row as i64,
+            );
+        }
+    }
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    sheet.save_with_format(output, ImageFormat::Png)?;
+    println!("reaction contact sheet: {}", output.display());
+    Ok(())
+}
+
+fn contact_sheet_frame(frame: RgbaImage, mirror_horizontal: bool) -> RgbaImage {
+    if mirror_horizontal {
+        image::imageops::flip_horizontal(&frame)
+    } else {
+        frame
+    }
 }
 
 pub(crate) fn generate(manifest_path: &Path, id: &str, force: bool) -> Result<()> {
@@ -724,7 +804,127 @@ fn validate_manifest(
     for audio in &manifest.audio {
         validate_audio(audio, asset_root, require_runtime, verbose, &mut ids)?;
     }
+    validate_positive_reaction_geometry(manifest, asset_root)?;
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OpaqueGeometry {
+    width: u32,
+    height: u32,
+    centroid_x: f64,
+    centroid_y: f64,
+}
+
+fn opaque_geometry(path: &Path) -> Result<OpaqueGeometry> {
+    let image = ImageReader::open(path)?.decode()?.to_rgba8();
+    let mut min_x = u32::MAX;
+    let mut min_y = u32::MAX;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    let mut sum_x = 0_u64;
+    let mut sum_y = 0_u64;
+    let mut count = 0_u64;
+    for (x, y, pixel) in image.enumerate_pixels() {
+        if pixel.0[3] == 0 {
+            continue;
+        }
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x);
+        max_y = max_y.max(y);
+        sum_x += u64::from(x);
+        sum_y += u64::from(y);
+        count += 1;
+    }
+    if count == 0 {
+        bail!("identity candidate {} has no opaque pixels", path.display());
+    }
+    Ok(OpaqueGeometry {
+        width: max_x - min_x + 1,
+        height: max_y - min_y + 1,
+        centroid_x: sum_x as f64 / count as f64,
+        centroid_y: sum_y as f64 / count as f64,
+    })
+}
+
+fn resolved_frame_path(asset_root: &Path, asset: &Asset, frame: u32) -> Option<PathBuf> {
+    let final_path = candidate_path(asset_root, Source::Final, &asset.id, asset.frames, frame);
+    let generated = candidate_path(
+        asset_root,
+        Source::Generated,
+        &asset.id,
+        asset.frames,
+        frame,
+    );
+    final_path
+        .is_file()
+        .then_some(final_path)
+        .or_else(|| generated.is_file().then_some(generated))
+}
+
+fn validate_positive_reaction_geometry(manifest: &Manifest, asset_root: &Path) -> Result<()> {
+    let Some(reference) = manifest
+        .asset
+        .iter()
+        .find(|asset| asset.id == "creature-v1/mood/content-south")
+    else {
+        return Ok(());
+    };
+    let Some(reference_path) = resolved_frame_path(asset_root, reference, 0) else {
+        return Ok(());
+    };
+    let reference = opaque_geometry(&reference_path)?;
+    for id in [
+        "creature-v1/reaction/delight-south",
+        "creature-v1/reaction/affection-south",
+        "creature-v1/reaction/comfort-south",
+    ] {
+        let Some(asset) = manifest.asset.iter().find(|asset| asset.id == id) else {
+            continue;
+        };
+        let mut previous = None;
+        for frame in 0..asset.frames {
+            let Some(path) = resolved_frame_path(asset_root, asset, frame) else {
+                continue;
+            };
+            let geometry = opaque_geometry(&path)?;
+            if !positive_reaction_geometry_passes(reference, geometry, previous)
+                && asset.identity_bounds_exception.is_none()
+            {
+                bail!(
+                    "asset {id} frame {frame} breaks positive-reaction identity bounds against content-south (bounds {}x{}, centroid {:.2},{:.2}; reference {}x{}, {:.2},{:.2}); add a reviewed identity_bounds_exception only for an intentional wider pose",
+                    geometry.width,
+                    geometry.height,
+                    geometry.centroid_x,
+                    geometry.centroid_y,
+                    reference.width,
+                    reference.height,
+                    reference.centroid_x,
+                    reference.centroid_y
+                );
+            }
+            previous = Some(geometry);
+        }
+    }
+    Ok(())
+}
+
+fn positive_reaction_geometry_passes(
+    reference: OpaqueGeometry,
+    geometry: OpaqueGeometry,
+    previous: Option<OpaqueGeometry>,
+) -> bool {
+    geometry.width * 100 >= reference.width * 85
+        && geometry.width * 100 <= reference.width * 115
+        && geometry.height * 100 >= reference.height * 85
+        && geometry.height * 100 <= reference.height * 115
+        && (geometry.centroid_x - reference.centroid_x).abs() <= 6.0
+        && (geometry.centroid_y - reference.centroid_y).abs() <= 6.0
+        && previous.is_none_or(|prior| {
+            (geometry.centroid_x - prior.centroid_x).abs() <= 3.0
+                && (geometry.centroid_y - prior.centroid_y).abs() <= 3.0
+        })
 }
 
 fn validate_runtime_sprite_catalog(manifest: &Manifest, asset_root: &Path) -> Result<()> {
@@ -1168,6 +1368,16 @@ fn validate_asset_policy(asset: &Asset) -> Result<()> {
             asset.id
         );
     }
+    if asset
+        .identity_bounds_exception
+        .as_deref()
+        .is_some_and(|reason| reason.trim().is_empty())
+    {
+        bail!(
+            "asset {} identity_bounds_exception must describe the reviewed contact-sheet exception",
+            asset.id
+        );
+    }
     Ok(())
 }
 
@@ -1586,6 +1796,60 @@ provenance = "docs/audio.md"
             ),
             Some(Source::Final)
         );
+    }
+
+    #[test]
+    fn positive_reaction_geometry_enforces_scale_anchor_and_frame_stability() {
+        let reference = OpaqueGeometry {
+            width: 40,
+            height: 30,
+            centroid_x: 40.0,
+            centroid_y: 41.0,
+        };
+        let accepted = OpaqueGeometry {
+            width: 34,
+            height: 34,
+            centroid_x: 46.0,
+            centroid_y: 35.0,
+        };
+        assert!(positive_reaction_geometry_passes(reference, accepted, None));
+        assert!(!positive_reaction_geometry_passes(
+            reference,
+            OpaqueGeometry {
+                width: 33,
+                ..accepted
+            },
+            None
+        ));
+        assert!(!positive_reaction_geometry_passes(
+            reference,
+            OpaqueGeometry {
+                centroid_x: 46.1,
+                ..accepted
+            },
+            None
+        ));
+        assert!(!positive_reaction_geometry_passes(
+            reference,
+            accepted,
+            Some(OpaqueGeometry {
+                centroid_x: 42.9,
+                ..accepted
+            })
+        ));
+    }
+
+    #[test]
+    fn contact_sheet_can_match_the_runtime_left_facing_delight() {
+        let mut frame = RgbaImage::new(3, 1);
+        frame.put_pixel(0, 0, Rgba([1, 0, 0, 255]));
+        frame.put_pixel(1, 0, Rgba([2, 0, 0, 255]));
+        frame.put_pixel(2, 0, Rgba([3, 0, 0, 255]));
+
+        let mirrored = contact_sheet_frame(frame, true);
+
+        assert_eq!(mirrored.get_pixel(0, 0), &Rgba([3, 0, 0, 255]));
+        assert_eq!(mirrored.get_pixel(2, 0), &Rgba([1, 0, 0, 255]));
     }
 
     #[test]

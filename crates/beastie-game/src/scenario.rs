@@ -11,6 +11,7 @@ use thiserror::Error;
 pub enum ScenarioStep {
     Session(CommandEnvelope),
     Ui(UiAction),
+    SetSubtitles(bool),
     Capture(String),
     Marker(String),
     /// One synthetic 60 Hz frame of a `wait` control.
@@ -139,6 +140,14 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
     }
 
     #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct SetSubtitles {
+        version: u32,
+        command: String,
+        enabled: bool,
+    }
+
+    #[derive(Deserialize)]
     #[serde(rename_all = "snake_case")]
     enum ScenarioUiAction {
         OpenFood,
@@ -176,6 +185,17 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
             ScenarioUiAction::Close => UiAction::CancelMode,
         };
         return Ok(ScenarioStep::Ui(action));
+    }
+    if kind.command == "set_subtitles" {
+        let setting: SetSubtitles = serde_json::from_str(line).map_err(ScenarioError::Json)?;
+        if setting.version != beastie_session::SESSION_PROTOCOL_VERSION
+            || setting.command != "set_subtitles"
+        {
+            return Err(ScenarioError::Command(
+                "unsupported subtitle control version".to_owned(),
+            ));
+        }
+        return Ok(ScenarioStep::SetSubtitles(setting.enabled));
     }
     if kind.command == "wait" {
         let wait: Wait = serde_json::from_str(line).map_err(ScenarioError::Json)?;
@@ -289,6 +309,10 @@ mod tests {
             Ok(ScenarioStep::Ui(UiAction::OpenSettings))
         ));
         assert!(matches!(
+            parse_step(r#"{"version":1,"command":"set_subtitles","enabled":false}"#),
+            Ok(ScenarioStep::SetSubtitles(false))
+        ));
+        assert!(matches!(
             parse_step(r#"{"version":1,"command":"capture","name":"room_1"}"#),
             Ok(ScenarioStep::Capture(name)) if name == "room_1"
         ));
@@ -368,6 +392,26 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    #[test]
+    fn dialogue_race_fixture_is_valid_and_restores_subtitles() {
+        let source = include_str!("../../../fixtures/scenarios/feel/dialogue-races.jsonl");
+        let steps = source
+            .lines()
+            .map(parse_step)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("dialogue race fixture should parse");
+        assert!(
+            steps
+                .iter()
+                .any(|step| matches!(step, ScenarioStep::SetSubtitles(false)))
+        );
+        assert!(
+            steps
+                .iter()
+                .any(|step| matches!(step, ScenarioStep::SetSubtitles(true)))
+        );
     }
 
     #[test]
