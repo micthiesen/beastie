@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -70,6 +71,12 @@ const RELATIONSHIP_OVER_TIME: Experience = Experience {
     scenario: "fixtures/scenarios/feel/relationship-over-time.jsonl",
     fake_ai: true,
     tts_requested: true,
+};
+const RELATIONSHIP_OVER_TIME_NO_AI: Experience = Experience {
+    id: "relationship-over-time-no-ai",
+    scenario: "fixtures/scenarios/feel/relationship-over-time-no-ai.jsonl",
+    fake_ai: false,
+    tts_requested: false,
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -149,12 +156,15 @@ fn experiences(suite: FeelSuite) -> Vec<Experience> {
             INTERACTION_CHAIN,
             BAD_CONDITIONS,
             RELATIONSHIP_OVER_TIME,
+            RELATIONSHIP_OVER_TIME_NO_AI,
         ],
         FeelSuite::FirstFiveMinutes => vec![FIRST_FIVE_MINUTES],
         FeelSuite::QuietObservation => vec![QUIET_OBSERVATION],
         FeelSuite::InteractionChain => vec![INTERACTION_CHAIN],
         FeelSuite::BadConditions => vec![BAD_CONDITIONS],
-        FeelSuite::RelationshipOverTime => vec![RELATIONSHIP_OVER_TIME],
+        FeelSuite::RelationshipOverTime => {
+            vec![RELATIONSHIP_OVER_TIME, RELATIONSHIP_OVER_TIME_NO_AI]
+        }
     }
 }
 
@@ -205,6 +215,7 @@ fn run_experience(
     verify_video(&directory.join("session.mp4"))?;
     generate_reference_mix(&directory)?;
     let markers = read_markers(&directory.join("markers.jsonl"))?;
+    validate_relationship_evidence(&directory, experience, &markers)?;
     generate_filmstrips(&directory, &markers)?;
     write_review(&directory, experience, &markers)?;
     write_manifest(&directory, experience, suite, game)?;
@@ -487,6 +498,333 @@ fn read_markers(path: &Path) -> Result<Vec<Marker>> {
     Ok(markers)
 }
 
+fn validate_relationship_evidence(
+    directory: &Path,
+    experience: Experience,
+    markers: &[Marker],
+) -> Result<()> {
+    if !experience.id.starts_with("relationship-over-time") {
+        return Ok(());
+    }
+    let duration_ms = video_duration_seconds(&directory.join("session.mp4"))?
+        .parse::<f64>()
+        .context("feel video duration is not numeric")?
+        .mul_add(1_000.0, 0.0) as u64;
+    let final_marker = markers
+        .last()
+        .context("relationship evidence has no final marker")?;
+    ensure!(
+        duration_ms >= final_marker.playback_ms.saturating_add(1_500),
+        "relationship final inspect hold is shorter than 1,500 ms"
+    );
+
+    let state = read_jsonl(&directory.join("state.jsonl"))?;
+    let expressions = state
+        .iter()
+        .filter_map(|record| record.get("creature")?.get("relationship_expression"))
+        .collect::<Vec<_>>();
+    ensure!(
+        !expressions.is_empty(),
+        "relationship state trace is missing active/recent expression metadata"
+    );
+    ensure!(
+        expressions.iter().all(|expression| {
+            expression
+                .get("count_active_day")
+                .and_then(serde_json::Value::as_u64)
+                .is_none_or(|count| count <= 4)
+        }),
+        "relationship beat count exceeded the four-per-day bound"
+    );
+
+    let events = read_jsonl(&directory.join("events.jsonl"))?;
+    let event_kinds = events
+        .iter()
+        .flat_map(|record| {
+            record
+                .get("events")
+                .into_iter()
+                .flat_map(|events| events.as_array())
+        })
+        .flat_map(|events| events.iter())
+        .filter_map(|event| event.get("kind").and_then(serde_json::Value::as_str))
+        .collect::<Vec<_>>();
+    ensure!(
+        event_kinds.contains(&"relationship_beat_started"),
+        "relationship scenario produced no authoritative beat-start event"
+    );
+    ensure!(
+        event_kinds.contains(&"relationship_beat_phase_changed"),
+        "relationship scenario produced no distinct phase callback"
+    );
+    if experience.id == "relationship-over-time" {
+        ensure!(
+            event_kinds.contains(&"relationship_beat_interrupted"),
+            "relationship scenario produced no direct interruption/preemption evidence"
+        );
+        let day_markers = [
+            "01-day-two-arrival",
+            "02-day-three-arrival",
+            "04-day-four-arrival",
+        ]
+        .into_iter()
+        .map(|name| {
+            markers
+                .iter()
+                .find(|marker| marker.name == name)
+                .with_context(|| {
+                    format!("relationship scenario is missing day callback marker {name}")
+                })
+        })
+        .collect::<Result<Vec<_>>>()?;
+        let callbacks = day_markers
+            .iter()
+            .map(|marker| relationship_signatures_near_marker(&events, marker))
+            .collect::<Vec<_>>();
+        ensure!(
+            callbacks.iter().all(|signatures| !signatures.is_empty()),
+            "relationship day marker has no typed callback in its bounded evidence window"
+        );
+        ensure!(
+            callbacks.windows(2).all(|pair| pair[0] != pair[1]),
+            "day-2/day-3/day-4 relationship callbacks do not carry distinct authoritative motifs"
+        );
+        let observable_callbacks = day_markers
+            .iter()
+            .map(|marker| relationship_observables_near_marker(&state, marker))
+            .collect::<Vec<_>>();
+        ensure!(
+            observable_callbacks
+                .iter()
+                .all(|signatures| !signatures.is_empty()),
+            "relationship day marker has no embodied callback in its bounded playback window"
+        );
+        ensure!(
+            observable_callbacks
+                .windows(2)
+                .all(|pair| pair[0] != pair[1]),
+            "day-2/day-3/day-4 callbacks are not observably distinct in intention, gaze, movement, destination, action, or cue"
+        );
+
+        let inputs = read_jsonl(&directory.join("inputs.jsonl"))?;
+        let save_index = inputs
+            .iter()
+            .position(|record| command_name(record) == Some("save"))
+            .context("relationship scenario did not save a session")?;
+        let load_index = inputs
+            .iter()
+            .enumerate()
+            .skip(save_index.saturating_add(1))
+            .find_map(|(index, record)| (command_name(record) == Some("load")).then_some(index))
+            .context("relationship scenario did not load after saving")?;
+        let save_playback_ms = inputs[save_index]["playback_ms"]
+            .as_u64()
+            .unwrap_or_default();
+        let load_playback_ms = inputs[load_index]["playback_ms"]
+            .as_u64()
+            .unwrap_or_default();
+        let before_save = state
+            .iter()
+            .rev()
+            .find(|record| record["playback_ms"].as_u64().unwrap_or_default() <= save_playback_ms)
+            .and_then(relationship_expression)
+            .context("relationship state trace has no ledger before save")?;
+        let after_load = state
+            .iter()
+            .find(|record| record["playback_ms"].as_u64().unwrap_or_default() >= load_playback_ms)
+            .and_then(relationship_expression)
+            .context("relationship state trace has no ledger after load")?;
+        let saved_recent = before_save
+            .get("recent")
+            .and_then(serde_json::Value::as_array)
+            .context("relationship ledger before save has no recent expressions")?;
+        let loaded_recent = after_load
+            .get("recent")
+            .and_then(serde_json::Value::as_array)
+            .context("relationship ledger after load has no recent expressions")?;
+        ensure!(
+            !saved_recent.is_empty() && saved_recent == loaded_recent,
+            "relationship expression ledger did not survive save/load unchanged"
+        );
+    } else {
+        ensure!(!experience.fake_ai && !experience.tts_requested);
+        let inputs = read_jsonl(&directory.join("inputs.jsonl"))?;
+        ensure!(
+            inputs.iter().all(|record| {
+                record
+                    .get("input")
+                    .and_then(|input| input.get("command"))
+                    .and_then(serde_json::Value::as_str)
+                    != Some("talk")
+            }),
+            "AI-off relationship scenario contains a talk command"
+        );
+        ensure!(
+            !read_jsonl(&directory.join("audio.jsonl"))?
+                .iter()
+                .any(
+                    |record| record.get("kind").and_then(serde_json::Value::as_str)
+                        == Some("speech")
+                ),
+            "AI-off relationship scenario unexpectedly recorded speech"
+        );
+        let return_marker = markers
+            .iter()
+            .find(|marker| marker.name == "02-familiar-return-without-voice")
+            .context("AI-off scenario is missing its familiar return marker")?;
+        ensure!(
+            !relationship_signatures_near_marker(&events, return_marker).is_empty(),
+            "AI-off return produced no authoritative relationship callback"
+        );
+        ensure!(
+            !relationship_observables_near_marker(&state, return_marker).is_empty(),
+            "AI-off return produced no observable nonverbal callback"
+        );
+        let return_events = relationship_events_in_playback_window(&events, return_marker, 8_000);
+        ensure!(
+            return_events.iter().any(|event| {
+                event.get("kind").and_then(serde_json::Value::as_str)
+                    == Some("relationship_beat_started")
+                    && event
+                        .get("value")
+                        .and_then(|value| value.get("trigger"))
+                        .and_then(|trigger| trigger.get("kind"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some("player_return")
+                    && event
+                        .get("value")
+                        .and_then(|value| value.get("expression"))
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|expression| expression != "notice")
+            }),
+            "AI-off familiar return did not start a mature grounded callback"
+        );
+        ensure!(
+            return_events.iter().any(|event| {
+                event.get("kind").and_then(serde_json::Value::as_str)
+                    == Some("relationship_beat_completed")
+            }) && !return_events.iter().any(|event| {
+                event.get("kind").and_then(serde_json::Value::as_str)
+                    == Some("relationship_beat_interrupted")
+            }),
+            "AI-off familiar return did not complete before another action interrupted it"
+        );
+    }
+    Ok(())
+}
+
+fn command_name(record: &serde_json::Value) -> Option<&str> {
+    record.get("input")?.get("command")?.as_str()
+}
+
+fn relationship_expression(record: &serde_json::Value) -> Option<&serde_json::Value> {
+    record.get("creature")?.get("relationship_expression")
+}
+
+fn relationship_signatures_near_marker(
+    records: &[serde_json::Value],
+    marker: &Marker,
+) -> BTreeSet<String> {
+    const CALLBACK_WINDOW_MS: u64 = 2_000;
+    records
+        .iter()
+        .filter(|record| {
+            let simulation_ms = record["simulation_ms"].as_u64().unwrap_or_default();
+            simulation_ms.abs_diff(marker.simulation_ms) <= CALLBACK_WINDOW_MS
+        })
+        .flat_map(|record| record["events"].as_array().into_iter().flatten())
+        .filter_map(relationship_event_signature)
+        .collect()
+}
+
+fn relationship_observables_near_marker(
+    records: &[serde_json::Value],
+    marker: &Marker,
+) -> BTreeSet<String> {
+    const CALLBACK_WINDOW_MS: u64 = 6_000;
+    records
+        .iter()
+        .filter(|record| {
+            let playback_ms = record["playback_ms"].as_u64().unwrap_or_default();
+            playback_ms >= marker.playback_ms
+                && playback_ms <= marker.playback_ms.saturating_add(CALLBACK_WINDOW_MS)
+                && relationship_expression(record)
+                    .and_then(|expression| expression.get("active"))
+                    .is_some_and(|active| !active.is_null())
+        })
+        .filter_map(|record| {
+            let creature = record.get("creature")?;
+            let view = record.get("view")?;
+            Some(format!(
+                "intention={};gaze={};steering={};destination={};action={};cue={}",
+                creature.get("intention")?,
+                creature.get("gaze")?,
+                creature.get("steering")?,
+                creature.get("destination")?,
+                creature.get("action")?,
+                view.get("cue")?
+            ))
+        })
+        .collect()
+}
+
+fn relationship_events_in_playback_window<'a>(
+    records: &'a [serde_json::Value],
+    marker: &Marker,
+    window_ms: u64,
+) -> Vec<&'a serde_json::Value> {
+    records
+        .iter()
+        .filter(|record| {
+            let playback_ms = record["playback_ms"].as_u64().unwrap_or_default();
+            playback_ms.saturating_add(100) >= marker.playback_ms
+                && playback_ms <= marker.playback_ms.saturating_add(window_ms)
+        })
+        .flat_map(|record| record["events"].as_array().into_iter().flatten())
+        .filter(|event| {
+            event
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|kind| kind.starts_with("relationship_"))
+        })
+        .collect()
+}
+
+fn relationship_event_signature(event: &serde_json::Value) -> Option<String> {
+    let kind = event.get("kind")?.as_str()?;
+    let value = event.get("value")?;
+    match kind {
+        "relationship_beat_started" => Some(format!(
+            "started:{}:{}:{}",
+            value.get("motif")?,
+            value.get("expression")?,
+            value.get("trigger")?
+        )),
+        "relationship_beat_phase_changed" => Some(format!(
+            "phase:{}:{}",
+            value.get("motif")?,
+            value.get("to")?
+        )),
+        "relationship_beat_completed" => Some(format!("completed:{value}")),
+        "relationship_beat_interrupted" => Some(format!("interrupted:{value}")),
+        _ => None,
+    }
+}
+
+fn read_jsonl(path: &Path) -> Result<Vec<serde_json::Value>> {
+    let file =
+        File::open(path).with_context(|| format!("feel trace is missing: {}", path.display()))?;
+    BufReader::new(file)
+        .lines()
+        .enumerate()
+        .map(|(index, line)| {
+            let line = line.with_context(|| format!("failed to read trace line {}", index + 1))?;
+            serde_json::from_str(&line)
+                .with_context(|| format!("invalid JSONL trace line {}", index + 1))
+        })
+        .collect()
+}
+
 fn generate_filmstrips(directory: &Path, markers: &[Marker]) -> Result<()> {
     let filmstrips = directory.join("filmstrips");
     fs::create_dir_all(&filmstrips)?;
@@ -719,9 +1057,18 @@ mod tests {
                 "quiet-observation",
                 "interaction-chain",
                 "bad-conditions",
-                "relationship-over-time"
+                "relationship-over-time",
+                "relationship-over-time-no-ai"
             ]
         );
+    }
+
+    #[test]
+    fn relationship_suite_keeps_ai_on_and_off_runs_separate() {
+        let experiences = experiences(FeelSuite::RelationshipOverTime);
+        assert_eq!(experiences.len(), 2);
+        assert!(experiences[0].fake_ai && experiences[0].tts_requested);
+        assert!(!experiences[1].fake_ai && !experiences[1].tts_requested);
     }
 
     #[test]

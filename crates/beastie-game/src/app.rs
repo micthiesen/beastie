@@ -546,6 +546,19 @@ impl Game {
             Ok(turn) => {
                 self.view.pending = false;
                 self.audio.stop_speech();
+                if !self.session.accept_dialogue_turn(
+                    &turn.request,
+                    &turn.reply,
+                    turn.retry_count,
+                    turn.fallback,
+                ) {
+                    // The player superseded the authoritative relationship beat while local
+                    // inference was pending. Never present, speak, or transcript stale wording.
+                    self.pending_mouth_timing = None;
+                    self.view.mode = UiMode::Compose;
+                    return Ok(());
+                }
+                self.persist()?;
                 let voice = identity_tts_voice_settings(self.session.world());
                 let text_speed = effective_dialogue_text_speed(
                     self.settings.text_speed,
@@ -571,17 +584,23 @@ impl Game {
                         5_000,
                     );
                 }
+                let mut transcript = TranscriptRecord::from_turn(
+                    self.session.world().elapsed_ms,
+                    &turn.request,
+                    Some(&turn.reply),
+                    turn.backend,
+                    turn.latency_ms,
+                    turn.fallback,
+                    false,
+                    Some(voice),
+                );
+                transcript.apply_dialogue_metadata(
+                    turn.retry_count,
+                    turn.duplicate_suppressed,
+                    turn.fallback_reason,
+                );
                 self.transcripts
-                    .append(&TranscriptRecord::from_turn(
-                        self.session.world().elapsed_ms,
-                        &turn.request,
-                        Some(&turn.reply),
-                        turn.backend,
-                        turn.latency_ms,
-                        turn.fallback,
-                        false,
-                        Some(voice),
-                    ))
+                    .append(&transcript)
                     .map_err(|error| GameError::FilesystemError(error.to_string()))?;
                 self.view.mode = UiMode::Compose;
                 self.view.focused_region = Some("reaction/laugh".to_owned());

@@ -4,6 +4,7 @@ mod language;
 mod memory;
 mod model;
 mod random;
+mod relationship;
 mod save;
 mod simulation;
 
@@ -15,26 +16,34 @@ pub use memory::{MemoryCue, MemoryQuery, select_candidate_memories};
 pub use model::{
     ActionPhase, ActionTimeline, AquariumCreatureState, AquariumPosition, AquariumState, Belief,
     BeliefId, BeliefKind, Concept, ConversationState, Creature, DepthLane, Development,
-    DevelopmentMilestone, Facing, FoodBuoyancy, FoodDisposition, FoodDropRejectionReason, FoodId,
-    FoodObject, GazeTarget, Idiolect, IdiolectQuirk, IdleLifeState, InitiatedBehavior,
-    InitiativeReason, Intention, InteractionCounters, InteractionState, LanguageExposure,
-    LanguageStage, Memory, MemoryId, MemoryKind, Mood, NamingTarget, Needs, NonverbalAct,
-    NormalizedPosition, NormalizedVelocity, Reaction, Relationship, Routine, SemanticDestination,
-    SocialAct, SocialHabits, StateValidationError, SteeringMode, ToyId, Traits, VisitEvidence,
-    WorldObject, WorldState,
+    DevelopmentMilestone, ExpressedMotif, Facing, FoodBuoyancy, FoodDisposition,
+    FoodDropRejectionReason, FoodId, FoodObject, GazeTarget, Idiolect, IdiolectQuirk,
+    IdleLifeState, InitiatedBehavior, InitiativeReason, Intention, InteractionCounters,
+    InteractionState, LanguageExposure, LanguageStage, Memory, MemoryId, MemoryKind, Mood,
+    NamingTarget, Needs, NonverbalAct, NormalizedPosition, NormalizedVelocity, Reaction,
+    Relationship, RelationshipBeat, RelationshipBeatPhase, RelationshipEvidence,
+    RelationshipExpressionKind, RelationshipExpressionState, RelationshipMotif,
+    RelationshipMotifKey, RelationshipTrigger, RelationshipTriggerKind, Routine,
+    SemanticDestination, SocialAct, SocialHabits, StateValidationError, SteeringMode, ToyId,
+    Traits, VisitEvidence, WorldObject, WorldState,
 };
 pub use random::{RandomDomain, RandomSource, SeededRandom, deterministic_unit};
+pub use relationship::{derive_relationship_motifs, select_relationship_beat};
 pub use save::{SaveError, SaveGame};
 pub use simulation::{
     GameEvent, MAX_OFFLINE_MS, OfflineProgress, PlayerEvent, SIMULATION_TICK_MS, SpeechAttention,
-    TALK_COOLDOWN_MS, advance_offline, speech_attention, step,
+    TALK_COOLDOWN_MS, advance_offline, apply_grounded_utterance, speech_attention, step,
+    trigger_relationship_beat,
 };
 
-pub const SAVE_VERSION: u32 = 3;
+pub const SAVE_VERSION: u32 = 4;
 pub const ACTIVE_DAY_MS: u64 = 15 * 60_000;
+pub const RELATIONSHIP_EXPRESSION_SCHEMA_VERSION: u32 = 1;
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     #[test]
@@ -805,6 +814,25 @@ mod tests {
     }
 
     #[test]
+    fn v3_save_migrates_relationship_expression_to_version_four() {
+        let world = WorldState::new(79, "V3");
+        let mut value =
+            serde_json::to_value(SaveGame::capture(&world, &SeededRandom::new(79))).unwrap();
+        value["save_version"] = 3.into();
+        value["world"]["save_version"] = 3.into();
+        value["world"]["creature"]
+            .as_object_mut()
+            .expect("creature object")
+            .remove("relationship_expression");
+        let (loaded, _) = SaveGame::from_json(&value.to_string()).unwrap().resume();
+        assert_eq!(loaded.save_version, SAVE_VERSION);
+        assert_eq!(
+            loaded.creature.relationship_expression,
+            RelationshipExpressionState::default()
+        );
+    }
+
+    #[test]
     fn cursor_is_persisted_and_uses_bounded_follow_or_flee_intent() {
         let mut world = WorldState::new(88, "Cursor");
         let mut rng = SeededRandom::new(88);
@@ -1008,6 +1036,7 @@ mod tests {
     fn needs_traits_routines_and_favorites_choose_distinct_destinations() {
         let mut hungry = WorldState::new(92, "Hungry");
         hungry.creature.needs.hunger = 0.9;
+        hungry.creature.idle_life.last_arrived_destination = Some(SemanticDestination::Bottom);
         let mut rng = SeededRandom::new(92);
         step(&mut hungry, &[], 1_000, &mut rng);
         assert_eq!(
@@ -1119,12 +1148,20 @@ mod tests {
         )));
 
         let progress = advance_offline(&mut world, ACTIVE_DAY_MS, &mut rng);
+        assert!(progress.events.iter().any(|event| matches!(
+            event,
+            GameEvent::RelationshipBeatStarted {
+                motif: RelationshipMotifKey::PlayerReturns,
+                expression: RelationshipExpressionKind::Notice,
+                ..
+            }
+        )));
         assert!(
-            progress
+            !progress
                 .events
                 .contains(&GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer))
         );
-        assert_eq!(world.creature.current_intention, Intention::ApproachPlayer);
+        assert_eq!(world.creature.aquarium.gaze, GazeTarget::Player);
         assert!(
             world
                 .creature
@@ -1159,5 +1196,668 @@ mod tests {
         let actual = step(&mut resumed, &[], 10_000, &mut resumed_rng);
         assert_eq!(actual, expected);
         assert_eq!(resumed, first);
+    }
+
+    #[test]
+    fn relationship_motifs_are_derived_for_all_families_with_typed_evidence() {
+        let mut world = WorldState::new(101, "History");
+        world.creature.preferences.insert(FoodId::Berry, 0.8);
+        world.creature.preferences.insert(FoodId::Mushroom, -0.8);
+        let comfort = world.remember(MemoryKind::WasComforted, &[Concept::You], 0.5, 0.7);
+        let toy = world.remember(
+            MemoryKind::PlayedWith { toy: ToyId::Ball },
+            &[Concept::Toy],
+            0.6,
+            0.7,
+        );
+        let fed_one = world.remember(
+            MemoryKind::WasFed {
+                food: FoodId::Berry,
+            },
+            &[Concept::Food],
+            0.7,
+            0.7,
+        );
+        world.elapsed_ms = ACTIVE_DAY_MS;
+        let _fed_two = world.remember(
+            MemoryKind::WasFed {
+                food: FoodId::Berry,
+            },
+            &[Concept::Food],
+            0.7,
+            0.7,
+        );
+        let grudge = world.remember(
+            MemoryKind::RejectedFood {
+                food: FoodId::Mushroom,
+            },
+            &[Concept::Food],
+            -0.7,
+            0.8,
+        );
+        world.revise_belief(BeliefKind::RedFoodIsATrick, grudge, true);
+        let returned = world.remember(
+            MemoryKind::PlayerReturnedAfterAbsence,
+            &[Concept::You],
+            0.5,
+            0.8,
+        );
+        world.revise_belief(BeliefKind::PlayerReturnsAfterSleep, returned, true);
+        world.creature.idle_life.visit_evidence.push(VisitEvidence {
+            hour_start: 2,
+            destination: SemanticDestination::Cave,
+            visits: 2,
+            last_active_day: 2,
+        });
+        world.set_routine(Routine {
+            hour_start: 2,
+            destination: SemanticDestination::Cave,
+            strength: 2,
+        });
+        let motifs = derive_relationship_motifs(&world);
+        let keys = motifs
+            .iter()
+            .map(|motif| motif.key)
+            .collect::<BTreeSet<_>>();
+        assert!(keys.contains(&RelationshipMotifKey::SharedToy(ToyId::Ball)));
+        assert!(keys.contains(&RelationshipMotifKey::ComfortRitual));
+        assert!(keys.contains(&RelationshipMotifKey::TrustedFood(FoodId::Berry)));
+        assert!(keys.contains(&RelationshipMotifKey::FoodGrudge(FoodId::Mushroom)));
+        assert!(keys.contains(&RelationshipMotifKey::PlayerReturns));
+        assert!(keys.contains(&RelationshipMotifKey::FamiliarPlace(
+            SemanticDestination::Cave
+        )));
+        let shared = motifs
+            .iter()
+            .find(|motif| motif.key == RelationshipMotifKey::SharedToy(ToyId::Ball))
+            .expect("shared toy motif");
+        assert!(
+            shared
+                .evidence
+                .contains(&RelationshipEvidence::Memory { id: toy })
+        );
+        let grudge_motif = motifs
+            .iter()
+            .find(|motif| motif.key == RelationshipMotifKey::FoodGrudge(FoodId::Mushroom))
+            .expect("food grudge motif");
+        assert!(
+            grudge_motif
+                .evidence
+                .contains(&RelationshipEvidence::Belief {
+                    id: world
+                        .creature
+                        .beliefs
+                        .iter()
+                        .find(|belief| belief.kind == BeliefKind::RedFoodIsATrick)
+                        .expect("grudge belief")
+                        .id,
+                    kind: BeliefKind::RedFoodIsATrick,
+                })
+        );
+        let returns_motif = motifs
+            .iter()
+            .find(|motif| motif.key == RelationshipMotifKey::PlayerReturns)
+            .expect("returns motif");
+        assert!(returns_motif.evidence.iter().any(|evidence| matches!(
+            evidence,
+            RelationshipEvidence::Belief {
+                kind: BeliefKind::PlayerReturnsAfterSleep,
+                ..
+            }
+        )));
+        let _ = comfort;
+        let _ = fed_one;
+    }
+
+    #[test]
+    fn relationship_strength_requires_distinct_active_days_for_repeated_memories() {
+        let mut world = WorldState::new(102, "Days");
+        world.remember(MemoryKind::WasComforted, &[Concept::You], 0.5, 0.7);
+        world.remember(MemoryKind::WasComforted, &[Concept::You], 0.5, 0.7);
+        assert_eq!(derive_relationship_motifs(&world)[0].strength, 1);
+        world.elapsed_ms = ACTIVE_DAY_MS;
+        world.remember(MemoryKind::WasComforted, &[Concept::You], 0.5, 0.7);
+        assert_eq!(derive_relationship_motifs(&world)[0].strength, 2);
+    }
+
+    #[test]
+    fn relationship_selection_prefers_recent_supporting_evidence() {
+        let mut world = WorldState::new(111, "Recency");
+        world.remember(
+            MemoryKind::PlayedWith { toy: ToyId::Ball },
+            &[Concept::Toy],
+            0.6,
+            0.7,
+        );
+        world.elapsed_ms = ACTIVE_DAY_MS * 19;
+        world.remember(
+            MemoryKind::PlayedWith { toy: ToyId::Bell },
+            &[Concept::Toy],
+            0.6,
+            0.7,
+        );
+
+        let beat = select_relationship_beat(&world, RelationshipTrigger::RelevantUtterance)
+            .expect("recent toy evidence should remain eligible");
+        assert_eq!(beat.motif, RelationshipMotifKey::SharedToy(ToyId::Bell));
+    }
+
+    #[test]
+    fn repeated_return_triggers_rotate_when_other_grounded_motifs_exist() {
+        let mut base = WorldState::new(112, "Variation");
+        let returned = base.remember(
+            MemoryKind::PlayerReturnedAfterAbsence,
+            &[Concept::You, Concept::Again],
+            0.5,
+            0.8,
+        );
+        base.revise_belief(BeliefKind::PlayerReturnsAfterSleep, returned, true);
+        base.remember(
+            MemoryKind::PlayedWith { toy: ToyId::Ball },
+            &[Concept::Toy],
+            0.6,
+            0.7,
+        );
+        base.remember(MemoryKind::WasComforted, &[Concept::You], 0.5, 0.7);
+        base.creature.idle_life.visit_evidence.push(VisitEvidence {
+            hour_start: 3,
+            destination: SemanticDestination::Cave,
+            visits: 2,
+            last_active_day: 1,
+        });
+        base.set_routine(Routine {
+            hour_start: 3,
+            destination: SemanticDestination::Cave,
+            strength: 2,
+        });
+
+        let run = |mut world: WorldState| {
+            let mut rng = SeededRandom::new(world.seed);
+            let mut motifs = Vec::new();
+            let mut events = Vec::new();
+            for elapsed_ms in [0, ACTIVE_DAY_MS * 2, ACTIVE_DAY_MS * 3] {
+                world.elapsed_ms = elapsed_ms;
+                let trigger_events =
+                    trigger_relationship_beat(&mut world, RelationshipTrigger::PlayerReturn);
+                motifs.push(
+                    world
+                        .creature
+                        .relationship_expression
+                        .active
+                        .as_ref()
+                        .expect("a grounded return motif")
+                        .motif,
+                );
+                events.extend(trigger_events);
+                events.extend(step(&mut world, &[], 10_000, &mut rng));
+            }
+            (world, motifs, events)
+        };
+
+        let (first, first_motifs, first_events) = run(base.clone());
+        let (second, second_motifs, second_events) = run(base);
+        assert_eq!(first_motifs[0], RelationshipMotifKey::PlayerReturns);
+        assert_ne!(first_motifs[1], first_motifs[0]);
+        assert_ne!(first_motifs[2], first_motifs[1]);
+        assert_eq!(first_motifs, second_motifs);
+        assert_eq!(first_events, second_events);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn relationship_selection_is_stable_and_ledger_is_bounded() {
+        let mut first = WorldState::new(103, "Select");
+        let mut second = first.clone();
+        for state in [&mut first, &mut second] {
+            state.creature.preferences.insert(FoodId::Berry, 0.8);
+            state.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+            let memory = state.remember(
+                MemoryKind::PlayedWith { toy: ToyId::Ball },
+                &[Concept::Toy],
+                0.6,
+                0.7,
+            );
+            state.creature.beliefs.push(Belief {
+                id: BeliefId(1),
+                kind: BeliefKind::PlayerReturnsAfterSleep,
+                supporting_memories: BTreeSet::from([memory]),
+                contradicting_memories: BTreeSet::new(),
+                confidence: 0.5,
+            });
+            state.next_belief_id = 2;
+        }
+        let first_beat = select_relationship_beat(
+            &first,
+            RelationshipTrigger::FamiliarToy { toy: ToyId::Ball },
+        )
+        .expect("eligible toy beat");
+        let second_beat = select_relationship_beat(
+            &second,
+            RelationshipTrigger::FamiliarToy { toy: ToyId::Ball },
+        )
+        .expect("same eligible toy beat");
+        assert_eq!(first_beat, second_beat);
+        let events = trigger_relationship_beat(
+            &mut first,
+            RelationshipTrigger::FamiliarToy { toy: ToyId::Ball },
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, GameEvent::RelationshipBeatStarted { .. }))
+        );
+        assert_eq!(first.creature.relationship_expression.recent.len(), 1);
+        assert!(
+            select_relationship_beat(
+                &first,
+                RelationshipTrigger::FamiliarToy { toy: ToyId::Ball }
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn relationship_beats_progress_save_reload_and_yield_to_care() {
+        let mut first = WorldState::new(104, "Beat");
+        let mut rng = SeededRandom::new(104);
+        let memory = first.remember(
+            MemoryKind::PlayedWith { toy: ToyId::Ball },
+            &[Concept::Toy],
+            0.6,
+            0.7,
+        );
+        first.creature.beliefs.push(Belief {
+            id: BeliefId(1),
+            kind: BeliefKind::PlayerReturnsAfterSleep,
+            supporting_memories: BTreeSet::from([memory]),
+            contradicting_memories: BTreeSet::new(),
+            confidence: 0.5,
+        });
+        first.next_belief_id = 2;
+        trigger_relationship_beat(
+            &mut first,
+            RelationshipTrigger::FamiliarToy { toy: ToyId::Ball },
+        );
+        step(&mut first, &[], 1_000, &mut rng);
+        let encoded = SaveGame::capture(&first, &rng)
+            .to_json()
+            .expect("beat save");
+        let (mut resumed, mut resumed_rng) = SaveGame::from_json(&encoded).unwrap().resume();
+        assert_eq!(
+            step(&mut first, &[], 2_000, &mut rng),
+            step(&mut resumed, &[], 2_000, &mut resumed_rng)
+        );
+        assert_eq!(first, resumed);
+        let interrupted = step(&mut resumed, &[PlayerEvent::Comfort], 0, &mut resumed_rng);
+        assert!(
+            interrupted
+                .iter()
+                .any(|event| matches!(event, GameEvent::Comforted))
+        );
+        assert!(resumed.creature.relationship_expression.active.is_none());
+    }
+
+    #[test]
+    fn grounded_utterance_is_a_public_typed_relationship_trigger() {
+        let mut world = WorldState::new(105, "Words");
+        let interpretation = UtteranceInterpretation {
+            references: BTreeSet::from([UtteranceReference::Toy(ToyId::Ball)]),
+            ..UtteranceInterpretation::default()
+        };
+        let events = apply_grounded_utterance(&mut world, &interpretation);
+        assert!(
+            !events
+                .iter()
+                .any(|event| { matches!(event, GameEvent::RelationshipBeatStarted { .. }) })
+        );
+    }
+
+    #[test]
+    fn successful_toy_use_starts_the_shared_toy_callback() {
+        let mut world = WorldState::new(113, "ToyUse");
+        world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        let mut rng = SeededRandom::new(113);
+        let events = step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            GameEvent::RelationshipBeatStarted {
+                motif: RelationshipMotifKey::SharedToy(ToyId::Ball),
+                trigger: RelationshipTrigger::FamiliarToy { toy: ToyId::Ball },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn relationship_callbacks_project_their_family_specific_embodied_intentions() {
+        let mut comfort = WorldState::new(107, "Comfort");
+        comfort.creature.needs.comfort = 0.1;
+        comfort.remember(MemoryKind::WasComforted, &[Concept::You], 0.5, 0.7);
+        comfort.elapsed_ms = ACTIVE_DAY_MS;
+        comfort.remember(MemoryKind::WasComforted, &[Concept::You], 0.5, 0.7);
+        trigger_relationship_beat(&mut comfort, RelationshipTrigger::NeedState);
+        step(&mut comfort, &[], 1_000, &mut SeededRandom::new(107));
+        assert_eq!(comfort.creature.current_intention, Intention::SeekComfort);
+
+        let mut trusted = WorldState::new(108, "Trusted");
+        trusted.creature.preferences.insert(FoodId::Berry, 0.8);
+        trusted.remember(
+            MemoryKind::WasFed {
+                food: FoodId::Berry,
+            },
+            &[Concept::Food],
+            0.7,
+            0.7,
+        );
+        trusted.elapsed_ms = ACTIVE_DAY_MS;
+        trusted.remember(
+            MemoryKind::WasFed {
+                food: FoodId::Berry,
+            },
+            &[Concept::Food],
+            0.7,
+            0.7,
+        );
+        trigger_relationship_beat(
+            &mut trusted,
+            RelationshipTrigger::FamiliarFood {
+                food: FoodId::Berry,
+            },
+        );
+        step(&mut trusted, &[], 1_000, &mut SeededRandom::new(108));
+        assert_eq!(trusted.creature.current_intention, Intention::WaitAtBowl);
+
+        let mut grudge = WorldState::new(109, "Grudge");
+        grudge.creature.preferences.insert(FoodId::Mushroom, -0.8);
+        let memory = grudge.remember(
+            MemoryKind::RejectedFood {
+                food: FoodId::Mushroom,
+            },
+            &[Concept::Food],
+            -0.7,
+            0.8,
+        );
+        grudge.revise_belief(BeliefKind::RedFoodIsATrick, memory, true);
+        grudge.elapsed_ms = ACTIVE_DAY_MS;
+        let second_memory = grudge.remember(
+            MemoryKind::RejectedFood {
+                food: FoodId::Mushroom,
+            },
+            &[Concept::Food],
+            -0.7,
+            0.8,
+        );
+        grudge.revise_belief(BeliefKind::RedFoodIsATrick, second_memory, true);
+        trigger_relationship_beat(
+            &mut grudge,
+            RelationshipTrigger::FamiliarFood {
+                food: FoodId::Mushroom,
+            },
+        );
+        step(&mut grudge, &[], 1_000, &mut SeededRandom::new(109));
+        assert_eq!(grudge.creature.current_intention, Intention::RejectFood);
+
+        let mut place = WorldState::new(110, "Place");
+        place.creature.idle_life.visit_evidence.push(VisitEvidence {
+            hour_start: 3,
+            destination: SemanticDestination::Cave,
+            visits: 2,
+            last_active_day: 1,
+        });
+        place.set_routine(Routine {
+            hour_start: 3,
+            destination: SemanticDestination::Cave,
+            strength: 2,
+        });
+        trigger_relationship_beat(
+            &mut place,
+            RelationshipTrigger::RoutineWindow {
+                hour_start: 3,
+                destination: SemanticDestination::Cave,
+            },
+        );
+        assert_eq!(
+            place
+                .creature
+                .relationship_expression
+                .active
+                .as_ref()
+                .map(|beat| beat.motif),
+            Some(RelationshipMotifKey::FamiliarPlace(
+                SemanticDestination::Cave
+            ))
+        );
+    }
+
+    #[test]
+    fn early_relationship_evidence_only_notices_without_forcing_familiar_behavior() {
+        let mut comfort = WorldState::new(120, "EarlyComfort");
+        comfort.creature.needs.comfort = 0.1;
+        comfort.remember(MemoryKind::WasComforted, &[Concept::You], 0.5, 0.7);
+        trigger_relationship_beat(&mut comfort, RelationshipTrigger::NeedState);
+        assert_eq!(comfort.creature.aquarium.gaze, GazeTarget::Player);
+        step(&mut comfort, &[], 1_000, &mut SeededRandom::new(120));
+        let beat = comfort
+            .creature
+            .relationship_expression
+            .active
+            .as_ref()
+            .expect("early comfort beat");
+        assert_eq!(beat.expression_kind, RelationshipExpressionKind::Notice);
+        assert_ne!(comfort.creature.current_intention, Intention::SeekComfort);
+
+        let mut grudge = WorldState::new(121, "EarlyGrudge");
+        grudge.creature.preferences.insert(FoodId::Mushroom, -0.8);
+        let memory = grudge.remember(
+            MemoryKind::RejectedFood {
+                food: FoodId::Mushroom,
+            },
+            &[Concept::Food],
+            -0.7,
+            0.8,
+        );
+        grudge.revise_belief(BeliefKind::RedFoodIsATrick, memory, true);
+        trigger_relationship_beat(
+            &mut grudge,
+            RelationshipTrigger::FamiliarFood {
+                food: FoodId::Mushroom,
+            },
+        );
+        step(&mut grudge, &[], 1_000, &mut SeededRandom::new(121));
+        let beat = grudge
+            .creature
+            .relationship_expression
+            .active
+            .as_ref()
+            .expect("early grudge beat");
+        assert_eq!(beat.expression_kind, RelationshipExpressionKind::Notice);
+        assert_ne!(grudge.creature.current_intention, Intention::RejectFood);
+    }
+
+    #[test]
+    fn active_relationship_beat_keeps_its_embodied_priority_over_idle_scheduling() {
+        let mut world = WorldState::new(123, "Priority");
+        let first = world.remember(
+            MemoryKind::PlayerReturnedAfterAbsence,
+            &[Concept::You, Concept::Again],
+            0.5,
+            0.8,
+        );
+        world.revise_belief(BeliefKind::PlayerReturnsAfterSleep, first, true);
+        world.elapsed_ms = ACTIVE_DAY_MS;
+        let second = world.remember(
+            MemoryKind::PlayerReturnedAfterAbsence,
+            &[Concept::You, Concept::Again],
+            0.5,
+            0.8,
+        );
+        world.revise_belief(BeliefKind::PlayerReturnsAfterSleep, second, true);
+        trigger_relationship_beat(&mut world, RelationshipTrigger::PlayerReturn);
+
+        let mut rng = SeededRandom::new(123);
+        for _ in 0..5 {
+            step(&mut world, &[], 1_000, &mut rng);
+            assert_eq!(world.creature.current_intention, Intention::ApproachPlayer);
+            assert!(
+                world
+                    .creature
+                    .aquarium
+                    .destination
+                    .is_none_or(|destination| destination == SemanticDestination::Player)
+            );
+            assert_eq!(world.creature.aquarium.gaze, GazeTarget::Player);
+        }
+    }
+
+    #[test]
+    fn validation_rejects_an_active_relationship_beat_not_grounded_in_derived_truth() {
+        let mut world = WorldState::new(122, "ForgedBeat");
+        world.creature.needs.comfort = 0.1;
+        world.remember(MemoryKind::WasComforted, &[Concept::You], 0.5, 0.7);
+        trigger_relationship_beat(&mut world, RelationshipTrigger::NeedState);
+        assert!(world.validate().is_ok());
+
+        world
+            .creature
+            .relationship_expression
+            .active
+            .as_mut()
+            .expect("active relationship beat")
+            .target = Some(SemanticDestination::Bottom);
+        assert!(matches!(
+            world.validate(),
+            Err(StateValidationError::RelationshipExpression)
+        ));
+    }
+
+    #[test]
+    fn every_relationship_family_recovers_to_independent_life() {
+        let finish = |mut world: WorldState, trigger: RelationshipTrigger| {
+            let mut rng = SeededRandom::new(world.seed);
+            trigger_relationship_beat(&mut world, trigger);
+            for _ in 0..12 {
+                step(&mut world, &[], 1_000, &mut rng);
+            }
+            world
+        };
+
+        let mut toy = WorldState::new(114, "Toy");
+        toy.remember(
+            MemoryKind::PlayedWith { toy: ToyId::Ball },
+            &[Concept::Toy],
+            0.6,
+            0.7,
+        );
+        let toy = finish(toy, RelationshipTrigger::FamiliarToy { toy: ToyId::Ball });
+
+        let mut comfort = WorldState::new(115, "Comfort");
+        comfort.creature.needs.comfort = 0.1;
+        comfort.remember(MemoryKind::WasComforted, &[Concept::You], 0.5, 0.7);
+        let comfort = finish(comfort, RelationshipTrigger::NeedState);
+
+        let mut trusted = WorldState::new(116, "TrustedFood");
+        trusted.creature.preferences.insert(FoodId::Berry, 0.8);
+        trusted.remember(
+            MemoryKind::WasFed {
+                food: FoodId::Berry,
+            },
+            &[Concept::Food],
+            0.7,
+            0.7,
+        );
+        trusted.elapsed_ms = ACTIVE_DAY_MS;
+        trusted.remember(
+            MemoryKind::WasFed {
+                food: FoodId::Berry,
+            },
+            &[Concept::Food],
+            0.7,
+            0.7,
+        );
+        let trusted = finish(
+            trusted,
+            RelationshipTrigger::FamiliarFood {
+                food: FoodId::Berry,
+            },
+        );
+
+        let mut grudge = WorldState::new(117, "FoodGrudge");
+        grudge.creature.preferences.insert(FoodId::Mushroom, -0.8);
+        let rejected = grudge.remember(
+            MemoryKind::RejectedFood {
+                food: FoodId::Mushroom,
+            },
+            &[Concept::Food],
+            -0.7,
+            0.8,
+        );
+        grudge.revise_belief(BeliefKind::RedFoodIsATrick, rejected, true);
+        let grudge = finish(
+            grudge,
+            RelationshipTrigger::FamiliarFood {
+                food: FoodId::Mushroom,
+            },
+        );
+
+        let mut returns = WorldState::new(118, "Returns");
+        let returned = returns.remember(
+            MemoryKind::PlayerReturnedAfterAbsence,
+            &[Concept::You],
+            0.5,
+            0.8,
+        );
+        returns.revise_belief(BeliefKind::PlayerReturnsAfterSleep, returned, true);
+        let returns = finish(returns, RelationshipTrigger::PlayerReturn);
+
+        let mut place = WorldState::new(119, "Place");
+        place.creature.idle_life.visit_evidence.push(VisitEvidence {
+            hour_start: 3,
+            destination: SemanticDestination::Cave,
+            visits: 2,
+            last_active_day: 1,
+        });
+        place.set_routine(Routine {
+            hour_start: 3,
+            destination: SemanticDestination::Cave,
+            strength: 2,
+        });
+        let place = finish(
+            place,
+            RelationshipTrigger::RoutineWindow {
+                hour_start: 3,
+                destination: SemanticDestination::Cave,
+            },
+        );
+
+        for world in [toy, comfort, trusted, grudge, returns, place] {
+            assert!(world.creature.relationship_expression.active.is_none());
+            assert!(world.creature.aquarium.action.is_none());
+        }
+    }
+
+    #[test]
+    fn offline_progress_advances_elapsed_time_but_emits_one_return_path() {
+        let mut world = WorldState::new(106, "Offline");
+        let mut rng = SeededRandom::new(106);
+        let before = world.elapsed_ms;
+        let progress = advance_offline(&mut world, ACTIVE_DAY_MS * 2, &mut rng);
+        assert_eq!(world.elapsed_ms, before + ACTIVE_DAY_MS * 2);
+        assert_eq!(
+            progress
+                .events
+                .iter()
+                .filter(|event| matches!(event, GameEvent::MemoryCreated(_)))
+                .count(),
+            1
+        );
+        assert!(progress.events.iter().any(|event| matches!(
+            event,
+            GameEvent::RelationshipBeatStarted {
+                motif: RelationshipMotifKey::PlayerReturns,
+                ..
+            }
+        )));
+        assert!(world.aquarium.player_present);
     }
 }

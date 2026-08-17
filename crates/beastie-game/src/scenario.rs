@@ -119,6 +119,17 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
         milliseconds: u64,
     }
 
+    // A named wait keeps final-review intent explicit in JSONL while remaining a normal
+    // frame-producing wait in the game shell. The shell can therefore hold an inspect state
+    // without inventing a UI meter or a second timing mechanism.
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct InspectHold {
+        version: u32,
+        command: String,
+        milliseconds: u64,
+    }
+
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Marker {
@@ -180,6 +191,22 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
             milliseconds: wait.milliseconds,
         });
     }
+    if kind.command == "inspect_hold" {
+        let hold: InspectHold = serde_json::from_str(line).map_err(ScenarioError::Json)?;
+        if hold.version != beastie_session::SESSION_PROTOCOL_VERSION
+            || hold.command != "inspect_hold"
+        {
+            return Err(ScenarioError::Command(
+                "unsupported inspect hold control version".to_owned(),
+            ));
+        }
+        if hold.milliseconds < 1_500 || hold.milliseconds > MAX_WAIT_MS {
+            return Err(ScenarioError::InspectHoldBounds);
+        }
+        return Ok(ScenarioStep::WaitTick {
+            milliseconds: hold.milliseconds,
+        });
+    }
     if kind.command == "marker" {
         let marker: Marker = serde_json::from_str(line).map_err(ScenarioError::Json)?;
         if marker.version != beastie_session::SESSION_PROTOCOL_VERSION || marker.command != "marker"
@@ -238,6 +265,8 @@ pub enum ScenarioError {
     MarkerName,
     #[error("wait must be between 1 ms and 15 minutes")]
     WaitBounds,
+    #[error("inspect hold must be between 1,500 ms and 15 minutes")]
+    InspectHoldBounds,
     #[error("scenario contains no commands")]
     Empty,
 }
@@ -267,6 +296,17 @@ mod tests {
             parse_step(r#"{"version":1,"command":"marker","name":"settled"}"#),
             Ok(ScenarioStep::Marker(name)) if name == "settled"
         ));
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"inspect_hold","milliseconds":1500}"#),
+            Ok(ScenarioStep::WaitTick { milliseconds: 1500 })
+        ));
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"resume","elapsed_ms":900000}"#),
+            Ok(ScenarioStep::Session(CommandEnvelope {
+                command: SessionCommand::Resume { elapsed_ms: 900000 },
+                ..
+            }))
+        ));
     }
 
     #[test]
@@ -274,6 +314,10 @@ mod tests {
         assert!(matches!(
             parse_step(r#"{"version":1,"command":"capture","name":"../save"}"#),
             Err(ScenarioError::CaptureName)
+        ));
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"inspect_hold","milliseconds":1499}"#),
+            Err(ScenarioError::InspectHoldBounds)
         ));
     }
 

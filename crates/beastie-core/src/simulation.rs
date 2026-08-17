@@ -3,8 +3,8 @@ use crate::{
     FoodDisposition, FoodDropRejectionReason, FoodId, FoodObject, GazeTarget, InitiativeReason,
     Intention, LanguageExposure, LanguageStage, MemoryId, MemoryKind, NamingTarget, NonverbalAct,
     NormalizedPosition, NormalizedVelocity, RandomDomain, RandomSource, Reaction,
-    SemanticDestination, SocialAct, SteeringMode, ToyId, WorldObject, WorldState,
-    deterministic_unit,
+    RelationshipTrigger, SemanticDestination, SocialAct, SteeringMode, ToyId,
+    UtteranceInterpretation, UtteranceReference, WorldObject, WorldState, deterministic_unit,
 };
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +40,7 @@ pub enum PlayerEvent {
     Talk,
     React(Reaction),
     LanguageExposure(LanguageExposure),
+    UnderstoodUtterance(UtteranceInterpretation),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +91,19 @@ pub enum GameEvent {
         target: NamingTarget,
         name: String,
     },
+    RelationshipBeatStarted {
+        motif: crate::RelationshipMotifKey,
+        expression: crate::RelationshipExpressionKind,
+        trigger: RelationshipTrigger,
+        evidence: Vec<crate::RelationshipEvidence>,
+    },
+    RelationshipBeatPhaseChanged {
+        motif: crate::RelationshipMotifKey,
+        from: Option<crate::RelationshipBeatPhase>,
+        to: crate::RelationshipBeatPhase,
+    },
+    RelationshipBeatCompleted(crate::RelationshipMotifKey),
+    RelationshipBeatInterrupted(crate::RelationshipMotifKey),
 }
 
 /// The creature's immediate, word-independent response to speech in its environment.
@@ -117,6 +131,9 @@ pub fn step(
     let mut events = Vec::new();
     for event in input {
         let before = state.creature.memories.len();
+        if should_interrupt_for_player_event(event) {
+            interrupt_relationship_beat(state, &mut events);
+        }
         apply_player_event(state, event, &mut events);
         events.extend(
             state.creature.memories[before..]
@@ -139,6 +156,39 @@ pub fn step(
     events
 }
 
+/// Apply a grounded semantic trigger without accepting arbitrary model-authored facts.
+///
+/// This is the session boundary for dialogue and other adapters that already have a typed,
+/// creature-bounded interpretation. It returns only authoritative simulation events.
+pub fn trigger_relationship_beat(
+    state: &mut WorldState,
+    trigger: RelationshipTrigger,
+) -> Vec<GameEvent> {
+    let mut events = Vec::new();
+    interrupt_relationship_beat(state, &mut events);
+    maybe_start_relationship_beat(state, trigger, &mut events);
+    events
+}
+
+/// Convert a previously grounded utterance into a bounded relationship trigger.
+pub fn apply_grounded_utterance(
+    state: &mut WorldState,
+    interpretation: &UtteranceInterpretation,
+) -> Vec<GameEvent> {
+    let trigger = interpretation
+        .references
+        .iter()
+        .find_map(|reference| match reference {
+            UtteranceReference::Toy(toy) => Some(RelationshipTrigger::FamiliarToy { toy: *toy }),
+            UtteranceReference::Food(food) => {
+                Some(RelationshipTrigger::FamiliarFood { food: *food })
+            }
+            UtteranceReference::Creature | UtteranceReference::Player => None,
+        })
+        .unwrap_or(RelationshipTrigger::RelevantUtterance);
+    trigger_relationship_beat(state, trigger)
+}
+
 pub fn advance_offline(
     state: &mut WorldState,
     requested_ms: u64,
@@ -153,6 +203,7 @@ pub fn advance_offline(
         };
     }
     state.aquarium.player_present = false;
+    state.elapsed_ms = state.elapsed_ms.saturating_add(applied_ms);
     state.absence_days = state
         .absence_days
         .saturating_add((applied_ms / crate::ACTIVE_DAY_MS) as u32)
@@ -186,6 +237,7 @@ pub fn advance_offline(
 fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut Vec<GameEvent>) {
     state.elapsed_ms = state.elapsed_ms.saturating_add(SIMULATION_TICK_MS);
     advance_embodied_state(state, events);
+    advance_relationship_beat(state, events);
     let minutes = SIMULATION_TICK_MS as f32 / 60_000.0;
     state.creature.needs.hunger += 0.025 * minutes;
     state.creature.needs.energy -= 0.018 * minutes;
@@ -197,11 +249,15 @@ fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut
     state.creature.needs.clamp();
     state.creature.relationship.clamp();
     state.creature.social_habits.clamp();
+    if state.aquarium.player_present && state.creature.needs.comfort < 0.35 {
+        maybe_start_relationship_beat(state, RelationshipTrigger::NeedState, events);
+    }
     events.push(GameEvent::NeedChanged);
     update_development(state, events);
     if state.creature.needs.energy < 0.1
         && state.creature.current_intention != crate::Intention::Sleep
     {
+        interrupt_relationship_beat(state, events);
         let previous = state.creature.current_intention;
         state.creature.current_intention = crate::Intention::Sleep;
         state.creature.interaction_state.sleep_started_at_ms = Some(state.elapsed_ms);
@@ -277,6 +333,9 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
             } else {
                 state.creature.aquarium.destination = None;
             }
+            if let Some(trigger) = familiar_trigger_at_cursor(state) {
+                maybe_start_relationship_beat(state, trigger, events);
+            }
         }
         PlayerEvent::Name { target, name } => assign_name(state, *target, name, events),
         PlayerEvent::Feed(food) => {
@@ -289,7 +348,13 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
                 .interactions
                 .plays
                 .saturating_add(1);
-            play_with_toy(state, *toy, events);
+            if play_with_toy(state, *toy, events) {
+                maybe_start_relationship_beat(
+                    state,
+                    RelationshipTrigger::FamiliarToy { toy: *toy },
+                    events,
+                );
+            }
         }
         PlayerEvent::Comfort => {
             state.creature.needs.comfort = (state.creature.needs.comfort + 0.18).min(1.0);
@@ -331,15 +396,13 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
                 0.8,
             );
             state.revise_belief(BeliefKind::PlayerReturnsAfterSleep, memory, true);
-            set_intention(state, Intention::ApproachPlayer, events);
             state.creature.aquarium.gaze = GazeTarget::Player;
-            state.creature.aquarium.destination = Some(SemanticDestination::Player);
-            state.creature.aquarium.steering = SteeringMode::Approach;
-            events.push(GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer));
+            maybe_start_relationship_beat(state, RelationshipTrigger::PlayerReturn, events);
         }
         PlayerEvent::SpeechStarted => {
             let attention = speech_attention(state);
             if !matches!(attention, SpeechAttention::Ignored) {
+                interrupt_relationship_beat(state, events);
                 // Hearing may redirect the creature's eyes without replacing its intention,
                 // destination, steering, or in-progress action.
                 state.creature.aquarium.gaze = GazeTarget::Player;
@@ -379,6 +442,23 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
             state.creature.social_habits.clamp();
             events.push(GameEvent::LanguageExposureRegistered(*exposure));
         }
+        PlayerEvent::UnderstoodUtterance(interpretation) => {
+            interrupt_relationship_beat(state, events);
+            let trigger = interpretation
+                .references
+                .iter()
+                .find_map(|reference| match reference {
+                    UtteranceReference::Toy(toy) => {
+                        Some(RelationshipTrigger::FamiliarToy { toy: *toy })
+                    }
+                    UtteranceReference::Food(food) => {
+                        Some(RelationshipTrigger::FamiliarFood { food: *food })
+                    }
+                    UtteranceReference::Creature | UtteranceReference::Player => None,
+                })
+                .unwrap_or(RelationshipTrigger::RelevantUtterance);
+            maybe_start_relationship_beat(state, trigger, events);
+        }
     }
 }
 
@@ -417,6 +497,222 @@ pub fn speech_attention(state: &WorldState) -> SpeechAttention {
         // An unoccupied creature attends instead of randomly dropping player language.
         SpeechAttention::Attended
     }
+}
+
+fn should_interrupt_for_player_event(event: &PlayerEvent) -> bool {
+    !matches!(
+        event,
+        PlayerEvent::SpeechStarted
+            | PlayerEvent::React(_)
+            | PlayerEvent::LanguageExposure(_)
+            | PlayerEvent::UnderstoodUtterance(_)
+    )
+}
+
+fn familiar_trigger_at_cursor(state: &WorldState) -> Option<RelationshipTrigger> {
+    let cursor = state.aquarium.cursor?;
+    state
+        .aquarium
+        .objects
+        .values()
+        .find_map(|object| match object {
+            WorldObject::Toy { toy, position }
+                if manhattan_distance(cursor, *position) <= ARRIVAL_DISTANCE * 2 =>
+            {
+                Some(RelationshipTrigger::FamiliarToy { toy: *toy })
+            }
+            WorldObject::Food(food)
+                if manhattan_distance(cursor, food.position) <= ARRIVAL_DISTANCE * 2 =>
+            {
+                Some(RelationshipTrigger::FamiliarFood { food: food.food })
+            }
+            _ => None,
+        })
+}
+
+fn maybe_start_relationship_beat(
+    state: &mut WorldState,
+    trigger: RelationshipTrigger,
+    events: &mut Vec<GameEvent>,
+) {
+    if state.creature.current_intention == Intention::Sleep
+        || state.creature.aquarium.action.is_some()
+        || state.creature.relationship_expression.active.is_some()
+    {
+        return;
+    }
+    let Some(beat) = crate::select_relationship_beat(state, trigger) else {
+        return;
+    };
+    let motif = beat.motif;
+    let expression = beat.expression_kind;
+    let evidence = beat.evidence.clone();
+    state.creature.relationship_expression.active = Some(beat.clone());
+    state.creature.relationship_expression.last_expressed_at_ms = Some(state.elapsed_ms);
+    if state
+        .creature
+        .relationship_expression
+        .count_active_day_index
+        != state.active_day()
+    {
+        state
+            .creature
+            .relationship_expression
+            .count_active_day_index = state.active_day();
+        state.creature.relationship_expression.count_active_day = 0;
+    }
+    state.creature.relationship_expression.count_active_day = state
+        .creature
+        .relationship_expression
+        .count_active_day
+        .saturating_add(1);
+    state
+        .creature
+        .relationship_expression
+        .recent
+        .push(crate::ExpressedMotif {
+            key: motif,
+            expressed_at_ms: state.elapsed_ms,
+            expression_kind: expression,
+        });
+    let excess = state
+        .creature
+        .relationship_expression
+        .recent
+        .len()
+        .saturating_sub(crate::relationship::MAX_RECENT_EXPRESSIONS);
+    if excess > 0 {
+        state
+            .creature
+            .relationship_expression
+            .recent
+            .drain(..excess);
+    }
+    apply_relationship_pose(state, &beat);
+    events.push(GameEvent::RelationshipBeatStarted {
+        motif,
+        expression,
+        trigger,
+        evidence,
+    });
+}
+
+fn apply_relationship_pose(state: &mut WorldState, beat: &crate::RelationshipBeat) {
+    match beat.motif {
+        crate::RelationshipMotifKey::SharedToy(toy) => {
+            state.creature.aquarium.gaze = GazeTarget::Toy(toy);
+            if beat.expression_kind != crate::RelationshipExpressionKind::Notice
+                && beat.phase != crate::RelationshipBeatPhase::Notice
+            {
+                state.creature.aquarium.destination = beat.target;
+                state.creature.aquarium.steering = SteeringMode::Approach;
+                state.creature.current_intention = Intention::Play;
+            }
+        }
+        crate::RelationshipMotifKey::ComfortRitual => {
+            state.creature.aquarium.gaze = GazeTarget::Player;
+            if beat.expression_kind != crate::RelationshipExpressionKind::Notice
+                && beat.phase != crate::RelationshipBeatPhase::Notice
+            {
+                state.creature.current_intention = Intention::SeekComfort;
+                state.creature.aquarium.destination = beat.target;
+                state.creature.aquarium.steering = SteeringMode::Approach;
+            }
+        }
+        crate::RelationshipMotifKey::TrustedFood(food) => {
+            if let Some(id) = state.aquarium.objects.iter().find_map(|(id, object)| {
+                matches!(object, WorldObject::Food(candidate) if candidate.food == food)
+                    .then_some(*id)
+            }) {
+                state.creature.aquarium.gaze = GazeTarget::Food(id);
+            }
+            state.creature.current_intention = Intention::WaitAtBowl;
+            if beat.phase != crate::RelationshipBeatPhase::Notice {
+                state.creature.aquarium.destination = beat.target;
+                state.creature.aquarium.steering = SteeringMode::Approach;
+            }
+        }
+        crate::RelationshipMotifKey::FoodGrudge(food) => {
+            if let Some(id) = state.aquarium.objects.iter().find_map(|(id, object)| {
+                matches!(object, WorldObject::Food(candidate) if candidate.food == food)
+                    .then_some(*id)
+            }) {
+                state.creature.aquarium.gaze = GazeTarget::Food(id);
+            }
+            if beat.expression_kind != crate::RelationshipExpressionKind::Notice
+                && beat.phase != crate::RelationshipBeatPhase::Notice
+            {
+                state.creature.current_intention = Intention::RejectFood;
+                state.creature.aquarium.destination = beat.target;
+                state.creature.aquarium.steering = SteeringMode::Approach;
+            }
+        }
+        crate::RelationshipMotifKey::PlayerReturns => {
+            state.creature.aquarium.gaze = GazeTarget::Player;
+            if beat.expression_kind != crate::RelationshipExpressionKind::Notice {
+                state.creature.current_intention = Intention::ApproachPlayer;
+                state.creature.aquarium.destination = beat.target;
+                state.creature.aquarium.steering = SteeringMode::Approach;
+            }
+        }
+        crate::RelationshipMotifKey::FamiliarPlace(destination) => {
+            state.creature.current_intention = Intention::Idle;
+            state.creature.aquarium.destination =
+                if beat.phase == crate::RelationshipBeatPhase::Notice {
+                    None
+                } else {
+                    Some(destination)
+                };
+            state.creature.aquarium.steering = SteeringMode::Approach;
+        }
+    }
+}
+
+fn interrupt_relationship_beat(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    let Some(beat) = state.creature.relationship_expression.active.take() else {
+        return;
+    };
+    if state.creature.aquarium.action.is_none() {
+        state.creature.aquarium.destination = None;
+        state.creature.aquarium.steering = SteeringMode::Hover;
+    }
+    events.push(GameEvent::RelationshipBeatInterrupted(beat.motif));
+}
+
+fn advance_relationship_beat(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    let Some(mut beat) = state.creature.relationship_expression.active.clone() else {
+        return;
+    };
+    let elapsed = state.elapsed_ms.saturating_sub(beat.phase_started_at_ms);
+    if elapsed < crate::relationship::phase_duration_ms(beat.phase) {
+        apply_relationship_pose(state, &beat);
+        return;
+    }
+    let old = beat.phase;
+    let next = match old {
+        crate::RelationshipBeatPhase::Notice => crate::RelationshipBeatPhase::Anticipate,
+        crate::RelationshipBeatPhase::Anticipate => crate::RelationshipBeatPhase::Act,
+        crate::RelationshipBeatPhase::Act => crate::RelationshipBeatPhase::Recover,
+        crate::RelationshipBeatPhase::Recover => {
+            state.creature.relationship_expression.active = None;
+            if state.creature.aquarium.action.is_none() {
+                state.creature.aquarium.destination = None;
+                state.creature.aquarium.steering = SteeringMode::Hover;
+                state.creature.current_intention = Intention::Idle;
+            }
+            events.push(GameEvent::RelationshipBeatCompleted(beat.motif));
+            return;
+        }
+    };
+    beat.phase = next;
+    beat.phase_started_at_ms = state.elapsed_ms;
+    apply_relationship_pose(state, &beat);
+    state.creature.relationship_expression.active = Some(beat.clone());
+    events.push(GameEvent::RelationshipBeatPhaseChanged {
+        motif: beat.motif,
+        from: Some(old),
+        to: next,
+    });
 }
 
 fn drop_food(
@@ -573,6 +869,13 @@ fn advance_aquarium(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         ActionPhase::Recover => {
             state.creature.aquarium.action = None;
             state.creature.aquarium.steering = SteeringMode::Hover;
+            maybe_start_relationship_beat(
+                state,
+                RelationshipTrigger::ActionCompleted {
+                    destination: timeline.destination,
+                },
+                events,
+            );
             return;
         }
     };
@@ -779,6 +1082,7 @@ fn drift_with_cause(state: &mut WorldState) {
 
 fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     if state.creature.aquarium.action.is_some()
+        || state.creature.relationship_expression.active.is_some()
         || matches!(state.creature.aquarium.steering, SteeringMode::Flee)
     {
         return;
@@ -805,30 +1109,50 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         .filter(|routine| routine.hour_start == hour)
         .max_by_key(|routine| routine.strength)
         .map(|routine| routine.destination);
+    if let Some(destination) = routine {
+        maybe_start_relationship_beat(
+            state,
+            RelationshipTrigger::RoutineWindow {
+                hour_start: hour,
+                destination,
+            },
+            events,
+        );
+        if state.creature.relationship_expression.active.is_some() {
+            return;
+        }
+    }
     let favorite = state.favorite_destination();
-    let destination = if state.creature.needs.energy < 0.2 {
-        Some(SemanticDestination::Cave)
+    let (destination, avoid_repeat) = if state.creature.needs.energy < 0.2 {
+        (Some(SemanticDestination::Cave), false)
     } else if state.creature.needs.hunger > 0.78 {
-        Some(SemanticDestination::Bottom)
+        (Some(SemanticDestination::Bottom), false)
     } else if let Some(routine) = routine {
-        Some(routine)
+        (Some(routine), false)
     } else if let Some(favorite) = favorite.filter(|_| {
         state.creature.current_intention == Intention::Idle
             && (state.elapsed_ms / SIMULATION_TICK_MS).is_multiple_of(8)
     }) {
-        Some(favorite)
+        (Some(favorite), true)
     } else if state.creature.needs.curiosity > 0.65 {
-        Some(if state.creature.traits.fussiness > 0.6 {
-            SemanticDestination::Plant
-        } else {
-            SemanticDestination::Toy(preferred_toy(state))
-        })
+        (
+            Some(if state.creature.traits.fussiness > 0.6 {
+                SemanticDestination::Plant
+            } else {
+                SemanticDestination::Toy(preferred_toy(state))
+            }),
+            true,
+        )
     } else {
-        Some(identity_shaped_idle_destination(state))
+        (Some(identity_shaped_idle_destination(state)), true)
     };
-    if let Some(destination) =
-        destination.map(|destination| avoid_immediate_repeat(state, destination))
-    {
+    if let Some(destination) = destination.map(|destination| {
+        if avoid_repeat {
+            avoid_immediate_repeat(state, destination)
+        } else {
+            destination
+        }
+    }) {
         state.creature.aquarium.destination = Some(destination);
         state.creature.aquarium.steering = SteeringMode::Approach;
         state.creature.aquarium.gaze = match destination {
@@ -974,9 +1298,9 @@ fn record_routine_visit(state: &mut WorldState, destination: SemanticDestination
     }
 }
 
-fn play_with_toy(state: &mut WorldState, toy: ToyId, events: &mut Vec<GameEvent>) {
+fn play_with_toy(state: &mut WorldState, toy: ToyId, events: &mut Vec<GameEvent>) -> bool {
     if destination_position(state, SemanticDestination::Toy(toy)).is_none() {
-        return;
+        return false;
     }
     let preference = *state
         .creature
@@ -995,6 +1319,7 @@ fn play_with_toy(state: &mut WorldState, toy: ToyId, events: &mut Vec<GameEvent>
         state.revise_belief(BeliefKind::ToyIsJealous, memory, true);
         events.push(GameEvent::ToyRejected(toy));
         events.push(GameEvent::NonverbalAct(NonverbalAct::TakeToyAway(toy)));
+        false
     } else {
         set_intention(state, Intention::Play, events);
         state.creature.needs.curiosity = (state.creature.needs.curiosity - 0.18).max(0.0);
@@ -1006,6 +1331,7 @@ fn play_with_toy(state: &mut WorldState, toy: ToyId, events: &mut Vec<GameEvent>
             0.6,
         );
         events.push(GameEvent::ToyPlayed(toy));
+        true
     }
 }
 

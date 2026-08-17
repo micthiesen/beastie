@@ -422,6 +422,34 @@
         "constraints": {"max_words": 8, "allowed_gestures": ["none", "look_player"]}
       },
       "expect": {"no_recalled_memory": true, "required_any_terms": ["fern", "plant", "watch"]}
+    },
+    {
+      "id": "relationship_return_motif",
+      "category": "relationship_grounding",
+      "request": {
+        "protocol_version": 1,
+        "request_id": 127,
+        "creature_name": "Mop",
+        "mood": "lonely",
+        "known_concepts": ["you", "here"],
+        "candidate_memories": [],
+        "context": {
+          "version": 1,
+          "recent_turns": [],
+          "repetition_count": 0,
+          "relationship": {
+            "motif": {"kind": "player_returns"},
+            "expression_kind": "welcome",
+            "recently_expressed": false,
+            "phase": "notice",
+            "evidence": [],
+            "target": "player"
+          }
+        },
+        "player_said": "",
+        "constraints": {"max_words": 8, "allowed_gestures": ["none", "look_player"]}
+      },
+      "expect": {"no_recalled_memory": true, "required_any_terms": ["back", "return", "came"]}
     }
   ]
 }

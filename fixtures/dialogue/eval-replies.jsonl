@@ -24,3 +24,4 @@
 {"case_id":"grudge_continuity","reply":{"protocol_version":1,"request_id":124,"say":"still remember. grudge remains.","gesture":"look_player","recalled_memory":null}}
 {"case_id":"ritual_continuity","reply":{"protocol_version":1,"request_id":125,"say":"again, as always. here.","gesture":"look_player","recalled_memory":null}}
 {"case_id":"aquarium_object_context","reply":{"protocol_version":1,"request_id":126,"say":"watch fern plant.","gesture":"look_player","recalled_memory":null}}
+{"case_id":"relationship_return_motif","reply":{"protocol_version":1,"request_id":127,"say":"you came back.","gesture":"look_player","recalled_memory":null}}

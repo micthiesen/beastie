@@ -10,7 +10,8 @@ use crate::{
 };
 
 const LEGACY_SAVE_VERSION: u32 = 1;
-const PREVIOUS_SAVE_VERSION: u32 = 2;
+const AQUARIUM_SAVE_VERSION: u32 = 2;
+const PREVIOUS_SAVE_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -40,8 +41,11 @@ impl SaveGame {
         if header.save_version == LEGACY_SAVE_VERSION {
             return LegacySaveGame::from_json(source);
         }
-        if header.save_version == PREVIOUS_SAVE_VERSION {
-            return PreviousSaveGame::from_json(source);
+        if matches!(
+            header.save_version,
+            AQUARIUM_SAVE_VERSION | PREVIOUS_SAVE_VERSION
+        ) {
+            return PreviousSaveGame::from_json(source, header.save_version);
         }
         if header.save_version != SAVE_VERSION {
             return Err(SaveError::Version(header.save_version));
@@ -81,12 +85,13 @@ struct PreviousSaveGame {
 }
 
 impl PreviousSaveGame {
-    fn from_json(source: &str) -> Result<SaveGame, SaveError> {
+    fn from_json(source: &str, source_version: u32) -> Result<SaveGame, SaveError> {
         let mut value =
             serde_json::from_str::<serde_json::Value>(source).map_err(SaveError::Json)?;
-        if let Some(world) = value
-            .get_mut("world")
-            .and_then(serde_json::Value::as_object_mut)
+        if source_version == AQUARIUM_SAVE_VERSION
+            && let Some(world) = value
+                .get_mut("world")
+                .and_then(serde_json::Value::as_object_mut)
         {
             world.remove("room");
             if let Some(aquarium) = world
@@ -111,8 +116,7 @@ impl PreviousSaveGame {
             }
         }
         let mut previous = serde_json::from_value::<Self>(value).map_err(SaveError::Json)?;
-        if previous.save_version != PREVIOUS_SAVE_VERSION
-            || previous.world.save_version != PREVIOUS_SAVE_VERSION
+        if previous.save_version != source_version || previous.world.save_version != source_version
         {
             return Err(SaveError::Version(previous.save_version));
         }
@@ -228,6 +232,7 @@ impl LegacyCreature {
             aquarium: crate::AquariumCreatureState::default(),
             idle_life: IdleLifeState::default(),
             interaction_state: InteractionState::default(),
+            relationship_expression: crate::RelationshipExpressionState::default(),
             routines: Vec::new(),
             favorite_locations: BTreeMap::new(),
             initiated_behavior: None,

@@ -5,8 +5,9 @@
 
 use beastie_core::{
     ActionPhase, FoodDisposition, FoodDropRejectionReason, FoodId, GameEvent, GazeTarget,
-    Intention, Mood, NonverbalAct, NormalizedPosition, Reaction, SpeechAttention, SteeringMode,
-    ToyId, WorldObject, WorldState,
+    Intention, Mood, NonverbalAct, NormalizedPosition, Reaction, RelationshipBeatPhase,
+    RelationshipExpressionKind, RelationshipMotifKey, SemanticDestination, SpeechAttention,
+    SteeringMode, ToyId, WorldObject, WorldState,
 };
 use serde::{Deserialize, Serialize};
 
@@ -358,6 +359,12 @@ impl ViewState {
     pub fn observe_events(&mut self, events: &[GameEvent], now_ms: u64) {
         self.expire(now_ms);
         for event in events {
+            if matches!(event, GameEvent::RelationshipBeatInterrupted(_)) {
+                // A relationship beat is presentation-only. It must not outlive an
+                // authoritative interruption or mask the next simulation event.
+                self.cue_queue.clear();
+                continue;
+            }
             let cue = cue_for_event(event);
             if let Some((kind, duration_ms)) = cue {
                 self.enqueue_cue(kind, duration_ms, now_ms);
@@ -401,6 +408,7 @@ impl ViewState {
             kind,
             PresentationCueKind::Affection
                 | PresentationCueKind::Comfort
+                | PresentationCueKind::Delight
                 | PresentationCueKind::Suspicion
                 | PresentationCueKind::Spit
                 | PresentationCueKind::AquariumFull
@@ -590,6 +598,8 @@ pub enum AudioCue {
     Annoyed,
     Sleep,
     UiReject,
+    /// Recovery sound for a creature completing a retreat into the authored cave asset.
+    CaveSettle,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -641,6 +651,12 @@ pub fn audio_plan_for_events(events: &[GameEvent]) -> AudioPlan {
                 Some(AudioCue::Annoyed)
             }
             GameEvent::NonverbalAct(NonverbalAct::UndoTidy) => Some(AudioCue::Sand),
+            GameEvent::RelationshipBeatStarted {
+                motif, expression, ..
+            } => Some(relationship_audio_cue(*motif, *expression)),
+            GameEvent::RelationshipBeatCompleted(RelationshipMotifKey::FamiliarPlace(
+                SemanticDestination::Cave,
+            )) => Some(AudioCue::CaveSettle),
             _ => None,
         };
         if let Some(cue) = cue
@@ -652,6 +668,29 @@ pub fn audio_plan_for_events(events: &[GameEvent]) -> AudioPlan {
     AudioPlan {
         ambience: Vec::new(),
         events: cues,
+    }
+}
+
+fn relationship_audio_cue(
+    motif: RelationshipMotifKey,
+    expression: RelationshipExpressionKind,
+) -> AudioCue {
+    match (motif, expression) {
+        // Recognition/anticipation is not a toy collision. The authored impact sound is reserved
+        // for the authoritative ToyPlayed event.
+        (RelationshipMotifKey::SharedToy(_), _) => AudioCue::Curious,
+        (RelationshipMotifKey::ComfortRitual, RelationshipExpressionKind::Notice)
+        | (RelationshipMotifKey::PlayerReturns, RelationshipExpressionKind::Notice)
+        | (RelationshipMotifKey::PlayerReturns, RelationshipExpressionKind::Anticipate)
+        | (RelationshipMotifKey::FoodGrudge(_), RelationshipExpressionKind::Notice) => {
+            AudioCue::Curious
+        }
+        (RelationshipMotifKey::ComfortRitual, _) | (RelationshipMotifKey::PlayerReturns, _) => {
+            AudioCue::Affection
+        }
+        (RelationshipMotifKey::TrustedFood(_), _) => AudioCue::Curious,
+        (RelationshipMotifKey::FoodGrudge(_), _) => AudioCue::FoodReject,
+        (RelationshipMotifKey::FamiliarPlace(_), _) => AudioCue::Curious,
     }
 }
 
@@ -2581,7 +2620,69 @@ fn cue_for_event(event: &GameEvent) -> Option<(PresentationCueKind, u64)> {
             Some((PresentationCueKind::Notice, 900))
         }
         GameEvent::TalkAccepted { .. } => Some((PresentationCueKind::Notice, 700)),
+        GameEvent::RelationshipBeatStarted {
+            motif, expression, ..
+        } => Some((relationship_cue(*motif, *expression), 1_400)),
+        GameEvent::RelationshipBeatPhaseChanged { motif, to, .. } => Some((
+            relationship_phase_cue(*motif, *to),
+            relationship_phase_duration(*to),
+        )),
         _ => None,
+    }
+}
+
+fn relationship_cue(
+    motif: RelationshipMotifKey,
+    expression: RelationshipExpressionKind,
+) -> PresentationCueKind {
+    match motif {
+        RelationshipMotifKey::SharedToy(_) => match expression {
+            RelationshipExpressionKind::Notice | RelationshipExpressionKind::Anticipate => {
+                PresentationCueKind::Notice
+            }
+            RelationshipExpressionKind::Seek
+            | RelationshipExpressionKind::Ritual
+            | RelationshipExpressionKind::Recognize
+            | RelationshipExpressionKind::Welcome => PresentationCueKind::Delight,
+        },
+        RelationshipMotifKey::ComfortRitual if expression == RelationshipExpressionKind::Notice => {
+            PresentationCueKind::Notice
+        }
+        RelationshipMotifKey::ComfortRitual => PresentationCueKind::Comfort,
+        RelationshipMotifKey::TrustedFood(_) => PresentationCueKind::Notice,
+        RelationshipMotifKey::FoodGrudge(_) if expression == RelationshipExpressionKind::Notice => {
+            PresentationCueKind::Notice
+        }
+        RelationshipMotifKey::FoodGrudge(_) => PresentationCueKind::Spit,
+        RelationshipMotifKey::PlayerReturns
+            if expression != RelationshipExpressionKind::Welcome =>
+        {
+            PresentationCueKind::Notice
+        }
+        RelationshipMotifKey::PlayerReturns => PresentationCueKind::Affection,
+        RelationshipMotifKey::FamiliarPlace(_) => PresentationCueKind::Notice,
+    }
+}
+
+fn relationship_phase_cue(
+    motif: RelationshipMotifKey,
+    phase: RelationshipBeatPhase,
+) -> PresentationCueKind {
+    match phase {
+        RelationshipBeatPhase::Notice | RelationshipBeatPhase::Anticipate => {
+            relationship_cue(motif, RelationshipExpressionKind::Notice)
+        }
+        RelationshipBeatPhase::Act => relationship_cue(motif, RelationshipExpressionKind::Ritual),
+        RelationshipBeatPhase::Recover => PresentationCueKind::Wake,
+    }
+}
+
+const fn relationship_phase_duration(phase: RelationshipBeatPhase) -> u64 {
+    match phase {
+        RelationshipBeatPhase::Notice => 700,
+        RelationshipBeatPhase::Anticipate => 900,
+        RelationshipBeatPhase::Act => 1_200,
+        RelationshipBeatPhase::Recover => 700,
     }
 }
 
@@ -3285,7 +3386,8 @@ mod tests {
 
     use super::*;
     use beastie_core::{
-        ActionTimeline, FoodBuoyancy, FoodObject, NormalizedVelocity, SemanticDestination,
+        ActionTimeline, FoodBuoyancy, FoodObject, NormalizedVelocity, RelationshipTrigger,
+        SemanticDestination,
     };
 
     #[test]
@@ -4249,6 +4351,113 @@ mod tests {
                 .iter()
                 .any(|text| { text.id == "status/message" && text.text.contains("Aquarium full") })
         );
+    }
+
+    #[test]
+    fn every_relationship_motif_projects_to_an_authored_body_cue() {
+        let cases = [
+            (
+                RelationshipMotifKey::SharedToy(ToyId::Ball),
+                RelationshipExpressionKind::Ritual,
+                PresentationCueKind::Delight,
+            ),
+            (
+                RelationshipMotifKey::ComfortRitual,
+                RelationshipExpressionKind::Seek,
+                PresentationCueKind::Comfort,
+            ),
+            (
+                RelationshipMotifKey::TrustedFood(FoodId::Berry),
+                RelationshipExpressionKind::Anticipate,
+                PresentationCueKind::Notice,
+            ),
+            (
+                RelationshipMotifKey::FoodGrudge(FoodId::Berry),
+                RelationshipExpressionKind::Notice,
+                PresentationCueKind::Notice,
+            ),
+            (
+                RelationshipMotifKey::PlayerReturns,
+                RelationshipExpressionKind::Welcome,
+                PresentationCueKind::Affection,
+            ),
+            (
+                RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
+                RelationshipExpressionKind::Recognize,
+                PresentationCueKind::Notice,
+            ),
+        ];
+        for (motif, expression, expected) in cases {
+            let mut view = ViewState::default();
+            view.observe_events(
+                &[GameEvent::RelationshipBeatStarted {
+                    motif,
+                    expression,
+                    trigger: RelationshipTrigger::RelevantUtterance,
+                    evidence: Vec::new(),
+                }],
+                1_000,
+            );
+            assert_eq!(view.active_cue(1_000), Some(expected), "{motif:?}");
+        }
+    }
+
+    #[test]
+    fn relationship_interrupt_preempts_stale_presentation_and_cave_settle_is_semantic() {
+        let mut view = ViewState::default();
+        view.observe_events(
+            &[GameEvent::RelationshipBeatStarted {
+                motif: RelationshipMotifKey::PlayerReturns,
+                expression: RelationshipExpressionKind::Welcome,
+                trigger: RelationshipTrigger::PlayerReturn,
+                evidence: Vec::new(),
+            }],
+            0,
+        );
+        view.observe_events(
+            &[GameEvent::RelationshipBeatInterrupted(
+                RelationshipMotifKey::PlayerReturns,
+            )],
+            100,
+        );
+        assert_eq!(view.active_cue(100), None);
+        assert_eq!(
+            audio_plan_for_events(&[GameEvent::RelationshipBeatCompleted(
+                RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
+            )])
+            .events,
+            vec![AudioCue::CaveSettle]
+        );
+        assert_eq!(
+            audio_plan_for_events(&[GameEvent::RelationshipBeatStarted {
+                motif: RelationshipMotifKey::SharedToy(ToyId::Ball),
+                expression: RelationshipExpressionKind::Anticipate,
+                trigger: RelationshipTrigger::FamiliarToy { toy: ToyId::Ball },
+                evidence: Vec::new(),
+            }])
+            .events,
+            vec![AudioCue::Curious]
+        );
+        let motifs = [
+            RelationshipMotifKey::SharedToy(ToyId::Ball),
+            RelationshipMotifKey::ComfortRitual,
+            RelationshipMotifKey::TrustedFood(FoodId::Berry),
+            RelationshipMotifKey::FoodGrudge(FoodId::Berry),
+            RelationshipMotifKey::PlayerReturns,
+            RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
+        ];
+        for motif in motifs {
+            assert!(
+                !audio_plan_for_events(&[GameEvent::RelationshipBeatStarted {
+                    motif,
+                    expression: RelationshipExpressionKind::Notice,
+                    trigger: RelationshipTrigger::RelevantUtterance,
+                    evidence: Vec::new(),
+                }])
+                .events
+                .is_empty()
+            );
+        }
     }
 
     #[test]

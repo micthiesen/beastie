@@ -13,6 +13,10 @@ pub use beastie_core::{
     BeliefId, BeliefKind, Concept, Idiolect, IdiolectQuirk, UtteranceInterpretation,
     UtteranceReference,
 };
+pub use beastie_core::{
+    RelationshipBeatPhase, RelationshipEvidence, RelationshipExpressionKind, RelationshipMotif,
+    RelationshipMotifKey,
+};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_DIALOGUE_REPLY_BYTES: usize = 512;
@@ -21,10 +25,13 @@ pub const STT_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_RECOGNITION_TEXT_BYTES: usize = 512;
 pub const MAX_TTS_TEXT_BYTES: usize = 2_048;
 pub const MAX_CANDIDATE_BELIEFS: usize = 4;
+pub const MAX_CANDIDATE_MEMORIES: usize = 8;
 pub const MAX_BELIEF_SUPPORTS: usize = 8;
 pub const DIALOGUE_CONTEXT_VERSION: u32 = 1;
 pub const MAX_RECENT_TURNS: usize = 6;
 pub const MAX_RECENT_FACT_IDS: usize = 4;
+pub const MAX_RELATIONSHIP_EVIDENCE: usize = 4;
+pub const MAX_REPLY_PROHIBITIONS: usize = 2;
 pub const MAX_AQUARIUM_OBJECTS: usize = 8;
 pub const MAX_AQUARIUM_LABEL_CHARS: usize = 48;
 pub const TRANSCRIPT_VERSION: u32 = 1;
@@ -246,6 +253,7 @@ pub enum FallbackLane {
     Hungry,
     Social,
     Silence,
+    Relationship,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -292,6 +300,30 @@ pub struct RecentTurn {
     pub selected_fact_ids: Vec<u64>,
     #[serde(default)]
     pub fallback_lane: Option<FallbackLane>,
+    #[serde(default)]
+    pub motif: Option<RelationshipMotifKey>,
+    #[serde(default)]
+    pub expression_kind: Option<RelationshipExpressionKind>,
+    #[serde(default)]
+    pub expressed_at_ms: Option<u64>,
+    /// Normalized semantic output fingerprint. This is never player text.
+    #[serde(default)]
+    pub reply_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelationshipDialogueContext {
+    pub motif: RelationshipMotifKey,
+    pub expression_kind: RelationshipExpressionKind,
+    #[serde(default)]
+    pub recently_expressed: bool,
+    #[serde(default)]
+    pub phase: Option<RelationshipBeatPhase>,
+    #[serde(default)]
+    pub evidence: Vec<RelationshipEvidence>,
+    #[serde(default)]
+    pub target: Option<beastie_core::SemanticDestination>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -305,6 +337,13 @@ pub struct DialogueContext {
     pub repetition_count: u8,
     #[serde(default)]
     pub aquarium: Option<AquariumContext>,
+    #[serde(default)]
+    pub relationship: Option<RelationshipDialogueContext>,
+    #[serde(default)]
+    pub avoid_reply_fingerprints: Vec<String>,
+    /// Transient manager-only prohibition. Session history stores only the one-way fingerprint.
+    #[serde(default)]
+    pub avoid_reply_texts: Vec<String>,
 }
 
 /// Simulation-bounded meaning extracted from player words before they reach expression.
@@ -358,6 +397,9 @@ impl Default for DialogueContext {
             recent_turns: Vec::new(),
             repetition_count: 0,
             aquarium: None,
+            relationship: None,
+            avoid_reply_fingerprints: Vec::new(),
+            avoid_reply_texts: Vec::new(),
         }
     }
 }
@@ -500,6 +542,15 @@ pub enum ContentBoundaryViolation {
     CredibleRealWorldViolence,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DialogueFallbackReason {
+    WorkerUnavailable,
+    GenerationFailed,
+    DuplicateAfterRetry,
+    ValidationFailed,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DialogueConstraints {
@@ -548,6 +599,10 @@ pub struct DialogueReply {
     pub recalled_memory: Option<MemoryId>,
     #[serde(default)]
     pub recalled_belief: Option<BeliefId>,
+    /// Trusted only when set by the worker after it rejects a backend result. Model output is
+    /// cleared before validation and cannot establish this metadata.
+    #[serde(default)]
+    pub worker_fallback: Option<DialogueFallbackReason>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -569,6 +624,10 @@ pub struct TranscriptRequest {
     pub topic: Option<DialogueTopic>,
     pub recent_turn_count: u8,
     pub selected_fact_ids: Vec<u64>,
+    #[serde(default)]
+    pub motif: Option<RelationshipMotifKey>,
+    #[serde(default)]
+    pub expression_kind: Option<RelationshipExpressionKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -601,6 +660,12 @@ pub struct TranscriptRecord {
     pub backend: TranscriptBackend,
     pub latency_ms: u32,
     pub fallback: bool,
+    #[serde(default)]
+    pub retry_count: u8,
+    #[serde(default)]
+    pub duplicate_suppressed: bool,
+    #[serde(default)]
+    pub fallback_reason: Option<DialogueFallbackReason>,
     pub safety: TranscriptSafety,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub voice: Option<TtsVoiceSettings>,
@@ -657,12 +722,25 @@ impl TranscriptRecord {
                 topic,
                 recent_turn_count: request.context.recent_turns.len() as u8,
                 selected_fact_ids: selected_fact_ids.clone(),
+                motif: request
+                    .context
+                    .relationship
+                    .as_ref()
+                    .map(|relationship| relationship.motif),
+                expression_kind: request
+                    .context
+                    .relationship
+                    .as_ref()
+                    .map(|relationship| relationship.expression_kind),
             },
             sanitized_reply,
             selected_fact_ids,
             backend,
             latency_ms,
             fallback,
+            retry_count: 0,
+            duplicate_suppressed: false,
+            fallback_reason: None,
             safety: TranscriptSafety {
                 input_rejection: request.input_rejection,
                 output_rejected,
@@ -670,6 +748,17 @@ impl TranscriptRecord {
             },
             voice,
         }
+    }
+
+    pub fn apply_dialogue_metadata(
+        &mut self,
+        retry_count: u8,
+        duplicate_suppressed: bool,
+        fallback_reason: Option<DialogueFallbackReason>,
+    ) {
+        self.retry_count = retry_count.min(1);
+        self.duplicate_suppressed = duplicate_suppressed;
+        self.fallback_reason = fallback_reason;
     }
 }
 
@@ -830,6 +919,8 @@ pub enum ValidationError {
     Belief,
     #[error("recalled belief is not expressed by the reply")]
     UngroundedBelief,
+    #[error("relationship reply is not grounded in the selected motif")]
+    UngroundedRelationship,
     #[error("text crosses the content boundary: {0:?}")]
     ContentBoundary(ContentBoundaryViolation),
     #[error("dialogue context version {0} is unsupported")]
@@ -842,6 +933,10 @@ pub enum ValidationError {
     ContextShape,
     #[error("dialogue interpretation exceeds its bounded shape")]
     InterpretationShape,
+    #[error("relationship dialogue context is malformed or ungrounded")]
+    RelationshipShape,
+    #[error("reply prohibition exceeds its bounded shape")]
+    ReplyProhibition,
 }
 
 pub fn validate_request(request: &DialogueRequest) -> Result<(), ValidationError> {
@@ -866,7 +961,7 @@ pub fn validate_request(request: &DialogueRequest) -> Result<(), ValidationError
         return Err(ValidationError::InterpretationShape);
     }
     validate_dialogue_context(request)?;
-    if request.candidate_memories.len() > 8 {
+    if request.candidate_memories.len() > MAX_CANDIDATE_MEMORIES {
         return Err(ValidationError::CandidateCount);
     }
     if request
@@ -943,9 +1038,61 @@ fn validate_dialogue_context(request: &DialogueRequest) -> Result<(), Validation
         if turn.turn_id == 0
             || turn.selected_fact_ids.len() > MAX_RECENT_FACT_IDS
             || turn.selected_fact_ids.contains(&0)
+            || turn
+                .reply_fingerprint
+                .as_deref()
+                .is_some_and(|fingerprint| !is_reply_fingerprint(fingerprint))
         {
             return Err(ValidationError::ContextShape);
         }
+    }
+    if context.avoid_reply_fingerprints.len() > MAX_REPLY_PROHIBITIONS
+        || context.avoid_reply_texts.len() > MAX_REPLY_PROHIBITIONS
+        || context
+            .avoid_reply_fingerprints
+            .iter()
+            .any(|fingerprint| !is_reply_fingerprint(fingerprint))
+        || context.avoid_reply_texts.iter().any(|text| {
+            text.trim().is_empty()
+                || text.chars().count() > MAX_DIALOGUE_REPLY_BYTES
+                || text.chars().any(char::is_control)
+        })
+    {
+        return Err(ValidationError::ReplyProhibition);
+    }
+    if let Some(relationship) = &context.relationship
+        && (relationship.evidence.len() > MAX_RELATIONSHIP_EVIDENCE
+            || relationship
+                .evidence
+                .iter()
+                .enumerate()
+                .any(|(index, evidence)| relationship.evidence[index + 1..].contains(evidence))
+            || relationship.evidence.iter().any(|evidence| match evidence {
+                RelationshipEvidence::Memory { id } => {
+                    id.0 == 0 || !request.candidate_memories.iter().any(|m| m.id == *id)
+                }
+                RelationshipEvidence::Belief { id, kind } => !request
+                    .candidate_beliefs
+                    .iter()
+                    .any(|candidate| candidate.id == *id && candidate.proposition == *kind),
+                RelationshipEvidence::Visit {
+                    hour_start,
+                    destination,
+                    ..
+                } => {
+                    *hour_start > 23
+                        || !matches!(
+                            destination,
+                            beastie_core::SemanticDestination::Cave
+                                | beastie_core::SemanticDestination::Plant
+                                | beastie_core::SemanticDestination::Bottom
+                                | beastie_core::SemanticDestination::Toy(_)
+                        )
+                }
+            })
+            || !relationship_target_is_canonical(relationship))
+    {
+        return Err(ValidationError::RelationshipShape);
     }
     if let Some(aquarium) = &context.aquarium {
         if aquarium.nearby_objects.len() > MAX_AQUARIUM_OBJECTS {
@@ -974,6 +1121,27 @@ fn validate_dialogue_context(request: &DialogueRequest) -> Result<(), Validation
         }
     }
     Ok(())
+}
+
+fn relationship_target_is_canonical(context: &RelationshipDialogueContext) -> bool {
+    let expected = match context.motif {
+        RelationshipMotifKey::SharedToy(toy) => Some(beastie_core::SemanticDestination::Toy(toy)),
+        RelationshipMotifKey::ComfortRitual | RelationshipMotifKey::PlayerReturns => {
+            Some(beastie_core::SemanticDestination::Player)
+        }
+        RelationshipMotifKey::TrustedFood(_) | RelationshipMotifKey::FoodGrudge(_) => {
+            Some(beastie_core::SemanticDestination::Bottom)
+        }
+        RelationshipMotifKey::FamiliarPlace(destination) => Some(destination),
+    };
+    context.target == expected
+        && context.evidence.iter().all(|evidence| {
+            !matches!(
+                evidence,
+                RelationshipEvidence::Visit { destination, .. }
+                    if Some(*destination) != context.target
+            )
+        })
 }
 
 pub struct DialogueRequestContext<'a> {
@@ -1254,10 +1422,37 @@ pub fn validate_reply(
             return Err(ValidationError::UngroundedBelief);
         }
     }
+    if let Some(relationship) = &request.context.relationship {
+        if reply.recalled_memory.is_some_and(|id| {
+            !relationship.evidence.iter().any(|evidence| {
+                matches!(evidence, RelationshipEvidence::Memory { id: evidence_id } if *evidence_id == id)
+            })
+        }) {
+            return Err(ValidationError::Memory);
+        }
+        if !relationship_reply_grounded(relationship.motif, &reply.say) {
+            return Err(ValidationError::UngroundedRelationship);
+        }
+    }
     if let Some(violation) = classify_content_boundary(&reply.say) {
         return Err(ValidationError::ContentBoundary(violation));
     }
     Ok(reply)
+}
+
+fn relationship_reply_grounded(motif: RelationshipMotifKey, say: &str) -> bool {
+    let words = normalized_words(say);
+    let terms: &[&str] = match motif {
+        RelationshipMotifKey::SharedToy(_) => &["toy", "play", "remember"],
+        RelationshipMotifKey::ComfortRitual => &["comfort", "safe", "ritual"],
+        RelationshipMotifKey::TrustedFood(_) => &["food", "good", "trusted"],
+        RelationshipMotifKey::FoodGrudge(_) => &["food", "bad", "grudge"],
+        RelationshipMotifKey::PlayerReturns => &["back", "return", "came"],
+        RelationshipMotifKey::FamiliarPlace(_) => &["place", "stay", "familiar"],
+    };
+    terms
+        .iter()
+        .any(|term| words.iter().any(|word| word == term))
 }
 
 /// Removes prohibited player text before any prompt is serialized, retaining only its category.
@@ -1477,6 +1672,24 @@ fn normalized_words(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Produces the bounded, one-way identifier persisted for a generated line. The manager may
+/// carry the normalized line transiently for a retry, but saves only this digest.
+#[must_use]
+pub fn reply_fingerprint(text: &str) -> String {
+    let normalized = normalized_words(text).join(" ");
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in normalized.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+#[must_use]
+pub fn is_reply_fingerprint(value: &str) -> bool {
+    value.len() == 16 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 fn belief_is_grounded(proposition: BeliefKind, say: &str) -> bool {
     let words = normalized_words(say);
     match proposition {
@@ -1511,6 +1724,7 @@ pub fn constrained_fallback_reply(request: &DialogueRequest) -> DialogueReply {
             .unwrap_or(Gesture::None),
         recalled_memory: None,
         recalled_belief: None,
+        worker_fallback: None,
     }
 }
 
@@ -1519,6 +1733,16 @@ pub fn constrained_fallback_reply(request: &DialogueRequest) -> DialogueReply {
 /// across machines and naturally rotates through mood, action, and social lanes.
 #[must_use]
 pub fn authored_fallback_phrase(request: &DialogueRequest) -> &'static str {
+    if let Some(relationship) = &request.context.relationship {
+        return match relationship.motif {
+            RelationshipMotifKey::SharedToy(_) => "toy remembers us.",
+            RelationshipMotifKey::ComfortRitual => "comfort ritual remains.",
+            RelationshipMotifKey::TrustedFood(_) => "trusted food. good.",
+            RelationshipMotifKey::FoodGrudge(_) => "that food still wrong.",
+            RelationshipMotifKey::PlayerReturns => "you came back again.",
+            RelationshipMotifKey::FamiliarPlace(_) => "familiar place. stay.",
+        };
+    }
     if request.context.recent_turns.is_empty()
         && request.context.repetition_count == 0
         && request.context.aquarium.is_none()
@@ -1576,6 +1800,7 @@ pub fn authored_fallback_phrase(request: &DialogueRequest) -> &'static str {
         FallbackLane::Social => SOCIAL,
         FallbackLane::Silence => SILENCE,
         FallbackLane::Generic => GENERIC,
+        FallbackLane::Relationship => GENERIC,
     };
     pool[usize::from(request.context.repetition_count) % pool.len()]
 }
@@ -1589,6 +1814,7 @@ pub fn fallback_reply(request_id: u64) -> DialogueReply {
         gesture: Gesture::None,
         recalled_memory: None,
         recalled_belief: None,
+        worker_fallback: None,
     }
 }
 
@@ -1762,6 +1988,7 @@ mod tests {
             gesture: Gesture::LookPlayer,
             recalled_memory: Some(MemoryId(41)),
             recalled_belief: None,
+            worker_fallback: None,
         };
         assert_eq!(validate_reply(&request(), reply.clone()), Ok(reply));
     }
@@ -1775,6 +2002,7 @@ mod tests {
             gesture: Gesture::None,
             recalled_memory: Some(MemoryId(999)),
             recalled_belief: None,
+            worker_fallback: None,
         };
         assert_eq!(
             validate_reply(&request(), reply),
@@ -1791,6 +2019,7 @@ mod tests {
             gesture: Gesture::None,
             recalled_memory: None,
             recalled_belief: None,
+            worker_fallback: None,
         };
         assert_eq!(
             validate_reply(&request(), reply.clone()),
@@ -1825,6 +2054,7 @@ mod tests {
             gesture: Gesture::None,
             recalled_memory: None,
             recalled_belief: None,
+            worker_fallback: None,
         };
         assert_eq!(validate_reply(&request(), reply.clone()), Ok(reply));
     }
@@ -1877,6 +2107,7 @@ mod tests {
                 gesture: Gesture::None,
                 recalled_memory: None,
                 recalled_belief: None,
+                worker_fallback: None,
             };
             assert_eq!(
                 validate_reply(&request, reply),
@@ -1929,6 +2160,7 @@ mod tests {
             gesture: Gesture::None,
             recalled_memory: None,
             recalled_belief: Some(BeliefId(7)),
+            worker_fallback: None,
         };
         assert_eq!(
             validate_reply(&request, grounded.clone()),
@@ -2083,6 +2315,7 @@ mod tests {
             gesture: Gesture::LookPlayer,
             recalled_memory: Some(recalled_memory),
             recalled_belief: None,
+            worker_fallback: None,
         };
         validate_reply(&request, reply).expect("offered memory should validate");
     }
@@ -2171,6 +2404,10 @@ mod tests {
                 selected_belief: None,
                 selected_fact_ids: Vec::new(),
                 fallback_lane: None,
+                motif: None,
+                expression_kind: None,
+                expressed_at_ms: None,
+                reply_fingerprint: None,
             })
             .collect();
         assert_eq!(
@@ -2217,6 +2454,10 @@ mod tests {
             selected_belief: None,
             selected_fact_ids: Vec::new(),
             fallback_lane: Some(FallbackLane::Resentful),
+            motif: None,
+            expression_kind: None,
+            expressed_at_ms: None,
+            reply_fingerprint: None,
         }];
         let second = DialogueRequest {
             context: DialogueContext {
@@ -2233,6 +2474,14 @@ mod tests {
             validate_reply(&request, constrained_fallback_reply(&request))
                 .expect("authored fallback remains bounded");
         }
+    }
+
+    #[test]
+    fn reply_fingerprint_normalizes_case_punctuation_and_whitespace() {
+        let first = reply_fingerprint("Toy remembers us!");
+        assert_eq!(first, reply_fingerprint("  toy   REMEMBERS us  "));
+        assert!(is_reply_fingerprint(&first));
+        assert!(!is_reply_fingerprint("toy remembers us"));
     }
 
     #[test]
@@ -2264,6 +2513,7 @@ mod tests {
             gesture: Gesture::None,
             recalled_memory: None,
             recalled_belief: None,
+            worker_fallback: None,
         };
         let record = TranscriptRecord::from_turn(
             123,

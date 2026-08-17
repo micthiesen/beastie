@@ -2,7 +2,7 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-16** (second feel pass complete; Windows validation parked).
+Last updated: **2026-08-16** (relationship expression implemented; Windows validation parked).
 
 ## Now
 
@@ -49,6 +49,17 @@ Last updated: **2026-08-16** (second feel pass complete; Windows validation park
   aquarium edges. The new evidence also isolates the next feel problem: relationship state grows,
   but ordinary arrivals and dialogue barely express shared history. See
   [feel-review-second-pass.md](feel-review-second-pass.md).
+- Relationship history is now expressed through one simulation-owned director rather than inferred
+  independently by UI, audio, or dialogue. Six grounded motif families select sparse,
+  interruptible notice/anticipate/act/recover beats from memories, beliefs, genuine visits,
+  routines, and preferences. Cross-day evidence unlocks qualitative anticipation, comfort seeking,
+  familiar-place recognition, food trust or grudges, shared-toy rituals, and return callbacks; one
+  encounter remains a restrained notice. A migrated bounded ledger prevents repetition and
+  survives exact save/reload. Dialogue receives the selected motif and evidence, retains only
+  semantic history, retries one exact duplicate, and otherwise uses a grounded authored fallback.
+  Native AI-on and AI-off evidence proves embodied callbacks, direct interruption, cross-day
+  variety, and no-speech operation. See
+  [relationship-expression-design.md](relationship-expression-design.md).
 - The selected local mouth is Qwen3.5 0.8B Q4 behind one authenticated loopback llama.cpp sidecar.
   The expanded V1 corpus passed 26/26 with no fallback, permitted refusal, or prohibited escape;
   the portable CPU corpus remains 18/18. Exact model evidence and limitations are in
@@ -134,13 +145,12 @@ Last updated: **2026-08-16** (second feel pass complete; Windows validation park
 
 ## Next
 
-Make accumulated relationship history perceptible during ordinary play. Use bounded familiar
-routines, remembered-object responses, or compact callbacks at arrivals, and suppress accidental
-consecutive dialogue duplicates. Preserve the creature-first reading: no relationship meters,
-progress dashboards, or model-authored facts. Prove the result with the same-seed
-`relationship-over-time` experience and a final inspect hold long enough to review. See
+Run the next targeted feel-tuning pass against trusted food, food grudges, and familiar places at
+native scale. Judge whether each reads from body, gaze, movement, timing, cue, and sound without
+needing trace labels; prefer tuning existing authored vocabulary before commissioning bespoke art.
+Keep the normal debug build and `cargo xtask verify` as the iteration loop. See
 [relationship-expression-design.md](relationship-expression-design.md) and
-[feel-review-second-pass.md](feel-review-second-pass.md).
+[feel-review-loop.md](feel-review-loop.md).
 
 ## Candidates Not Chosen
 

@@ -299,6 +299,7 @@ mod tests {
                 gesture: beastie_protocol::Gesture::None,
                 recalled_memory: None,
                 recalled_belief: None,
+                worker_fallback: None,
             };
             assert!(validate_model_safety(&request, &reply).is_err(), "{say}");
         }
@@ -316,6 +317,7 @@ mod tests {
                 gesture: beastie_protocol::Gesture::None,
                 recalled_memory: None,
                 recalled_belief: None,
+                worker_fallback: None,
             };
             assert!(validate_model_safety(&request, &reply).is_ok(), "{say}");
         }
@@ -335,6 +337,7 @@ mod tests {
             gesture: beastie_protocol::Gesture::None,
             recalled_memory: None,
             recalled_belief: None,
+            worker_fallback: None,
         };
         assert!(validate_model_semantics(&request, &reply).is_err());
         reply.say = "nest is warm. come closer.".to_owned();
@@ -353,6 +356,7 @@ mod tests {
             gesture: beastie_protocol::Gesture::None,
             recalled_memory: Some(memory_id),
             recalled_belief: None,
+            worker_fallback: None,
         };
         assert!(validate_model_grounding(&request, &reply).is_err());
 

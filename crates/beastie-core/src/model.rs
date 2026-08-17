@@ -652,6 +652,174 @@ pub struct InteractionState {
     pub sleep_started_at_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum RelationshipMotifKey {
+    SharedToy(ToyId),
+    ComfortRitual,
+    TrustedFood(FoodId),
+    FoodGrudge(FoodId),
+    PlayerReturns,
+    FamiliarPlace(SemanticDestination),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelationshipMotif {
+    pub key: RelationshipMotifKey,
+    pub strength: u8,
+    #[serde(default)]
+    pub evidence: Vec<RelationshipEvidence>,
+    pub last_supported_day: u64,
+    #[serde(default)]
+    pub eligible_triggers: BTreeSet<RelationshipTriggerKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "evidence_kind", rename_all = "snake_case")]
+pub enum RelationshipEvidence {
+    Memory {
+        id: MemoryId,
+    },
+    Belief {
+        id: BeliefId,
+        kind: BeliefKind,
+    },
+    Visit {
+        hour_start: u8,
+        destination: SemanticDestination,
+        last_active_day: u64,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationshipExpressionKind {
+    Notice,
+    Anticipate,
+    Seek,
+    Ritual,
+    Recognize,
+    Welcome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationshipTriggerKind {
+    PlayerReturn,
+    FamiliarObject,
+    RoutineWindow,
+    NeedState,
+    RelevantUtterance,
+    ActionCompleted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RelationshipTrigger {
+    PlayerReturn,
+    FamiliarToy {
+        toy: ToyId,
+    },
+    FamiliarFood {
+        food: FoodId,
+    },
+    RoutineWindow {
+        hour_start: u8,
+        destination: SemanticDestination,
+    },
+    NeedState,
+    RelevantUtterance,
+    ActionCompleted {
+        destination: SemanticDestination,
+    },
+}
+
+impl RelationshipTrigger {
+    #[must_use]
+    pub const fn kind(self) -> RelationshipTriggerKind {
+        match self {
+            Self::PlayerReturn => RelationshipTriggerKind::PlayerReturn,
+            Self::FamiliarToy { .. } | Self::FamiliarFood { .. } => {
+                RelationshipTriggerKind::FamiliarObject
+            }
+            Self::RoutineWindow { .. } => RelationshipTriggerKind::RoutineWindow,
+            Self::NeedState => RelationshipTriggerKind::NeedState,
+            Self::RelevantUtterance => RelationshipTriggerKind::RelevantUtterance,
+            Self::ActionCompleted { .. } => RelationshipTriggerKind::ActionCompleted,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationshipBeatPhase {
+    Notice,
+    Anticipate,
+    Act,
+    Recover,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelationshipBeat {
+    pub motif: RelationshipMotifKey,
+    pub trigger: RelationshipTrigger,
+    pub expression_kind: RelationshipExpressionKind,
+    #[serde(default)]
+    pub evidence: Vec<RelationshipEvidence>,
+    pub target: Option<SemanticDestination>,
+    pub phase: RelationshipBeatPhase,
+    pub started_at_ms: u64,
+    pub phase_started_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpressedMotif {
+    pub key: RelationshipMotifKey,
+    pub expressed_at_ms: u64,
+    pub expression_kind: RelationshipExpressionKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelationshipExpressionState {
+    #[serde(default = "relationship_expression_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub recent: Vec<ExpressedMotif>,
+    #[serde(default)]
+    pub active: Option<RelationshipBeat>,
+    #[serde(default)]
+    pub last_expressed_at_ms: Option<u64>,
+    #[serde(default)]
+    pub count_active_day: u8,
+    #[serde(default = "first_active_day")]
+    pub count_active_day_index: u64,
+}
+
+const fn relationship_expression_schema_version() -> u32 {
+    crate::RELATIONSHIP_EXPRESSION_SCHEMA_VERSION
+}
+
+const fn first_active_day() -> u64 {
+    1
+}
+
+impl Default for RelationshipExpressionState {
+    fn default() -> Self {
+        Self {
+            schema_version: crate::RELATIONSHIP_EXPRESSION_SCHEMA_VERSION,
+            recent: Vec::new(),
+            active: None,
+            last_expressed_at_ms: None,
+            count_active_day: 0,
+            count_active_day_index: 1,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InitiatedBehavior {
@@ -707,6 +875,8 @@ pub struct Creature {
     pub idle_life: IdleLifeState,
     #[serde(default)]
     pub interaction_state: InteractionState,
+    #[serde(default)]
+    pub relationship_expression: RelationshipExpressionState,
     #[serde(default)]
     pub routines: Vec<Routine>,
     #[serde(default)]
@@ -831,6 +1001,7 @@ impl WorldState {
                 aquarium: AquariumCreatureState::default(),
                 idle_life: IdleLifeState::default(),
                 interaction_state: InteractionState::default(),
+                relationship_expression: RelationshipExpressionState::default(),
                 routines: Vec::new(),
                 favorite_locations: BTreeMap::new(),
                 initiated_behavior: None,
@@ -1165,6 +1336,71 @@ impl WorldState {
             .iter()
             .map(|memory| memory.id)
             .collect::<BTreeSet<_>>();
+        let valid_motif_key = |key: RelationshipMotifKey| match key {
+            RelationshipMotifKey::FamiliarPlace(destination) => {
+                has_valid_visit_destination(destination)
+            }
+            RelationshipMotifKey::SharedToy(_)
+            | RelationshipMotifKey::ComfortRitual
+            | RelationshipMotifKey::TrustedFood(_)
+            | RelationshipMotifKey::FoodGrudge(_)
+            | RelationshipMotifKey::PlayerReturns => true,
+        };
+        let valid_relationship_evidence = |evidence: RelationshipEvidence| match evidence {
+            RelationshipEvidence::Memory { id } => memory_ids.contains(&id),
+            RelationshipEvidence::Belief { id, kind } => self
+                .creature
+                .beliefs
+                .iter()
+                .any(|candidate| candidate.id == id && candidate.kind == kind),
+            RelationshipEvidence::Visit {
+                hour_start,
+                destination,
+                last_active_day,
+            } => {
+                hour_start < 24
+                    && has_valid_visit_destination(destination)
+                    && last_active_day <= self.active_day()
+                    && self.creature.idle_life.visit_evidence.iter().any(|visit| {
+                        visit.hour_start == hour_start
+                            && visit.destination == destination
+                            && visit.last_active_day >= last_active_day
+                    })
+            }
+        };
+        let expression = &self.creature.relationship_expression;
+        if expression.schema_version != crate::RELATIONSHIP_EXPRESSION_SCHEMA_VERSION
+            || expression.recent.len() > 8
+            || expression
+                .last_expressed_at_ms
+                .is_some_and(|time| time > self.elapsed_ms)
+            || expression.count_active_day > 4
+            || expression.count_active_day_index == 0
+            || expression.count_active_day_index > self.active_day()
+            || expression
+                .recent
+                .iter()
+                .any(|entry| entry.expressed_at_ms > self.elapsed_ms || !valid_motif_key(entry.key))
+            || expression
+                .recent
+                .windows(2)
+                .any(|pair| pair[0].expressed_at_ms > pair[1].expressed_at_ms)
+            || expression.active.as_ref().is_some_and(|beat| {
+                beat.started_at_ms > self.elapsed_ms
+                    || beat.phase_started_at_ms < beat.started_at_ms
+                    || beat.phase_started_at_ms > self.elapsed_ms
+                    || beat.evidence.len() > 8
+                    || beat
+                        .evidence
+                        .iter()
+                        .copied()
+                        .any(|evidence| !valid_relationship_evidence(evidence))
+                    || !valid_motif_key(beat.motif)
+                    || !crate::relationship::relationship_beat_is_grounded(self, beat)
+            })
+        {
+            return Err(StateValidationError::RelationshipExpression);
+        }
         if self.next_memory_id == 0 {
             return Err(StateValidationError::MemoryOrder);
         }
@@ -1256,4 +1492,6 @@ pub enum StateValidationError {
     Aquarium,
     #[error("idle life, routine, or embodied interaction state is invalid")]
     IdleLife,
+    #[error("relationship expression state is invalid")]
+    RelationshipExpression,
 }

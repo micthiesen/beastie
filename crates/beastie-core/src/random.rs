@@ -10,6 +10,7 @@ pub enum RandomDomain {
     Preferences,
     Social,
     Environment,
+    Relationship,
 }
 
 impl RandomDomain {
@@ -20,6 +21,7 @@ impl RandomDomain {
             Self::Preferences => "preferences",
             Self::Social => "social",
             Self::Environment => "environment",
+            Self::Relationship => "relationship",
         }
     }
 }

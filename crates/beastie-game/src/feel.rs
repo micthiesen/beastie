@@ -132,6 +132,9 @@ impl FeelRecorder {
         ambience_duck: f32,
         simulation_ms: u64,
     ) -> Result<(), FeelError> {
+        // Motif/reason stays in the synchronized events trace. Adding it here would require the
+        // app-owned audio queue to carry the authoritative beat alongside each sound ID; keeping
+        // this method cue-only avoids fabricating a relationship association at recording time.
         self.audio.write(&json!({
             "version": FORMAT_VERSION,
             "playback_ms": self.playback_ms(),
@@ -192,11 +195,13 @@ impl FeelRecorder {
                 facing: world.creature.aquarium.facing,
                 gaze: world.creature.aquarium.gaze,
                 steering: world.creature.aquarium.steering,
+                destination: world.creature.aquarium.destination,
                 intention: world.creature.current_intention,
                 action: world.creature.aquarium.action,
                 mood: world.mood(),
                 needs: &world.creature.needs,
                 relationship: &world.creature.relationship,
+                relationship_expression: &world.creature.relationship_expression,
                 development: &world.creature.development,
                 routines: &world.creature.routines,
                 favorite_locations: world
@@ -267,11 +272,16 @@ struct CreatureFrame<'a> {
     facing: beastie_core::Facing,
     gaze: beastie_core::GazeTarget,
     steering: beastie_core::SteeringMode,
+    destination: Option<beastie_core::SemanticDestination>,
     intention: beastie_core::Intention,
     action: Option<beastie_core::ActionTimeline>,
     mood: beastie_core::Mood,
     needs: &'a beastie_core::Needs,
     relationship: &'a beastie_core::Relationship,
+    /// The bounded, typed relationship-expression ledger is safe to inspect: it contains motif
+    /// keys and memory IDs, never player text or model output. Keeping it beside the frame makes
+    /// active/recent beats and preemptions replayable without exposing UI meters.
+    relationship_expression: &'a beastie_core::RelationshipExpressionState,
     development: &'a beastie_core::Development,
     routines: &'a [beastie_core::Routine],
     favorite_locations: Vec<FavoriteLocationFrame>,

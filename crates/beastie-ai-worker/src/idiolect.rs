@@ -110,6 +110,7 @@ mod tests {
             gesture: Gesture::None,
             recalled_memory: None,
             recalled_belief: None,
+            worker_fallback: None,
         }
     }
 

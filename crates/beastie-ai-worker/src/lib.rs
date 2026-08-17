@@ -110,30 +110,86 @@ pub fn run_jsonl(
 #[must_use]
 pub fn process_line(line: &str, backend: &mut dyn DialogueBackend) -> DialogueReply {
     let Ok(mut request) = serde_json::from_str::<DialogueRequest>(line) else {
-        return fallback_reply(0);
+        return mark_fallback(
+            fallback_reply(0),
+            beastie_protocol::DialogueFallbackReason::ValidationFailed,
+        );
     };
     normalize_dialogue_request(&mut request);
     if validate_request(&request).is_err() {
-        return fallback_reply(request.request_id);
+        return mark_fallback(
+            fallback_reply(request.request_id),
+            beastie_protocol::DialogueFallbackReason::ValidationFailed,
+        );
     }
     if request.input_rejection.is_some() {
-        return grounded_fallback_reply(&request);
+        return mark_fallback(
+            grounded_fallback_reply(&request),
+            beastie_protocol::DialogueFallbackReason::ValidationFailed,
+        );
     }
 
-    let reply = backend
-        .generate(&request)
-        .unwrap_or_else(|_| grounded_fallback_reply(&request));
+    let reply = match backend.generate(&request) {
+        Ok(mut reply) => {
+            // Backend/model JSON is untrusted and cannot set worker outcome metadata.
+            reply.worker_fallback = None;
+            reply
+        }
+        Err(_) => {
+            return mark_fallback(
+                grounded_fallback_reply(&request),
+                beastie_protocol::DialogueFallbackReason::GenerationFailed,
+            );
+        }
+    };
     let reply = idiolect::apply(&request, reply);
     if crate::llama_cpp::validate_model_safety(&request, &reply).is_err() {
-        return grounded_fallback_reply(&request);
+        return mark_fallback(
+            grounded_fallback_reply(&request),
+            beastie_protocol::DialogueFallbackReason::ValidationFailed,
+        );
     }
     if crate::llama_cpp::validate_model_semantics(&request, &reply).is_err() {
-        return grounded_fallback_reply(&request);
+        return mark_fallback(
+            grounded_fallback_reply(&request),
+            beastie_protocol::DialogueFallbackReason::ValidationFailed,
+        );
     }
-    validate_reply(&request, reply).unwrap_or_else(|_| grounded_fallback_reply(&request))
+    validate_reply(&request, reply).unwrap_or_else(|_| {
+        mark_fallback(
+            grounded_fallback_reply(&request),
+            beastie_protocol::DialogueFallbackReason::ValidationFailed,
+        )
+    })
+}
+
+fn mark_fallback(
+    mut reply: DialogueReply,
+    reason: beastie_protocol::DialogueFallbackReason,
+) -> DialogueReply {
+    reply.worker_fallback = Some(reason);
+    reply
 }
 
 fn grounded_fallback_reply(request: &DialogueRequest) -> DialogueReply {
+    if let Some(relationship) = &request.context.relationship {
+        let mut reply = constrained_fallback_reply(request);
+        reply.recalled_memory = relationship
+            .evidence
+            .iter()
+            .find_map(|evidence| match evidence {
+                beastie_protocol::RelationshipEvidence::Memory { id }
+                    if request
+                        .candidate_memories
+                        .iter()
+                        .any(|memory| memory.id == *id) =>
+                {
+                    Some(*id)
+                }
+                _ => None,
+            });
+        return reply;
+    }
     if request.input_rejection.is_some() {
         let mut reply = constrained_fallback_reply(request);
         reply.say = "no. thought too rotten."
@@ -193,10 +249,28 @@ fn grounded_fallback_reply(request: &DialogueRequest) -> DialogueReply {
             .unwrap_or(Gesture::None),
         recalled_memory: Some(memory.id),
         recalled_belief: None,
+        worker_fallback: None,
     }
 }
 
 fn fixture_reply(request: &DialogueRequest) -> DialogueReply {
+    if request.context.relationship.is_some() {
+        return DialogueReply {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: request.request_id,
+            say: "you came back.".to_owned(),
+            gesture: request
+                .constraints
+                .allowed_gestures
+                .iter()
+                .next()
+                .copied()
+                .unwrap_or(Gesture::None),
+            recalled_memory: None,
+            recalled_belief: None,
+            worker_fallback: None,
+        };
+    }
     let memory = request.candidate_memories.first();
     DialogueReply {
         protocol_version: PROTOCOL_VERSION,
@@ -222,6 +296,7 @@ fn fixture_reply(request: &DialogueRequest) -> DialogueReply {
         },
         recalled_memory: memory.map(|candidate| candidate.id),
         recalled_belief: None,
+        worker_fallback: None,
     }
 }
 
@@ -270,6 +345,10 @@ mod tests {
         assert!(reply.say.contains("berry"));
         assert!(reply.say.contains("bad"));
         assert_eq!(reply.recalled_memory, Some(memory_id));
+        assert_eq!(
+            reply.worker_fallback,
+            Some(beastie_protocol::DialogueFallbackReason::GenerationFailed)
+        );
         assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
     }
 

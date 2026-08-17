@@ -1065,6 +1065,7 @@ impl AdapterError {
             SessionError::Json(_) => "malformed_command",
             SessionError::Advance(_) => "invalid_advance",
             SessionError::Tick(_) => "invalid_tick",
+            SessionError::Resume(_) => "invalid_resume",
             SessionError::TalkTooLong => "talk_too_long",
             SessionError::EmptySpeechCandidate => "empty_speech_candidate",
             SessionError::SpeechAlreadyStarted => "speech_already_started",
@@ -1076,6 +1077,7 @@ impl AdapterError {
             | SessionError::RequestId => "save_failed",
             SessionError::State(_) => "invalid_state",
             SessionError::Dialogue(_) => "invalid_dialogue_request",
+            SessionError::DialogueHistory => "invalid_dialogue_history",
         };
         Self::new(code, error.to_string())
     }

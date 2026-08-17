@@ -3,14 +3,14 @@ use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use beastie_protocol::{
-    DialogueReply, DialogueRequest, TranscriptBackend, constrained_fallback_reply, validate_reply,
-    validate_request,
+    DialogueFallbackReason, DialogueReply, DialogueRequest, TranscriptBackend,
+    constrained_fallback_reply, reply_fingerprint, validate_reply, validate_request,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -332,9 +332,17 @@ pub struct DialogueManager {
     pending_request: Option<DialogueRequest>,
     pending_since: Option<Instant>,
     backend: TranscriptBackend,
-    last_fallback: Arc<AtomicBool>,
+    outcome: Arc<DialogueOutcomeState>,
     cancelled: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
+}
+
+#[derive(Debug, Default)]
+struct DialogueOutcomeState {
+    fallback: AtomicBool,
+    retry_count: AtomicU8,
+    duplicate_suppressed: AtomicBool,
+    fallback_reason: AtomicU8,
 }
 
 impl DialogueManager {
@@ -344,8 +352,8 @@ impl DialogueManager {
         let (reply_sender, replies) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let manager_cancelled = Arc::clone(&cancelled);
-        let last_fallback = Arc::new(AtomicBool::new(false));
-        let manager_fallback = Arc::clone(&last_fallback);
+        let outcome = Arc::new(DialogueOutcomeState::default());
+        let manager_outcome = Arc::clone(&outcome);
         let backend = config
             .as_ref()
             .map_or(TranscriptBackend::Unknown, |config| config.backend);
@@ -355,7 +363,7 @@ impl DialogueManager {
                 command_receiver,
                 reply_sender,
                 &manager_cancelled,
-                &manager_fallback,
+                &manager_outcome,
             );
         });
         Self {
@@ -365,7 +373,7 @@ impl DialogueManager {
             pending_request: None,
             pending_since: None,
             backend,
-            last_fallback,
+            outcome,
             cancelled,
             thread: Some(thread),
         }
@@ -403,7 +411,12 @@ impl DialogueManager {
             reply,
             backend: self.backend,
             latency_ms,
-            fallback: self.last_fallback.load(Ordering::Acquire),
+            fallback: self.outcome.fallback.load(Ordering::Acquire),
+            retry_count: self.outcome.retry_count.load(Ordering::Acquire),
+            duplicate_suppressed: self.outcome.duplicate_suppressed.load(Ordering::Acquire),
+            fallback_reason: fallback_reason_from_code(
+                self.outcome.fallback_reason.load(Ordering::Acquire),
+            ),
         })
     }
 
@@ -454,6 +467,9 @@ pub struct DialogueTurn {
     pub backend: TranscriptBackend,
     pub latency_ms: u32,
     pub fallback: bool,
+    pub retry_count: u8,
+    pub duplicate_suppressed: bool,
+    pub fallback_reason: Option<DialogueFallbackReason>,
 }
 
 impl Drop for DialogueManager {
@@ -471,16 +487,114 @@ fn run_manager(
     commands: Receiver<ManagerCommand>,
     replies: Sender<DialogueReply>,
     cancelled: &AtomicBool,
-    last_fallback: &AtomicBool,
+    outcome: &DialogueOutcomeState,
 ) {
     let mut worker = None;
+    let mut recent_fingerprints: std::collections::VecDeque<String> =
+        std::collections::VecDeque::new();
     while let Ok(command) = commands.recv() {
         match command {
             ManagerCommand::Request(request) => {
-                let generated = config.as_ref().and_then(|config| {
-                    exchange_with_recovery(config, &mut worker, &request, cancelled)
+                let mut retry_count = 0;
+                let mut duplicate_suppressed = false;
+                let mut generation_reason = if config.is_none() {
+                    DialogueFallbackReason::WorkerUnavailable
+                } else {
+                    DialogueFallbackReason::GenerationFailed
+                };
+                let mut generated = config.as_ref().and_then(|config| {
+                    exchange_with_recovery(config, &mut worker, &request, cancelled).map_or_else(
+                        |reason| {
+                            generation_reason = reason;
+                            None
+                        },
+                        Some,
+                    )
                 });
-                last_fallback.store(generated.is_none(), Ordering::Release);
+                let mut worker_fallback_reason =
+                    generated.as_ref().and_then(|reply| reply.worker_fallback);
+                if let Some(first) = generated.take() {
+                    let fingerprint = reply_fingerprint(&first.say);
+                    let duplicate = request
+                        .context
+                        .avoid_reply_fingerprints
+                        .iter()
+                        .any(|known| known == &fingerprint)
+                        || recent_fingerprints
+                            .iter()
+                            .any(|known| known == &fingerprint);
+                    if duplicate {
+                        retry_count = 1;
+                        duplicate_suppressed = true;
+                        let mut retry_request = (*request).clone();
+                        let original_fingerprints =
+                            request.context.avoid_reply_fingerprints.clone();
+                        let mut retry_fingerprints = original_fingerprints.clone();
+                        if !retry_fingerprints.contains(&fingerprint) {
+                            retry_fingerprints.push(fingerprint.clone());
+                        }
+                        while retry_fingerprints.len() > beastie_protocol::MAX_REPLY_PROHIBITIONS {
+                            retry_fingerprints.remove(0);
+                        }
+                        retry_request.context.avoid_reply_fingerprints = retry_fingerprints;
+                        retry_request.context.avoid_reply_texts = vec![first.say.clone()];
+                        generated = config.as_ref().and_then(|config| {
+                            exchange_with_recovery(config, &mut worker, &retry_request, cancelled)
+                                .map_or_else(
+                                    |reason| {
+                                        generation_reason = reason;
+                                        None
+                                    },
+                                    Some,
+                                )
+                        });
+                        if generated.as_ref().is_none_or(|reply| {
+                            let retry_fingerprint = reply_fingerprint(&reply.say);
+                            retry_fingerprint == fingerprint
+                                || original_fingerprints.contains(&retry_fingerprint)
+                                || recent_fingerprints
+                                    .iter()
+                                    .any(|known| known == &retry_fingerprint)
+                        }) {
+                            generated = None;
+                        }
+                        worker_fallback_reason =
+                            generated.as_ref().and_then(|reply| reply.worker_fallback);
+                    } else {
+                        generated = Some(first);
+                    }
+                }
+                outcome.fallback.store(
+                    generated.is_none() || worker_fallback_reason.is_some(),
+                    Ordering::Release,
+                );
+                outcome.retry_count.store(retry_count, Ordering::Release);
+                outcome
+                    .duplicate_suppressed
+                    .store(duplicate_suppressed, Ordering::Release);
+                let fallback_reason = if let Some(reason) = worker_fallback_reason {
+                    fallback_reason_code(reason)
+                } else if generated.is_some() {
+                    0
+                } else if duplicate_suppressed {
+                    3
+                } else {
+                    match generation_reason {
+                        DialogueFallbackReason::WorkerUnavailable => 1,
+                        DialogueFallbackReason::GenerationFailed => 2,
+                        DialogueFallbackReason::ValidationFailed => 4,
+                        DialogueFallbackReason::DuplicateAfterRetry => 3,
+                    }
+                };
+                outcome
+                    .fallback_reason
+                    .store(fallback_reason, Ordering::Release);
+                if let Some(reply) = generated.as_ref() {
+                    recent_fingerprints.push_back(reply_fingerprint(&reply.say));
+                    while recent_fingerprints.len() > 4 {
+                        recent_fingerprints.pop_front();
+                    }
+                }
                 let reply = generated.unwrap_or_else(|| constrained_fallback_reply(&request));
                 if cancelled.load(Ordering::Acquire) {
                     break;
@@ -497,32 +611,56 @@ fn run_manager(
     }
 }
 
+fn fallback_reason_code(reason: DialogueFallbackReason) -> u8 {
+    match reason {
+        DialogueFallbackReason::WorkerUnavailable => 1,
+        DialogueFallbackReason::GenerationFailed => 2,
+        DialogueFallbackReason::DuplicateAfterRetry => 3,
+        DialogueFallbackReason::ValidationFailed => 4,
+    }
+}
+
+fn fallback_reason_from_code(code: u8) -> Option<DialogueFallbackReason> {
+    match code {
+        1 => Some(DialogueFallbackReason::WorkerUnavailable),
+        2 => Some(DialogueFallbackReason::GenerationFailed),
+        3 => Some(DialogueFallbackReason::DuplicateAfterRetry),
+        4 => Some(DialogueFallbackReason::ValidationFailed),
+        _ => None,
+    }
+}
+
 fn exchange_with_recovery(
     config: &WorkerConfig,
     worker: &mut Option<JsonlWorkerSession>,
     request: &DialogueRequest,
     cancelled: &AtomicBool,
-) -> Option<DialogueReply> {
+) -> Result<DialogueReply, DialogueFallbackReason> {
     if worker.is_none() {
         *worker =
             JsonlWorkerSession::spawn(&config.executable, &config.arguments, MAX_REPLY_BYTES).ok();
     }
 
-    let reply = worker.as_mut().and_then(|session| {
-        let line = session
-            .exchange(request, config.reply_timeout, cancelled)
-            .ok()?;
-        let reply = serde_json::from_str::<DialogueReply>(&line).ok()?;
-        validate_reply(request, reply).ok()
-    });
-    if reply.is_some() {
-        return reply;
+    let result = worker
+        .as_mut()
+        .ok_or(DialogueFallbackReason::WorkerUnavailable)
+        .and_then(|session| {
+            let line = session
+                .exchange(request, config.reply_timeout, cancelled)
+                .map_err(|_| DialogueFallbackReason::GenerationFailed)?;
+            let reply = serde_json::from_str::<DialogueReply>(&line)
+                .map_err(|_| DialogueFallbackReason::ValidationFailed)?;
+            validate_reply(request, reply).map_err(|_| DialogueFallbackReason::ValidationFailed)
+        });
+    if let Ok(reply) = result {
+        return Ok(reply);
     }
+    let reason = result.expect_err("result was checked above");
 
     if let Some(mut failed) = worker.take() {
         failed.terminate();
     }
-    None
+    Err(reason)
 }
 
 #[cfg(test)]
@@ -748,7 +886,10 @@ mod tests {
             "too many thought."
         );
         assert!(manager.request(request()));
-        assert_eq!(manager.recv_timeout(Duration::from_secs(1)).say, "reply 1");
+        assert_eq!(
+            manager.recv_timeout(Duration::from_secs(1)).say,
+            "too many thought."
+        );
         manager.shutdown();
     }
 
@@ -774,6 +915,35 @@ mod tests {
         assert!(manager.request(request()));
         let recovered = manager.recv_timeout(Duration::from_secs(1));
         assert_eq!(recovered.say, "reply 1");
+        manager.shutdown();
+    }
+
+    #[test]
+    fn duplicate_output_gets_one_retry_then_typed_fallback() {
+        let worker = compile_worker("duplicate");
+        let config = WorkerConfig::new(
+            worker,
+            vec![OsString::from("duplicate")],
+            Duration::from_secs(1),
+        );
+        let mut manager = DialogueManager::new(Some(config));
+        assert!(manager.request(request()));
+        assert_eq!(manager.recv_timeout(Duration::from_secs(1)).say, "same");
+        assert!(manager.request(request()));
+        let turn = loop {
+            match manager.try_recv_turn() {
+                Ok(turn) => break turn,
+                Err(TryRecvError::Empty) => thread::yield_now(),
+                Err(TryRecvError::Disconnected) => panic!("manager disconnected"),
+            }
+        };
+        assert_eq!(turn.retry_count, 1);
+        assert!(turn.duplicate_suppressed);
+        assert_eq!(
+            turn.fallback_reason,
+            Some(DialogueFallbackReason::DuplicateAfterRetry)
+        );
+        assert_ne!(turn.reply.say, "same");
         manager.shutdown();
     }
 
@@ -871,8 +1041,9 @@ mod tests {
 	        std::thread::sleep(Duration::from_secs(60));
 	        return;
 	    }
-	    let tree = args.get(1).is_some_and(|value| value == "hang-tree");
+    let tree = args.get(1).is_some_and(|value| value == "hang-tree");
     let extra = args.get(1).is_some_and(|value| value == "extra");
+    let duplicate = args.get(1).is_some_and(|value| value == "duplicate");
 	    if tree {
 	        let descendant = Command::new(std::env::current_exe().unwrap())
 	            .arg("grandchild")
@@ -895,8 +1066,9 @@ mod tests {
             std::thread::sleep(Duration::from_secs(60));
         }
         count += 1;
+        let say = if duplicate { "same".to_owned() } else { format!("reply {count}") };
         println!(
-            "{{\"protocol_version\":1,\"request_id\":7,\"say\":\"reply {count}\",\"gesture\":\"none\",\"recalled_memory\":null}}"
+            "{{\"protocol_version\":1,\"request_id\":7,\"say\":\"{say}\",\"gesture\":\"none\",\"recalled_memory\":null}}"
         );
         if extra {
             println!(

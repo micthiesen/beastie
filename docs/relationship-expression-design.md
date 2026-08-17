@@ -1,6 +1,6 @@
 # Relationship expression design
 
-Status: chosen direction, not yet implemented
+Status: implemented and validated; further taste tuning remains
 
 Date: 2026-08-16
 
@@ -19,6 +19,19 @@ This design introduces a **relationship expression director**. It answers one bo
 The intended result is that the player notices “we have a history” through movement, anticipation,
 attention, routine, refusal, and occasional language. The result must not be a relationship meter,
 milestone feed, or chatbot memory recital.
+
+## Decision
+
+Treat this as an architectural rework, not a collection of presentation patches. Relationship
+history must pass through one simulation-owned expression layer that selects a grounded motif and
+turns it into an interruptible behavioral beat. Rendering, audio, and dialogue then project that
+same beat. They must not independently infer familiarity from counters, memories, or recent events.
+
+The important test is observable change over time. Early, familiar, and established evidence for a
+motif must produce meaningfully different combinations of attention, movement, intention, timing,
+cue, or sound. Different event names or trace labels alone do not count as proof. A callback must
+also remain readable without AI or speech, survive save/load without losing its expression ledger,
+and yield immediately to direct player action.
 
 ## Product boundaries
 
@@ -277,6 +290,38 @@ obedience. Mood, needs, temperament, and player priority still decide whether a 
 Estimated implementation and evidence time for the first three slices is 8 to 12 focused hours.
 Breadth and taste tuning should be a separate pass rather than expanding the first implementation
 until every memory kind has a bespoke animation.
+
+## Implemented result
+
+The 2026-08-16 implementation follows the architectural rework above:
+
+- Core derives all six motif families from authoritative memories, beliefs, visits, routines, and
+  preferences. It owns deterministic trigger relevance, evidence scoring, maturity, cooldowns,
+  daily bounds, recent-motif rotation, and the active notice/anticipate/act/recover beat.
+- Save version 4 persists only the bounded expression ledger and active beat. Migration defaults
+  older saves safely, exact replay survives save/load, and validation rejects an active beat whose
+  motif, evidence, trigger, target, or maturity is not derivable from current truth.
+- Active beats own their embodied intention, gaze, destination, and steering until completion.
+  Direct player care, play, food, speech attention, and sleep still interrupt them immediately.
+- View and runtime audio project the same typed motif. Early evidence stays a restrained notice;
+  familiar and established evidence unlocks anticipation, seeking, recognition, ritual, or welcome
+  without exposing a universal level.
+- Dialogue receives the selected motif and bounded evidence plus semantic recent-expression
+  history. Raw player text is not persisted. Exact duplicate wording gets one retry and then a
+  grounded authored fallback, with retry/fallback metadata retained in the privacy-safe transcript.
+- The relationship feel suite records destination and expression state, compares observable
+  behavior rather than event labels alone, verifies ledger continuity through save/load, and runs a
+  separate scenario with no AI, TTS, or Talk command.
+
+Native evidence is under `target/feel/relationship-expression-20260816-3/`. Its AI-on filmstrips
+show a restrained day-two return notice, a day-three comfort-seeking callback, a day-four shared-toy
+callback, and immediate direct-care interruption. The refined AI-off proof is under
+`target/feel/relationship-expression-20260816-no-ai-direct/`: a mature shared-toy beat triggered by
+the player return remains visible for its full seven seconds and completes without speech. The
+normal `cargo xtask verify` gate is green. Intermittent macOS Metal drawable acquisition can still
+prevent a newly launched evidence window from submitting its first frame; this is capture-host
+flakiness rather than a simulation failure and successful reruns are retained instead of using a
+slower build profile.
 
 ## Feel-review acceptance
 

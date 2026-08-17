@@ -311,6 +311,7 @@ pub const fn sound_for_cue(cue: AudioCue) -> Option<&'static str> {
         AudioCue::Annoyed => Some(CREATURE_ANNOYED),
         AudioCue::Sleep => Some(CREATURE_SLEEP),
         AudioCue::UiReject => Some(UI_SELECT),
+        AudioCue::CaveSettle => Some(CAVE_SETTLE),
     }
 }
 
@@ -332,6 +333,7 @@ mod tests {
         assert_eq!(sound_for_cue(AudioCue::ToyImpact), Some(TOY_IMPACT));
         assert_eq!(sound_for_cue(AudioCue::Sleep), Some(CREATURE_SLEEP));
         assert_eq!(sound_for_cue(AudioCue::Curious), Some(CREATURE_CURIOUS));
+        assert_eq!(sound_for_cue(AudioCue::CaveSettle), Some(CAVE_SETTLE));
     }
 
     #[test]
