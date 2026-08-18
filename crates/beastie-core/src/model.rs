@@ -499,6 +499,189 @@ pub enum TravelPurpose {
         initiative_id: NonZeroU64,
         requested_at_ms: u64,
     },
+    PrivateLife {
+        activity_id: NonZeroU64,
+    },
+}
+
+/// The concrete subject an autonomous activity is about.  This intentionally stays distinct
+/// from a travel destination: the activity owns the meaning, travel only owns locomotion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivitySubject {
+    Toy(ToyId),
+    Cave,
+    Plant,
+    Bottom,
+    OpenWater,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivateLifeKind {
+    ToyPlay(ToyId),
+    CaveSettle,
+    PlantInspect,
+    BottomForage,
+    OpenWaterDrift,
+}
+
+impl PrivateLifeKind {
+    #[must_use]
+    pub const fn subject(self) -> ActivitySubject {
+        match self {
+            Self::ToyPlay(toy) => ActivitySubject::Toy(toy),
+            Self::CaveSettle => ActivitySubject::Cave,
+            Self::PlantInspect => ActivitySubject::Plant,
+            Self::BottomForage => ActivitySubject::Bottom,
+            Self::OpenWaterDrift => ActivitySubject::OpenWater,
+        }
+    }
+
+    #[must_use]
+    pub const fn destination(self) -> Option<SemanticDestination> {
+        match self {
+            Self::ToyPlay(toy) => Some(SemanticDestination::Toy(toy)),
+            Self::CaveSettle => Some(SemanticDestination::Cave),
+            Self::PlantInspect => Some(SemanticDestination::Plant),
+            Self::BottomForage => Some(SemanticDestination::Bottom),
+            Self::OpenWaterDrift => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityRecipe {
+    BallNudge,
+    BellStrike,
+    SockTug,
+    CaveShelter,
+    PlantOrbit,
+    BottomForage,
+    OpenWaterDrift,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityPhase {
+    Notice,
+    Approach,
+    Act,
+    Recover,
+    Settle,
+    Interrupted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityPurpose {
+    Autonomous,
+    NeedUrgency,
+    Routine,
+    Preference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityInterruptionOwner {
+    Player,
+    Food,
+    Toy,
+    Comfort,
+    Sleep,
+    Relationship,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivitySelectionEvidence {
+    pub need_pressure: u8,
+    pub trait_bias: u8,
+    pub preference: i8,
+    pub routine_hour: Option<u8>,
+    #[serde(default)]
+    pub relationship_evidence: Vec<RelationshipEvidence>,
+    #[serde(default)]
+    pub excluded_families: Vec<PrivateLifeKind>,
+    #[serde(default)]
+    pub excluded_subjects: Vec<ActivitySubject>,
+    #[serde(default)]
+    pub excluded_recipes: Vec<ActivityRecipe>,
+    #[serde(default)]
+    pub urgency_overrode_repetition: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrivateLifeActivity {
+    pub id: NonZeroU64,
+    pub kind: PrivateLifeKind,
+    pub subject: Option<ActivitySubject>,
+    pub purpose: ActivityPurpose,
+    pub recipe: ActivityRecipe,
+    pub phase: ActivityPhase,
+    #[serde(default)]
+    pub selected_at_ms: u64,
+    pub phase_started_at_ms: u64,
+    pub selected_from: ActivitySelectionEvidence,
+    #[serde(default)]
+    pub payoff_reached: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecentActivity {
+    pub id: NonZeroU64,
+    pub kind: PrivateLifeKind,
+    pub subject: Option<ActivitySubject>,
+    pub recipe: ActivityRecipe,
+    pub selected_at_ms: u64,
+    pub completed_at_ms: Option<u64>,
+    pub interrupted_by: Option<ActivityInterruptionOwner>,
+    pub active_day: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrivateLifeState {
+    #[serde(default = "first_action_id")]
+    pub next_activity_id: u64,
+    #[serde(default)]
+    pub active: Option<PrivateLifeActivity>,
+    #[serde(default)]
+    pub recent: Vec<RecentActivity>,
+}
+
+impl Default for PrivateLifeState {
+    fn default() -> Self {
+        Self {
+            next_activity_id: first_action_id(),
+            active: None,
+            recent: Vec::new(),
+        }
+    }
+}
+
+/// Stable authoritative toy physics and contact history.  The object catalogue keeps authored
+/// placement; this state carries the mutable, save-owned response to a particular interaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToyResponse {
+    None,
+    BallNudged,
+    BellStruck,
+    SockTugged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToyObjectState {
+    pub position: NormalizedPosition,
+    pub velocity: NormalizedVelocity,
+    pub carried: bool,
+    pub last_response: ToyResponse,
+    pub last_contact_activity: Option<NonZeroU64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -694,6 +877,8 @@ pub struct AquariumState {
     pub cursor: Option<NormalizedPosition>,
     #[serde(default)]
     pub object_names: BTreeMap<u64, String>,
+    #[serde(default)]
+    pub toy_states: BTreeMap<ToyId, ToyObjectState>,
     pub player_present: bool,
     pub max_food: u16,
 }
@@ -740,6 +925,38 @@ impl Default for AquariumState {
             next_object_id: 6,
             cursor: None,
             object_names: BTreeMap::new(),
+            toy_states: BTreeMap::from([
+                (
+                    ToyId::Ball,
+                    ToyObjectState {
+                        position: NormalizedPosition::new(5_000, 8_900),
+                        velocity: NormalizedVelocity::default(),
+                        carried: false,
+                        last_response: ToyResponse::None,
+                        last_contact_activity: None,
+                    },
+                ),
+                (
+                    ToyId::Bell,
+                    ToyObjectState {
+                        position: NormalizedPosition::new(6_500, 8_900),
+                        velocity: NormalizedVelocity::default(),
+                        carried: false,
+                        last_response: ToyResponse::None,
+                        last_contact_activity: None,
+                    },
+                ),
+                (
+                    ToyId::Sock,
+                    ToyObjectState {
+                        position: NormalizedPosition::new(8_000, 8_900),
+                        velocity: NormalizedVelocity::default(),
+                        carried: false,
+                        last_response: ToyResponse::None,
+                        last_contact_activity: None,
+                    },
+                ),
+            ]),
             player_present: true,
             max_food: 12,
         }
@@ -976,6 +1193,43 @@ pub struct ExpressedMotif {
     pub expression_kind: RelationshipExpressionKind,
 }
 
+/// The embodied treatment chosen for one relationship callback.
+///
+/// This is intentionally separate from the motif. A motif establishes what the creature knows;
+/// the recipe establishes the particular, repeatable performance that made that knowledge
+/// visible. Keeping it typed makes the suppression ledger robust to future presentation work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "expression", rename_all = "snake_case")]
+pub enum RelationshipPerformanceRecipe {
+    SharedBall(RelationshipExpressionKind),
+    SharedBell(RelationshipExpressionKind),
+    SharedSock(RelationshipExpressionKind),
+    ComfortAttention(RelationshipExpressionKind),
+    TrustedFoodReceipt(RelationshipExpressionKind),
+    FoodGrudgeReceipt(RelationshipExpressionKind),
+    PlayerReturn(RelationshipExpressionKind),
+    FamiliarCave(RelationshipExpressionKind),
+    FamiliarPlant(RelationshipExpressionKind),
+    FamiliarBottom(RelationshipExpressionKind),
+    FamiliarPlayer(RelationshipExpressionKind),
+    FamiliarToy(RelationshipExpressionKind),
+    FamiliarFood(RelationshipExpressionKind),
+    FamiliarPosition(RelationshipExpressionKind),
+}
+
+/// One authoritative performance receipt. The bounded ledger stops a newly remembered event
+/// from immediately replaying as a callback, while preserving the exact history that did speak.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelationshipPerformanceRecord {
+    pub motif: RelationshipMotifKey,
+    pub subject: RelationshipSubject,
+    #[serde(default)]
+    pub evidence: Vec<RelationshipEvidence>,
+    pub recipe: RelationshipPerformanceRecipe,
+    pub performed_at_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RelationshipExpressionState {
@@ -983,6 +1237,8 @@ pub struct RelationshipExpressionState {
     pub schema_version: u32,
     #[serde(default)]
     pub recent: Vec<ExpressedMotif>,
+    #[serde(default)]
+    pub performance_ledger: Vec<RelationshipPerformanceRecord>,
     #[serde(default)]
     pub active: Option<RelationshipBeat>,
     #[serde(default)]
@@ -1006,6 +1262,7 @@ impl Default for RelationshipExpressionState {
         Self {
             schema_version: crate::RELATIONSHIP_EXPRESSION_SCHEMA_VERSION,
             recent: Vec::new(),
+            performance_ledger: Vec::new(),
             active: None,
             last_expressed_at_ms: None,
             count_active_day: 0,
@@ -1067,6 +1324,8 @@ pub struct Creature {
     pub aquarium: AquariumCreatureState,
     #[serde(default)]
     pub idle_life: IdleLifeState,
+    #[serde(default)]
+    pub private_life: PrivateLifeState,
     #[serde(default)]
     pub interaction_state: InteractionState,
     #[serde(default)]
@@ -1197,6 +1456,7 @@ impl WorldState {
                 development: Development::default(),
                 aquarium: AquariumCreatureState::default(),
                 idle_life: IdleLifeState::default(),
+                private_life: PrivateLifeState::default(),
                 interaction_state: InteractionState::default(),
                 relationship_expression: RelationshipExpressionState::default(),
                 routines: Vec::new(),
@@ -1461,6 +1721,13 @@ impl WorldState {
         {
             return Err(StateValidationError::Aquarium);
         }
+        if self.aquarium.toy_states.len() > 3
+            || self.aquarium.toy_states.values().any(|toy| {
+                toy.position != toy.position.clamped() || toy.velocity != toy.velocity.clamped()
+            })
+        {
+            return Err(StateValidationError::Aquarium);
+        }
         let has_valid_visit_destination = |destination: SemanticDestination| {
             matches!(
                 destination,
@@ -1505,6 +1772,35 @@ impl WorldState {
                 .is_some_and(|started_at| started_at > self.elapsed_ms)
         {
             return Err(StateValidationError::IdleLife);
+        }
+        let private_life = &self.creature.private_life;
+        let valid_private_activity = |activity: &PrivateLifeActivity| {
+            activity.id.get() < private_life.next_activity_id
+                && activity.subject == Some(activity.kind.subject())
+                && activity.selected_at_ms <= self.elapsed_ms
+                && activity.phase_started_at_ms <= self.elapsed_ms
+        };
+        let private_life_invalid = private_life.next_activity_id == 0
+            || private_life.recent.len() > 32
+            || private_life
+                .active
+                .as_ref()
+                .is_some_and(|activity| !valid_private_activity(activity))
+            || private_life.recent.iter().any(|entry| {
+                entry.id.get() >= private_life.next_activity_id
+                    || entry.subject != Some(entry.kind.subject())
+                    || entry.selected_at_ms > self.elapsed_ms
+                    || entry
+                        .completed_at_ms
+                        .is_some_and(|time| time > self.elapsed_ms)
+                    || (entry.completed_at_ms.is_some() && entry.interrupted_by.is_some())
+            })
+            || private_life
+                .recent
+                .windows(2)
+                .any(|pair| pair[0].id >= pair[1].id);
+        if private_life_invalid {
+            return Err(StateValidationError::PrivateLife);
         }
         if self.creature.beliefs.iter().any(|belief| {
             belief
@@ -1601,6 +1897,16 @@ impl WorldState {
                     TravelPurpose::Relationship { .. } => {
                         self.creature.relationship_expression.active.is_none()
                     }
+                    TravelPurpose::PrivateLife { activity_id } => self
+                        .creature
+                        .private_life
+                        .active
+                        .as_ref()
+                        .is_none_or(|activity| {
+                            activity.id != activity_id
+                                || activity.phase != ActivityPhase::Approach
+                                || activity.kind.destination() != Some(destination)
+                        }),
                     TravelPurpose::Initiative {
                         requested_at_ms, ..
                     } => {
@@ -1729,6 +2035,8 @@ impl WorldState {
             || relationship_moment_invalid
             || expression.schema_version != crate::RELATIONSHIP_EXPRESSION_SCHEMA_VERSION
             || expression.recent.len() > 8
+            || expression.performance_ledger.len()
+                > crate::relationship::MAX_PERFORMANCE_LEDGER_RECORDS
             || expression
                 .last_expressed_at_ms
                 .is_some_and(|time| time > self.elapsed_ms)
@@ -1743,6 +2051,15 @@ impl WorldState {
                 .recent
                 .windows(2)
                 .any(|pair| pair[0].expressed_at_ms > pair[1].expressed_at_ms)
+            || expression.performance_ledger.iter().any(|record| {
+                record.performed_at_ms > self.elapsed_ms
+                    || !valid_motif_key(record.motif)
+                    || !crate::relationship::performance_record_is_grounded(self, record)
+            })
+            || expression
+                .performance_ledger
+                .windows(2)
+                .any(|pair| pair[0].performed_at_ms > pair[1].performed_at_ms)
             || expression.active.as_ref().is_some_and(|beat| {
                 beat.started_at_ms > self.elapsed_ms
                     || beat.phase_started_at_ms < beat.started_at_ms
@@ -1850,6 +2167,8 @@ pub enum StateValidationError {
     Aquarium,
     #[error("idle life, routine, or embodied interaction state is invalid")]
     IdleLife,
+    #[error("private-life activity, ledger, or allocator is invalid")]
+    PrivateLife,
     #[error("relationship expression state is invalid")]
     RelationshipExpression,
     #[error("toy interaction or travel ownership is invalid")]

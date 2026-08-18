@@ -29,7 +29,8 @@ use crate::args::Args;
 use crate::audio::{AmbientBubbleSchedule, AudioBank, sound_for_cue};
 use crate::dialogue::{DialogueManager, DialogueOwner, DialogueTurn, WorkerConfig};
 use crate::feel::{
-    AudioTraceFrame, DialogueTraceOwner, FeelRecorder, PresentationTraceState, SpeechTraceOwner,
+    AudioTraceFrame, DialogueHealthTrace, DialogueTraceOwner, FeelRecorder, PresentationTraceState,
+    SpeechTraceOwner,
 };
 use crate::input::{
     action_at_with_assets, append_text, cursor_at_with_assets, focused_action, move_focus,
@@ -41,7 +42,7 @@ use crate::renderer::{
     AssetCatalog, Viewport, execute_plan, presentation_rgba, save_presentation_png,
 };
 use crate::save_store::{LoadedSave, SaveStore};
-use crate::scenario::{ScenarioRunner, ScenarioStep};
+use crate::scenario::{MicrophoneAcquisition, ScenarioRunner, ScenarioStep};
 use crate::settings::{BindingKey, KeyBindings, SettingsStore, TextScale, TextSpeed, UserSettings};
 use crate::transcript::TranscriptStore;
 use crate::tts::{TtsManager, TtsWorkerConfig};
@@ -184,6 +185,52 @@ enum CaptureState {
     ReadbackReady(String),
 }
 
+/// The shell must establish capture before it tells the simulation that Mop perceived speech.
+/// These outcomes remain deliberately small and testable because device startup is host I/O.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MicrophoneAcquisitionOutcome {
+    Acquired,
+    Unavailable,
+    StartFailed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MicrophoneAcquisitionTransition {
+    starts_perception: bool,
+    state: MicrophoneState,
+    message: Option<&'static str>,
+}
+
+const fn microphone_acquisition_transition(
+    outcome: MicrophoneAcquisitionOutcome,
+) -> MicrophoneAcquisitionTransition {
+    match outcome {
+        MicrophoneAcquisitionOutcome::Acquired => MicrophoneAcquisitionTransition {
+            starts_perception: true,
+            state: MicrophoneState::Listening,
+            message: None,
+        },
+        MicrophoneAcquisitionOutcome::Unavailable => MicrophoneAcquisitionTransition {
+            starts_perception: false,
+            state: MicrophoneState::Unavailable,
+            message: Some("Microphone unavailable. Text still works"),
+        },
+        MicrophoneAcquisitionOutcome::StartFailed => MicrophoneAcquisitionTransition {
+            starts_perception: false,
+            state: MicrophoneState::Error,
+            message: Some("Microphone could not start. Text still works"),
+        },
+    }
+}
+
+const fn microphone_acquisition_label(outcome: MicrophoneAcquisitionOutcome) -> &'static str {
+    match outcome {
+        MicrophoneAcquisitionOutcome::Acquired => "acquired",
+        MicrophoneAcquisitionOutcome::Unavailable => "unavailable",
+        MicrophoneAcquisitionOutcome::StartFailed => "start_failed",
+    }
+}
+
 impl Game {
     pub fn new(ctx: &mut Context, args: &Args) -> GameResult<Self> {
         let assets_root = assets_root();
@@ -234,7 +281,12 @@ impl Game {
                 debug_assert_eq!(progress.applied_ms, 0);
                 (session, None, false, false)
             } else if args.script.is_some() {
-                (GameSession::new(42, "Mop"), None, false, false)
+                (
+                    GameSession::new(args.feel_seed.unwrap_or(42), "Mop"),
+                    None,
+                    false,
+                    false,
+                )
             } else if args.new_game {
                 (GameSession::new(42, "Mop"), None, false, true)
             } else {
@@ -485,35 +537,43 @@ impl Game {
             self.view.status_message = Some("Finish this thought before speaking again".to_owned());
             return Ok(());
         }
-        self.apply_command(SessionCommand::SpeechStarted, false)?;
         match MicrophoneCapture::start() {
             Ok(capture) => {
+                self.apply_microphone_acquisition(MicrophoneAcquisitionOutcome::Acquired)?;
                 self.microphone = Some(capture);
-                self.view.microphone_state = MicrophoneState::Listening;
-                self.view.status_message = None;
             }
             Err(MicrophoneError::Unavailable | MicrophoneError::UnsupportedFormat) => {
-                self.apply_command(
-                    SessionCommand::SpeechFailed {
-                        failure: SpeechInputFailure::MicrophoneUnavailable,
-                    },
-                    false,
-                )?;
-                self.view.microphone_state = MicrophoneState::Unavailable;
-                self.view.status_message =
-                    Some("Microphone unavailable. Text still works".to_owned());
+                self.apply_microphone_acquisition(MicrophoneAcquisitionOutcome::Unavailable)?;
             }
             Err(MicrophoneError::Start(_) | MicrophoneError::Storage(_)) => {
-                self.apply_command(
-                    SessionCommand::SpeechFailed {
-                        failure: SpeechInputFailure::MicrophoneUnavailable,
-                    },
-                    false,
-                )?;
-                self.view.microphone_state = MicrophoneState::Error;
-                self.view.status_message =
-                    Some("Microphone could not start. Text still works".to_owned());
+                self.apply_microphone_acquisition(MicrophoneAcquisitionOutcome::StartFailed)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Applies the host-side result of microphone acquisition. Failures deliberately never send a
+    /// session command: without a live capture there is no perceptual evidence for the creature.
+    fn apply_microphone_acquisition(
+        &mut self,
+        outcome: MicrophoneAcquisitionOutcome,
+    ) -> GameResult {
+        let transition = microphone_acquisition_transition(outcome);
+        if transition.starts_perception {
+            self.apply_command(SessionCommand::SpeechStarted, false)?;
+        }
+        self.view.microphone_state = transition.state;
+        self.view.status_message = transition.message.map(str::to_owned);
+        if let Some(feel) = &mut self.feel {
+            feel.record_native(
+                "microphone_acquisition",
+                serde_json::json!({
+                    "outcome": microphone_acquisition_label(outcome),
+                    "capture_evidence": transition.starts_perception,
+                }),
+                self.session.world().elapsed_ms,
+            )
+            .map_err(feel_error)?;
         }
         Ok(())
     }
@@ -687,12 +747,31 @@ impl Game {
         }
         self.view.pending = false;
         self.audio.stop_speech();
-        if !self.session.accept_dialogue_turn(
+        let accepted_by_session = self.session.accept_dialogue_turn(
             &turn.request,
             &turn.reply,
             turn.retry_count,
             turn.fallback,
-        ) {
+        );
+        if let Some(feel) = &mut self.feel {
+            feel.record_dialogue_health(
+                DialogueHealthTrace {
+                    owner: dialogue_trace_owner(turn.owner),
+                    backend: turn.backend,
+                    fallback: turn.fallback,
+                    fallback_reason: turn.fallback_reason,
+                    retry_count: turn.retry_count,
+                    duplicate_suppressed: turn.duplicate_suppressed,
+                    reply_word_count: turn.reply.say.split_whitespace().count(),
+                    recalled_memory: turn.reply.recalled_memory.is_some(),
+                    recalled_belief: turn.reply.recalled_belief.is_some(),
+                    accepted_by_session,
+                },
+                self.session.world().elapsed_ms,
+            )
+            .map_err(feel_error)?;
+        }
+        if !accepted_by_session {
             // The player superseded the authoritative relationship beat while local
             // inference was pending. Never present, speak, or transcript stale wording.
             self.active_dialogue_owner = None;
@@ -1336,6 +1415,13 @@ impl Game {
                         .map_err(feel_error)?;
                 }
                 self.apply_ui_action(action, false)?;
+            }
+            ScenarioStep::MicrophoneAcquisition(outcome) => {
+                let outcome = match outcome {
+                    MicrophoneAcquisition::Acquired => MicrophoneAcquisitionOutcome::Acquired,
+                    MicrophoneAcquisition::Unavailable => MicrophoneAcquisitionOutcome::Unavailable,
+                };
+                self.apply_microphone_acquisition(outcome)?;
             }
             ScenarioStep::SetSubtitles(enabled) => {
                 if let Some(feel) = &mut self.feel {
@@ -2282,6 +2368,14 @@ fn apply_spoken_input_status(
                 5_000,
             );
         }
+        SpokenInputStatus::Expired => {
+            view.microphone_state = resting_microphone_state;
+            view.show_status(
+                "Mop stayed with what it was doing.".to_owned(),
+                now_ms,
+                5_000,
+            );
+        }
         SpokenInputStatus::Refused => {
             view.microphone_state = resting_microphone_state;
             view.show_status("Not answering right now.".to_owned(), now_ms, 4_000);
@@ -2326,10 +2420,10 @@ mod tests {
     use beastie_view::{MicrophoneState, UiAction, ViewState};
 
     use super::{
-        CaptureState, DelayedCompletion, apply_spoken_input_status, clears_speech,
-        command_requires_persist, effective_dialogue_text_speed, load_session,
-        mark_capture_rendered, mouth_phase, play_command, revealed_text, show_dialogue_caption,
-        spoken_input_is_pending, take_capture_for_readback,
+        CaptureState, DelayedCompletion, MicrophoneAcquisitionOutcome, apply_spoken_input_status,
+        clears_speech, command_requires_persist, effective_dialogue_text_speed, load_session,
+        mark_capture_rendered, microphone_acquisition_transition, mouth_phase, play_command,
+        revealed_text, show_dialogue_caption, spoken_input_is_pending, take_capture_for_readback,
     };
     use crate::dialogue::DialogueOwner;
     use crate::save_store::SaveStore;
@@ -2430,6 +2524,27 @@ mod tests {
     }
 
     #[test]
+    fn microphone_acquisition_only_starts_perception_after_live_capture() {
+        let acquired = microphone_acquisition_transition(MicrophoneAcquisitionOutcome::Acquired);
+        assert!(acquired.starts_perception);
+        assert_eq!(acquired.state, MicrophoneState::Listening);
+        assert_eq!(acquired.message, None);
+
+        let unavailable =
+            microphone_acquisition_transition(MicrophoneAcquisitionOutcome::Unavailable);
+        assert!(!unavailable.starts_perception);
+        assert_eq!(unavailable.state, MicrophoneState::Unavailable);
+        assert_eq!(
+            unavailable.message,
+            Some("Microphone unavailable. Text still works")
+        );
+
+        let failed = microphone_acquisition_transition(MicrophoneAcquisitionOutcome::StartFailed);
+        assert!(!failed.starts_perception);
+        assert_eq!(failed.state, MicrophoneState::Error);
+    }
+
+    #[test]
     fn deferred_spoken_input_stays_busy_until_the_session_submits_it() {
         assert!(spoken_input_is_pending(SpokenInputStatus::Listening));
         assert!(spoken_input_is_pending(
@@ -2442,6 +2557,7 @@ mod tests {
         for terminal in [
             SpokenInputStatus::Submitted,
             SpokenInputStatus::NoCandidate,
+            SpokenInputStatus::Expired,
             SpokenInputStatus::Refused,
             SpokenInputStatus::AcousticUncertainty {
                 confidence: beastie_protocol::AcousticConfidence::new(500).expect("valid"),

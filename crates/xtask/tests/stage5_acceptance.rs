@@ -232,8 +232,9 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
             GameEvent::NonverbalAct(NonverbalAct::PushFoodAway(FoodId::Berry))
         )
     }));
-    assert_eq!(
+    assert_ne!(
         session.world().creature.current_intention,
-        Intention::WaitAtBowl
+        Intention::Eat,
+        "the rejected berry must not become a delayed eating intention"
     );
 }

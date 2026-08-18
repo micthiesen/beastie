@@ -61,6 +61,14 @@ pub struct Args {
         conflicts_with = "new_game"
     )]
     pub feel_initial_save: Option<PathBuf>,
+    /// Deterministic new-creature seed used only by scripted feel evidence.
+    #[arg(
+        long,
+        hide = true,
+        requires_all = ["script", "feel_dir"],
+        conflicts_with = "feel_initial_save"
+    )]
+    pub feel_seed: Option<u64>,
     /// Keep a completed visible scenario open for native input inspection.
     #[arg(long, requires = "script")]
     pub stay_open: bool,
@@ -127,6 +135,37 @@ mod tests {
                 "fixtures/saves/feel/trusted-berry.json",
             ])
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn feel_seed_is_capture_only_and_conflicts_with_an_initial_save() {
+        assert!(
+            Args::try_parse_from([
+                "beastie-game",
+                "--script",
+                "fixtures/scenarios/feel/quiet-observation.jsonl",
+                "--feel-dir",
+                "target/feel/run",
+                "--feel-seed",
+                "4201",
+            ])
+            .is_ok()
+        );
+        assert!(Args::try_parse_from(["beastie-game", "--feel-seed", "4201"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "beastie-game",
+                "--script",
+                "fixtures/scenarios/feel/quiet-observation.jsonl",
+                "--feel-dir",
+                "target/feel/run",
+                "--feel-seed",
+                "4201",
+                "--feel-initial-save",
+                "fixtures/saves/feel/trusted-berry.json",
+            ])
+            .is_err()
         );
     }
 

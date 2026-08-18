@@ -1,0 +1,12 @@
+{"version":1,"command":"play","toy":"ball"}
+{"version":1,"command":"wait","milliseconds":14000}
+{"version":1,"command":"resume","elapsed_ms":900000}
+{"version":1,"command":"wait","milliseconds":39000}
+{"version":1,"command":"marker","name":"shared-ball"}
+{"version":1,"command":"wait","milliseconds":3000}
+{"version":1,"command":"capture","name":"shared-ball-callback"}
+{"version":1,"command":"wait","milliseconds":4000}
+{"version":1,"command":"play","toy":"ball"}
+{"version":1,"command":"wait","milliseconds":8000}
+{"version":1,"command":"capture","name":"shared-ball-contact"}
+{"version":1,"command":"inspect_hold","milliseconds":2000}

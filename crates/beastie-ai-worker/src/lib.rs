@@ -16,7 +16,8 @@ use std::time::Duration;
 
 use beastie_protocol::{
     DialogueReply, DialogueRequest, Gesture, PROTOCOL_VERSION, constrained_fallback_reply,
-    fallback_reply, normalize_dialogue_request, validate_reply, validate_request,
+    fallback_reply, normalize_dialogue_request, reply_fingerprint, validate_reply,
+    validate_request,
 };
 use bounded::{BoundedLine, read_bounded_line};
 
@@ -254,31 +255,28 @@ fn grounded_fallback_reply(request: &DialogueRequest) -> DialogueReply {
 }
 
 fn fixture_reply(request: &DialogueRequest) -> DialogueReply {
-    if request.context.relationship.is_some() {
-        return DialogueReply {
-            protocol_version: PROTOCOL_VERSION,
-            request_id: request.request_id,
-            say: "you came back.".to_owned(),
-            gesture: request
-                .constraints
-                .allowed_gestures
-                .iter()
-                .next()
-                .copied()
-                .unwrap_or(Gesture::None),
-            recalled_memory: None,
-            recalled_belief: None,
-            worker_fallback: None,
-        };
-    }
-    let memory = request.candidate_memories.first();
+    let say = fixture_say(request);
+    let recalled_memory = if request.context.relationship.is_none() {
+        prompt::planned_memory(request)
+            .filter(|memory| {
+                request.constraints.max_words >= 2 && prompt::memory_anchor(&memory.fact).is_some()
+            })
+            .map(|memory| memory.id)
+    } else {
+        // The motif and exact subject already ground relationship expression. Avoid attaching a
+        // memory ID unless the line also deliberately expresses that memory's sentiment.
+        None
+    };
+    let recalled_belief = request
+        .context
+        .relationship
+        .is_none()
+        .then(|| prompt::planned_belief(request).map(|belief| belief.id))
+        .flatten();
     DialogueReply {
         protocol_version: PROTOCOL_VERSION,
         request_id: request.request_id,
-        say: memory.map_or_else(
-            || "hm. no old thought.".to_owned(),
-            |_| "yes. old thing remains.".to_owned(),
-        ),
+        say,
         gesture: if request
             .constraints
             .allowed_gestures
@@ -294,10 +292,208 @@ fn fixture_reply(request: &DialogueRequest) -> DialogueReply {
                 .cloned()
                 .unwrap_or(Gesture::None)
         },
-        recalled_memory: memory.map(|candidate| candidate.id),
-        recalled_belief: None,
+        recalled_memory,
+        recalled_belief,
         worker_fallback: None,
     }
+}
+
+/// A deterministic, request-aware local mouth for fixture sessions. It deliberately uses only
+/// typed request context, never raw player words, and rotates within grounded alternatives when
+/// the dialogue manager asks for a non-duplicate retry.
+fn fixture_say(request: &DialogueRequest) -> String {
+    if let Some(relationship) = &request.context.relationship {
+        let subject = fixture_relationship_subject(relationship.subject);
+        if request.constraints.max_words == 1 {
+            let options = match relationship.motif {
+                beastie_protocol::RelationshipMotifKey::SharedToy(_) => {
+                    ["toy".to_owned(), "play".to_owned(), "remember".to_owned()]
+                }
+                beastie_protocol::RelationshipMotifKey::ComfortRitual => {
+                    ["comfort".to_owned(), "safe".to_owned(), "ritual".to_owned()]
+                }
+                beastie_protocol::RelationshipMotifKey::TrustedFood(_) => {
+                    ["food".to_owned(), "good".to_owned(), "trusted".to_owned()]
+                }
+                beastie_protocol::RelationshipMotifKey::FoodGrudge(_) => {
+                    ["food".to_owned(), "bad".to_owned(), "grudge".to_owned()]
+                }
+                beastie_protocol::RelationshipMotifKey::PlayerReturns => {
+                    ["back".to_owned(), "return".to_owned(), "came".to_owned()]
+                }
+                beastie_protocol::RelationshipMotifKey::FamiliarPlace(_) => {
+                    ["place".to_owned(), "stay".to_owned(), "familiar".to_owned()]
+                }
+            };
+            return fixture_choose(request, &options);
+        }
+        let options = match relationship.motif {
+            beastie_protocol::RelationshipMotifKey::SharedToy(_) => [
+                format!("{subject} toy remembers play."),
+                format!("play remembers {subject} toy."),
+                format!("{subject} toy, shared play."),
+            ],
+            beastie_protocol::RelationshipMotifKey::ComfortRitual => [
+                "comfort ritual stays safe.".to_owned(),
+                "safe comfort ritual remains.".to_owned(),
+                "ritual comfort, safe here.".to_owned(),
+            ],
+            beastie_protocol::RelationshipMotifKey::TrustedFood(_) => [
+                format!("{subject} food stays trusted."),
+                format!("trusted {subject} food."),
+                format!("{subject} food feels good."),
+            ],
+            beastie_protocol::RelationshipMotifKey::FoodGrudge(_) => [
+                format!("{subject} food keeps grudge."),
+                format!("{subject} food feels bad."),
+                format!("bad {subject} food grudge."),
+            ],
+            beastie_protocol::RelationshipMotifKey::PlayerReturns => [
+                "you came back.".to_owned(),
+                "back again. return warm.".to_owned(),
+                "return came. hello.".to_owned(),
+            ],
+            beastie_protocol::RelationshipMotifKey::FamiliarPlace(_) => [
+                format!("{subject} place feels familiar."),
+                format!("familiar {subject} place. stay."),
+                format!("stay at {subject} place."),
+            ],
+        };
+        return fixture_choose(request, &options);
+    }
+
+    if let Some(memory) = prompt::planned_memory(request)
+        && let Some(anchor) = prompt::memory_anchor(&memory.fact)
+    {
+        let feeling = if memory.feeling.contains("dislike") {
+            "bad"
+        } else if memory.feeling.contains("liked") {
+            "good"
+        } else {
+            "old"
+        };
+        let options = [
+            format!("{anchor} {feeling}."),
+            format!("{feeling} {anchor}."),
+            format!("{anchor}, {feeling} still."),
+        ];
+        return fixture_choose(request, &options);
+    }
+
+    if let Some(belief) = prompt::planned_belief(request) {
+        let options = match belief.proposition {
+            beastie_protocol::BeliefKind::FoodIsATrick => [
+                "food may be trick.".to_owned(),
+                "trick food, maybe.".to_owned(),
+                "food feels tricky.".to_owned(),
+            ],
+            beastie_protocol::BeliefKind::PlayerReturnsAfterSleep => [
+                "sleep ends. return comes.".to_owned(),
+                "after sleep, you return.".to_owned(),
+                "return follows sleep.".to_owned(),
+            ],
+            beastie_protocol::BeliefKind::ToyIsJealous => [
+                "toy looks jealous.".to_owned(),
+                "jealous toy watches.".to_owned(),
+                "toy stays jealous.".to_owned(),
+            ],
+        };
+        return fixture_choose(request, &options);
+    }
+
+    if let Some(say) = prompt::authored_context_say(request) {
+        if request.constraints.max_words == 1
+            && let Some(terms) = prompt::required_output_terms(request)
+        {
+            let options = [
+                terms[0].clone(),
+                terms[1 % terms.len()].clone(),
+                terms[2 % terms.len()].clone(),
+            ];
+            return fixture_choose(request, &options);
+        }
+        let alternatives = [say.clone(), format!("{say} still."), format!("{say} here.")];
+        return fixture_choose(request, &alternatives);
+    }
+
+    let options = if request.mood.eq_ignore_ascii_case("sleepy") {
+        [
+            "sleep pulls me.".to_owned(),
+            "tired fish rests.".to_owned(),
+            "need sleep now.".to_owned(),
+        ]
+    } else if request.interpretation.is_question {
+        [
+            "do not know.".to_owned(),
+            "not remember yet.".to_owned(),
+            "hm. unknown.".to_owned(),
+        ]
+    } else {
+        [
+            format!("{} is here.", request.creature_name),
+            "here. watching water.".to_owned(),
+            "hm. still here.".to_owned(),
+        ]
+    };
+    fixture_choose(request, &options)
+}
+
+fn fixture_relationship_subject(subject: beastie_protocol::RelationshipSubject) -> &'static str {
+    match subject {
+        beastie_protocol::RelationshipSubject::Food(beastie_protocol::FoodId::Berry) => "berry",
+        beastie_protocol::RelationshipSubject::Food(beastie_protocol::FoodId::Mushroom) => {
+            "mushroom"
+        }
+        beastie_protocol::RelationshipSubject::Food(beastie_protocol::FoodId::Pellet) => "pellet",
+        beastie_protocol::RelationshipSubject::Toy(beastie_protocol::ToyId::Ball) => "ball",
+        beastie_protocol::RelationshipSubject::Toy(beastie_protocol::ToyId::Bell) => "bell",
+        beastie_protocol::RelationshipSubject::Toy(beastie_protocol::ToyId::Sock) => "sock",
+        beastie_protocol::RelationshipSubject::Place(
+            beastie_protocol::SemanticDestination::Cave,
+        ) => "cave",
+        beastie_protocol::RelationshipSubject::Place(
+            beastie_protocol::SemanticDestination::Plant,
+        ) => "plant",
+        beastie_protocol::RelationshipSubject::Place(
+            beastie_protocol::SemanticDestination::Bottom,
+        ) => "bottom",
+        beastie_protocol::RelationshipSubject::Place(_) => "place",
+        beastie_protocol::RelationshipSubject::Player => "player",
+    }
+}
+
+fn fixture_choose(request: &DialogueRequest, options: &[String; 3]) -> String {
+    let start = (request.request_id as usize)
+        .wrapping_add(request.context.repetition_count as usize)
+        % options.len();
+    for offset in 0..options.len() {
+        let say = truncate_fixture_reply(
+            &options[(start + offset) % options.len()],
+            request.constraints.max_words,
+        );
+        let fingerprint = reply_fingerprint(&say);
+        let repeated_text = request
+            .context
+            .avoid_reply_texts
+            .iter()
+            .any(|known| reply_fingerprint(known) == fingerprint);
+        if !repeated_text
+            && !request
+                .context
+                .avoid_reply_fingerprints
+                .contains(&fingerprint)
+        {
+            return say;
+        }
+    }
+    truncate_fixture_reply(&options[start], request.constraints.max_words)
+}
+
+fn truncate_fixture_reply(say: &str, max_words: usize) -> String {
+    say.split_whitespace()
+        .take(max_words)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -402,8 +598,119 @@ mod tests {
         };
         let line = serde_json::to_string(&request).expect("request should serialize");
         let reply = process_line(&line, &mut FixtureBackend);
-        assert_eq!(reply.say, "yes. old thing remains. remains.");
+        assert_eq!(reply.say, "berry, bad still. still.");
         assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
+    }
+
+    #[test]
+    fn fixture_backend_keeps_relationship_motif_and_subject_grounded_without_fallback() {
+        let request = eval_request("relationship_return_motif");
+        let line = serde_json::to_string(&request).expect("request should serialize");
+        let reply = process_line(&line, &mut FixtureBackend);
+        assert!(reply.worker_fallback.is_none());
+        assert!(
+            reply.say.contains("back")
+                || reply.say.contains("return")
+                || reply.say.contains("came")
+        );
+        assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
+    }
+
+    #[test]
+    fn fixture_backend_covers_each_relationship_motif_without_fallback() {
+        use beastie_protocol::{
+            FoodId, RelationshipMotifKey, RelationshipSubject, SemanticDestination, ToyId,
+        };
+
+        let mut request = eval_request("relationship_return_motif");
+        let cases = [
+            (
+                RelationshipMotifKey::SharedToy(ToyId::Ball),
+                RelationshipSubject::Toy(ToyId::Ball),
+                Some(SemanticDestination::Toy(ToyId::Ball)),
+            ),
+            (
+                RelationshipMotifKey::ComfortRitual,
+                RelationshipSubject::Player,
+                Some(SemanticDestination::Player),
+            ),
+            (
+                RelationshipMotifKey::TrustedFood(FoodId::Berry),
+                RelationshipSubject::Food(FoodId::Berry),
+                Some(SemanticDestination::Bottom),
+            ),
+            (
+                RelationshipMotifKey::FoodGrudge(FoodId::Mushroom),
+                RelationshipSubject::Food(FoodId::Mushroom),
+                Some(SemanticDestination::Bottom),
+            ),
+            (
+                RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
+                RelationshipSubject::Place(SemanticDestination::Cave),
+                Some(SemanticDestination::Cave),
+            ),
+            (
+                RelationshipMotifKey::PlayerReturns,
+                RelationshipSubject::Player,
+                Some(SemanticDestination::Player),
+            ),
+        ];
+        for (motif, subject, target) in cases {
+            let relationship = request
+                .context
+                .relationship
+                .as_mut()
+                .expect("relationship context");
+            relationship.motif = motif;
+            relationship.subject = subject;
+            relationship.target = target;
+            let line = serde_json::to_string(&request).expect("request should serialize");
+            let reply = process_line(&line, &mut FixtureBackend);
+            assert!(reply.worker_fallback.is_none(), "{motif:?}: {}", reply.say);
+            assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
+        }
+    }
+
+    #[test]
+    fn fixture_backend_changes_a_requested_retry_without_losing_grounding() {
+        let mut request = eval_request("relationship_return_motif");
+        let first = fixture_reply(&request);
+        request.context.avoid_reply_texts = vec![first.say.clone()];
+        request.context.avoid_reply_fingerprints = vec![reply_fingerprint(&first.say)];
+        let retry = fixture_reply(&request);
+        assert_ne!(reply_fingerprint(&first.say), reply_fingerprint(&retry.say));
+        assert_eq!(validate_reply(&request, retry.clone()), Ok(retry));
+    }
+
+    #[test]
+    fn fixture_backend_keeps_every_safe_eval_turn_healthy() {
+        let corpus: serde_json::Value =
+            serde_json::from_str(EVAL_CORPUS).expect("corpus should parse");
+        for case in corpus["cases"]
+            .as_array()
+            .expect("cases should be an array")
+        {
+            let mut request: DialogueRequest =
+                serde_json::from_value(case["request"].clone()).expect("request should parse");
+            normalize_dialogue_request(&mut request);
+            if request.input_rejection.is_some() {
+                continue;
+            }
+            let line = serde_json::to_string(&request).expect("request should serialize");
+            let reply = process_line(&line, &mut FixtureBackend);
+            assert!(
+                reply.worker_fallback.is_none(),
+                "{} unexpectedly fell back: {}",
+                case["id"],
+                reply.say
+            );
+            assert_eq!(
+                validate_reply(&request, reply.clone()),
+                Ok(reply),
+                "{} returned an invalid reply",
+                case["id"]
+            );
+        }
     }
 
     #[test]

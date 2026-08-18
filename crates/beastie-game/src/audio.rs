@@ -23,6 +23,9 @@ const FOOD_DROP: &str = "food/drop-sink";
 const FOOD_EAT: &str = "food/eat";
 const FOOD_REJECT: &str = "food/spit-reject";
 const TOY_IMPACT: &str = "object/toy-impact";
+const BALL_NUDGE: &str = "object/ball-nudge";
+const BELL_RING: &str = "object/bell-ring";
+const SOCK_RUSTLE: &str = "object/sock-rustle";
 const CREATURE_AFFECTION: &str = "creature/affection";
 const CREATURE_WAKE: &str = "creature/wake";
 const CREATURE_CURIOUS: &str = "creature/curious";
@@ -43,6 +46,9 @@ const SOUND_IDS: &[&str] = &[
     FOOD_EAT,
     FOOD_REJECT,
     TOY_IMPACT,
+    BALL_NUDGE,
+    BELL_RING,
+    SOCK_RUSTLE,
     CREATURE_AFFECTION,
     "creature/surprise",
     "creature/curious",
@@ -243,6 +249,7 @@ impl AudioBank {
 const fn owner_priority(owner: SemanticOwner) -> u8 {
     match owner {
         SemanticOwner::Ordinary => 0,
+        SemanticOwner::PrivateLife(_) => 1,
         SemanticOwner::StandaloneRelationship(_) => 1,
         SemanticOwner::ActionRelationship(_) => 2,
         SemanticOwner::DirectOutcome => 3,
@@ -276,6 +283,8 @@ pub struct AmbientBubbleSchedule {
     seed: u64,
     sequence: u64,
     next_at_ms: u64,
+    last_variant: Option<bool>,
+    repeat_count: u8,
 }
 
 impl AmbientBubbleSchedule {
@@ -285,6 +294,8 @@ impl AmbientBubbleSchedule {
             seed,
             sequence: 0,
             next_at_ms: now_ms,
+            last_variant: None,
+            repeat_count: 0,
         };
         schedule.schedule_after(now_ms);
         schedule
@@ -298,7 +309,22 @@ impl AmbientBubbleSchedule {
             self.next_at_ms = now_ms.saturating_add(1_000);
             return None;
         }
-        let sound = if self.sequence.is_multiple_of(2) {
+        let mixed = splitmix64(
+            self.seed.rotate_left(17) ^ self.sequence.wrapping_mul(0xD1B5_4A32_D192_ED03),
+        );
+        let candidate = mixed.is_multiple_of(2);
+        let variant = if self.last_variant == Some(candidate) && self.repeat_count >= 2 {
+            !candidate
+        } else {
+            candidate
+        };
+        if self.last_variant == Some(variant) {
+            self.repeat_count = self.repeat_count.saturating_add(1);
+        } else {
+            self.last_variant = Some(variant);
+            self.repeat_count = 1;
+        }
+        let sound = if variant {
             AudioCue::Bubble
         } else {
             AudioCue::BubbleAlternate
@@ -310,7 +336,7 @@ impl AmbientBubbleSchedule {
     fn schedule_after(&mut self, now_ms: u64) {
         let mixed = splitmix64(self.seed ^ self.sequence.wrapping_mul(0x9E37_79B9_7F4A_7C15));
         self.sequence = self.sequence.wrapping_add(1);
-        self.next_at_ms = now_ms.saturating_add(4_000 + mixed % 9_001);
+        self.next_at_ms = now_ms.saturating_add(6_000 + mixed % 12_001);
     }
 }
 
@@ -371,6 +397,9 @@ pub const fn sound_for_cue(cue: AudioCue) -> Option<&'static str> {
         AudioCue::FoodReject => Some(FOOD_REJECT),
         AudioCue::Sand => Some(SAND_DISTURB),
         AudioCue::ToyImpact => Some(TOY_IMPACT),
+        AudioCue::BallNudge => Some(BALL_NUDGE),
+        AudioCue::BellRing => Some(BELL_RING),
+        AudioCue::SockRustle => Some(SOCK_RUSTLE),
         AudioCue::Affection => Some(CREATURE_AFFECTION),
         AudioCue::Curious => Some(CREATURE_CURIOUS),
         AudioCue::Mrr => Some(CREATURE_MRR),
@@ -399,6 +428,9 @@ mod tests {
         assert_eq!(sound_for_cue(AudioCue::FoodReject), Some(FOOD_REJECT));
         assert_eq!(sound_for_cue(AudioCue::Affection), Some(CREATURE_AFFECTION));
         assert_eq!(sound_for_cue(AudioCue::ToyImpact), Some(TOY_IMPACT));
+        assert_eq!(sound_for_cue(AudioCue::BallNudge), Some(BALL_NUDGE));
+        assert_eq!(sound_for_cue(AudioCue::BellRing), Some(BELL_RING));
+        assert_eq!(sound_for_cue(AudioCue::SockRustle), Some(SOCK_RUSTLE));
         assert_eq!(sound_for_cue(AudioCue::Sleep), Some(CREATURE_SLEEP));
         assert_eq!(sound_for_cue(AudioCue::Curious), Some(CREATURE_CURIOUS));
         assert_eq!(sound_for_cue(AudioCue::CaveSettle), Some(CAVE_SETTLE));
@@ -497,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn ambient_bubbles_are_deterministic_rate_limited_and_alternating() {
+    fn ambient_bubbles_are_deterministic_sparse_and_avoid_long_repeats() {
         let mut left = AmbientBubbleSchedule::new(42, 0);
         let mut right = AmbientBubbleSchedule::new(42, 0);
         let mut emitted = Vec::new();
@@ -509,13 +541,19 @@ mod tests {
                 emitted.push((now_ms, sound));
             }
         }
-        assert!(emitted.len() >= 4);
+        assert!(emitted.len() >= 3);
         assert!(
             emitted
                 .windows(2)
-                .all(|pair| pair[1].0.saturating_sub(pair[0].0) >= 4_000)
+                .all(|pair| pair[1].0.saturating_sub(pair[0].0) >= 6_000)
         );
-        assert!(emitted.windows(2).all(|pair| pair[0].1 != pair[1].1));
+        assert!(
+            emitted
+                .windows(3)
+                .all(|run| { !(run[0].1 == run[1].1 && run[1].1 == run[2].1) })
+        );
+        assert!(emitted.windows(2).any(|pair| pair[0].1 == pair[1].1));
+        assert!(emitted.windows(2).any(|pair| pair[0].1 != pair[1].1));
     }
 
     #[test]

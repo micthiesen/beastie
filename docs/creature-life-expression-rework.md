@@ -1,7 +1,7 @@
 # Creature life and expression rework
 
 Date: 2026-08-17
-Status: proposed
+Status: implemented and verified
 
 ## Outcome
 
@@ -401,7 +401,50 @@ perception, and evidence seams must agree.
 
 ## Implementation ledger
 
-This contract is proposed and has no implementation entries yet. During implementation, record
-each material slice with its authoritative change, focused tests, native evidence root, surviving
-limitations, and independent adjudication. On completion, change `Status` to `implemented and
-verified` and rewrite this section as the durable final-state ledger.
+- **Canonical speech identity:** all six moods now use curated three-frame mouth cycles derived
+  from the canonical gold fish. Asset checks enforce exact dimensions, palette, opaque envelope,
+  centroid, eye line, mouth anchors, and transition stability. The rejected provider frames remain
+  under `assets/generated/creature-v1/talk/rejected/`, and
+  `cargo xtask asset talking-contact-sheet` produced the inspected exact-2x gallery at
+  `target/feel/talking-identity-contact-sheet.png`.
+- **Authoritative private life:** core save version 7 persists monotonic activity IDs, exact kind,
+  subject, purpose, recipe, phase, selection evidence, payoff boundary, bounded recent history, and
+  mutable toy state. Private travel carries the activity ID. Ball displacement, bell strike, and
+  sock carry begin only at semantic contact and survive save, reload, offline completion, and
+  migration without duplicate events.
+- **Selection and quiet rhythm:** deterministic weighted choice uses needs, traits, preferences,
+  routines, and recent family, subject, and recipe penalties. Dominant needs and strong state
+  signals remain decisive. Every completed private activity schedules 16 to 32 seconds of quiet.
+  Final three-seed evidence contains six starts per session, real omissions and recurrence, and no
+  completion-tick restart or common opening permutation.
+- **Embodied presentation and sound:** cave, plant, bottom, open water, ball, bell, and sock project
+  exact typed recipes. Open water has a reduced-motion-safe current contour; toy props remain
+  visible through contact and recovery. Ball nudge, bell ring, and sock rustle use separate authored
+  mono PCM16 cues at the exact authoritative payoff. The ambient bubble stream now uses seeded
+  6-to-18-second spacing with bounded variant runs instead of strict alternation.
+- **Specific relationship expression:** the bounded persisted performance ledger records exact
+  motif, subject, evidence, typed recipe, and time. Fresh quiet callbacks wait at least 45 seconds,
+  and an exact performance is suppressed for a full five-minute lived session. Shared-toy notice
+  now approaches and visibly marks the exact remembered prop without claiming physical contact;
+  view and audio otherwise project motif-specific recipes rather than a shared heart and
+  seven-second template. Final shared-ball evidence starts from memory 1 at 52.016 seconds,
+  completes at 59.066 seconds, and only then yields to new direct ball play.
+- **Perception and dialogue arbitration:** microphone capture must be acquired before
+  `SpeechStarted`; unavailable acquisition is shell-only technical feedback with no perception,
+  gaze, cue, or canonical mutation. Deferred language binds to the exact food, toy, refusal,
+  private-life, or relationship owner and releases only at its semantic boundary, or expires
+  honestly. Session save version 5 migrates older embedded state conservatively.
+- **Evidence and gate:** the final focused native roots are
+  `target/feel/creature-life-private-life-pass-04` and
+  `target/feel/creature-life-shared-ball-pass-08`; the complete seven-experience integration root is
+  `target/feel/creature-life-final-baseline-pass-01`, with the relationship correction rechecked in
+  `target/feel/creature-life-final-first-five-pass-03`. Failed zero-frame Metal attempts are
+  retained separately and never promoted. Attempt manifests hash marker captures as well as
+  filmstrips. Independent visual, causality/behavior, and audio/timing review found no remaining
+  material issue in scope. `cargo xtask verify` passes with 81 declared runtime assets, 27/27
+  dialogue fixtures, and 11/11 spoken-input fixtures.
+
+Known evidence limits remain explicit: reference mixes do not prove host-speaker output, the quiet
+fixtures do not carry relationship-shaped private-life preferences, reduced motion is covered
+headlessly rather than by a dedicated native capture, and Windows plus physical-controller
+acceptance remain parked. None is a known material regression in this pass.

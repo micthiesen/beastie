@@ -3,15 +3,116 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     ACTIVE_DAY_MS, ActionRelationshipContext, BeliefKind, FoodId, FoodOutcome, Memory, MemoryId,
     MemoryKind, RelationshipBeat, RelationshipBeatPhase, RelationshipEvidence,
-    RelationshipExpressionKind, RelationshipMotif, RelationshipMotifKey, RelationshipSubject,
+    RelationshipExpressionKind, RelationshipMotif, RelationshipMotifKey,
+    RelationshipPerformanceRecipe, RelationshipPerformanceRecord, RelationshipSubject,
     RelationshipTrigger, RelationshipTriggerKind, SemanticDestination, ToyId, WorldState,
 };
 
 pub const MAX_MOTIF_EVIDENCE: usize = 8;
 pub const MAX_RECENT_EXPRESSIONS: usize = 8;
+pub const MAX_PERFORMANCE_LEDGER_RECORDS: usize = 16;
 pub const MAX_RELATIONSHIP_BEATS_PER_DAY: u8 = 4;
 pub const RELATIONSHIP_GLOBAL_COOLDOWN_MS: u64 = 20_000;
 pub const RELATIONSHIP_MOTIF_COOLDOWN_MS: u64 = 90_000;
+/// A memory may make a later callback meaningful, but it may not force an immediate receipt.
+pub const RELATIONSHIP_EVIDENCE_MATURITY_MS: u64 = 45_000;
+pub const RELATIONSHIP_PERFORMANCE_COOLDOWN_MS: u64 = 300_000;
+
+#[must_use]
+pub const fn performance_recipe_for(
+    motif: RelationshipMotifKey,
+    expression: RelationshipExpressionKind,
+) -> RelationshipPerformanceRecipe {
+    match motif {
+        RelationshipMotifKey::SharedToy(ToyId::Ball) => {
+            RelationshipPerformanceRecipe::SharedBall(expression)
+        }
+        RelationshipMotifKey::SharedToy(ToyId::Bell) => {
+            RelationshipPerformanceRecipe::SharedBell(expression)
+        }
+        RelationshipMotifKey::SharedToy(ToyId::Sock) => {
+            RelationshipPerformanceRecipe::SharedSock(expression)
+        }
+        RelationshipMotifKey::ComfortRitual => {
+            RelationshipPerformanceRecipe::ComfortAttention(expression)
+        }
+        RelationshipMotifKey::TrustedFood(_) => {
+            RelationshipPerformanceRecipe::TrustedFoodReceipt(expression)
+        }
+        RelationshipMotifKey::FoodGrudge(_) => {
+            RelationshipPerformanceRecipe::FoodGrudgeReceipt(expression)
+        }
+        RelationshipMotifKey::PlayerReturns => {
+            RelationshipPerformanceRecipe::PlayerReturn(expression)
+        }
+        RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave) => {
+            RelationshipPerformanceRecipe::FamiliarCave(expression)
+        }
+        RelationshipMotifKey::FamiliarPlace(SemanticDestination::Plant) => {
+            RelationshipPerformanceRecipe::FamiliarPlant(expression)
+        }
+        RelationshipMotifKey::FamiliarPlace(SemanticDestination::Bottom) => {
+            RelationshipPerformanceRecipe::FamiliarBottom(expression)
+        }
+        RelationshipMotifKey::FamiliarPlace(SemanticDestination::Player) => {
+            RelationshipPerformanceRecipe::FamiliarPlayer(expression)
+        }
+        RelationshipMotifKey::FamiliarPlace(SemanticDestination::Toy(_)) => {
+            RelationshipPerformanceRecipe::FamiliarToy(expression)
+        }
+        RelationshipMotifKey::FamiliarPlace(SemanticDestination::Food(_)) => {
+            RelationshipPerformanceRecipe::FamiliarFood(expression)
+        }
+        RelationshipMotifKey::FamiliarPlace(SemanticDestination::Position(_)) => {
+            RelationshipPerformanceRecipe::FamiliarPosition(expression)
+        }
+    }
+}
+
+pub(crate) fn performance_record_is_grounded(
+    state: &WorldState,
+    record: &RelationshipPerformanceRecord,
+) -> bool {
+    record.subject == subject_for_motif(record.motif)
+        && !record.evidence.is_empty()
+        && record.evidence.len() <= MAX_MOTIF_EVIDENCE
+        && record.recipe
+            == performance_recipe_for(record.motif, expression_for_record(record.recipe))
+        && record.evidence.iter().all(|evidence| match *evidence {
+            RelationshipEvidence::Visit {
+                hour_start,
+                destination,
+                last_active_day,
+            } => {
+                record.motif == RelationshipMotifKey::FamiliarPlace(destination)
+                    && hour_start < 24
+                    && last_active_day > 0
+                    && last_active_day <= state.active_day()
+            }
+            evidence => evidence_supports_motif(state, evidence, record.motif),
+        })
+}
+
+const fn expression_for_record(
+    recipe: RelationshipPerformanceRecipe,
+) -> RelationshipExpressionKind {
+    match recipe {
+        RelationshipPerformanceRecipe::SharedBall(expression)
+        | RelationshipPerformanceRecipe::SharedBell(expression)
+        | RelationshipPerformanceRecipe::SharedSock(expression)
+        | RelationshipPerformanceRecipe::ComfortAttention(expression)
+        | RelationshipPerformanceRecipe::TrustedFoodReceipt(expression)
+        | RelationshipPerformanceRecipe::FoodGrudgeReceipt(expression)
+        | RelationshipPerformanceRecipe::PlayerReturn(expression)
+        | RelationshipPerformanceRecipe::FamiliarCave(expression)
+        | RelationshipPerformanceRecipe::FamiliarPlant(expression)
+        | RelationshipPerformanceRecipe::FamiliarBottom(expression)
+        | RelationshipPerformanceRecipe::FamiliarPlayer(expression)
+        | RelationshipPerformanceRecipe::FamiliarToy(expression)
+        | RelationshipPerformanceRecipe::FamiliarFood(expression)
+        | RelationshipPerformanceRecipe::FamiliarPosition(expression) => expression,
+    }
+}
 
 #[derive(Default)]
 struct MemoryEvidence {
@@ -471,7 +572,7 @@ pub fn select_relationship_beat(
     ) {
         return None;
     }
-    select_relationship_motif(state, trigger).map(|motif| RelationshipBeat {
+    select_relationship_motif(state, trigger, true).map(|motif| RelationshipBeat {
         motif: motif.key,
         trigger,
         subject: Some(subject_for_motif(motif.key)),
@@ -503,7 +604,7 @@ pub fn select_action_relationship_context(
     if state.creature.aquarium.action.is_some() {
         return None;
     }
-    select_relationship_motif(state, trigger).map(|motif| ActionRelationshipContext {
+    select_relationship_motif(state, trigger, false).map(|motif| ActionRelationshipContext {
         motif: motif.key,
         expression_kind: expression_for(&motif, trigger),
         evidence: motif.evidence,
@@ -617,6 +718,7 @@ const fn expression_rank(expression: RelationshipExpressionKind) -> u8 {
 fn select_relationship_motif(
     state: &WorldState,
     trigger: RelationshipTrigger,
+    require_mature_evidence: bool,
 ) -> Option<RelationshipMotif> {
     let expression = &state.creature.relationship_expression;
     if expression.active.is_some() {
@@ -651,6 +753,25 @@ fn select_relationship_motif(
             if relevance == 0 {
                 return None;
             }
+            if require_mature_evidence
+                && matches!(trigger, RelationshipTrigger::QuietMoment)
+                && !evidence_is_mature(state, &motif)
+            {
+                return None;
+            }
+            let expression_kind = expression_for(&motif, trigger);
+            let subject = subject_for_motif(motif.key);
+            let recipe = performance_recipe_for(motif.key, expression_kind);
+            if expression.performance_ledger.iter().any(|record| {
+                record.motif == motif.key
+                    && record.subject == subject
+                    && record.recipe == recipe
+                    && same_evidence_identity(&record.evidence, &motif.evidence)
+                    && state.elapsed_ms.saturating_sub(record.performed_at_ms)
+                        < RELATIONSHIP_PERFORMANCE_COOLDOWN_MS
+            }) {
+                return None;
+            }
             let score = u32::from(motif.strength) * 100
                 + relevance
                 + evidence_recency_score(state, &motif)
@@ -683,12 +804,49 @@ fn select_relationship_motif(
         .map(|(_, motif)| motif)
 }
 
+fn same_evidence_identity(left: &[RelationshipEvidence], right: &[RelationshipEvidence]) -> bool {
+    left == right
+}
+
+fn evidence_is_mature(state: &WorldState, motif: &RelationshipMotif) -> bool {
+    motif.evidence.iter().all(|evidence| match evidence {
+        RelationshipEvidence::Memory { id } => state
+            .creature
+            .memories
+            .iter()
+            .find(|memory| memory.id == *id)
+            .is_some_and(|memory| {
+                state.elapsed_ms.saturating_sub(memory.happened_at_ms)
+                    >= RELATIONSHIP_EVIDENCE_MATURITY_MS
+            }),
+        RelationshipEvidence::Belief { .. } | RelationshipEvidence::Visit { .. } => true,
+    })
+}
+
 #[must_use]
-pub const fn phase_duration_ms(phase: RelationshipBeatPhase) -> u64 {
-    match phase {
-        RelationshipBeatPhase::Notice => 1_000,
-        RelationshipBeatPhase::Anticipate => 2_000,
-        RelationshipBeatPhase::Act => 2_000,
-        RelationshipBeatPhase::Recover => 2_000,
+pub const fn phase_duration_ms(beat: &RelationshipBeat) -> u64 {
+    // The director owns distinct temporal contours.  This remains pure and save-derived, so
+    // replay does not depend on presentation timing or wall-clock animation.
+    match (beat.motif, beat.phase) {
+        (RelationshipMotifKey::SharedToy(ToyId::Ball), RelationshipBeatPhase::Notice) => 700,
+        (RelationshipMotifKey::SharedToy(ToyId::Ball), RelationshipBeatPhase::Anticipate) => 1_200,
+        (RelationshipMotifKey::SharedToy(ToyId::Bell), RelationshipBeatPhase::Act) => 900,
+        (RelationshipMotifKey::SharedToy(ToyId::Sock), RelationshipBeatPhase::Act) => 2_600,
+        (
+            RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
+            RelationshipBeatPhase::Act,
+        ) => 4_000,
+        (
+            RelationshipMotifKey::FamiliarPlace(SemanticDestination::Plant),
+            RelationshipBeatPhase::Anticipate,
+        ) => 2_800,
+        (RelationshipMotifKey::ComfortRitual, RelationshipBeatPhase::Act) => 3_200,
+        (RelationshipMotifKey::PlayerReturns, RelationshipBeatPhase::Notice) => 1_400,
+        (RelationshipMotifKey::TrustedFood(_), RelationshipBeatPhase::Recover) => 1_100,
+        (RelationshipMotifKey::FoodGrudge(_), RelationshipBeatPhase::Act) => 1_500,
+        (_, RelationshipBeatPhase::Notice) => 1_000,
+        (_, RelationshipBeatPhase::Anticipate) => 2_000,
+        (_, RelationshipBeatPhase::Act) => 2_000,
+        (_, RelationshipBeatPhase::Recover) => 1_800,
     }
 }

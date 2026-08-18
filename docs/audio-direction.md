@@ -22,6 +22,9 @@ fades. `environment/underwater-loop` is exactly 12 seconds and phase-locked at i
 | `environment/sand-disturb` | 0.780 s | -13.00 dBFS | -24.55 dBFS | Creature or object makes meaningful contact with the substrate |
 | `environment/cave-settle` | 0.680 s | -10.00 dBFS | -21.39 dBFS | Creature completes a retreat/rest action in the cave |
 | `object/toy-impact` | 0.340 s | -8.50 dBFS | -18.37 dBFS | An authoritative toy collision or play action resolves |
+| `object/ball-nudge` | 0.550 s | -9.40 dBFS | -18.30 dBFS | An autonomous ball activity reaches authoritative contact and displaces the ball |
+| `object/bell-ring` | 0.820 s | -10.40 dBFS | -20.20 dBFS | An autonomous bell activity reaches authoritative contact |
+| `object/sock-rustle` | 0.480 s | -9.10 dBFS | -25.10 dBFS | An autonomous sock activity reaches authoritative contact and begins the tug |
 | `creature/affection` | 0.640 s | -7.50 dBFS | -16.98 dBFS | Positive touch, comfort, or attachment response |
 | `creature/surprise` | 0.420 s | -7.20 dBFS | -15.79 dBFS | Startle or high-salience unexpected event |
 | `creature/curious` | 0.580 s | -8.50 dBFS | -15.38 dBFS | Investigation begins or a novel object earns attention |
@@ -34,9 +37,9 @@ fades. `environment/underwater-loop` is exactly 12 seconds and phase-locked at i
 | `ui/confirm` | 0.180 s | -8.76 dBFS | -14.50 dBFS | A semantic player command is accepted |
 
 The simulation or session layer chooses semantic events. Rendering may place or attenuate them,
-but must not infer that an interaction succeeded. Ambient bubble variants should be selected from a
-seeded presentation stream, with 4 to 13 seconds between bursts, so captures and scripted runs can
-be reproduced.
+but must not infer that an interaction succeeded. Ambient bubble variants are selected from a
+seeded presentation stream, with 6 to 18 seconds between bursts and no run longer than two of the
+same variant, so captures remain reproducible without exposing a clock-like alternation.
 
 ## Mix and layering
 
@@ -83,6 +86,9 @@ material was used.
 | `food/spit-reject.wav` | `fb512e71ab8d6403fa866dd87fea98dadc0e976f51f7621dba2a28aab38b535c` |
 | `movement/swim-wake.wav` | `0f0ed6e2b4c41a8ae13df0cf2985f9a27cd10509703dc6e8d8e773aa46451de8` |
 | `object/toy-impact.wav` | `1a6ac2f71c72bde130149ee02e64b04116332ebab6244d08fcd96ec50119a649` |
+| `object/ball-nudge.wav` | `66afa878f3d37707bf5fd0915ef2d4855378c77840387c1613e4333a054349fa` |
+| `object/bell-ring.wav` | `b3b0a055f01ef15381faf5061b0d687a4a14682a6a8eb469fb428016878273a9` |
+| `object/sock-rustle.wav` | `73df5576081331ca3528727f5024006df174fed0114b2c35c0dd1a5734bf04e4` |
 | `ui/confirm.wav` | `92a6d1e8504be4a2c38757f4f893235689bc771a5955d0f130685b26ff369c1a` |
 | `ui/select.wav` | `2c57986e0d9988304fd4abb96976db265d084dd33cff24d158b117136dad66aa` |
 

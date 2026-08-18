@@ -1106,7 +1106,7 @@ prompt = "Three full-body happy vocal mouth positions generated from the content
 seed = "812750"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["generated/creature-v1/mood/content-south-0.png"]
-human_modifications = "mapped closed, medium and open mouth positions to protocol phases after reviewing the full talking GIF"
+human_modifications = "2026-08-17 canonical curation: final candidates duplicate the selected content mood body and add only exact-palette half/open mouth pixels. The 2026-08-15 provider frames are retained under generated/creature-v1/talk/rejected/pixellab-2026-08-15 after canonical identity diagnostics rejected their drift. A built-in imagegen identity-preserve candidate using the mood references was also rejected because it enlarged the rig and invented paw-like limbs. Reviewed in the all-mood exact-2x transition sheet."
 
 [[asset]]
 id = "creature-v1/talk/curious-south"
@@ -1130,7 +1130,7 @@ prompt = "Three full-body surprised vocal mouth positions generated from the cur
 seed = "812751"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["generated/creature-v1/mood/curious-south-0.png"]
-human_modifications = "mapped the three selected curious mouth shapes to closed, medium and open protocol phases"
+human_modifications = "2026-08-17 canonical curation: final candidates duplicate the selected curious mood body and add only exact-palette half/open mouth pixels. The 2026-08-15 provider frames are retained under generated/creature-v1/talk/rejected/pixellab-2026-08-15 after canonical identity diagnostics rejected their drift. A built-in imagegen identity-preserve candidate using the mood references was also rejected because it enlarged the rig and invented paw-like limbs. Reviewed in the all-mood exact-2x transition sheet."
 
 [[asset]]
 id = "creature-v1/talk/hungry-south"
@@ -1154,7 +1154,7 @@ prompt = "Three full-body neutral vocal mouth positions generated from the hungr
 seed = "812752"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["generated/creature-v1/mood/hungry-south-0.png"]
-human_modifications = "mapped the three selected hungry mouth shapes to closed, medium and open protocol phases"
+human_modifications = "2026-08-17 canonical curation: final candidates duplicate the selected hungry gold-fish body and add only exact-palette half/open mouth pixels. The 2026-08-15 provider frames are retained under generated/creature-v1/talk/rejected/pixellab-2026-08-15 after canonical identity diagnostics rejected their drift. A built-in imagegen identity-preserve candidate using the mood references was also rejected because it enlarged the rig and invented paw-like limbs. Reviewed in the all-mood exact-2x transition sheet."
 
 [[asset]]
 id = "creature-v1/talk/sleepy-south"
@@ -1178,7 +1178,7 @@ prompt = "Three full-body sad vocal mouth positions generated from the sleepy so
 seed = "812753"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["generated/creature-v1/mood/sleepy-south-0.png"]
-human_modifications = "mapped the three selected sleepy mouth shapes to closed, medium and open protocol phases"
+human_modifications = "2026-08-17 canonical curation: final candidates duplicate the selected sleepy mood body and add only exact-palette half/open mouth pixels. The 2026-08-15 provider frames are retained under generated/creature-v1/talk/rejected/pixellab-2026-08-15 after canonical identity diagnostics rejected their drift. A built-in imagegen identity-preserve candidate using the mood references was also rejected because it enlarged the rig and invented paw-like limbs. Reviewed in the all-mood exact-2x transition sheet."
 
 [[asset]]
 id = "creature-v1/talk/lonely-south"
@@ -1188,7 +1188,7 @@ height = 80
 frames = 3
 transparent = true
 palette = "style/creature-v1-expression.hex"
-max_colors = 25
+max_colors = 27
 palette_tolerance = 0
 alpha_policy = "hard"
 native_pixel_density = 1
@@ -1202,7 +1202,7 @@ prompt = "Three full-body sad vocal mouth positions generated from the lonely so
 seed = "812754"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["generated/creature-v1/mood/lonely-south-0.png"]
-human_modifications = "mapped the three selected lonely mouth shapes to closed, medium and open protocol phases, retaining one natural blink"
+human_modifications = "2026-08-17 canonical curation: final candidates duplicate the selected lonely mood body and add only exact-palette half/open mouth pixels. The 2026-08-15 provider frames are retained under generated/creature-v1/talk/rejected/pixellab-2026-08-15 after canonical identity diagnostics rejected their drift. A built-in imagegen identity-preserve candidate using the mood references was also rejected because it enlarged the rig and invented paw-like limbs. Reviewed in the all-mood exact-2x transition sheet."
 
 [[asset]]
 id = "creature-v1/talk/resentful-south"
@@ -1226,7 +1226,7 @@ prompt = "Three full-body angry vocal mouth positions generated from the resentf
 seed = "812755"
 terms = "PixelLab Terms of Use, accessed 2026-08-15"
 references = ["generated/creature-v1/mood/resentful-south.png"]
-human_modifications = "selected the clean closed and open angry mouth positions; rejected the third generated position because it invented a red tongue"
+human_modifications = "2026-08-17 canonical curation: final candidates duplicate the selected resentful mood body and add only exact-palette half/open mouth pixels. The 2026-08-15 provider frames, including the tongue candidate, are retained under generated/creature-v1/talk/rejected/pixellab-2026-08-15 after canonical identity diagnostics rejected their drift. A built-in imagegen identity-preserve candidate using the mood references was also rejected because it enlarged the rig and invented paw-like limbs. Reviewed in the all-mood exact-2x transition sheet."
 
 [[asset]]
 id = "ui/status-pearl"
@@ -1455,6 +1455,30 @@ provenance = "docs/audio-direction.md"
 
 [[audio]]
 id = "audio/object/toy-impact"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/object/ball-nudge"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/object/bell-ring"
+sample_rate = 44100
+channels = 1
+bits_per_sample = 16
+status = "runtime"
+provenance = "docs/audio-direction.md"
+
+[[audio]]
+id = "audio/object/sock-rustle"
 sample_rate = 44100
 channels = 1
 bits_per_sample = 16

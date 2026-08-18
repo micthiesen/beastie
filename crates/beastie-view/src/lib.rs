@@ -4,12 +4,14 @@
 //! presentation-only effects. It never mutates simulation state.
 
 use beastie_core::{
-    ActionPhase, FoodDisposition, FoodDropRejectionReason, FoodId, GameEvent, GazeTarget,
-    Intention, Mood, NonverbalAct, NormalizedPosition, Reaction, RelationshipBeatPhase,
-    RelationshipExpressionKind, RelationshipMotifKey, SemanticDestination, SpeechAttention,
-    SteeringMode, ToyId, WorldObject, WorldState,
+    ActionPhase, ActivityPhase, ActivityRecipe, FoodDisposition, FoodDropRejectionReason, FoodId,
+    GameEvent, GazeTarget, Intention, Mood, NonverbalAct, NormalizedPosition, PrivateLifeKind,
+    Reaction, RelationshipBeatPhase, RelationshipExpressionKind, RelationshipMotifKey,
+    RelationshipPerformanceRecipe, SemanticDestination, SpeechAttention, SteeringMode, ToyId,
+    ToyResponse, WorldObject, WorldState, performance_recipe_for,
 };
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU64;
 
 pub const LOGICAL_WIDTH: i32 = 320;
 pub const LOGICAL_HEIGHT: i32 = 180;
@@ -197,6 +199,13 @@ pub enum PresentationCueKind {
     Wake,
     Sleep,
     AquariumFull,
+    BallNudge,
+    BellStrike,
+    SockTug,
+    CaveShelter,
+    PlantOrbit,
+    BottomForage,
+    OpenWaterDrift,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -205,6 +214,7 @@ pub enum SemanticOwner {
     Ordinary,
     StandaloneRelationship(RelationshipMotifKey),
     ActionRelationship(u64),
+    PrivateLife(NonZeroU64),
     DirectOutcome,
 }
 
@@ -214,6 +224,7 @@ impl SemanticOwner {
             Self::Ordinary => 0,
             Self::StandaloneRelationship(_) => 1,
             Self::ActionRelationship(_) => 2,
+            Self::PrivateLife(_) => 2,
             Self::DirectOutcome => 3,
         }
     }
@@ -406,12 +417,9 @@ impl ViewState {
                     self.cancel_owner(SemanticOwner::ActionRelationship(*action_id));
                     self.cancel_owner(SemanticOwner::DirectOutcome);
                 }
-                GameEvent::RelationshipBeatPhaseChanged {
-                    motif: motif @ RelationshipMotifKey::FamiliarPlace(_),
-                    to,
-                    ..
-                } if *to != RelationshipBeatPhase::Notice => {
-                    self.cancel_owner(SemanticOwner::StandaloneRelationship(*motif));
+                GameEvent::PrivateLifeCompleted { activity_id, .. }
+                | GameEvent::PrivateLifeInterrupted { activity_id, .. } => {
+                    self.cancel_owner(SemanticOwner::PrivateLife(*activity_id));
                 }
                 _ => {}
             }
@@ -656,6 +664,9 @@ pub enum AudioCue {
     FoodReject,
     Sand,
     ToyImpact,
+    BallNudge,
+    BellRing,
+    SockRustle,
     Affection,
     Curious,
     Mrr,
@@ -755,6 +766,31 @@ pub fn audio_plan_for_events(events: &[GameEvent]) -> AudioPlan {
                 AudioCue::ToyImpact,
                 700,
             )),
+            GameEvent::ToyObjectResponded {
+                activity_id,
+                response,
+                ..
+            } => match response {
+                ToyResponse::None => None,
+                ToyResponse::BallNudged => Some((
+                    SemanticOwner::PrivateLife(*activity_id),
+                    physical,
+                    AudioCue::BallNudge,
+                    680,
+                )),
+                ToyResponse::BellStruck => Some((
+                    SemanticOwner::PrivateLife(*activity_id),
+                    physical,
+                    AudioCue::BellRing,
+                    650,
+                )),
+                ToyResponse::SockTugged => Some((
+                    SemanticOwner::PrivateLife(*activity_id),
+                    physical,
+                    AudioCue::SockRustle,
+                    620,
+                )),
+            },
             GameEvent::ToyRejected { .. } | GameEvent::UtteranceRefused => {
                 Some((SemanticOwner::DirectOutcome, voice, AudioCue::Annoyed, 700))
             }
@@ -854,6 +890,12 @@ pub fn audio_plan_for_events(events: &[GameEvent]) -> AudioPlan {
             GameEvent::ActionRelationshipResolved { action_id, .. } => {
                 commands.push(AudioCommand::CancelOwner {
                     owner: SemanticOwner::ActionRelationship(*action_id),
+                })
+            }
+            GameEvent::PrivateLifeCompleted { activity_id, .. }
+            | GameEvent::PrivateLifeInterrupted { activity_id, .. } => {
+                commands.push(AudioCommand::CancelOwner {
+                    owner: SemanticOwner::PrivateLife(*activity_id),
                 })
             }
             GameEvent::FoodConsumed(_)
@@ -1232,18 +1274,9 @@ fn add_objects(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCom
                 None,
             ),
             WorldObject::Food(_) => continue,
-            WorldObject::Toy { toy, position } => (
-                "aquarium/toys",
-                *position,
-                None,
-                9,
-                Some(Rect {
-                    x: toy_sheet_x(*toy),
-                    y: 0,
-                    w: 32,
-                    h: 32,
-                }),
-            ),
+            // Mutable toy position, velocity, and carried state are save-owned in
+            // `toy_states`. The static catalogue only preserves object identity and hit ids.
+            WorldObject::Toy { .. } => continue,
             WorldObject::Plant { position } => (
                 "aquarium/plants",
                 *position,
@@ -1277,6 +1310,181 @@ fn add_objects(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCom
             offset_y,
         });
     }
+    for (toy, object) in &state.aquarium.toy_states {
+        let Some(object_id) = state.aquarium.objects.iter().find_map(|(id, catalogue)| {
+            matches!(catalogue, WorldObject::Toy { toy: catalogue_toy, .. } if catalogue_toy == toy)
+                .then_some(*id)
+        }) else {
+            continue;
+        };
+        let (x, y) = world_to_logical(object.position);
+        let (mut offset_x, mut offset_y) = presentation_offset_for(
+            view,
+            object.position,
+            object.velocity,
+            state.simulation_remainder_ms,
+        );
+        let active_contact = state
+            .creature
+            .private_life
+            .active
+            .as_ref()
+            .is_some_and(|activity| {
+                activity.kind == PrivateLifeKind::ToyPlay(*toy)
+                    && activity.payoff_reached
+                    && object.last_contact_activity == Some(activity.id)
+            });
+        if active_contact && *toy == ToyId::Sock && !view.reduced_motion {
+            // The carried sock is truthfully anchored to the creature in core. Present it just
+            // ahead of the mouth during the tug so the small prop is not hidden by the 2x body.
+            offset_x = offset_x.saturating_add(
+                if matches!(state.creature.aquarium.facing, beastie_core::Facing::Left) {
+                    -48
+                } else {
+                    48
+                },
+            );
+            offset_y = offset_y.saturating_sub(8);
+        }
+        sprites.push(SpriteCommand {
+            id: "aquarium/toys".to_owned(),
+            x: x - 8,
+            y: y - 8,
+            layer: if object.carried || active_contact {
+                13
+            } else {
+                9
+            },
+            frame: 0,
+            flip: SpriteFlip::None,
+            source_rect: Some(Rect {
+                x: toy_sheet_x(*toy),
+                y: 0,
+                w: 32,
+                h: 32,
+            }),
+            scale: 1,
+            hit_region_id: Some(format!("target/object-{object_id}")),
+            highlight: highlight_for(view, &format!("target/object-{object_id}")),
+            offset_x,
+            offset_y,
+        });
+    }
+    add_private_life_target_effect(state, view, sprites);
+    add_relationship_target_effect(state, view, sprites);
+}
+
+fn add_relationship_target_effect(
+    state: &WorldState,
+    view: &ViewState,
+    sprites: &mut Vec<SpriteCommand>,
+) {
+    let Some(beat) = state.creature.relationship_expression.active.as_ref() else {
+        return;
+    };
+    let RelationshipMotifKey::SharedToy(toy) = beat.motif else {
+        return;
+    };
+    if beat.phase != RelationshipBeatPhase::Act {
+        return;
+    }
+    let Some(object) = state.aquarium.toy_states.get(&toy) else {
+        return;
+    };
+    let (x, y) = world_to_logical(object.position);
+    let elapsed = if view.reduced_motion {
+        0
+    } else {
+        state.elapsed_ms.saturating_sub(beat.phase_started_at_ms)
+    };
+    sprites.push(framed_sprite(
+        "creature-v1/effect/attention",
+        x + 2,
+        y - 16,
+        14,
+        u8::try_from((elapsed / 240) % 4).unwrap_or_default(),
+    ));
+}
+
+fn add_private_life_target_effect(
+    state: &WorldState,
+    view: &ViewState,
+    sprites: &mut Vec<SpriteCommand>,
+) {
+    let Some(activity) = state.creature.private_life.active.as_ref() else {
+        return;
+    };
+    let at_semantic_contact = match activity.kind {
+        PrivateLifeKind::ToyPlay(_) => activity.payoff_reached,
+        PrivateLifeKind::CaveSettle => {
+            matches!(activity.phase, ActivityPhase::Act | ActivityPhase::Settle)
+        }
+        PrivateLifeKind::PlantInspect
+        | PrivateLifeKind::BottomForage
+        | PrivateLifeKind::OpenWaterDrift => activity.phase == ActivityPhase::Act,
+    };
+    if !at_semantic_contact {
+        return;
+    }
+    let target = match activity.kind {
+        PrivateLifeKind::ToyPlay(toy) => state
+            .aquarium
+            .toy_states
+            .get(&toy)
+            .map(|object| object.position),
+        PrivateLifeKind::CaveSettle => {
+            state
+                .aquarium
+                .objects
+                .values()
+                .find_map(|object| match object {
+                    WorldObject::Cave { position } => Some(*position),
+                    _ => None,
+                })
+        }
+        PrivateLifeKind::PlantInspect => {
+            state
+                .aquarium
+                .objects
+                .values()
+                .find_map(|object| match object {
+                    WorldObject::Plant { position } => Some(*position),
+                    _ => None,
+                })
+        }
+        PrivateLifeKind::BottomForage => Some(NormalizedPosition::new(
+            state.creature.aquarium.position.x,
+            NormalizedPosition::SCALE,
+        )),
+        PrivateLifeKind::OpenWaterDrift => Some(state.creature.aquarium.position),
+    };
+    let Some(target) = target else {
+        return;
+    };
+    let (x, y) = world_to_logical(target);
+    let elapsed = if view.reduced_motion {
+        0
+    } else {
+        state
+            .elapsed_ms
+            .saturating_sub(activity.phase_started_at_ms)
+    };
+    let (id, effect_x, effect_y, cadence) = match activity.recipe {
+        ActivityRecipe::BallNudge => ("aquarium/wake", x - 7, y + 8, 130),
+        ActivityRecipe::BellStrike => ("creature-v1/effect/attention", x + 3, y - 13, 90),
+        ActivityRecipe::SockTug => ("creature-v1/effect/mouth-particles", x + 6, y + 5, 220),
+        ActivityRecipe::CaveShelter => ("creature-v1/effect/sleep", x + 6, y - 17, 420),
+        ActivityRecipe::PlantOrbit => ("creature-v1/effect/attention", x + 11, y - 12, 180),
+        ActivityRecipe::BottomForage => ("aquarium/sand-puff", x - 10, y + 1, 180),
+        ActivityRecipe::OpenWaterDrift => ("aquarium/wake", x - 8, y + 8, 300),
+    };
+    sprites.push(framed_sprite(
+        id,
+        effect_x,
+        effect_y,
+        11,
+        u8::try_from((elapsed / cadence) % 4).unwrap_or_default(),
+    ));
 }
 
 fn add_creature(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCommand>) {
@@ -1288,6 +1496,9 @@ fn add_creature(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCo
         creature.velocity,
         state.simulation_remainder_ms,
     );
+    let (private_offset_x, private_offset_y) = private_life_motion_offset_half(state, view);
+    let motion_offset_x = motion_offset_x.saturating_add(private_offset_x);
+    let motion_offset_y = motion_offset_y.saturating_add(private_offset_y);
     let mut x =
         (center_x - CREATURE_CANVAS_SIZE / 2).clamp(CREATURE_BODY_MIN_X, CREATURE_BODY_MAX_X);
     let mut y =
@@ -1391,6 +1602,38 @@ fn add_creature(state: &WorldState, view: &ViewState, sprites: &mut Vec<SpriteCo
     }
 }
 
+fn private_life_motion_offset_half(state: &WorldState, view: &ViewState) -> (i16, i16) {
+    if view.reduced_motion {
+        return (0, 0);
+    }
+    let Some(activity) = state.creature.private_life.active.as_ref() else {
+        return (0, 0);
+    };
+    if activity.kind != PrivateLifeKind::OpenWaterDrift
+        || activity.recipe != ActivityRecipe::OpenWaterDrift
+        || activity.phase != ActivityPhase::Act
+    {
+        return (0, 0);
+    }
+
+    let phase = state
+        .elapsed_ms
+        .saturating_sub(activity.phase_started_at_ms)
+        % 4_000;
+    let vertical = match phase {
+        0..=999 => -i16::try_from(phase * 24 / 1_000).unwrap_or(24),
+        1_000..=1_999 => -24 + i16::try_from((phase - 1_000) * 24 / 1_000).unwrap_or(24),
+        2_000..=2_999 => i16::try_from((phase - 2_000) * 24 / 1_000).unwrap_or(24),
+        _ => 24 - i16::try_from((phase - 3_000) * 24 / 1_000).unwrap_or(24),
+    };
+    let horizontal = if phase < 2_000 {
+        i16::try_from(phase * 8 / 2_000).unwrap_or(8)
+    } else {
+        8 - i16::try_from((phase - 2_000) * 8 / 2_000).unwrap_or(8)
+    };
+    (horizontal, vertical)
+}
+
 fn world_hit_regions(
     state: &WorldState,
     view: &ViewState,
@@ -1451,16 +1694,23 @@ fn world_hit_regions(
                     .unwrap_or_else(|| food_name(food.food).to_owned()),
             ),
             WorldObject::Food(_) => continue,
-            WorldObject::Toy { toy, position } => (
-                UiTarget::Toy(*toy),
-                *position,
-                state
+            WorldObject::Toy { toy, position } => {
+                let position = state
                     .aquarium
-                    .object_names
-                    .get(id)
-                    .cloned()
-                    .unwrap_or_else(|| toy_name(*toy).to_owned()),
-            ),
+                    .toy_states
+                    .get(toy)
+                    .map_or(*position, |toy_state| toy_state.position);
+                (
+                    UiTarget::Toy(*toy),
+                    position,
+                    state
+                        .aquarium
+                        .object_names
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_else(|| toy_name(*toy).to_owned()),
+                )
+            }
             WorldObject::Plant { position } => {
                 (UiTarget::Plant(*id), *position, "Plant".to_owned())
             }
@@ -1474,9 +1724,21 @@ fn world_hit_regions(
                 food.velocity,
                 state.simulation_remainder_ms,
             ),
-            WorldObject::Toy { .. } | WorldObject::Plant { .. } | WorldObject::Cave { .. } => {
-                (0, 0)
+            WorldObject::Toy { toy, .. } => {
+                state
+                    .aquarium
+                    .toy_states
+                    .get(toy)
+                    .map_or((0, 0), |toy_state| {
+                        presentation_offset_for(
+                            view,
+                            toy_state.position,
+                            toy_state.velocity,
+                            state.simulation_remainder_ms,
+                        )
+                    })
             }
+            WorldObject::Plant { .. } | WorldObject::Cave { .. } => (0, 0),
         };
         let hit_id = format!("target/object-{id}");
         hits.push(HitRegion {
@@ -2733,6 +2995,9 @@ fn discovered_fact(state: &WorldState) -> Option<String> {
 }
 
 fn creature_pose(state: &WorldState) -> &'static str {
+    if let Some(activity) = state.creature.private_life.active.as_ref() {
+        return private_life_pose(activity.kind, activity.recipe, activity.phase);
+    }
     if let Some(action) = state.creature.aquarium.action.as_ref() {
         return match action.phase {
             ActionPhase::Notice | ActionPhase::Gaze | ActionPhase::Inspect => "inspect",
@@ -2762,7 +3027,54 @@ fn creature_pose(state: &WorldState) -> &'static str {
     }
 }
 
+const fn private_life_pose(
+    kind: PrivateLifeKind,
+    recipe: ActivityRecipe,
+    phase: ActivityPhase,
+) -> &'static str {
+    match phase {
+        ActivityPhase::Notice => "inspect",
+        ActivityPhase::Approach => "swim",
+        ActivityPhase::Recover => "recover",
+        ActivityPhase::Settle => "sleep",
+        ActivityPhase::Interrupted => "react",
+        ActivityPhase::Act => match (kind, recipe) {
+            (PrivateLifeKind::ToyPlay(ToyId::Ball), ActivityRecipe::BallNudge) => "play",
+            (PrivateLifeKind::ToyPlay(ToyId::Bell), ActivityRecipe::BellStrike) => "turn",
+            (PrivateLifeKind::ToyPlay(ToyId::Sock), ActivityRecipe::SockTug) => "play",
+            (PrivateLifeKind::CaveSettle, ActivityRecipe::CaveShelter) => "sleep",
+            (PrivateLifeKind::PlantInspect, ActivityRecipe::PlantOrbit) => "swim",
+            (PrivateLifeKind::BottomForage, ActivityRecipe::BottomForage) => "inspect",
+            (PrivateLifeKind::OpenWaterDrift, ActivityRecipe::OpenWaterDrift) => "hover",
+            // A save can be loaded from a newer version. Keep its body calm while the
+            // authoritative type remains visible in diagnostics, rather than guessing from intent.
+            _ => "hover",
+        },
+    }
+}
+
 fn behavior_name(state: &WorldState) -> &'static str {
+    if let Some(activity) = state.creature.private_life.active.as_ref() {
+        return private_life_behavior_name(activity.kind, activity.recipe, activity.phase);
+    }
+    if let Some(beat) = state.creature.relationship_expression.active.as_ref()
+        && let RelationshipMotifKey::SharedToy(toy) = beat.motif
+    {
+        return match (toy, beat.phase) {
+            (ToyId::Ball, RelationshipBeatPhase::Notice) => "noticing the ball",
+            (ToyId::Ball, RelationshipBeatPhase::Anticipate) => "swimming toward the ball",
+            (ToyId::Ball, RelationshipBeatPhase::Act) => "watching the ball",
+            (ToyId::Ball, RelationshipBeatPhase::Recover) => "settling after the ball",
+            (ToyId::Bell, RelationshipBeatPhase::Notice) => "noticing the bell",
+            (ToyId::Bell, RelationshipBeatPhase::Anticipate) => "swimming toward the bell",
+            (ToyId::Bell, RelationshipBeatPhase::Act) => "watching the bell",
+            (ToyId::Bell, RelationshipBeatPhase::Recover) => "settling after the bell",
+            (ToyId::Sock, RelationshipBeatPhase::Notice) => "noticing the sock",
+            (ToyId::Sock, RelationshipBeatPhase::Anticipate) => "swimming toward the sock",
+            (ToyId::Sock, RelationshipBeatPhase::Act) => "watching the sock",
+            (ToyId::Sock, RelationshipBeatPhase::Recover) => "settling after the sock",
+        };
+    }
     if let Some(action) = state.creature.aquarium.action.as_ref() {
         return match action.phase {
             ActionPhase::Notice => "noticed something",
@@ -2802,6 +3114,36 @@ fn behavior_name(state: &WorldState) -> &'static str {
     }
 }
 
+const fn private_life_behavior_name(
+    kind: PrivateLifeKind,
+    recipe: ActivityRecipe,
+    phase: ActivityPhase,
+) -> &'static str {
+    match phase {
+        ActivityPhase::Notice => "noticing something to do",
+        ActivityPhase::Approach => "heading somewhere on its own",
+        ActivityPhase::Recover => "finishing up",
+        ActivityPhase::Settle => "settling in the cave",
+        ActivityPhase::Interrupted => "changing course",
+        ActivityPhase::Act => match (kind, recipe) {
+            (PrivateLifeKind::ToyPlay(ToyId::Ball), ActivityRecipe::BallNudge) => {
+                "nudging the ball"
+            }
+            (PrivateLifeKind::ToyPlay(ToyId::Bell), ActivityRecipe::BellStrike) => {
+                "striking the bell"
+            }
+            (PrivateLifeKind::ToyPlay(ToyId::Sock), ActivityRecipe::SockTug) => "tugging the sock",
+            (PrivateLifeKind::CaveSettle, ActivityRecipe::CaveShelter) => "resting in the cave",
+            (PrivateLifeKind::PlantInspect, ActivityRecipe::PlantOrbit) => "circling the plant",
+            (PrivateLifeKind::BottomForage, ActivityRecipe::BottomForage) => "foraging in the sand",
+            (PrivateLifeKind::OpenWaterDrift, ActivityRecipe::OpenWaterDrift) => {
+                "drifting through open water"
+            }
+            _ => "following a private routine",
+        },
+    }
+}
+
 fn cue_for_event(event: &GameEvent) -> Option<(SemanticOwner, PresentationCueKind, u64)> {
     let ordinary = SemanticOwner::Ordinary;
     let direct = SemanticOwner::DirectOutcome;
@@ -2822,6 +3164,24 @@ fn cue_for_event(event: &GameEvent) -> Option<(SemanticOwner, PresentationCueKin
             to: ActionPhase::Approach,
             ..
         } => Some((ordinary, PresentationCueKind::Wake, 650)),
+        GameEvent::PrivateLifeStarted { activity_id, .. } => Some((
+            SemanticOwner::PrivateLife(*activity_id),
+            PresentationCueKind::Notice,
+            800,
+        )),
+        // The current authoritative activity carries the recipe needed to render this phase. The
+        // event remains useful for cancellation and traceability, but does not degrade that exact
+        // identity into a generic transition cue.
+        GameEvent::PrivateLifePhaseChanged { .. } => None,
+        GameEvent::ToyObjectResponded {
+            activity_id,
+            response,
+            ..
+        } => Some((
+            SemanticOwner::PrivateLife(*activity_id),
+            toy_response_cue(*response),
+            private_life_phase_duration_for_response(*response),
+        )),
         GameEvent::SpeechPerceived(SpeechAttention::Glanced | SpeechAttention::Attended) => {
             Some((ordinary, PresentationCueKind::Notice, 900))
         }
@@ -2842,25 +3202,12 @@ fn cue_for_event(event: &GameEvent) -> Option<(SemanticOwner, PresentationCueKin
         } => Some((
             SemanticOwner::StandaloneRelationship(*motif),
             relationship_cue(*motif, *expression),
-            1_400,
+            relationship_expression_duration(*motif, *expression),
         )),
-        GameEvent::RelationshipBeatPhaseChanged {
-            motif: motif @ RelationshipMotifKey::FamiliarPlace(_),
-            to: RelationshipBeatPhase::Notice,
-            ..
-        } => Some((
-            SemanticOwner::StandaloneRelationship(*motif),
-            PresentationCueKind::PlaceNotice,
-            relationship_phase_duration(RelationshipBeatPhase::Notice),
-        )),
-        GameEvent::RelationshipBeatPhaseChanged {
-            motif: RelationshipMotifKey::FamiliarPlace(_),
-            ..
-        } => None,
         GameEvent::RelationshipBeatPhaseChanged { motif, to, .. } => Some((
             SemanticOwner::StandaloneRelationship(*motif),
             relationship_phase_cue(*motif, *to),
-            relationship_phase_duration(*to),
+            relationship_phase_duration(*motif, *to),
         )),
         _ => None,
     }
@@ -2870,32 +3217,50 @@ fn relationship_cue(
     motif: RelationshipMotifKey,
     expression: RelationshipExpressionKind,
 ) -> PresentationCueKind {
-    match motif {
-        RelationshipMotifKey::SharedToy(_) => match expression {
+    match performance_recipe_for(motif, expression) {
+        RelationshipPerformanceRecipe::SharedBall(expression) => match expression {
             RelationshipExpressionKind::Notice | RelationshipExpressionKind::Anticipate => {
                 PresentationCueKind::Notice
             }
             RelationshipExpressionKind::Seek
             | RelationshipExpressionKind::Ritual
             | RelationshipExpressionKind::Recognize
-            | RelationshipExpressionKind::Welcome => PresentationCueKind::Delight,
+            | RelationshipExpressionKind::Welcome => PresentationCueKind::BallNudge,
         },
-        RelationshipMotifKey::ComfortRitual if expression == RelationshipExpressionKind::Notice => {
+        RelationshipPerformanceRecipe::SharedBell(expression) => match expression {
+            RelationshipExpressionKind::Notice | RelationshipExpressionKind::Anticipate => {
+                PresentationCueKind::Notice
+            }
+            _ => PresentationCueKind::BellStrike,
+        },
+        RelationshipPerformanceRecipe::SharedSock(expression) => match expression {
+            RelationshipExpressionKind::Notice | RelationshipExpressionKind::Anticipate => {
+                PresentationCueKind::Notice
+            }
+            _ => PresentationCueKind::SockTug,
+        },
+        RelationshipPerformanceRecipe::ComfortAttention(RelationshipExpressionKind::Notice) => {
             PresentationCueKind::Notice
         }
-        RelationshipMotifKey::ComfortRitual => PresentationCueKind::Comfort,
-        RelationshipMotifKey::TrustedFood(_) => PresentationCueKind::Notice,
-        RelationshipMotifKey::FoodGrudge(_) if expression == RelationshipExpressionKind::Notice => {
+        RelationshipPerformanceRecipe::ComfortAttention(_) => PresentationCueKind::Comfort,
+        RelationshipPerformanceRecipe::TrustedFoodReceipt(_) => PresentationCueKind::Notice,
+        RelationshipPerformanceRecipe::FoodGrudgeReceipt(RelationshipExpressionKind::Notice) => {
             PresentationCueKind::Notice
         }
-        RelationshipMotifKey::FoodGrudge(_) => PresentationCueKind::Spit,
-        RelationshipMotifKey::PlayerReturns
+        RelationshipPerformanceRecipe::FoodGrudgeReceipt(_) => PresentationCueKind::Spit,
+        RelationshipPerformanceRecipe::PlayerReturn(expression)
             if expression != RelationshipExpressionKind::Welcome =>
         {
             PresentationCueKind::Notice
         }
-        RelationshipMotifKey::PlayerReturns => PresentationCueKind::Affection,
-        RelationshipMotifKey::FamiliarPlace(_) => PresentationCueKind::PlaceNotice,
+        RelationshipPerformanceRecipe::PlayerReturn(_) => PresentationCueKind::Affection,
+        RelationshipPerformanceRecipe::FamiliarCave(_)
+        | RelationshipPerformanceRecipe::FamiliarPlant(_)
+        | RelationshipPerformanceRecipe::FamiliarBottom(_)
+        | RelationshipPerformanceRecipe::FamiliarPlayer(_)
+        | RelationshipPerformanceRecipe::FamiliarToy(_)
+        | RelationshipPerformanceRecipe::FamiliarFood(_)
+        | RelationshipPerformanceRecipe::FamiliarPosition(_) => PresentationCueKind::PlaceNotice,
     }
 }
 
@@ -2907,17 +3272,94 @@ fn relationship_phase_cue(
         RelationshipBeatPhase::Notice | RelationshipBeatPhase::Anticipate => {
             relationship_cue(motif, RelationshipExpressionKind::Notice)
         }
-        RelationshipBeatPhase::Act => relationship_cue(motif, RelationshipExpressionKind::Ritual),
+        RelationshipBeatPhase::Act => match motif {
+            RelationshipMotifKey::SharedToy(_) => PresentationCueKind::Notice,
+            RelationshipMotifKey::FamiliarPlace(destination) => match destination {
+                SemanticDestination::Cave => PresentationCueKind::CaveShelter,
+                SemanticDestination::Plant => PresentationCueKind::PlantOrbit,
+                SemanticDestination::Bottom => PresentationCueKind::BottomForage,
+                SemanticDestination::Player
+                | SemanticDestination::Toy(_)
+                | SemanticDestination::Food(_)
+                | SemanticDestination::Position(_) => PresentationCueKind::PlaceNotice,
+            },
+            _ => relationship_cue(motif, RelationshipExpressionKind::Ritual),
+        },
         RelationshipBeatPhase::Recover => PresentationCueKind::Wake,
     }
 }
 
-const fn relationship_phase_duration(phase: RelationshipBeatPhase) -> u64 {
-    match phase {
-        RelationshipBeatPhase::Notice => 700,
-        RelationshipBeatPhase::Anticipate => 900,
-        RelationshipBeatPhase::Act => 1_200,
-        RelationshipBeatPhase::Recover => 700,
+const fn relationship_phase_duration(
+    motif: RelationshipMotifKey,
+    phase: RelationshipBeatPhase,
+) -> u64 {
+    match (motif, phase) {
+        (RelationshipMotifKey::SharedToy(ToyId::Ball), RelationshipBeatPhase::Notice) => 700,
+        (RelationshipMotifKey::SharedToy(ToyId::Ball), RelationshipBeatPhase::Anticipate) => 1_200,
+        (RelationshipMotifKey::SharedToy(ToyId::Bell), RelationshipBeatPhase::Act) => 900,
+        (RelationshipMotifKey::SharedToy(ToyId::Sock), RelationshipBeatPhase::Act) => 2_600,
+        (
+            RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
+            RelationshipBeatPhase::Act,
+        ) => 4_000,
+        (
+            RelationshipMotifKey::FamiliarPlace(SemanticDestination::Plant),
+            RelationshipBeatPhase::Anticipate,
+        ) => 2_800,
+        (RelationshipMotifKey::ComfortRitual, RelationshipBeatPhase::Act) => 3_200,
+        (RelationshipMotifKey::PlayerReturns, RelationshipBeatPhase::Notice) => 1_400,
+        (RelationshipMotifKey::TrustedFood(_), RelationshipBeatPhase::Recover) => 1_100,
+        (RelationshipMotifKey::FoodGrudge(_), RelationshipBeatPhase::Act) => 1_500,
+        (_, RelationshipBeatPhase::Notice) => 1_000,
+        (_, RelationshipBeatPhase::Anticipate) => 2_000,
+        (_, RelationshipBeatPhase::Act) => 2_000,
+        (_, RelationshipBeatPhase::Recover) => 1_800,
+    }
+}
+
+const fn relationship_expression_duration(
+    motif: RelationshipMotifKey,
+    expression: RelationshipExpressionKind,
+) -> u64 {
+    let phase = match expression {
+        RelationshipExpressionKind::Notice => RelationshipBeatPhase::Notice,
+        RelationshipExpressionKind::Anticipate | RelationshipExpressionKind::Seek => {
+            RelationshipBeatPhase::Anticipate
+        }
+        RelationshipExpressionKind::Ritual
+        | RelationshipExpressionKind::Recognize
+        | RelationshipExpressionKind::Welcome => RelationshipBeatPhase::Act,
+    };
+    relationship_phase_duration(motif, phase)
+}
+
+const fn private_life_recipe_cue(recipe: ActivityRecipe) -> PresentationCueKind {
+    match recipe {
+        ActivityRecipe::BallNudge => PresentationCueKind::BallNudge,
+        ActivityRecipe::BellStrike => PresentationCueKind::BellStrike,
+        ActivityRecipe::SockTug => PresentationCueKind::SockTug,
+        ActivityRecipe::CaveShelter => PresentationCueKind::CaveShelter,
+        ActivityRecipe::PlantOrbit => PresentationCueKind::PlantOrbit,
+        ActivityRecipe::BottomForage => PresentationCueKind::BottomForage,
+        ActivityRecipe::OpenWaterDrift => PresentationCueKind::OpenWaterDrift,
+    }
+}
+
+const fn toy_response_cue(response: ToyResponse) -> PresentationCueKind {
+    match response {
+        ToyResponse::None => PresentationCueKind::Notice,
+        ToyResponse::BallNudged => PresentationCueKind::BallNudge,
+        ToyResponse::BellStruck => PresentationCueKind::BellStrike,
+        ToyResponse::SockTugged => PresentationCueKind::SockTug,
+    }
+}
+
+const fn private_life_phase_duration_for_response(response: ToyResponse) -> u64 {
+    match response {
+        ToyResponse::None => 450,
+        ToyResponse::BallNudged => 900,
+        ToyResponse::BellStruck => 550,
+        ToyResponse::SockTugged => 1_700,
     }
 }
 
@@ -2962,6 +3404,31 @@ fn action_relationship_cue(
     ))
 }
 
+fn private_life_cue(state: &WorldState) -> Option<(SemanticOwner, PresentationCueKind, u64)> {
+    let activity = state.creature.private_life.active.as_ref()?;
+    let kind = match activity.phase {
+        ActivityPhase::Notice => PresentationCueKind::Notice,
+        ActivityPhase::Approach => PresentationCueKind::Wake,
+        ActivityPhase::Act => match activity.kind {
+            PrivateLifeKind::ToyPlay(_) if !activity.payoff_reached => PresentationCueKind::Notice,
+            _ => private_life_recipe_cue(activity.recipe),
+        },
+        ActivityPhase::Recover if activity.payoff_reached => {
+            private_life_recipe_cue(activity.recipe)
+        }
+        ActivityPhase::Recover => PresentationCueKind::Wake,
+        ActivityPhase::Settle => private_life_recipe_cue(activity.recipe),
+        ActivityPhase::Interrupted => return None,
+    };
+    Some((
+        SemanticOwner::PrivateLife(activity.id),
+        kind,
+        state
+            .elapsed_ms
+            .saturating_sub(activity.phase_started_at_ms),
+    ))
+}
+
 fn effective_cue_timing(
     state: &WorldState,
     view: &ViewState,
@@ -2972,13 +3439,18 @@ fn effective_cue_timing(
         .filter(|cue| state.elapsed_ms >= cue.starts_at_ms && state.elapsed_ms < cue.expires_at_ms)
         .max_by_key(|cue| cue.owner.priority());
     let action = action_relationship_cue(state);
-    match (queued, action) {
-        (Some(cue), Some((owner, kind, elapsed))) if owner.priority() > cue.owner.priority() => {
+    let private_life = private_life_cue(state);
+    match (queued, action, private_life) {
+        (Some(cue), Some((owner, kind, elapsed)), _) if owner.priority() > cue.owner.priority() => {
             Some((kind, elapsed))
         }
-        (Some(cue), _) => Some((cue.kind, state.elapsed_ms.saturating_sub(cue.starts_at_ms))),
-        (None, Some((_, kind, elapsed))) => Some((kind, elapsed)),
-        (None, None) => None,
+        (Some(cue), _, Some((owner, kind, elapsed))) if owner.priority() > cue.owner.priority() => {
+            Some((kind, elapsed))
+        }
+        (Some(cue), _, _) => Some((cue.kind, state.elapsed_ms.saturating_sub(cue.starts_at_ms))),
+        (None, Some((_, kind, elapsed)), _) => Some((kind, elapsed)),
+        (None, None, Some((_, kind, elapsed))) => Some((kind, elapsed)),
+        (None, None, None) => None,
     }
 }
 
@@ -3098,7 +3570,14 @@ fn reaction_body_asset(
     match cue {
         PresentationCueKind::PositiveNotice
         | PresentationCueKind::FoodSuspicion
-        | PresentationCueKind::PlaceNotice => None,
+        | PresentationCueKind::PlaceNotice
+        | PresentationCueKind::BallNudge
+        | PresentationCueKind::BellStrike
+        | PresentationCueKind::SockTug
+        | PresentationCueKind::CaveShelter
+        | PresentationCueKind::PlantOrbit
+        | PresentationCueKind::BottomForage
+        | PresentationCueKind::OpenWaterDrift => None,
         PresentationCueKind::Notice => {
             Some(("creature-v1/reaction/notice-south", SpriteFlip::None))
         }
@@ -3148,7 +3627,14 @@ fn visual_mood_name(state: &WorldState, cue: Option<PresentationCueKind>) -> &'s
         | Some(PresentationCueKind::Comfort)
         | Some(PresentationCueKind::Crumbs)
         | Some(PresentationCueKind::SandPuff)
-        | Some(PresentationCueKind::Wake) => "content",
+        | Some(PresentationCueKind::Wake)
+        | Some(PresentationCueKind::BallNudge)
+        | Some(PresentationCueKind::PlantOrbit)
+        | Some(PresentationCueKind::BottomForage)
+        | Some(PresentationCueKind::OpenWaterDrift) => "content",
+        Some(PresentationCueKind::BellStrike) => "curious",
+        Some(PresentationCueKind::SockTug) => "curious",
+        Some(PresentationCueKind::CaveShelter) => "sleepy",
         None => mood_name(state.mood()),
     }
 }
@@ -3232,6 +3718,29 @@ fn effect_sprite(
             body_y + 64,
         ),
         PresentationCueKind::Sleep => ("creature-v1/effect/sleep", body_x + 108, body_y + 2),
+        PresentationCueKind::BallNudge => (
+            "aquarium/wake",
+            body_x + if left { 112 } else { 4 },
+            body_y + 74,
+        ),
+        PresentationCueKind::BellStrike => {
+            ("creature-v1/effect/attention", body_x + 100, body_y + 12)
+        }
+        PresentationCueKind::SockTug => (
+            "creature-v1/effect/mouth-particles",
+            body_x + if left { 8 } else { 120 },
+            body_y + 68,
+        ),
+        PresentationCueKind::CaveShelter => ("creature-v1/effect/sleep", body_x + 108, body_y + 2),
+        PresentationCueKind::PlantOrbit => {
+            ("creature-v1/effect/attention", body_x + 112, body_y + 8)
+        }
+        PresentationCueKind::BottomForage => ("aquarium/sand-puff", body_x + 64, body_y + 112),
+        PresentationCueKind::OpenWaterDrift => (
+            "aquarium/wake",
+            body_x + if left { 112 } else { 4 },
+            body_y + 74,
+        ),
     };
     framed_sprite(id, x, y, 15, frame)
 }
@@ -3657,7 +4166,8 @@ mod tests {
 
     use super::*;
     use beastie_core::{
-        ActionRelationshipContext, ActionTimeline, FoodBuoyancy, FoodObject, NormalizedVelocity,
+        ActionRelationshipContext, ActionTimeline, ActivityPurpose, ActivitySelectionEvidence,
+        FoodBuoyancy, FoodObject, NormalizedVelocity, PrivateLifeActivity, RelationshipBeat,
         RelationshipSubject, RelationshipTrigger, SemanticDestination,
     };
 
@@ -3669,6 +4179,36 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn private_activity(
+        id: NonZeroU64,
+        kind: PrivateLifeKind,
+        recipe: ActivityRecipe,
+        phase: ActivityPhase,
+    ) -> PrivateLifeActivity {
+        PrivateLifeActivity {
+            id,
+            kind,
+            subject: Some(kind.subject()),
+            purpose: ActivityPurpose::Autonomous,
+            recipe,
+            phase,
+            selected_at_ms: 0,
+            phase_started_at_ms: 0,
+            selected_from: ActivitySelectionEvidence {
+                need_pressure: 0,
+                trait_bias: 0,
+                preference: 0,
+                routine_hour: None,
+                relationship_evidence: Vec::new(),
+                excluded_families: Vec::new(),
+                excluded_subjects: Vec::new(),
+                excluded_recipes: Vec::new(),
+                urgency_overrode_repetition: false,
+            },
+            payoff_reached: false,
+        }
     }
 
     #[test]
@@ -4656,6 +5196,239 @@ mod tests {
     }
 
     #[test]
+    fn private_life_recipe_projects_the_exact_body_target_and_hidden_summary() {
+        let cases = [
+            (
+                PrivateLifeKind::ToyPlay(ToyId::Ball),
+                ActivityRecipe::BallNudge,
+                "creature-v1/play",
+                "aquarium/wake",
+                "nudging the ball",
+            ),
+            (
+                PrivateLifeKind::ToyPlay(ToyId::Bell),
+                ActivityRecipe::BellStrike,
+                "creature-v1/swim",
+                "creature-v1/effect/attention",
+                "striking the bell",
+            ),
+            (
+                PrivateLifeKind::CaveSettle,
+                ActivityRecipe::CaveShelter,
+                "creature-v1/sleep",
+                "creature-v1/effect/sleep",
+                "resting in the cave",
+            ),
+            (
+                PrivateLifeKind::PlantInspect,
+                ActivityRecipe::PlantOrbit,
+                "creature-v1/swim",
+                "creature-v1/effect/attention",
+                "circling the plant",
+            ),
+            (
+                PrivateLifeKind::BottomForage,
+                ActivityRecipe::BottomForage,
+                "creature-v1/mood/",
+                "aquarium/sand-puff",
+                "foraging in the sand",
+            ),
+            (
+                PrivateLifeKind::OpenWaterDrift,
+                ActivityRecipe::OpenWaterDrift,
+                "creature-v1/mood/",
+                "aquarium/wake",
+                "drifting through open water",
+            ),
+        ];
+        for (index, (kind, recipe, body_prefix, effect_id, behavior)) in
+            cases.into_iter().enumerate()
+        {
+            let mut state = WorldState::new(7, "Mop");
+            state.creature.private_life.next_activity_id = 20;
+            let mut activity = private_activity(
+                NonZeroU64::new(u64::try_from(index + 1).unwrap()).unwrap(),
+                kind,
+                recipe,
+                ActivityPhase::Act,
+            );
+            if matches!(kind, PrivateLifeKind::ToyPlay(_)) {
+                activity.payoff_reached = true;
+            }
+            state.creature.private_life.active = Some(activity);
+            let render = plan(&state, &ViewState::default()).0;
+            let body = render
+                .sprites
+                .iter()
+                .find(|sprite| sprite.layer == 12)
+                .expect("private-life body");
+            assert!(body.id.starts_with(body_prefix), "{kind:?}: {}", body.id);
+            assert!(
+                render.sprites.iter().any(|sprite| sprite.id == effect_id),
+                "{kind:?} should make its exact target legible"
+            );
+            assert_eq!(creature_summary(&state).behavior, behavior);
+        }
+    }
+
+    #[test]
+    fn private_toy_effect_waits_for_authoritative_contact() {
+        let mut state = WorldState::new(7, "Mop");
+        state.creature.private_life.active = Some(private_activity(
+            NonZeroU64::MIN,
+            PrivateLifeKind::ToyPlay(ToyId::Ball),
+            ActivityRecipe::BallNudge,
+            ActivityPhase::Act,
+        ));
+        let before = plan(&state, &ViewState::default()).0;
+        assert!(
+            !before
+                .sprites
+                .iter()
+                .any(|sprite| sprite.id == "aquarium/wake")
+        );
+
+        state
+            .creature
+            .private_life
+            .active
+            .as_mut()
+            .expect("activity")
+            .payoff_reached = true;
+        let at_contact = plan(&state, &ViewState::default()).0;
+        assert!(
+            at_contact
+                .sprites
+                .iter()
+                .any(|sprite| sprite.id == "aquarium/wake")
+        );
+    }
+
+    #[test]
+    fn open_water_act_has_a_distinct_drift_contour_that_reduced_motion_removes() {
+        let mut state = WorldState::new(7, "Mop");
+        let mut activity = private_activity(
+            NonZeroU64::MIN,
+            PrivateLifeKind::OpenWaterDrift,
+            ActivityRecipe::OpenWaterDrift,
+            ActivityPhase::Act,
+        );
+        activity.phase_started_at_ms = 1_000;
+        state.creature.private_life.active = Some(activity);
+        state.elapsed_ms = 2_000;
+
+        assert_eq!(
+            private_life_motion_offset_half(&state, &ViewState::default()),
+            (4, -24)
+        );
+        let reduced = ViewState {
+            reduced_motion: true,
+            ..ViewState::default()
+        };
+        assert_eq!(private_life_motion_offset_half(&state, &reduced), (0, 0));
+        let reduced_plan = plan(&state, &reduced).0;
+        let reduced_body = reduced_plan
+            .sprites
+            .iter()
+            .find(|sprite| sprite.layer == 12)
+            .expect("reduced-motion body");
+        assert_eq!((reduced_body.offset_x, reduced_body.offset_y), (0, 0));
+    }
+
+    #[test]
+    fn toy_projection_uses_mutable_authoritative_state_without_losing_catalogue_hit_identity() {
+        let mut state = WorldState::new(7, "Mop");
+        let ball = state.aquarium.toy_states.get_mut(&ToyId::Ball).unwrap();
+        ball.position = NormalizedPosition::new(1_000, 2_000);
+        ball.velocity = NormalizedVelocity { x: 100, y: -100 };
+        ball.carried = true;
+        state.simulation_remainder_ms = 100;
+        let render = plan(&state, &ViewState::default()).0;
+        let ball = render
+            .sprites
+            .iter()
+            .find(|sprite| sprite.hit_region_id.as_deref() == Some("target/object-3"))
+            .expect("ball sprite");
+        let (x, y) = world_to_logical(NormalizedPosition::new(1_000, 2_000));
+        assert_eq!((ball.x, ball.y), (x - 8, y - 8));
+        assert_eq!(ball.layer, 13);
+        assert_ne!((ball.offset_x, ball.offset_y), (0, 0));
+        let ball_hit = render
+            .hit_regions
+            .iter()
+            .find(|hit| hit.id == "target/object-3")
+            .expect("ball hit region");
+        assert_eq!(
+            (ball_hit.rect.x, ball_hit.rect.y),
+            (
+                x - 10 + half_offset_to_logical(ball.offset_x),
+                y - 10 + half_offset_to_logical(ball.offset_y),
+            )
+        );
+    }
+
+    #[test]
+    fn private_toy_contact_keeps_the_exact_prop_above_the_creature() {
+        let mut state = WorldState::new(7, "Mop");
+        let id = NonZeroU64::MIN;
+        let mut activity = private_activity(
+            id,
+            PrivateLifeKind::ToyPlay(ToyId::Sock),
+            ActivityRecipe::SockTug,
+            ActivityPhase::Act,
+        );
+        activity.payoff_reached = true;
+        state.creature.private_life.active = Some(activity);
+        let sock = state.aquarium.toy_states.get_mut(&ToyId::Sock).unwrap();
+        sock.carried = true;
+        sock.last_contact_activity = Some(id);
+
+        let render = plan(&state, &ViewState::default()).0;
+        let sock = render
+            .sprites
+            .iter()
+            .find(|sprite| {
+                sprite.id == "aquarium/toys"
+                    && sprite
+                        .source_rect
+                        .is_some_and(|rect| rect.x == toy_sheet_x(ToyId::Sock))
+            })
+            .expect("sock sprite");
+        assert_eq!(sock.layer, 13);
+        assert_eq!(sock.offset_x.unsigned_abs(), 48);
+        assert!(sock.offset_y <= -8);
+    }
+
+    #[test]
+    fn dialogue_keeps_the_talk_body_while_private_life_effects_remain_visible() {
+        let mut state = WorldState::new(7, "Mop");
+        state.creature.private_life.next_activity_id = 2;
+        let mut activity = private_activity(
+            NonZeroU64::MIN,
+            PrivateLifeKind::ToyPlay(ToyId::Sock),
+            ActivityRecipe::SockTug,
+            ActivityPhase::Act,
+        );
+        activity.payoff_reached = true;
+        state.creature.private_life.active = Some(activity);
+        let mut view = ViewState::default();
+        view.show_speech("still here".to_owned(), 0);
+        let render = plan(&state, &view).0;
+        let body = render
+            .sprites
+            .iter()
+            .find(|sprite| sprite.layer == 12)
+            .expect("dialogue body");
+        assert!(body.id.starts_with("creature-v1/talk/"));
+        assert!(
+            render
+                .sprites
+                .iter()
+                .any(|sprite| sprite.id == "creature-v1/effect/mouth-particles")
+        );
+    }
+
+    #[test]
     fn aquarium_full_rejection_is_queued_visible_and_audible() {
         let state = WorldState::new(7, "Mop");
         let mut view = ViewState::default();
@@ -4691,7 +5464,7 @@ mod tests {
             (
                 RelationshipMotifKey::SharedToy(ToyId::Ball),
                 RelationshipExpressionKind::Ritual,
-                PresentationCueKind::Delight,
+                PresentationCueKind::BallNudge,
             ),
             (
                 RelationshipMotifKey::ComfortRitual,
@@ -4735,6 +5508,73 @@ mod tests {
             );
             assert_eq!(view.active_cue(1_000), Some(expected), "{motif:?}");
         }
+    }
+
+    #[test]
+    fn shared_toy_and_familiar_place_use_subject_cues_not_generic_hearts() {
+        assert_eq!(
+            relationship_phase_cue(
+                RelationshipMotifKey::SharedToy(ToyId::Bell),
+                RelationshipBeatPhase::Act,
+            ),
+            PresentationCueKind::Notice
+        );
+        assert_eq!(
+            relationship_phase_cue(
+                RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
+                RelationshipBeatPhase::Act,
+            ),
+            PresentationCueKind::CaveShelter
+        );
+        assert_eq!(
+            relationship_phase_duration(
+                RelationshipMotifKey::SharedToy(ToyId::Sock),
+                RelationshipBeatPhase::Act,
+            ),
+            2_600
+        );
+        assert_eq!(
+            relationship_phase_duration(
+                RelationshipMotifKey::SharedToy(ToyId::Bell),
+                RelationshipBeatPhase::Act,
+            ),
+            900
+        );
+        assert_ne!(
+            effect_sprite(PresentationCueKind::BellStrike, 0, 0, SpriteFlip::None, 0,).id,
+            "creature-v1/effect/affection"
+        );
+        assert_ne!(
+            effect_sprite(PresentationCueKind::CaveShelter, 0, 0, SpriteFlip::None, 0,).id,
+            "creature-v1/effect/affection"
+        );
+    }
+
+    #[test]
+    fn standalone_shared_toy_act_marks_the_exact_object_without_faking_contact() {
+        let mut state = WorldState::new(7, "Mop");
+        state.creature.relationship_expression.active = Some(RelationshipBeat {
+            motif: RelationshipMotifKey::SharedToy(ToyId::Ball),
+            trigger: RelationshipTrigger::QuietMoment,
+            subject: Some(RelationshipSubject::Toy(ToyId::Ball)),
+            expression_kind: RelationshipExpressionKind::Notice,
+            evidence: Vec::new(),
+            target: Some(SemanticDestination::Toy(ToyId::Ball)),
+            phase: RelationshipBeatPhase::Act,
+            started_at_ms: 1,
+            phase_started_at_ms: 1,
+        });
+        let render = plan(&state, &ViewState::default()).0;
+        let marker = render
+            .sprites
+            .iter()
+            .find(|sprite| sprite.id == "creature-v1/effect/attention" && sprite.layer == 14)
+            .expect("exact shared-toy target marker");
+        let ball = state.aquarium.toy_states.get(&ToyId::Ball).unwrap();
+        let (x, y) = world_to_logical(ball.position);
+        assert_eq!((marker.x, marker.y), (x + 2, y - 16));
+        assert_eq!(ball.last_contact_activity, None);
+        assert_eq!(creature_summary(&state).behavior, "watching the ball");
     }
 
     #[test]
@@ -4864,7 +5704,10 @@ mod tests {
             }],
             1_000,
         );
-        assert_eq!(place.active_cue(1_000), None);
+        assert_eq!(
+            place.active_cue(1_000),
+            Some(PresentationCueKind::PlaceNotice)
+        );
         assert!(
             played_cues(audio_plan_for_events(&[
                 GameEvent::RelationshipBeatCompleted(RelationshipMotifKey::FamiliarPlace(
@@ -4948,6 +5791,45 @@ mod tests {
             ])),
             vec![AudioCue::Affection]
         );
+    }
+
+    #[test]
+    fn private_toy_responses_select_exact_owned_audio_and_cancel_at_the_boundary() {
+        let activity_id = NonZeroU64::MIN;
+        let events = [
+            GameEvent::ToyObjectResponded {
+                toy: ToyId::Ball,
+                activity_id,
+                response: ToyResponse::BallNudged,
+            },
+            GameEvent::ToyObjectResponded {
+                toy: ToyId::Bell,
+                activity_id,
+                response: ToyResponse::BellStruck,
+            },
+            GameEvent::ToyObjectResponded {
+                toy: ToyId::Sock,
+                activity_id,
+                response: ToyResponse::SockTugged,
+            },
+            GameEvent::PrivateLifeCompleted {
+                activity_id,
+                kind: PrivateLifeKind::ToyPlay(ToyId::Sock),
+                recipe: ActivityRecipe::SockTug,
+            },
+        ];
+        let plan = audio_plan_for_events(&events);
+        assert_eq!(
+            played_cues(plan.clone()),
+            vec![
+                AudioCue::BallNudge,
+                AudioCue::BellRing,
+                AudioCue::SockRustle
+            ]
+        );
+        assert!(plan.events.contains(&AudioCommand::CancelOwner {
+            owner: SemanticOwner::PrivateLife(activity_id),
+        }));
     }
 
     #[test]

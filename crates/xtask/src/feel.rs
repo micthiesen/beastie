@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const FEEL_SCHEMA_VERSION: u32 = 1;
-const MANIFEST_VERSION: u32 = 5;
+const MANIFEST_VERSION: u32 = 6;
 const RUN_TIMEOUT_GRACE: Duration = Duration::from_secs(60);
 const FIRST_FRAME_HEARTBEAT: &str = "first-frame.json";
 const MIN_STARTUP_TIMEOUT: Duration = Duration::from_millis(250);
@@ -31,6 +31,7 @@ pub enum FeelSuite {
     Baseline,
     FirstFiveMinutes,
     QuietObservation,
+    PrivateLife,
     InteractionChain,
     BadConditions,
     RelationshipOverTime,
@@ -84,6 +85,14 @@ const QUIET_OBSERVATION: Experience = Experience {
     fake_ai: true,
     tts_requested: false,
     fixture_dialogue_delay_ms: None,
+};
+const QUIET_OBSERVATION_SEED_4201: Experience = Experience {
+    id: "quiet-observation-seed-4201",
+    ..QUIET_OBSERVATION
+};
+const QUIET_OBSERVATION_SEED_4202: Experience = Experience {
+    id: "quiet-observation-seed-4202",
+    ..QUIET_OBSERVATION
 };
 const INTERACTION_CHAIN: Experience = Experience {
     id: "interaction-chain",
@@ -166,6 +175,13 @@ const FAMILIAR_BALL_MARKERS: &[RequiredMotifMarker] = &[RequiredMotifMarker {
     mode: RelationshipExpressionMode::Standalone,
     minimum_evidence: 1,
 }];
+const SHARED_BALL_MARKERS: &[RequiredMotifMarker] = &[RequiredMotifMarker {
+    name: "shared-ball",
+    motif: RelationshipMotifKey::SharedToy(ToyId::Ball),
+    subject: RelationshipSubject::Toy(ToyId::Ball),
+    mode: RelationshipExpressionMode::Standalone,
+    minimum_evidence: 1,
+}];
 
 const TRUSTED_BERRY: Experience = Experience {
     id: "trusted-berry",
@@ -208,6 +224,15 @@ const FAMILIAR_BALL: Experience = Experience {
     scenario: "fixtures/scenarios/feel/relationship-breadth/familiar-ball.jsonl",
     initial_save: Some("fixtures/saves/feel/familiar-ball.json"),
     required_motifs: FAMILIAR_BALL_MARKERS,
+    fake_ai: false,
+    tts_requested: false,
+    fixture_dialogue_delay_ms: None,
+};
+const SHARED_BALL: Experience = Experience {
+    id: "shared-ball",
+    scenario: "fixtures/scenarios/feel/relationship-breadth/shared-ball.jsonl",
+    initial_save: None,
+    required_motifs: SHARED_BALL_MARKERS,
     fake_ai: false,
     tts_requested: false,
     fixture_dialogue_delay_ms: None,
@@ -374,6 +399,11 @@ fn experiences(suite: FeelSuite) -> Vec<Experience> {
         ],
         FeelSuite::FirstFiveMinutes => vec![FIRST_FIVE_MINUTES],
         FeelSuite::QuietObservation => vec![QUIET_OBSERVATION],
+        FeelSuite::PrivateLife => vec![
+            QUIET_OBSERVATION,
+            QUIET_OBSERVATION_SEED_4201,
+            QUIET_OBSERVATION_SEED_4202,
+        ],
         FeelSuite::InteractionChain => vec![INTERACTION_CHAIN, DIALOGUE_RACES],
         FeelSuite::BadConditions => vec![BAD_CONDITIONS],
         FeelSuite::RelationshipOverTime => {
@@ -385,7 +415,16 @@ fn experiences(suite: FeelSuite) -> Vec<Experience> {
             FAMILIAR_CAVE,
             FAMILIAR_PLANT,
             FAMILIAR_BALL,
+            SHARED_BALL,
         ],
+    }
+}
+
+fn experience_seed(experience: Experience) -> u64 {
+    match experience.id {
+        "quiet-observation-seed-4201" => 4_201,
+        "quiet-observation-seed-4202" => 4_202,
+        _ => 42,
     }
 }
 
@@ -557,6 +596,10 @@ fn capture_attempt(
         .stderr(Stdio::from(runtime_stderr));
     if let Some(path) = initial_save {
         command.arg("--feel-initial-save").arg(path);
+    } else {
+        command
+            .arg("--feel-seed")
+            .arg(experience_seed(experience).to_string());
     }
     if experience.tts_requested {
         let worker = binary_path("beastie-tts").map_err(|error| launch_failure(started, error))?;
@@ -2166,6 +2209,20 @@ fn write_manifest(
             names.push(name);
         }
     }
+    for artifact_directory in ["captures", "filmstrips"] {
+        let artifact_path = directory.join(artifact_directory);
+        for entry in fs::read_dir(&artifact_path)
+            .with_context(|| format!("failed to list {}", artifact_path.display()))?
+        {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                names.push(format!(
+                    "{artifact_directory}/{}",
+                    entry.file_name().to_string_lossy()
+                ));
+            }
+        }
+    }
     names.sort();
     let mut artifacts = Vec::new();
     for name in names {
@@ -2203,7 +2260,7 @@ fn write_manifest(
         fixture_dialogue_delay_ms: experience.fixture_dialogue_delay_ms,
         seed: initial_save
             .as_ref()
-            .map_or(42, |(_, save)| save.world.seed),
+            .map_or_else(|| experience_seed(experience), |(_, save)| save.world.seed),
         video_fps: 60,
         presentation: "640x360 exact 2x logical framebuffer",
         audible_mix_captured: false,
@@ -2315,6 +2372,25 @@ mod tests {
     }
 
     #[test]
+    fn private_life_suite_captures_three_distinct_deterministic_temperaments() {
+        let experiences = experiences(FeelSuite::PrivateLife);
+        assert_eq!(experiences.len(), 3);
+        assert_eq!(
+            experiences
+                .iter()
+                .copied()
+                .map(experience_seed)
+                .collect::<Vec<_>>(),
+            [42, 4_201, 4_202]
+        );
+        assert!(
+            experiences
+                .iter()
+                .all(|experience| experience.scenario == QUIET_OBSERVATION.scenario)
+        );
+    }
+
+    #[test]
     fn interaction_suite_includes_bounded_dialogue_race_capture() {
         let experiences = experiences(FeelSuite::InteractionChain);
         assert_eq!(
@@ -2332,7 +2408,7 @@ mod tests {
     #[test]
     fn relationship_breadth_is_a_separate_nonverbal_taste_pass() {
         let experiences = experiences(FeelSuite::RelationshipBreadth);
-        assert_eq!(experiences.len(), 5);
+        assert_eq!(experiences.len(), 6);
         assert_eq!(
             experiences
                 .iter()
@@ -2343,12 +2419,12 @@ mod tests {
                 "mushroom-grudge",
                 "familiar-cave",
                 "familiar-plant",
-                "familiar-ball"
+                "familiar-ball",
+                "shared-ball"
             ]
         );
         assert!(experiences.iter().all(|experience| {
-            experience.initial_save.is_some()
-                && !experience.required_motifs.is_empty()
+            !experience.required_motifs.is_empty()
                 && !experience.fake_ai
                 && !experience.tts_requested
         }));
@@ -2360,7 +2436,9 @@ mod tests {
         for experience in experiences(FeelSuite::RelationshipBreadth) {
             let duration = authored_scenario_duration_ms(&root.join(experience.scenario))
                 .expect("scenario duration");
-            let expected = if experience.id.starts_with("familiar-") {
+            let expected = if experience.id == "shared-ball" {
+                70_000
+            } else if experience.id.starts_with("familiar-") {
                 12_000
             } else {
                 16_000
@@ -2372,7 +2450,9 @@ mod tests {
     #[test]
     fn relationship_breadth_starting_saves_are_valid_and_derive_the_required_motif() {
         for experience in experiences(FeelSuite::RelationshipBreadth) {
-            let path = experience.initial_save.expect("starting save");
+            let Some(path) = experience.initial_save else {
+                continue;
+            };
             let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../..")
                 .join(path);
@@ -2393,9 +2473,12 @@ mod tests {
     #[test]
     fn relationship_breadth_scenarios_start_the_exact_required_context() {
         for experience in experiences(FeelSuite::RelationshipBreadth) {
+            let Some(initial_save) = experience.initial_save else {
+                continue;
+            };
             let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../..")
-                .join(experience.initial_save.expect("starting save"));
+                .join(initial_save);
             let source = fs::read_to_string(fixture).expect("fixture exists");
             let save = SessionSave::from_json(&source).expect("fixture validates");
             let resumed_at_ms = save.saved_at_ms;

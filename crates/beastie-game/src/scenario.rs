@@ -11,6 +11,11 @@ use thiserror::Error;
 pub enum ScenarioStep {
     Session(CommandEnvelope),
     Ui(UiAction),
+    /// Shell-only result of attempting to acquire a bounded microphone capture.
+    ///
+    /// This is intentionally separate from `SpeechStarted`: an unavailable device never reaches
+    /// the simulation, while an acquired capture may legitimately produce perception.
+    MicrophoneAcquisition(MicrophoneAcquisition),
     SetSubtitles(bool),
     Capture(String),
     Marker(String),
@@ -18,6 +23,12 @@ pub enum ScenarioStep {
     WaitTick {
         milliseconds: u64,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MicrophoneAcquisition {
+    Acquired,
+    Unavailable,
 }
 
 #[derive(Debug)]
@@ -149,6 +160,21 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
 
     #[derive(Deserialize)]
     #[serde(rename_all = "snake_case")]
+    enum MicrophoneAcquisitionOutcome {
+        Acquired,
+        Unavailable,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct MicrophoneAcquisitionControl {
+        version: u32,
+        command: String,
+        outcome: MicrophoneAcquisitionOutcome,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "snake_case")]
     enum ScenarioUiAction {
         OpenFood,
         OpenToys,
@@ -196,6 +222,22 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
             ));
         }
         return Ok(ScenarioStep::SetSubtitles(setting.enabled));
+    }
+    if kind.command == "microphone_acquisition" {
+        let control: MicrophoneAcquisitionControl =
+            serde_json::from_str(line).map_err(ScenarioError::Json)?;
+        if control.version != beastie_session::SESSION_PROTOCOL_VERSION
+            || control.command != "microphone_acquisition"
+        {
+            return Err(ScenarioError::Command(
+                "unsupported microphone acquisition control version".to_owned(),
+            ));
+        }
+        let outcome = match control.outcome {
+            MicrophoneAcquisitionOutcome::Acquired => MicrophoneAcquisition::Acquired,
+            MicrophoneAcquisitionOutcome::Unavailable => MicrophoneAcquisition::Unavailable,
+        };
+        return Ok(ScenarioStep::MicrophoneAcquisition(outcome));
     }
     if kind.command == "wait" {
         let wait: Wait = serde_json::from_str(line).map_err(ScenarioError::Json)?;
@@ -313,6 +355,12 @@ mod tests {
             Ok(ScenarioStep::SetSubtitles(false))
         ));
         assert!(matches!(
+            parse_step(r#"{"version":1,"command":"microphone_acquisition","outcome":"acquired"}"#),
+            Ok(ScenarioStep::MicrophoneAcquisition(
+                MicrophoneAcquisition::Acquired
+            ))
+        ));
+        assert!(matches!(
             parse_step(r#"{"version":1,"command":"capture","name":"room_1"}"#),
             Ok(ScenarioStep::Capture(name)) if name == "room_1"
         ));
@@ -381,6 +429,10 @@ mod tests {
             parse_step(r#"{"version":1,"command":"marker","name":"../private"}"#),
             Err(ScenarioError::MarkerName)
         ));
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"microphone_acquisition","outcome":"missing"}"#),
+            Err(ScenarioError::Json(_))
+        ));
     }
 
     #[test]
@@ -412,6 +464,31 @@ mod tests {
                 .iter()
                 .any(|step| matches!(step, ScenarioStep::SetSubtitles(true)))
         );
+    }
+
+    #[test]
+    fn bad_conditions_models_microphone_acquisition_without_faking_perception() {
+        let source = include_str!("../../../fixtures/scenarios/feel/bad-conditions.jsonl");
+        let steps = source
+            .lines()
+            .map(parse_step)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("bad conditions fixture should parse");
+        assert!(steps.iter().any(|step| {
+            matches!(
+                step,
+                ScenarioStep::MicrophoneAcquisition(MicrophoneAcquisition::Unavailable)
+            )
+        }));
+        assert!(!steps.iter().any(|step| {
+            matches!(
+                step,
+                ScenarioStep::Session(CommandEnvelope {
+                    command: SessionCommand::SpeechStarted,
+                    ..
+                })
+            )
+        }));
     }
 
     #[test]

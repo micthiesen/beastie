@@ -302,6 +302,13 @@ enum AssetTask {
         )]
         output: PathBuf,
     },
+    /// Rebuild the six canonical talking rows from their selected mood bodies.
+    CurateTalking,
+    /// Render all normal-to-talking transitions at exact 2x scale.
+    TalkingContactSheet {
+        #[arg(long, default_value = "target/feel/talking-identity-contact-sheet.png")]
+        output: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -355,6 +362,12 @@ fn main() -> Result<()> {
         Task::Asset {
             command: AssetTask::ReactionContactSheet { output },
         } => asset::reaction_contact_sheet(Path::new("assets/manifest.toml"), &output),
+        Task::Asset {
+            command: AssetTask::CurateTalking,
+        } => asset::curate_talking(Path::new("assets/manifest.toml")),
+        Task::Asset {
+            command: AssetTask::TalkingContactSheet { output },
+        } => asset::talking_contact_sheet(Path::new("assets/manifest.toml"), &output),
         Task::StoreAssets {
             command: StoreAssetsTask::Build,
         } => store_assets::build(Path::new(".")),
@@ -909,6 +922,7 @@ fn replay_spoken_input_scenario(path: &str) -> Result<()> {
             Some(SpokenInputStatus::Refused) => {}
             Some(SpokenInputStatus::Deferred)
             | Some(SpokenInputStatus::NotEngaged { .. })
+            | Some(SpokenInputStatus::Expired)
             | Some(SpokenInputStatus::NoCandidate)
             | None => {}
         }

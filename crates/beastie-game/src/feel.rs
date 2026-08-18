@@ -29,6 +29,22 @@ pub struct DialogueTraceOwner {
     pub dialogue_request_id: u64,
 }
 
+/// Dialogue diagnostics intentionally carry only bounded outcome metadata. They exclude player
+/// input, generated text, and memory/belief identifiers so feel bundles remain safe to share.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct DialogueHealthTrace {
+    pub owner: DialogueTraceOwner,
+    pub backend: beastie_protocol::TranscriptBackend,
+    pub fallback: bool,
+    pub fallback_reason: Option<beastie_protocol::DialogueFallbackReason>,
+    pub retry_count: u8,
+    pub duplicate_suppressed: bool,
+    pub reply_word_count: usize,
+    pub recalled_memory: bool,
+    pub recalled_belief: bool,
+    pub accepted_by_session: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct PresentationTraceState {
     pub subtitles_enabled: bool,
@@ -223,6 +239,20 @@ impl FeelRecorder {
         }))
     }
 
+    pub fn record_dialogue_health(
+        &mut self,
+        health: DialogueHealthTrace,
+        simulation_ms: u64,
+    ) -> Result<(), FeelError> {
+        self.events.write(&json!({
+            "version": FORMAT_VERSION,
+            "playback_ms": self.playback_ms(),
+            "simulation_ms": simulation_ms,
+            "kind": "dialogue_health",
+            "health": health,
+        }))
+    }
+
     pub fn record_frame(
         &mut self,
         rgba: &[u8],
@@ -261,6 +291,8 @@ impl FeelRecorder {
                 needs: &world.creature.needs,
                 relationship: &world.creature.relationship,
                 relationship_expression: &world.creature.relationship_expression,
+                private_life: &world.creature.private_life,
+                toy_states: &world.aquarium.toy_states,
                 development: &world.creature.development,
                 routines: &world.creature.routines,
                 favorite_locations: world
@@ -397,6 +429,10 @@ struct CreatureFrame<'a> {
     /// keys and memory IDs, never player text or model output. Keeping it beside the frame makes
     /// active/recent beats and preemptions replayable without exposing UI meters.
     relationship_expression: &'a beastie_core::RelationshipExpressionState,
+    /// Exact activity identity, selection evidence, phase, and contact state. This is simulation
+    /// truth, not a presentation inference from the status label.
+    private_life: &'a beastie_core::PrivateLifeState,
+    toy_states: &'a std::collections::BTreeMap<beastie_core::ToyId, beastie_core::ToyObjectState>,
     development: &'a beastie_core::Development,
     routines: &'a [beastie_core::Routine],
     favorite_locations: Vec<FavoriteLocationFrame>,
@@ -623,8 +659,8 @@ mod tests {
     use std::fs;
 
     use super::{
-        FIRST_FRAME_HEARTBEAT, playback_ms_for_frame, redacted_command, redacted_events,
-        write_first_frame_heartbeat,
+        DialogueHealthTrace, DialogueTraceOwner, FIRST_FRAME_HEARTBEAT, playback_ms_for_frame,
+        redacted_command, redacted_events, write_first_frame_heartbeat,
     };
 
     #[test]
@@ -664,6 +700,31 @@ mod tests {
         .to_string();
         assert!(!encoded.contains("private pet name"));
         assert!(encoded.contains("<redacted>"));
+    }
+
+    #[test]
+    fn dialogue_health_trace_contains_only_outcome_metadata() {
+        let encoded = serde_json::to_string(&DialogueHealthTrace {
+            owner: DialogueTraceOwner {
+                dialogue_generation: 2,
+                dialogue_request_id: 9,
+            },
+            backend: beastie_protocol::TranscriptBackend::Fixture,
+            fallback: false,
+            fallback_reason: None,
+            retry_count: 1,
+            duplicate_suppressed: true,
+            reply_word_count: 4,
+            recalled_memory: true,
+            recalled_belief: false,
+            accepted_by_session: true,
+        })
+        .expect("health metadata serializes");
+        assert!(encoded.contains("reply_word_count"));
+        assert!(encoded.contains("recalled_memory"));
+        assert!(!encoded.contains("private words"));
+        assert!(!encoded.contains("say"));
+        assert!(!encoded.contains("memory_id"));
     }
 
     #[test]

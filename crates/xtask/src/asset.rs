@@ -291,6 +291,192 @@ pub(crate) fn reaction_contact_sheet(manifest_path: &Path, output: &Path) -> Res
     Ok(())
 }
 
+const TALKING_MOODS: [&str; 6] = [
+    "content",
+    "curious",
+    "hungry",
+    "sleepy",
+    "lonely",
+    "resentful",
+];
+
+#[derive(Clone, Copy)]
+struct TalkMouth {
+    x: u32,
+    y: u32,
+}
+
+fn talk_mouth(mood: &str) -> Result<TalkMouth> {
+    match mood {
+        "content" => Ok(TalkMouth { x: 34, y: 48 }),
+        "curious" => Ok(TalkMouth { x: 35, y: 49 }),
+        "hungry" => Ok(TalkMouth { x: 36, y: 50 }),
+        "sleepy" => Ok(TalkMouth { x: 38, y: 52 }),
+        "lonely" => Ok(TalkMouth { x: 38, y: 51 }),
+        "resentful" => Ok(TalkMouth { x: 38, y: 50 }),
+        _ => bail!("unknown talking mood {mood}"),
+    }
+}
+
+fn talk_asset_id(mood: &str) -> String {
+    format!("creature-v1/talk/{mood}-south")
+}
+
+fn mood_asset_id(mood: &str) -> String {
+    format!("creature-v1/mood/{mood}-south")
+}
+
+/// Curate the talk family from the selected canonical mood poses. This deliberately creates
+/// final candidates instead of overwriting provider-generated history.
+pub(crate) fn curate_talking(manifest_path: &Path) -> Result<()> {
+    let source = fs::read_to_string(manifest_path)?;
+    let manifest: Manifest = toml::from_str(&source)?;
+    let asset_root = manifest_path
+        .parent()
+        .context("asset manifest must have a parent")?;
+    let mut curated = Vec::new();
+    for mood in TALKING_MOODS {
+        let talk_id = talk_asset_id(mood);
+        let talk = manifest
+            .asset
+            .iter()
+            .find(|asset| asset.id == talk_id)
+            .with_context(|| format!("manifest has no {talk_id}"))?;
+        if talk.frames != 3 {
+            bail!("asset {talk_id} must declare three mouth frames");
+        }
+        let mood_id = mood_asset_id(mood);
+        let canonical = manifest
+            .asset
+            .iter()
+            .find(|asset| asset.id == mood_id)
+            .with_context(|| format!("manifest has no canonical {mood_id}"))?;
+        let source_path = resolved_frame_path(asset_root, canonical, 0)
+            .with_context(|| format!("canonical {mood_id} has no resolved frame"))?;
+        let source_image = ImageReader::open(&source_path)?.decode()?.to_rgba8();
+        let palette = read_palette(talk, asset_root)?;
+        for frame in 0..talk.frames {
+            let destination =
+                candidate_path(asset_root, Source::Final, &talk.id, talk.frames, frame);
+            if destination.exists() {
+                bail!(
+                    "refusing to overwrite curated talking candidate {}; remove it after review before rerunning",
+                    destination.display()
+                );
+            }
+            let image = curated_talk_frame(source_image.clone(), talk_mouth(mood)?, frame)?;
+            validate_decoded_png(
+                talk,
+                &DynamicImage::ImageRgba8(image.clone()),
+                "curated talking in-memory candidate",
+                &palette,
+            )?;
+            curated.push((destination, image));
+        }
+    }
+    for (destination, image) in curated {
+        let parent = destination
+            .parent()
+            .context("curated talking candidate must have a parent")?;
+        fs::create_dir_all(parent)?;
+        image.save_with_format(&destination, ImageFormat::Png)?;
+    }
+    println!("curated canonical talking candidates under assets/final/creature-v1/talk");
+    Ok(())
+}
+
+fn curated_talk_frame(mut image: RgbaImage, mouth: TalkMouth, frame: u32) -> Result<RgbaImage> {
+    if frame == 0 {
+        return Ok(image);
+    }
+    let (width, height) = image.dimensions();
+    let (mouth_width, mouth_height) = match frame {
+        1 => (3, 3),
+        2 => (5, 4),
+        _ => bail!("talking mouth frame {frame} is outside the three-frame contract"),
+    };
+    let left = mouth.x.saturating_sub(mouth_width / 2);
+    let top = mouth.y.saturating_sub(mouth_height / 2);
+    if left + mouth_width > width || top + mouth_height > height {
+        bail!("talking mouth anchor is outside the canonical canvas");
+    }
+    let outline = Rgba([23, 17, 16, 255]);
+    let interior = Rgba([231, 116, 88, 255]);
+    for y in top..top + mouth_height {
+        for x in left..left + mouth_width {
+            let edge =
+                x == left || x + 1 == left + mouth_width || y == top || y + 1 == top + mouth_height;
+            image.put_pixel(x, y, if edge { outline } else { interior });
+        }
+    }
+    Ok(image)
+}
+
+/// The sheet contains, for each mood, normal -> closed -> half -> open -> normal. It is an
+/// exact 2x nearest-neighbor identity and transition review aid, not a runtime texture.
+pub(crate) fn talking_contact_sheet(manifest_path: &Path, output: &Path) -> Result<()> {
+    let source = fs::read_to_string(manifest_path)?;
+    let manifest: Manifest = toml::from_str(&source)?;
+    let asset_root = manifest_path
+        .parent()
+        .context("asset manifest must have a parent")?;
+    let cell_width = 160;
+    let cell_height = 160;
+    let mut sheet =
+        ImageBuffer::from_pixel(cell_width * 5, cell_height * 6, Rgba([9, 17, 31, 255]));
+    for (row, mood) in TALKING_MOODS.into_iter().enumerate() {
+        let normal_id = mood_asset_id(mood);
+        let normal = manifest
+            .asset
+            .iter()
+            .find(|asset| asset.id == normal_id)
+            .with_context(|| format!("manifest has no {normal_id}"))?;
+        let talk_id = talk_asset_id(mood);
+        let talk = manifest
+            .asset
+            .iter()
+            .find(|asset| asset.id == talk_id)
+            .with_context(|| format!("manifest has no {talk_id}"))?;
+        if talk.frames != 3 {
+            bail!("asset {talk_id} must have three talk frames for transition review");
+        }
+        let normal_path = resolved_frame_path(asset_root, normal, 0)
+            .with_context(|| format!("normal asset {normal_id} is unresolved"))?;
+        let mut sequence = vec![normal_path];
+        for frame in 0..talk.frames {
+            sequence.push(
+                resolved_frame_path(asset_root, talk, frame)
+                    .with_context(|| format!("talk asset {talk_id} frame {frame} is unresolved"))?,
+            );
+        }
+        sequence.push(
+            resolved_frame_path(asset_root, normal, 0)
+                .with_context(|| format!("normal asset {normal_id} is unresolved"))?,
+        );
+        for (column, path) in sequence.into_iter().enumerate() {
+            let frame = ImageReader::open(path)?.decode()?.to_rgba8();
+            let scaled = image::imageops::resize(
+                &frame,
+                cell_width,
+                cell_height,
+                image::imageops::FilterType::Nearest,
+            );
+            image::imageops::overlay(
+                &mut sheet,
+                &scaled,
+                i64::from(cell_width) * column as i64,
+                i64::from(cell_height) * row as i64,
+            );
+        }
+    }
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    sheet.save_with_format(output, ImageFormat::Png)?;
+    println!("talking contact sheet: {}", output.display());
+    Ok(())
+}
+
 fn contact_sheet_frame(frame: RgbaImage, mirror_horizontal: bool) -> RgbaImage {
     if mirror_horizontal {
         image::imageops::flip_horizontal(&frame)
@@ -805,6 +991,7 @@ fn validate_manifest(
         validate_audio(audio, asset_root, require_runtime, verbose, &mut ids)?;
     }
     validate_positive_reaction_geometry(manifest, asset_root)?;
+    validate_talking_geometry(manifest, asset_root)?;
     Ok(())
 }
 
@@ -814,6 +1001,19 @@ struct OpaqueGeometry {
     height: u32,
     centroid_x: f64,
     centroid_y: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FeatureAnchor {
+    x: f64,
+    y: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TalkingGeometry {
+    opaque: OpaqueGeometry,
+    eye_line: Option<FeatureAnchor>,
+    mouth_anchor: Option<FeatureAnchor>,
 }
 
 fn opaque_geometry(path: &Path) -> Result<OpaqueGeometry> {
@@ -845,6 +1045,63 @@ fn opaque_geometry(path: &Path) -> Result<OpaqueGeometry> {
         height: max_y - min_y + 1,
         centroid_x: sum_x as f64 / count as f64,
         centroid_y: sum_y as f64 / count as f64,
+    })
+}
+
+fn talking_geometry(path: &Path) -> Result<TalkingGeometry> {
+    let image = ImageReader::open(path)?.decode()?.to_rgba8();
+    let opaque = opaque_geometry(path)?;
+    let min_x = image
+        .enumerate_pixels()
+        .filter(|(_, _, pixel)| pixel.0[3] != 0)
+        .map(|(x, _, _)| x)
+        .min()
+        .context("talking candidate has no opaque pixels")?;
+    let min_y = image
+        .enumerate_pixels()
+        .filter(|(_, _, pixel)| pixel.0[3] != 0)
+        .map(|(_, y, _)| y)
+        .min()
+        .context("talking candidate has no opaque pixels")?;
+    let face_left = min_x + opaque.width / 8;
+    let face_right = min_x + opaque.width * 7 / 8;
+    let eye_bottom = min_y + opaque.height * 3 / 5;
+    let mouth_top = min_y + opaque.height * 2 / 5;
+    let mouth_bottom = min_y + opaque.height * 7 / 8;
+    let eye_line = dark_feature_anchor(&image, face_left, face_right, min_y, eye_bottom);
+    let mouth_anchor = dark_feature_anchor(&image, face_left, face_right, mouth_top, mouth_bottom);
+    Ok(TalkingGeometry {
+        opaque,
+        eye_line,
+        mouth_anchor,
+    })
+}
+
+fn dark_feature_anchor(
+    image: &RgbaImage,
+    left: u32,
+    right: u32,
+    top: u32,
+    bottom: u32,
+) -> Option<FeatureAnchor> {
+    let mut sum_x = 0_u64;
+    let mut sum_y = 0_u64;
+    let mut count = 0_u64;
+    for y in top..bottom.min(image.height()) {
+        for x in left..right.min(image.width()) {
+            let pixel = image.get_pixel(x, y);
+            let [red, green, blue, alpha] = pixel.0;
+            if alpha == 0 || red > 50 || green > 50 || blue > 50 {
+                continue;
+            }
+            sum_x += u64::from(x);
+            sum_y += u64::from(y);
+            count += 1;
+        }
+    }
+    (count > 0).then_some(FeatureAnchor {
+        x: sum_x as f64 / count as f64,
+        y: sum_y as f64 / count as f64,
     })
 }
 
@@ -908,6 +1165,83 @@ fn validate_positive_reaction_geometry(manifest: &Manifest, asset_root: &Path) -
         }
     }
     Ok(())
+}
+
+fn validate_talking_geometry(manifest: &Manifest, asset_root: &Path) -> Result<()> {
+    for mood in TALKING_MOODS {
+        let normal_id = mood_asset_id(mood);
+        let Some(normal) = manifest.asset.iter().find(|asset| asset.id == normal_id) else {
+            continue;
+        };
+        let Some(normal_path) = resolved_frame_path(asset_root, normal, 0) else {
+            continue;
+        };
+        let reference = talking_geometry(&normal_path)?;
+        let talk_id = talk_asset_id(mood);
+        let Some(talk) = manifest.asset.iter().find(|asset| asset.id == talk_id) else {
+            continue;
+        };
+        for source in [Source::Generated, Source::Final] {
+            for frame in 0..talk.frames {
+                let path = candidate_path(asset_root, source, &talk.id, talk.frames, frame);
+                if !path.is_file() {
+                    continue;
+                }
+                let geometry = talking_geometry(&path)?;
+                if !talking_geometry_passes(reference, geometry) {
+                    bail!(
+                        "asset {talk_id} {} frame {frame} breaks canonical talking identity geometry against {normal_id} (envelope {}x{}, centroid {:.2},{:.2}, eye {:?}, mouth {:?}; reference {}x{}, {:.2},{:.2}, eye {:?}, mouth {:?})",
+                        source.directory(),
+                        geometry.opaque.width,
+                        geometry.opaque.height,
+                        geometry.opaque.centroid_x,
+                        geometry.opaque.centroid_y,
+                        geometry.eye_line,
+                        geometry.mouth_anchor,
+                        reference.opaque.width,
+                        reference.opaque.height,
+                        reference.opaque.centroid_x,
+                        reference.opaque.centroid_y,
+                        reference.eye_line,
+                        reference.mouth_anchor,
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn talking_geometry_passes(reference: TalkingGeometry, candidate: TalkingGeometry) -> bool {
+    let opaque = candidate.opaque;
+    let reference_opaque = reference.opaque;
+    let envelope_and_centroid = opaque.width * 100 >= reference_opaque.width * 92
+        && opaque.width * 100 <= reference_opaque.width * 108
+        && opaque.height * 100 >= reference_opaque.height * 92
+        && opaque.height * 100 <= reference_opaque.height * 108
+        && (opaque.centroid_x - reference_opaque.centroid_x).abs() <= 2.0
+        && (opaque.centroid_y - reference_opaque.centroid_y).abs() <= 2.0;
+    let anchors = match (
+        reference.eye_line,
+        candidate.eye_line,
+        reference.mouth_anchor,
+        candidate.mouth_anchor,
+    ) {
+        (
+            Some(reference_eye),
+            Some(candidate_eye),
+            Some(reference_mouth),
+            Some(candidate_mouth),
+        ) => {
+            (reference_eye.x - candidate_eye.x).abs() <= 2.0
+                && (reference_eye.y - candidate_eye.y).abs() <= 2.0
+                && (reference_mouth.x - candidate_mouth.x).abs() <= 3.0
+                && (reference_mouth.y - candidate_mouth.y).abs() <= 3.0
+        }
+        // A sparse pose can lack one diagnostic cluster. Envelope and centroid are still required.
+        _ => true,
+    };
+    envelope_and_centroid && anchors
 }
 
 fn positive_reaction_geometry_passes(
@@ -1837,6 +2171,66 @@ provenance = "docs/audio.md"
                 ..accepted
             })
         ));
+    }
+
+    #[test]
+    fn talking_geometry_enforces_canonical_envelope_centroid_and_face_anchors() {
+        let reference = TalkingGeometry {
+            opaque: OpaqueGeometry {
+                width: 40,
+                height: 30,
+                centroid_x: 39.0,
+                centroid_y: 40.0,
+            },
+            eye_line: Some(FeatureAnchor { x: 39.0, y: 34.0 }),
+            mouth_anchor: Some(FeatureAnchor { x: 39.0, y: 46.0 }),
+        };
+        let accepted = TalkingGeometry {
+            opaque: OpaqueGeometry {
+                width: 41,
+                height: 29,
+                centroid_x: 40.5,
+                centroid_y: 38.5,
+            },
+            eye_line: Some(FeatureAnchor { x: 40.5, y: 35.5 }),
+            mouth_anchor: Some(FeatureAnchor { x: 41.0, y: 47.5 }),
+        };
+        assert!(talking_geometry_passes(reference, accepted));
+        assert!(!talking_geometry_passes(
+            reference,
+            TalkingGeometry {
+                opaque: OpaqueGeometry {
+                    width: 44,
+                    ..accepted.opaque
+                },
+                ..accepted
+            }
+        ));
+        assert!(!talking_geometry_passes(
+            reference,
+            TalkingGeometry {
+                mouth_anchor: Some(FeatureAnchor { x: 43.0, y: 47.5 }),
+                ..accepted
+            }
+        ));
+    }
+
+    #[test]
+    fn curated_talk_frames_only_add_a_small_visible_mouth_cycle() {
+        let base = ImageBuffer::from_pixel(8, 8, Rgba([180, 160, 80, 255]));
+        let mouth = TalkMouth { x: 4, y: 4 };
+        assert_eq!(
+            curated_talk_frame(base.clone(), mouth, 0).expect("closed mouth"),
+            base
+        );
+        let half = curated_talk_frame(base.clone(), mouth, 1).expect("half mouth");
+        let open = curated_talk_frame(base.clone(), mouth, 2).expect("open mouth");
+        assert_eq!(half.get_pixel(4, 4), &Rgba([231, 116, 88, 255]));
+        assert_eq!(open.get_pixel(4, 4), &Rgba([231, 116, 88, 255]));
+        assert_eq!(half.get_pixel(0, 0), base.get_pixel(0, 0));
+        assert_eq!(open.get_pixel(0, 0), base.get_pixel(0, 0));
+        assert_eq!(half.get_pixel(3, 3), &Rgba([23, 17, 16, 255]));
+        assert_eq!(open.get_pixel(2, 2), &Rgba([23, 17, 16, 255]));
     }
 
     #[test]

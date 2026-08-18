@@ -2,11 +2,14 @@
 
 use std::collections::BTreeSet;
 
+#[cfg(test)]
+use beastie_core::SIMULATION_TICK_MS;
 use beastie_core::{
-    FoodId, GameEvent, LanguageExposure, MemoryCue, MemoryQuery, Mood, NamingTarget, NonverbalAct,
-    NormalizedPosition, OfflineProgress, PlayerEvent, Reaction, SIMULATION_TICK_MS, SaveGame,
-    SeededRandom, SpeechAttention, ToyId, ToyOrigin, UtteranceInterpretation, UtteranceReference,
-    WorldState, advance_offline, ground_utterance, speech_attention, step,
+    DialogueActionOwner, DialogueHandoffState, FoodId, GameEvent, LanguageExposure, MemoryCue,
+    MemoryQuery, Mood, NamingTarget, NonverbalAct, NormalizedPosition, OfflineProgress,
+    PlayerEvent, Reaction, SaveGame, SeededRandom, SpeechAttention, ToyId, ToyOrigin,
+    UtteranceInterpretation, UtteranceReference, WorldState, advance_offline, dialogue_handoff,
+    ground_utterance, speech_attention, step,
 };
 use beastie_protocol::{
     AcousticConfidence, DialogueActionPhase, DialogueContext, DialogueReply, DialogueRequest,
@@ -19,13 +22,14 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const SESSION_PROTOCOL_VERSION: u32 = 1;
-pub const SESSION_SAVE_VERSION: u32 = 4;
+pub const SESSION_SAVE_VERSION: u32 = 5;
 const LEGACY_CORE_SAVE_VERSION: u32 = 1;
 pub const MAX_COMMAND_BYTES: usize = 4_096;
 pub const MAX_ADVANCE_MINUTES: u32 = 45;
 pub const MAX_SCENARIO_ABSENCE_MS: u64 = beastie_core::MAX_OFFLINE_MS;
 const DIALOGUE_HISTORY_VERSION: u32 = 1;
 const MAX_DIALOGUE_HISTORY: usize = 6;
+const DEFERRED_UTTERANCE_MAX_MS: u64 = 45_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandEnvelope {
@@ -119,6 +123,7 @@ pub enum SpokenInputStatus {
     },
     NoCandidate,
     Deferred,
+    Expired,
     Refused,
     NotEngaged {
         attention: beastie_core::SpeechAttention,
@@ -173,6 +178,8 @@ enum SpokenInputState {
     Deferred {
         candidate: SpokenCandidate,
         ready_at_ms: u64,
+        expires_at_ms: u64,
+        owner: Option<DialogueActionOwner>,
         channel: InputChannel,
     },
 }
@@ -284,7 +291,7 @@ impl SessionSave {
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
         let version = u32::try_from(version).unwrap_or(u32::MAX);
-        if !matches!(version, 2 | 3 | SESSION_SAVE_VERSION) {
+        if !matches!(version, 2 | 3 | 4 | SESSION_SAVE_VERSION) {
             return Err(SessionError::SaveVersion(version));
         }
         migrate_embedded_core_save(&mut value)?;
@@ -477,6 +484,14 @@ impl GameSession {
         validate_envelope(&envelope)?;
         validate_spoken_input_order(&self.spoken_input, &envelope.command)?;
         self.world.validate().map_err(SessionError::State)?;
+        if matches!(self.spoken_input, SpokenInputState::Deferred { .. })
+            && matches!(
+                &envelope.command,
+                SessionCommand::Talk { .. } | SessionCommand::SpeechStarted
+            )
+        {
+            self.spoken_input = SpokenInputState::Idle;
+        }
         let next_sequence = self.sequence.saturating_add(1);
         let mut events = Vec::new();
         let mut dialogue_request = None;
@@ -765,16 +780,16 @@ impl GameSession {
         if matches!(attention, SpeechAttention::Glanced)
             || (matches!(channel, InputChannel::Spoken) && waiting_for_cooldown)
         {
-            let attention_delay = if matches!(attention, SpeechAttention::Glanced) {
-                SIMULATION_TICK_MS.saturating_mul(2)
-            } else {
-                0
-            };
-            let after_attention_delay = self.world.elapsed_ms.saturating_add(attention_delay);
-            let ready_at_ms = after_attention_delay.max(self.next_talk_ready_at_ms());
+            let handoff = dialogue_handoff(&self.world);
+            let ready_at_ms = self.world.elapsed_ms.max(self.next_talk_ready_at_ms());
             self.spoken_input = SpokenInputState::Deferred {
                 candidate,
                 ready_at_ms,
+                expires_at_ms: self
+                    .world
+                    .elapsed_ms
+                    .saturating_add(DEFERRED_UTTERANCE_MAX_MS),
+                owner: handoff.owner,
                 channel,
             };
             events.push(GameEvent::UtteranceDeferred);
@@ -817,25 +832,47 @@ impl GameSession {
         let SpokenInputState::Deferred {
             candidate,
             ready_at_ms,
+            expires_at_ms,
+            owner,
             channel,
         } = &self.spoken_input
         else {
             return Ok(());
         };
+        if self.world.elapsed_ms >= *expires_at_ms {
+            let channel = *channel;
+            self.spoken_input = SpokenInputState::Idle;
+            if matches!(channel, InputChannel::Spoken) {
+                *spoken_input = Some(SpokenInputStatus::Expired);
+            } else {
+                events.push(GameEvent::TalkIgnored);
+            }
+            return Ok(());
+        }
         if self.world.elapsed_ms < *ready_at_ms
             || self.world.elapsed_ms < self.next_talk_ready_at_ms()
             || dialogue_request.is_some()
         {
             return Ok(());
         }
+        let handoff = dialogue_handoff(&self.world);
+        let owner_finished = owner.is_some() && handoff.owner != *owner;
+        // A cooldown-only deferral has no action promise to preserve. Do not let a private-life
+        // activity selected on a later tick capture an utterance that was already waiting.
+        let boundary_ready = owner.is_none()
+            || owner_finished
+            || matches!(
+                handoff.state,
+                DialogueHandoffState::Ready | DialogueHandoffState::SafeBoundary
+            );
+        if !boundary_ready {
+            return Ok(());
+        }
         let candidate = candidate.clone();
         let channel = *channel;
         let attention = match speech_attention(&self.world) {
-            SpeechAttention::Ignored => SpeechAttention::Ignored,
-            // The original glance delay has already elapsed. Re-check for a newly
-            // non-interruptible state, but do not defer forever just because the
-            // creature is still finishing the activity it glanced away from.
-            SpeechAttention::Glanced | SpeechAttention::Attended => SpeechAttention::Attended,
+            SpeechAttention::Glanced => SpeechAttention::Attended,
+            attention => attention,
         };
         self.spoken_input = SpokenInputState::Idle;
         *dialogue_request =
@@ -1226,8 +1263,10 @@ const fn relationship_dialogue_target(
 /// `NeedChanged` means "read the current authoritative needs" rather than describing a
 /// historical delta, so one notification represents the final state just as well as hundreds.
 /// Autonomous `ToyPlayed` events are presentation beats rather than history; an accelerated span
-/// retains the first arrival for each toy instead of replaying minutes of obsolete impacts. All
-/// other transition and identity-bearing events retain their original order and multiplicity.
+/// retains the first arrival for each toy instead of replaying minutes of obsolete impacts.
+/// Private-life performance events are likewise stale after an accelerated span. Their durable
+/// outcome is already present in the world and toy-object state, so replaying their notices,
+/// contacts, and recoveries on resume would fictionalize hours-old action.
 fn compact_advance_events(events: &mut Vec<GameEvent>) {
     let mut emitted_need_change = false;
     let mut emitted_toy_arrivals = BTreeSet::new();
@@ -1244,6 +1283,15 @@ fn compact_advance_events(events: &mut Vec<GameEvent>) {
         } = event
         {
             emitted_toy_arrivals.insert(*toy)
+        } else if matches!(
+            event,
+            GameEvent::PrivateLifeStarted { .. }
+                | GameEvent::PrivateLifePhaseChanged { .. }
+                | GameEvent::PrivateLifeCompleted { .. }
+                | GameEvent::PrivateLifeInterrupted { .. }
+                | GameEvent::ToyObjectResponded { .. }
+        ) {
+            false
         } else if let GameEvent::RelationshipBeatStarted { motif, .. } = event {
             emitted_relationship_starts.insert(*motif)
         } else {
@@ -1355,20 +1403,20 @@ fn validate_spoken_input_order(
         | (SpokenInputState::Listening { .. }, SessionCommand::SpeechCandidate { .. })
         | (SpokenInputState::Listening { .. }, SessionCommand::SpeechEnded)
         | (SpokenInputState::Listening { .. }, SessionCommand::SpeechFailed { .. }) => Ok(()),
-        (
-            SpokenInputState::Listening { .. } | SpokenInputState::Deferred { .. },
-            SessionCommand::SpeechStarted,
-        ) => Err(SessionError::SpeechAlreadyStarted),
+        (SpokenInputState::Deferred { .. }, SessionCommand::SpeechStarted) => Ok(()),
+        (SpokenInputState::Listening { .. }, SessionCommand::SpeechStarted) => {
+            Err(SessionError::SpeechAlreadyStarted)
+        }
         (
             SpokenInputState::Idle | SpokenInputState::Deferred { .. },
             SessionCommand::SpeechCandidate { .. }
             | SessionCommand::SpeechEnded
             | SessionCommand::SpeechFailed { .. },
         ) => Err(SessionError::SpeechNotStarted),
-        (
-            SpokenInputState::Listening { .. } | SpokenInputState::Deferred { .. },
-            SessionCommand::Talk { .. },
-        ) => Err(SessionError::UtteranceBusy),
+        (SpokenInputState::Deferred { .. }, SessionCommand::Talk { .. }) => Ok(()),
+        (SpokenInputState::Listening { .. }, SessionCommand::Talk { .. }) => {
+            Err(SessionError::UtteranceBusy)
+        }
         _ => Ok(()),
     }
 }
@@ -2590,12 +2638,19 @@ mod tests {
     }
 
     #[test]
-    fn occupied_glance_defers_the_shared_talk_path_without_interrupting() {
+    fn occupied_glance_waits_for_the_exact_toy_boundary_without_interrupting() {
         let mut session = GameSession::new(532, "Busy");
-        session.world.creature.current_intention = beastie_core::Intention::Play;
         session.world.creature.traits.sociability = 1.0;
         session.world.creature.relationship.bond = 1.0;
         session.world.creature.relationship.resentment = 0.0;
+        session
+            .world
+            .creature
+            .toy_preferences
+            .insert(ToyId::Ball, 0.8);
+        session
+            .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
+            .expect("accepted toy establishes an exact owner");
         session
             .apply(command(SessionCommand::SpeechStarted))
             .expect("occupied creature glances");
@@ -2614,17 +2669,35 @@ mod tests {
 
         let early = session
             .apply(command(SessionCommand::Tick {
-                milliseconds: 1_000,
+                milliseconds: 2_000,
             }))
             .expect("time advances");
         assert!(early.dialogue_request.is_none());
-        let ready = session
-            .apply(command(SessionCommand::Tick {
-                milliseconds: 1_000,
-            }))
-            .expect("deferred response becomes ready");
+        assert!(matches!(
+            session.spoken_input,
+            SpokenInputState::Deferred { .. }
+        ));
+
+        let mut saw_contact = false;
+        let mut submitted = None;
+        for _ in 0..20 {
+            let observation = session
+                .apply(command(SessionCommand::Tick {
+                    milliseconds: 1_000,
+                }))
+                .expect("activity progresses toward its semantic boundary");
+            saw_contact |= observation
+                .events
+                .iter()
+                .any(|event| matches!(event, GameEvent::ToyContacted { .. }));
+            if observation.dialogue_request.is_some() {
+                submitted = Some(observation);
+                break;
+            }
+        }
+        let ready = submitted.expect("deferred response becomes ready after toy contact");
+        assert!(saw_contact);
         assert_eq!(ready.spoken_input, Some(SpokenInputStatus::Submitted));
-        assert!(ready.dialogue_request.is_some());
     }
 
     #[test]
@@ -2668,6 +2741,43 @@ mod tests {
         assert!(refused.dialogue_request.is_none());
         assert!(refused.events.contains(&GameEvent::UtteranceRefused));
         assert!(matches!(resentful.spoken_input, SpokenInputState::Idle));
+    }
+
+    #[test]
+    fn deferred_utterance_expires_honestly_instead_of_seizing_the_body() {
+        let mut session = GameSession::new(5_323, "Patient");
+        session.spoken_input = SpokenInputState::Deferred {
+            candidate: SpokenCandidate {
+                text: "remember the berry".to_owned(),
+                confidence: AcousticConfidence::new(900).expect("valid confidence"),
+            },
+            ready_at_ms: session
+                .world
+                .elapsed_ms
+                .saturating_add(DEFERRED_UTTERANCE_MAX_MS + SIMULATION_TICK_MS),
+            expires_at_ms: session
+                .world
+                .elapsed_ms
+                .saturating_add(DEFERRED_UTTERANCE_MAX_MS),
+            owner: None,
+            channel: InputChannel::Spoken,
+        };
+
+        session.world.elapsed_ms = session
+            .world
+            .elapsed_ms
+            .saturating_add(DEFERRED_UTTERANCE_MAX_MS);
+        let mut dialogue_request = None;
+        let mut events = Vec::new();
+        let mut status = None;
+        session
+            .apply_deferred_speech(&mut dialogue_request, &mut events, &mut status)
+            .expect("bounded deferred utterance expires");
+
+        assert_eq!(status, Some(SpokenInputStatus::Expired));
+        assert!(dialogue_request.is_none());
+        assert!(events.is_empty());
+        assert!(matches!(session.spoken_input, SpokenInputState::Idle));
     }
 
     #[test]
@@ -2764,7 +2874,7 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_utterance_is_rejected_without_cooldown_or_habit_mutation() {
+    fn newer_utterance_supersedes_deferred_text_without_cooldown_or_habit_mutation() {
         let mut session = GameSession::new(535, "Busy");
         session.world.creature.current_intention = beastie_core::Intention::Play;
         session.world.creature.traits.sociability = 1.0;
@@ -2776,13 +2886,17 @@ mod tests {
             .expect("first utterance is deferred");
         let world_before_overlap = session.world.clone();
 
-        assert!(matches!(
-            session.apply(command(SessionCommand::Talk {
+        let replacement = session
+            .apply(command(SessionCommand::Talk {
                 text: "fuck shit".to_owned(),
-            })),
-            Err(SessionError::UtteranceBusy)
-        ));
+            }))
+            .expect("newer utterance replaces the deferred candidate");
+        assert!(replacement.dialogue_request.is_none());
         assert_eq!(session.world, world_before_overlap);
+        assert!(matches!(
+            &session.spoken_input,
+            SpokenInputState::Deferred { candidate, .. } if candidate.text == "fuck shit"
+        ));
     }
 
     #[test]
@@ -2824,9 +2938,16 @@ mod tests {
     #[test]
     fn deferred_transcript_is_episode_transient_and_fixed_tick_deterministic() {
         let mut first = GameSession::new(536, "Delay");
-        first.world.creature.current_intention = beastie_core::Intention::Play;
         first.world.creature.traits.sociability = 1.0;
         first.world.creature.relationship.bond = 1.0;
+        first
+            .world
+            .creature
+            .toy_preferences
+            .insert(ToyId::Ball, 0.8);
+        first
+            .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
+            .expect("accepted toy establishes an exact deferred owner");
         let mut second = first.clone();
         for session in [&mut first, &mut second] {
             session
@@ -2849,30 +2970,28 @@ mod tests {
         let (resumed, _) = GameSession::resume_json(&save, 0).expect("resume");
         assert!(matches!(resumed.spoken_input, SpokenInputState::Idle));
 
-        let early_a = first
-            .apply(command(SessionCommand::Tick {
-                milliseconds: SIMULATION_TICK_MS,
-            }))
-            .expect("first tick");
-        let early_b = second
-            .apply(command(SessionCommand::Tick {
-                milliseconds: SIMULATION_TICK_MS,
-            }))
-            .expect("matching first tick");
-        assert_eq!(early_a, early_b);
-        assert!(early_a.dialogue_request.is_none());
-        let ready_a = first
-            .apply(command(SessionCommand::Tick {
-                milliseconds: SIMULATION_TICK_MS,
-            }))
-            .expect("second tick");
-        let ready_b = second
-            .apply(command(SessionCommand::Tick {
-                milliseconds: SIMULATION_TICK_MS,
-            }))
-            .expect("matching second tick");
-        assert_eq!(ready_a, ready_b);
-        assert!(ready_a.dialogue_request.is_some());
+        let mut submitted = false;
+        for _ in 0..20 {
+            let next_a = first
+                .apply(command(SessionCommand::Tick {
+                    milliseconds: SIMULATION_TICK_MS,
+                }))
+                .expect("first deterministic tick");
+            let next_b = second
+                .apply(command(SessionCommand::Tick {
+                    milliseconds: SIMULATION_TICK_MS,
+                }))
+                .expect("matching deterministic tick");
+            assert_eq!(next_a, next_b);
+            if next_a.dialogue_request.is_some() {
+                submitted = true;
+                break;
+            }
+        }
+        assert!(
+            submitted,
+            "the exact toy boundary eventually releases dialogue"
+        );
     }
 
     #[test]

@@ -15,6 +15,7 @@ const AQUARIUM_SAVE_VERSION: u32 = 2;
 const PRE_RELATIONSHIP_SAVE_VERSION: u32 = 3;
 const RELATIONSHIP_SAVE_VERSION: u32 = 4;
 const PRE_TRAVEL_OWNERSHIP_SAVE_VERSION: u32 = 5;
+const PRE_PRIVATE_LIFE_SAVE_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,6 +51,7 @@ impl SaveGame {
                 | PRE_RELATIONSHIP_SAVE_VERSION
                 | RELATIONSHIP_SAVE_VERSION
                 | PRE_TRAVEL_OWNERSHIP_SAVE_VERSION
+                | PRE_PRIVATE_LIFE_SAVE_VERSION
         ) {
             return PreviousSaveGame::from_json(source, header.save_version);
         }
@@ -169,19 +171,57 @@ pub fn migrate_world(mut world: WorldState) -> Result<WorldState, SaveError> {
             | PRE_RELATIONSHIP_SAVE_VERSION
             | RELATIONSHIP_SAVE_VERSION
             | PRE_TRAVEL_OWNERSHIP_SAVE_VERSION
+            | PRE_PRIVATE_LIFE_SAVE_VERSION
     ) {
         return Err(SaveError::Version(source_version));
     }
     world.save_version = SAVE_VERSION;
     if source_version == RELATIONSHIP_SAVE_VERSION {
         world.creature.relationship_expression.active = None;
-        world.creature.relationship_expression.schema_version =
-            crate::RELATIONSHIP_EXPRESSION_SCHEMA_VERSION;
         migrate_v4_action(&mut world);
     }
-    migrate_pre_travel_ownership(&mut world);
+    if source_version <= PRE_TRAVEL_OWNERSHIP_SAVE_VERSION {
+        migrate_pre_travel_ownership(&mut world);
+    }
+    migrate_v6_private_life(&mut world);
+    migrate_relationship_performance_ledger(&mut world);
     world.validate().map_err(SaveError::State)?;
     Ok(world)
+}
+
+fn migrate_relationship_performance_ledger(world: &mut WorldState) {
+    // Pre-v7 worlds have no authoritative recipe receipts. Treating their presentation history as
+    // a modern exact-performance ledger would invent a suppression fact, so retain the broad
+    // display history and start the bounded ledger empty.
+    world.creature.relationship_expression.schema_version =
+        crate::RELATIONSHIP_EXPRESSION_SCHEMA_VERSION;
+    world
+        .creature
+        .relationship_expression
+        .performance_ledger
+        .clear();
+}
+
+fn migrate_v6_private_life(world: &mut WorldState) {
+    // V6's catalogue positions were durable, but it did not have mutable toy response state.
+    // Preserve every direct owner and outcome; initialise only the missing autonomous seam.
+    if world.aquarium.toy_states.is_empty() {
+        for object in world.aquarium.objects.values() {
+            if let crate::WorldObject::Toy { toy, position } = object {
+                world.aquarium.toy_states.insert(
+                    *toy,
+                    crate::ToyObjectState {
+                        position: *position,
+                        velocity: crate::NormalizedVelocity::default(),
+                        carried: false,
+                        last_response: crate::ToyResponse::None,
+                        last_contact_activity: None,
+                    },
+                );
+            }
+        }
+    }
+    world.creature.private_life = crate::PrivateLifeState::default();
 }
 
 fn migrate_pre_travel_ownership(world: &mut WorldState) {
@@ -346,6 +386,7 @@ impl LegacyCreature {
             development: Development::default(),
             aquarium: crate::AquariumCreatureState::default(),
             idle_life: IdleLifeState::default(),
+            private_life: crate::PrivateLifeState::default(),
             interaction_state: InteractionState::default(),
             relationship_expression: crate::RelationshipExpressionState::default(),
             routines: Vec::new(),

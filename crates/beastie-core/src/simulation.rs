@@ -1,11 +1,13 @@
 use crate::{
-    ActionPhase, ActionTimeline, BeliefKind, Concept, DevelopmentMilestone, FoodBuoyancy,
-    FoodDisposition, FoodDropRejectionReason, FoodId, FoodObject, FoodOutcome, GazeTarget,
-    InitiativeReason, Intention, LanguageExposure, LanguageStage, MemoryId, MemoryKind,
-    NamingTarget, NonverbalAct, NormalizedPosition, NormalizedVelocity, RandomDomain, RandomSource,
-    Reaction, RelationshipSubject, RelationshipTrigger, SemanticDestination, SocialAct,
-    SteeringMode, ToyId, UtteranceInterpretation, UtteranceReference, WorldObject, WorldState,
-    deterministic_unit,
+    ActionPhase, ActionTimeline, ActivityInterruptionOwner, ActivityPhase, ActivityPurpose,
+    ActivityRecipe, ActivitySelectionEvidence, ActivitySubject, BeliefKind, Concept,
+    DevelopmentMilestone, FoodBuoyancy, FoodDisposition, FoodDropRejectionReason, FoodId,
+    FoodObject, FoodOutcome, GazeTarget, InitiativeReason, Intention, LanguageExposure,
+    LanguageStage, MemoryId, MemoryKind, NamingTarget, NonverbalAct, NormalizedPosition,
+    NormalizedVelocity, PrivateLifeActivity, PrivateLifeKind, RandomDomain, RandomSource, Reaction,
+    RecentActivity, RelationshipSubject, RelationshipTrigger, SemanticDestination, SocialAct,
+    SteeringMode, ToyId, ToyResponse, UtteranceInterpretation, UtteranceReference, WorldObject,
+    WorldState, deterministic_unit,
 };
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
@@ -13,14 +15,22 @@ use std::num::NonZeroU64;
 pub const SIMULATION_TICK_MS: u64 = 1_000;
 pub const MAX_OFFLINE_MS: u64 = crate::ACTIVE_DAY_MS * 8;
 pub const TALK_COOLDOWN_MS: u64 = 30_000;
-const IDLE_BOUT_MIN_MS: u64 = 4_000;
-const IDLE_BOUT_MAX_MS: u64 = 10_000;
+// Private life needs room to read as lived time, not a showcase playlist. Arrival begins a
+// state-shaped quiet span that outlasts the authored payoff and leaves genuine observation
+// between bouts.
+const IDLE_BOUT_MIN_MS: u64 = 16_000;
+const IDLE_BOUT_MAX_MS: u64 = 32_000;
 const AFFECTION_DURATION_MS: u64 = 7_000;
 const MAX_SLEEP_MS: u64 = 30_000;
 const INITIATIVE_DURATION_MS: u64 = 45_000;
 const ACTIVE_DAY_HOURS: u64 = 24;
 const MAX_VISIT_EVIDENCE: usize = 32;
 const DIRECT_RELATIONSHIP_MOMENT_MS: u64 = 3_000;
+const MAX_RECENT_ACTIVITIES: usize = 32;
+const PRIVATE_NOTICE_MS: u64 = 1_000;
+const PRIVATE_ACT_MS: u64 = 2_000;
+const PRIVATE_RECOVER_MS: u64 = 2_000;
+const PRIVATE_SETTLE_MS: u64 = 7_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
@@ -157,6 +167,123 @@ pub enum GameEvent {
     ActionAborted {
         destination: SemanticDestination,
     },
+    PrivateLifeStarted {
+        activity_id: NonZeroU64,
+        kind: PrivateLifeKind,
+        recipe: ActivityRecipe,
+    },
+    PrivateLifePhaseChanged {
+        activity_id: NonZeroU64,
+        from: ActivityPhase,
+        to: ActivityPhase,
+    },
+    PrivateLifeCompleted {
+        activity_id: NonZeroU64,
+        kind: PrivateLifeKind,
+        recipe: ActivityRecipe,
+    },
+    PrivateLifeInterrupted {
+        activity_id: NonZeroU64,
+        phase: ActivityPhase,
+        by: ActivityInterruptionOwner,
+    },
+    ToyObjectResponded {
+        toy: ToyId,
+        activity_id: NonZeroU64,
+        response: ToyResponse,
+    },
+}
+
+/// Exact simulation-owned body that a deferred utterance must wait for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+pub enum DialogueActionOwner {
+    Food(NonZeroU64),
+    Toy(NonZeroU64),
+    Refusal(NonZeroU64),
+    PrivateLife(NonZeroU64),
+    Relationship(NonZeroU64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DialogueHandoffState {
+    Ready,
+    WaitingForContact,
+    WaitingForRecovery,
+    SafeBoundary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DialogueHandoff {
+    pub owner: Option<DialogueActionOwner>,
+    pub state: DialogueHandoffState,
+}
+
+/// Return the only authoritative dialogue handoff boundary.  Callers bind a deferred utterance
+/// to `owner`; a new owner or `Ready` means that owner ended rather than silently borrowing a
+/// different action.
+#[must_use]
+pub fn dialogue_handoff(state: &WorldState) -> DialogueHandoff {
+    if let Some(action) = state.creature.aquarium.action.as_ref() {
+        let owner = NonZeroU64::new(action.action_id).map(DialogueActionOwner::Food);
+        return DialogueHandoff {
+            owner,
+            state: match action.phase {
+                ActionPhase::Act => DialogueHandoffState::WaitingForRecovery,
+                ActionPhase::Recover => DialogueHandoffState::SafeBoundary,
+                _ => DialogueHandoffState::WaitingForContact,
+            },
+        };
+    }
+    if let Some(interaction) = state.creature.interaction_state.toy_interaction.as_ref() {
+        let owner = match interaction.outcome {
+            crate::ToyInteractionOutcome::Rejected => DialogueActionOwner::Refusal(interaction.id),
+            _ => DialogueActionOwner::Toy(interaction.id),
+        };
+        return DialogueHandoff {
+            owner: Some(owner),
+            state: match interaction.phase {
+                crate::ToyInteractionPhase::Approach => DialogueHandoffState::WaitingForContact,
+                crate::ToyInteractionPhase::Contact | crate::ToyInteractionPhase::Resolved => {
+                    DialogueHandoffState::WaitingForRecovery
+                }
+                crate::ToyInteractionPhase::Recovery | crate::ToyInteractionPhase::Interrupted => {
+                    DialogueHandoffState::SafeBoundary
+                }
+            },
+        };
+    }
+    if let Some(activity) = state.creature.private_life.active.as_ref() {
+        return DialogueHandoff {
+            owner: Some(DialogueActionOwner::PrivateLife(activity.id)),
+            state: match activity.phase {
+                ActivityPhase::Notice | ActivityPhase::Approach => {
+                    DialogueHandoffState::WaitingForContact
+                }
+                ActivityPhase::Act => DialogueHandoffState::WaitingForRecovery,
+                ActivityPhase::Recover | ActivityPhase::Settle | ActivityPhase::Interrupted => {
+                    DialogueHandoffState::SafeBoundary
+                }
+            },
+        };
+    }
+    if let Some(beat) = state.creature.relationship_expression.active.as_ref() {
+        return DialogueHandoff {
+            owner: NonZeroU64::new(beat.started_at_ms.saturating_add(1))
+                .map(DialogueActionOwner::Relationship),
+            state: if beat.phase == crate::RelationshipBeatPhase::Recover {
+                DialogueHandoffState::SafeBoundary
+            } else {
+                DialogueHandoffState::WaitingForRecovery
+            },
+        };
+    }
+    DialogueHandoff {
+        owner: None,
+        state: DialogueHandoffState::Ready,
+    }
 }
 
 /// The creature's immediate, word-independent response to speech in its environment.
@@ -185,6 +312,7 @@ pub fn step(
     for event in input {
         let before = state.creature.memories.len();
         if should_interrupt_for_player_event(event) {
+            interrupt_private_life(state, ActivityInterruptionOwner::Player, &mut events);
             interrupt_toy_interaction(state, &mut events);
             interrupt_action_relationship_moment(state, &mut events);
             interrupt_relationship_beat(state, &mut events);
@@ -260,6 +388,7 @@ pub fn advance_offline(
     }
     state.aquarium.player_present = false;
     resolve_toy_interaction_offline(state);
+    resolve_private_life_offline(state);
     state.elapsed_ms = state.elapsed_ms.saturating_add(applied_ms);
     state.absence_days = state
         .absence_days
@@ -294,6 +423,7 @@ pub fn advance_offline(
 fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut Vec<GameEvent>) {
     state.elapsed_ms = state.elapsed_ms.saturating_add(SIMULATION_TICK_MS);
     advance_embodied_state(state, events);
+    advance_private_life(state, events);
     advance_relationship_beat(state, events);
     let minutes = SIMULATION_TICK_MS as f32 / 60_000.0;
     state.creature.needs.hunger += 0.025 * minutes;
@@ -645,7 +775,7 @@ fn maybe_start_relationship_beat(
         .expect("selected standalone beat has a subject");
     let evidence = beat.evidence.clone();
     state.creature.relationship_expression.active = Some(beat.clone());
-    record_relationship_expression(state, motif, expression);
+    record_relationship_expression(state, motif, subject, &evidence, expression);
     apply_relationship_pose(state, &beat, events);
     events.push(GameEvent::RelationshipBeatStarted {
         motif,
@@ -659,6 +789,8 @@ fn maybe_start_relationship_beat(
 fn record_relationship_expression(
     state: &mut WorldState,
     motif: crate::RelationshipMotifKey,
+    subject: crate::RelationshipSubject,
+    evidence: &[crate::RelationshipEvidence],
     expression_kind: crate::RelationshipExpressionKind,
 ) {
     state.creature.relationship_expression.last_expressed_at_ms = Some(state.elapsed_ms);
@@ -688,6 +820,17 @@ fn record_relationship_expression(
             expressed_at_ms: state.elapsed_ms,
             expression_kind,
         });
+    state
+        .creature
+        .relationship_expression
+        .performance_ledger
+        .push(crate::RelationshipPerformanceRecord {
+            motif,
+            subject,
+            evidence: evidence.to_vec(),
+            recipe: crate::relationship::performance_recipe_for(motif, expression_kind),
+            performed_at_ms: state.elapsed_ms,
+        });
     let excess = state
         .creature
         .relationship_expression
@@ -700,6 +843,19 @@ fn record_relationship_expression(
             .relationship_expression
             .recent
             .drain(..excess);
+    }
+    let ledger_excess = state
+        .creature
+        .relationship_expression
+        .performance_ledger
+        .len()
+        .saturating_sub(crate::relationship::MAX_PERFORMANCE_LEDGER_RECORDS);
+    if ledger_excess > 0 {
+        state
+            .creature
+            .relationship_expression
+            .performance_ledger
+            .drain(..ledger_excess);
     }
 }
 
@@ -730,6 +886,17 @@ fn set_travel_target(
     let replacing = previous_destination.is_some() || previous_purpose.is_some();
     let same = previous_destination == Some(destination) && previous_purpose == Some(purpose);
     if replacing && !same {
+        let active_private_previous = state
+            .creature
+            .private_life
+            .active
+            .as_ref()
+            .is_some_and(|activity| {
+                matches!(
+                    previous_purpose,
+                    Some(crate::TravelPurpose::PrivateLife { activity_id }) if activity_id == activity.id
+                )
+            });
         let active_toy_owned_previous = state
             .creature
             .interaction_state
@@ -743,7 +910,9 @@ fn set_travel_target(
                         if interaction_id == interaction.id
                 )
             });
-        if active_toy_owned_previous {
+        if active_private_previous {
+            interrupt_private_life(state, ActivityInterruptionOwner::Relationship, events);
+        } else if active_toy_owned_previous {
             interrupt_toy_interaction(state, events);
         } else {
             clear_travel_target(state);
@@ -796,6 +965,216 @@ fn interrupt_toy_interaction(state: &mut WorldState, events: &mut Vec<GameEvent>
         interaction_id: interaction.id,
         origin: interaction.origin,
     });
+}
+
+fn interrupt_private_life(
+    state: &mut WorldState,
+    by: ActivityInterruptionOwner,
+    events: &mut Vec<GameEvent>,
+) {
+    let Some(mut activity) = state.creature.private_life.active.take() else {
+        return;
+    };
+    if activity.phase == ActivityPhase::Recover || activity.phase == ActivityPhase::Settle {
+        state.creature.private_life.active = Some(activity);
+        return;
+    }
+    let phase = activity.phase;
+    activity.phase = ActivityPhase::Interrupted;
+    push_recent_activity(state, &activity, Some(by));
+    if matches!(
+        state.creature.aquarium.travel_purpose,
+        Some(crate::TravelPurpose::PrivateLife { activity_id }) if activity_id == activity.id
+    ) {
+        clear_travel_target(state);
+        state.creature.aquarium.steering = SteeringMode::Hover;
+    }
+    events.push(GameEvent::PrivateLifeInterrupted {
+        activity_id: activity.id,
+        phase,
+        by,
+    });
+}
+
+fn private_phase_duration(phase: ActivityPhase) -> u64 {
+    match phase {
+        ActivityPhase::Notice => PRIVATE_NOTICE_MS,
+        ActivityPhase::Approach => PRIVATE_NOTICE_MS,
+        ActivityPhase::Act => PRIVATE_ACT_MS,
+        ActivityPhase::Recover => PRIVATE_RECOVER_MS,
+        ActivityPhase::Settle => PRIVATE_SETTLE_MS,
+        ActivityPhase::Interrupted => 0,
+    }
+}
+
+fn advance_private_life(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    let Some(mut activity) = state.creature.private_life.active.clone() else {
+        return;
+    };
+    if state
+        .elapsed_ms
+        .saturating_sub(activity.phase_started_at_ms)
+        < private_phase_duration(activity.phase)
+    {
+        return;
+    }
+    let from = activity.phase;
+    match from {
+        ActivityPhase::Notice => {
+            activity.phase = ActivityPhase::Approach;
+            activity.phase_started_at_ms = state.elapsed_ms;
+            if let Some(destination) = activity.kind.destination() {
+                set_travel_target(
+                    state,
+                    destination,
+                    crate::TravelPurpose::PrivateLife {
+                        activity_id: activity.id,
+                    },
+                    events,
+                );
+                state.creature.aquarium.gaze = match activity.subject {
+                    Some(ActivitySubject::Toy(toy)) => GazeTarget::Toy(toy),
+                    Some(ActivitySubject::Cave) => GazeTarget::Cave,
+                    Some(ActivitySubject::Plant) => GazeTarget::Plant,
+                    _ => GazeTarget::None,
+                };
+            } else {
+                // Open water has a real approach contour but no destination transaction.
+                state.creature.aquarium.steering = SteeringMode::Drift;
+            }
+        }
+        ActivityPhase::Approach if activity.kind.destination().is_none() => {
+            activity.phase = ActivityPhase::Act;
+            activity.phase_started_at_ms = state.elapsed_ms;
+        }
+        ActivityPhase::Act => {
+            perform_private_life_payoff(state, &mut activity, events);
+            activity.phase = match activity.kind {
+                PrivateLifeKind::CaveSettle => ActivityPhase::Settle,
+                _ => ActivityPhase::Recover,
+            };
+            activity.phase_started_at_ms = state.elapsed_ms;
+        }
+        ActivityPhase::Recover | ActivityPhase::Settle => {
+            if let PrivateLifeKind::ToyPlay(ToyId::Sock) = activity.kind
+                && let Some(sock) = state.aquarium.toy_states.get_mut(&ToyId::Sock)
+            {
+                sock.carried = false;
+                sock.position = state.creature.aquarium.position;
+            }
+            push_recent_activity(state, &activity, None);
+            state.creature.private_life.active = None;
+            state.creature.aquarium.steering = SteeringMode::Hover;
+            state.creature.current_intention = Intention::Idle;
+            schedule_next_idle_bout(state);
+            events.push(GameEvent::PrivateLifeCompleted {
+                activity_id: activity.id,
+                kind: activity.kind,
+                recipe: activity.recipe,
+            });
+            return;
+        }
+        ActivityPhase::Approach | ActivityPhase::Interrupted => return,
+    }
+    state.creature.private_life.active = Some(activity.clone());
+    events.push(GameEvent::PrivateLifePhaseChanged {
+        activity_id: activity.id,
+        from,
+        to: activity.phase,
+    });
+}
+
+fn perform_private_life_payoff(
+    state: &mut WorldState,
+    activity: &mut PrivateLifeActivity,
+    events: &mut Vec<GameEvent>,
+) {
+    if activity.payoff_reached {
+        return;
+    }
+    activity.payoff_reached = true;
+    match activity.kind {
+        PrivateLifeKind::ToyPlay(toy) => {
+            let Some(object) = state.aquarium.toy_states.get_mut(&toy) else {
+                return;
+            };
+            object.last_contact_activity = Some(activity.id);
+            let response = match toy {
+                ToyId::Ball => {
+                    object.velocity = NormalizedVelocity { x: 220, y: -30 };
+                    object.position = NormalizedPosition::new(
+                        object.position.x.saturating_add(220),
+                        object.position.y.saturating_sub(30),
+                    )
+                    .clamped();
+                    ToyResponse::BallNudged
+                }
+                ToyId::Bell => {
+                    object.velocity = NormalizedVelocity::default();
+                    ToyResponse::BellStruck
+                }
+                ToyId::Sock => {
+                    object.carried = true;
+                    object.position = state.creature.aquarium.position;
+                    object.velocity = NormalizedVelocity::default();
+                    ToyResponse::SockTugged
+                }
+            };
+            object.last_response = response;
+            events.push(GameEvent::ToyObjectResponded {
+                toy,
+                activity_id: activity.id,
+                response,
+            });
+        }
+        PrivateLifeKind::CaveSettle => {
+            state.creature.needs.energy = (state.creature.needs.energy + 0.04).min(1.0);
+        }
+        PrivateLifeKind::PlantInspect => {
+            state.creature.needs.curiosity = (state.creature.needs.curiosity - 0.08).max(0.0);
+        }
+        PrivateLifeKind::BottomForage => {
+            state.creature.needs.curiosity = (state.creature.needs.curiosity - 0.12).max(0.0);
+        }
+        PrivateLifeKind::OpenWaterDrift => {
+            state.creature.needs.comfort = (state.creature.needs.comfort + 0.02).min(1.0);
+        }
+    }
+}
+
+fn push_recent_activity(
+    state: &mut WorldState,
+    activity: &PrivateLifeActivity,
+    interrupted_by: Option<ActivityInterruptionOwner>,
+) {
+    if state
+        .creature
+        .private_life
+        .recent
+        .iter()
+        .any(|entry| entry.id == activity.id)
+    {
+        return;
+    }
+    state.creature.private_life.recent.push(RecentActivity {
+        id: activity.id,
+        kind: activity.kind,
+        subject: activity.subject,
+        recipe: activity.recipe,
+        selected_at_ms: activity.selected_at_ms,
+        completed_at_ms: interrupted_by.is_none().then_some(state.elapsed_ms),
+        interrupted_by,
+        active_day: state.active_day(),
+    });
+    let excess = state
+        .creature
+        .private_life
+        .recent
+        .len()
+        .saturating_sub(MAX_RECENT_ACTIVITIES);
+    if excess > 0 {
+        state.creature.private_life.recent.drain(..excess);
+    }
 }
 
 fn resolve_toy_play(
@@ -894,6 +1273,24 @@ fn dispatch_travel_arrival(
             state.creature.idle_life.settled_until_ms =
                 state.elapsed_ms.saturating_add(IDLE_BOUT_MIN_MS);
         }
+        crate::TravelPurpose::PrivateLife { activity_id } => {
+            let Some(mut activity) = state.creature.private_life.active.clone() else {
+                return;
+            };
+            if activity.id != activity_id || activity.phase != ActivityPhase::Approach {
+                return;
+            }
+            let from = activity.phase;
+            activity.phase = ActivityPhase::Act;
+            activity.phase_started_at_ms = state.elapsed_ms;
+            record_idle_arrival_state(state, destination);
+            state.creature.private_life.active = Some(activity.clone());
+            events.push(GameEvent::PrivateLifePhaseChanged {
+                activity_id,
+                from,
+                to: ActivityPhase::Act,
+            });
+        }
         crate::TravelPurpose::CursorSocial { .. } | crate::TravelPurpose::Initiative { .. } => {}
     }
 }
@@ -945,7 +1342,13 @@ fn resolve_toy_interaction_offline(state: &mut WorldState) {
                 0.6,
             );
             if let Some(context) = interaction.relationship.take() {
-                record_relationship_expression(state, context.motif, context.expression_kind);
+                record_relationship_expression(
+                    state,
+                    context.motif,
+                    context.subject,
+                    &context.evidence,
+                    context.expression_kind,
+                );
             }
         }
         crate::ToyOrigin::Autonomous => {
@@ -965,13 +1368,39 @@ fn resolve_toy_interaction_offline(state: &mut WorldState) {
     state.creature.interaction_state.toy_interaction = Some(interaction);
 }
 
+fn resolve_private_life_offline(state: &mut WorldState) {
+    let Some(mut activity) = state.creature.private_life.active.take() else {
+        return;
+    };
+    if !activity.payoff_reached {
+        let mut discarded_events = Vec::new();
+        perform_private_life_payoff(state, &mut activity, &mut discarded_events);
+    }
+    if let PrivateLifeKind::ToyPlay(ToyId::Sock) = activity.kind
+        && let Some(sock) = state.aquarium.toy_states.get_mut(&ToyId::Sock)
+    {
+        sock.carried = false;
+        sock.position = state.creature.aquarium.position;
+    }
+    push_recent_activity(state, &activity, None);
+    clear_travel_target(state);
+    state.creature.aquarium.steering = SteeringMode::Hover;
+    state.creature.current_intention = Intention::Idle;
+}
+
 fn start_action_relationship_moment(
     state: &mut WorldState,
     context: crate::ActionRelationshipContext,
     events: &mut Vec<GameEvent>,
 ) {
     let action_id = allocate_action_id(state);
-    record_relationship_expression(state, context.motif, context.expression_kind);
+    record_relationship_expression(
+        state,
+        context.motif,
+        context.subject,
+        &context.evidence,
+        context.expression_kind,
+    );
     events.push(GameEvent::ActionRelationshipStarted {
         action_id,
         motif: context.motif,
@@ -1001,7 +1430,13 @@ fn start_toy_relationship_moment(
         .interaction_state
         .next_action_id
         .max(action_id.saturating_add(1));
-    record_relationship_expression(state, context.motif, context.expression_kind);
+    record_relationship_expression(
+        state,
+        context.motif,
+        context.subject,
+        &context.evidence,
+        context.expression_kind,
+    );
     events.push(GameEvent::ActionRelationshipStarted {
         action_id,
         motif: context.motif,
@@ -1038,11 +1473,19 @@ fn apply_relationship_pose(
     match beat.motif {
         crate::RelationshipMotifKey::SharedToy(toy) => {
             state.creature.aquarium.gaze = GazeTarget::Toy(toy);
-            if beat.expression_kind != crate::RelationshipExpressionKind::Notice
-                && beat.phase != crate::RelationshipBeatPhase::Notice
+            let restrained_approach = beat.expression_kind
+                == crate::RelationshipExpressionKind::Notice
+                && beat.phase == crate::RelationshipBeatPhase::Anticipate;
+            if beat.phase != crate::RelationshipBeatPhase::Notice
+                && (beat.expression_kind != crate::RelationshipExpressionKind::Notice
+                    || restrained_approach)
             {
                 set_relationship_travel(state, beat, events);
                 state.creature.current_intention = Intention::Play;
+            } else if beat.expression_kind == crate::RelationshipExpressionKind::Notice {
+                clear_travel_target(state);
+                state.creature.aquarium.steering = SteeringMode::Hover;
+                state.creature.current_intention = Intention::Idle;
             }
         }
         crate::RelationshipMotifKey::ComfortRitual => {
@@ -1140,7 +1583,7 @@ fn advance_relationship_beat(state: &mut WorldState, events: &mut Vec<GameEvent>
         return;
     };
     let elapsed = state.elapsed_ms.saturating_sub(beat.phase_started_at_ms);
-    if elapsed < crate::relationship::phase_duration_ms(beat.phase) {
+    if elapsed < crate::relationship::phase_duration_ms(&beat) {
         apply_relationship_pose(state, &beat, events);
         return;
     }
@@ -1260,7 +1703,13 @@ fn drop_food(
         to: ActionPhase::Notice,
     });
     if let Some(context) = relationship {
-        record_relationship_expression(state, context.motif, context.expression_kind);
+        record_relationship_expression(
+            state,
+            context.motif,
+            context.subject,
+            &context.evidence,
+            context.expression_kind,
+        );
         events.push(GameEvent::ActionRelationshipStarted {
             action_id,
             motif: context.motif,
@@ -1297,6 +1746,18 @@ fn assign_name(
 }
 
 fn advance_aquarium(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    for toy in state.aquarium.toy_states.values_mut() {
+        if toy.carried {
+            continue;
+        }
+        toy.position = NormalizedPosition::new(
+            toy.position.x.saturating_add(toy.velocity.x),
+            toy.position.y.saturating_add(toy.velocity.y),
+        )
+        .clamped();
+        toy.velocity.x /= 2;
+        toy.velocity.y /= 2;
+    }
     if state.creature.current_intention != Intention::Sleep {
         advance_creature_motion(state, events);
     }
@@ -1544,19 +2005,24 @@ fn destination_position(
                     _ => None,
                 })
         }
-        SemanticDestination::Toy(toy) => {
-            state
-                .aquarium
-                .objects
-                .values()
-                .find_map(|object| match object {
-                    WorldObject::Toy {
-                        toy: candidate,
-                        position,
-                    } if *candidate == toy => Some(*position),
-                    _ => None,
-                })
-        }
+        SemanticDestination::Toy(toy) => state
+            .aquarium
+            .toy_states
+            .get(&toy)
+            .map(|state| state.position)
+            .or_else(|| {
+                state
+                    .aquarium
+                    .objects
+                    .values()
+                    .find_map(|object| match object {
+                        WorldObject::Toy {
+                            toy: candidate,
+                            position,
+                        } if *candidate == toy => Some(*position),
+                        _ => None,
+                    })
+            }),
         SemanticDestination::Cave | SemanticDestination::Plant => state
             .aquarium
             .objects
@@ -1626,6 +2092,7 @@ fn drift_with_cause(state: &mut WorldState) {
 fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     if state.creature.aquarium.action.is_some()
         || state.creature.interaction_state.toy_interaction.is_some()
+        || state.creature.private_life.active.is_some()
         || state.creature.relationship_expression.active.is_some()
         || matches!(state.creature.aquarium.steering, SteeringMode::Flee)
     {
@@ -1657,6 +2124,12 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         if state.creature.relationship_expression.active.is_some() {
             return;
         }
+    }
+    // Relationship callbacks get a bounded, explicitly grounded opportunity before the creature
+    // falls back to private life. The relationship director's cooldown/ledger remains the source
+    // of suppression, so a newly formed memory cannot create a receipt-like interruption.
+    if start_private_life(state, events) {
+        return;
     }
     let hour = active_day_hour(state);
     let routine = state
@@ -1759,6 +2232,217 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     }
 }
 
+fn start_private_life(state: &mut WorldState, events: &mut Vec<GameEvent>) -> bool {
+    let candidates = [
+        PrivateLifeKind::CaveSettle,
+        PrivateLifeKind::PlantInspect,
+        PrivateLifeKind::BottomForage,
+        PrivateLifeKind::OpenWaterDrift,
+        PrivateLifeKind::ToyPlay(ToyId::Ball),
+        PrivateLifeKind::ToyPlay(ToyId::Bell),
+        PrivateLifeKind::ToyPlay(ToyId::Sock),
+    ];
+    let recent = state.creature.private_life.recent.clone();
+    let last = recent.last();
+    let has_recent_kind = |kind| recent.iter().rev().take(3).any(|entry| entry.kind == kind);
+    let has_recent_subject = |subject| {
+        recent
+            .iter()
+            .rev()
+            .take(2)
+            .any(|entry| entry.subject == Some(subject))
+    };
+    let has_recent_recipe = |recipe| {
+        recent
+            .iter()
+            .rev()
+            .take(4)
+            .any(|entry| entry.recipe == recipe)
+    };
+    let recipe_for = |kind| match kind {
+        PrivateLifeKind::ToyPlay(ToyId::Ball) => ActivityRecipe::BallNudge,
+        PrivateLifeKind::ToyPlay(ToyId::Bell) => ActivityRecipe::BellStrike,
+        PrivateLifeKind::ToyPlay(ToyId::Sock) => ActivityRecipe::SockTug,
+        PrivateLifeKind::CaveSettle => ActivityRecipe::CaveShelter,
+        PrivateLifeKind::PlantInspect => ActivityRecipe::PlantOrbit,
+        PrivateLifeKind::BottomForage => ActivityRecipe::BottomForage,
+        PrivateLifeKind::OpenWaterDrift => ActivityRecipe::OpenWaterDrift,
+    };
+    let need_pressure = if state.creature.needs.energy < 0.28 {
+        100
+    } else if state.creature.needs.hunger > 0.75 {
+        95
+    } else {
+        (state.creature.needs.curiosity * 70.0) as u8
+    };
+    let urgent_kind = if state.creature.needs.energy < 0.28 {
+        Some(PrivateLifeKind::CaveSettle)
+    } else if state.creature.needs.hunger > 0.75 {
+        Some(PrivateLifeKind::BottomForage)
+    } else {
+        None
+    };
+    let mut excluded_families = Vec::new();
+    let mut excluded_subjects = Vec::new();
+    let mut excluded_recipes = Vec::new();
+    let scored = candidates
+        .into_iter()
+        .map(|kind| {
+            let subject = kind.subject();
+            let recipe = recipe_for(kind);
+            let mut score = match kind {
+                PrivateLifeKind::CaveSettle => (1.0 - state.creature.needs.energy) * 90.0,
+                PrivateLifeKind::PlantInspect => {
+                    state.creature.needs.curiosity * 70.0 + state.creature.traits.fussiness * 20.0
+                }
+                PrivateLifeKind::BottomForage => state.creature.needs.hunger * 85.0,
+                PrivateLifeKind::OpenWaterDrift => {
+                    (1.0 - state.creature.needs.curiosity) * 48.0
+                        + (1.0 - state.creature.needs.energy) * 15.0
+                }
+                PrivateLifeKind::ToyPlay(toy) => {
+                    state.creature.needs.curiosity * 60.0
+                        + state
+                            .creature
+                            .toy_preferences
+                            .get(&toy)
+                            .copied()
+                            .unwrap_or(0.0)
+                            * 55.0
+                        + state.creature.traits.boldness * 14.0
+                }
+            } as i32;
+            if has_recent_kind(kind) {
+                excluded_families.push(kind);
+                score -= 20;
+            }
+            if has_recent_subject(subject) {
+                excluded_subjects.push(subject);
+                score -= 12;
+            }
+            if has_recent_recipe(recipe) {
+                excluded_recipes.push(recipe);
+                score -= 10;
+            }
+            if last.is_some_and(|entry| entry.kind == kind) {
+                score -= 75;
+            }
+            if urgent_kind == Some(kind) {
+                score += 150;
+            }
+            if state.creature.routines.iter().any(|routine| {
+                routine.hour_start == active_day_hour(state)
+                    && kind.destination() == Some(routine.destination)
+            }) {
+                score += 170;
+            }
+            (kind, recipe, score)
+        })
+        .collect::<Vec<_>>();
+    let dominant = scored
+        .iter()
+        .max_by_key(|(kind, _, score)| (*score, std::cmp::Reverse(*kind)))
+        .copied()
+        .filter(|(_, _, score)| *score >= 80);
+    let selected = if let Some(urgent) = urgent_kind {
+        scored
+            .iter()
+            .find(|candidate| candidate.0 == urgent)
+            .copied()
+    } else if dominant.is_some() {
+        dominant
+    } else {
+        // Weighted deterministic choice makes state evidence shape likelihood without sorting
+        // quiet life into a fixed highest-score tour. The exact previous activity remains the
+        // sole hard exclusion; other recent evidence is a soft bias, so habits can recur without
+        // becoming either a metronome or a seven-item checklist.
+        let weighted = scored
+            .iter()
+            .map(|candidate| {
+                let weight = if last.is_some_and(|entry| entry.kind == candidate.0) {
+                    0
+                } else {
+                    u32::try_from(candidate.2.max(1)).unwrap_or(1)
+                };
+                (*candidate, weight)
+            })
+            .collect::<Vec<_>>();
+        let total = weighted.iter().map(|(_, weight)| *weight).sum::<u32>();
+        let mut draw = ((state.domain_draw(RandomDomain::Environment) * total as f32) as u32)
+            .min(total.saturating_sub(1));
+        weighted.into_iter().find_map(|(candidate, weight)| {
+            if draw < weight {
+                Some(candidate)
+            } else {
+                draw = draw.saturating_sub(weight);
+                None
+            }
+        })
+    };
+    let Some((kind, recipe, _)) = selected else {
+        return false;
+    };
+    let raw = state.creature.private_life.next_activity_id.max(1);
+    state.creature.private_life.next_activity_id = raw.saturating_add(1).max(1);
+    let id = NonZeroU64::new(raw).expect("private-life activity IDs start at one");
+    let purpose = if urgent_kind == Some(kind) {
+        ActivityPurpose::NeedUrgency
+    } else if state.creature.routines.iter().any(|routine| {
+        routine.destination
+            == kind.destination().unwrap_or(SemanticDestination::Position(
+                state.creature.aquarium.position,
+            ))
+    }) {
+        ActivityPurpose::Routine
+    } else if matches!(kind, PrivateLifeKind::ToyPlay(toy) if state.creature.toy_preferences.get(&toy).copied().unwrap_or_default() > 0.25)
+    {
+        ActivityPurpose::Preference
+    } else {
+        ActivityPurpose::Autonomous
+    };
+    let activity = PrivateLifeActivity {
+        id,
+        kind,
+        subject: Some(kind.subject()),
+        purpose,
+        recipe,
+        phase: ActivityPhase::Notice,
+        selected_at_ms: state.elapsed_ms,
+        phase_started_at_ms: state.elapsed_ms,
+        selected_from: ActivitySelectionEvidence {
+            need_pressure,
+            trait_bias: (state.creature.traits.boldness * 100.0) as u8,
+            preference: match kind {
+                PrivateLifeKind::ToyPlay(toy) => {
+                    (state
+                        .creature
+                        .toy_preferences
+                        .get(&toy)
+                        .copied()
+                        .unwrap_or_default()
+                        * 100.0) as i8
+                }
+                _ => 0,
+            },
+            routine_hour: Some(active_day_hour(state)),
+            relationship_evidence: Vec::new(),
+            excluded_families,
+            excluded_subjects,
+            excluded_recipes,
+            urgency_overrode_repetition: urgent_kind == Some(kind) && has_recent_kind(kind),
+        },
+        payoff_reached: false,
+    };
+    state.creature.private_life.active = Some(activity.clone());
+    state.creature.aquarium.steering = SteeringMode::Hover;
+    events.push(GameEvent::PrivateLifeStarted {
+        activity_id: id,
+        kind,
+        recipe,
+    });
+    true
+}
+
 fn active_day_hour(state: &WorldState) -> u8 {
     ((state.elapsed_ms % crate::ACTIVE_DAY_MS) * ACTIVE_DAY_HOURS / crate::ACTIVE_DAY_MS) as u8
 }
@@ -1828,11 +2512,15 @@ fn record_idle_arrival_state(state: &mut WorldState, destination: SemanticDestin
     }
     state.record_favorite(destination);
     state.creature.idle_life.last_arrived_destination = Some(destination);
+    schedule_next_idle_bout(state);
+    record_routine_visit(state, destination);
+}
+
+fn schedule_next_idle_bout(state: &mut WorldState) {
     let spans = IDLE_BOUT_MAX_MS / SIMULATION_TICK_MS - IDLE_BOUT_MIN_MS / SIMULATION_TICK_MS + 1;
     let duration = IDLE_BOUT_MIN_MS
         + (state.domain_draw(RandomDomain::Environment) * spans as f32) as u64 * SIMULATION_TICK_MS;
     state.creature.idle_life.settled_until_ms = state.elapsed_ms.saturating_add(duration);
-    record_routine_visit(state, destination);
 }
 
 fn record_routine_visit(state: &mut WorldState, destination: SemanticDestination) {

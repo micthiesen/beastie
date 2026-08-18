@@ -185,15 +185,59 @@ callback, generic timing grid, or identity-breaking talking body.
 - No finding supports reopening direct food timing, rejection causality, global dialogue ownership,
   the aquarium composition, or the accepted technical-status language.
 
-## Recommended next pass
+## Review outcome
 
-Implement [creature-life-expression-rework.md](creature-life-expression-rework.md) as one cohesive
-pass. Give private life typed activities and repetition-aware selection, make places and toys
-physically distinct, author motif-specific history performances, replace every identity-drifting
-talk frame, and move creature perception after successful microphone acquisition. Make deferred
-speech wait for semantic boundaries rather than a fixed grace period.
+The accepted cohesive rework is specified in
+[creature-life-expression-rework.md](creature-life-expression-rework.md). The normal-debug
+acceptance loop retained direct food, refusal, dialogue supersession, AI-off completeness, graceful
+degradation, UI hierarchy, and quiet space while closing the findings below. Release builds remain
+outside this review.
 
-The acceptance loop uses normal debug builds and the same seed-42 baseline, plus cross-seed quiet
-and all-mood talking galleries. It must retain the current direct food, refusal, dialogue
-supersession, AI-off completeness, graceful degradation, UI hierarchy, and quiet space. Release or
-final builds are outside this loop.
+## Implementation closure
+
+The rework is implemented and verified. Final normal-debug evidence lives at:
+
+- `target/feel/creature-life-final-baseline-pass-01`, all seven integration experiences;
+- `target/feel/creature-life-private-life-pass-04`, three 180-second quiet sessions using seeds 42,
+  4201, and 4202;
+- `target/feel/creature-life-shared-ball-pass-08`, one complete memory-grounded shared-ball callback
+  followed by separately owned direct contact;
+- `target/feel/creature-life-final-first-five-pass-03`, the corrected five-minute relationship
+  suppression check;
+- `target/feel/talking-identity-contact-sheet.png`, all six normal-to-talking transitions at exact
+  2x scale.
+
+The original high and medium-high findings are closed:
+
+- All eighteen talking frames preserve the canonical gold fish. The final AI-on and AI-off
+  relationship footage contains no brown curled-tail or pawed substitute.
+- Private life is simulation-owned and persisted. Final quiet sessions contain six activity starts
+  each, 17-to-32-second post-completion quiet spans, different cross-seed orders, omissions, and a
+  meaningful sock recurrence before full coverage. The old five-sock commute and later checklist
+  carousel are gone.
+- Ball, bell, and sock mutate only at exact contact and remain visible through recovery. Their
+  nudge, ring, and rustle cues occur once on the same simulation timestamp as the authoritative
+  response. Cave sleep, plant inspection, bottom forage, and open-water current motion remain
+  visually distinct and mostly quiet.
+- Relationship performance now retains exact motif, subject, evidence, typed recipe, and timing.
+  Fresh-memory delay and full-session exact-performance suppression prevent receipt echoes.
+  Shared-ball footage approaches and marks the exact ball without moving or sounding it, then
+  completes the callback before separately owned direct play creates contact.
+- Microphone-unavailable emits only technical acquisition evidence. It creates no
+  `SpeechStarted`, `SpeechPerceived`, creature cue, or state mutation. Successfully acquired speech
+  still receives immediate embodied acknowledgement.
+- Deferred language binds to the exact active owner and waits for contact, recovery, or another
+  explicit safe boundary. Supersession and expiration remain honest and cancel all late residue.
+- Nominal fixture dialogue is healthy and non-fallback in AI-on first-five, interaction, dialogue,
+  and relationship runs. `bad-conditions` and AI-off remain separate deliberate fallback evidence.
+
+Independent final visual, causality/behavior, and audio/timing adjudication found no remaining
+material issue in scope. The former strict ABAB ambient bubble pattern was caught during review and
+replaced with seeded 6-to-18-second spacing and bounded repeats; pass 04 confirms varied sequences,
+sparse mixes, exact contact cues, and at least 14 dBFS of peak headroom. The final headless
+`cargo xtask verify` gate passes.
+
+Remaining gaps are evidence boundaries rather than accepted defects: generated reference mixes do
+not prove host-speaker translation, the quiet fixtures do not demonstrate relationship-shaped
+preferences, reduced motion is covered by deterministic render tests rather than a dedicated
+native capture, and physical-controller plus Windows validation remain parked.

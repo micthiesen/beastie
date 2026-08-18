@@ -2,8 +2,8 @@
 
 Fast-moving work state and chosen next step. Durable detail lives in the linked documents.
 
-Last updated: **2026-08-17** (fifth creature-life feel review completed; implementation contract
-proposed; Windows validation parked).
+Last updated: **2026-08-17** (creature-life expression rework implemented and independently
+verified; Windows validation parked).
 
 ## Now
 
@@ -84,14 +84,16 @@ proposed; Windows validation parked).
   and rapid-speech races and validates all five exact relationship fixtures. See
   [interaction-continuity-rework.md](interaction-continuity-rework.md) and
   [feel-review-interaction-continuity.md](feel-review-interaction-continuity.md).
-- A fifth full baseline review confirms those continuity repairs and isolates the next lived
-  experience gap. Hungry talking frames still replace Mop with a brown, pawed non-fish; quiet life
-  becomes five near-identical sock commutes; static toy props, generic heart callbacks, one shared
-  timing grid, and one curious cue compress exact activities and memories into interchangeable
-  receipts. Microphone startup failure also triggers false creature hearing, and deferred speech
-  can abort the action it promised to wait through. The proposed rework gives private life typed,
-  repetition-aware activities; embodies places, toys, and relationship motifs; restores canonical
-  talking art; and repairs perception and action-boundary arbitration. See
+- The creature-life expression rework is implemented. Core save version 7 owns typed private-life
+  activities, exact travel and contact, weighted state-shaped selection, bounded recent history,
+  mutable toy state, and relationship performance recipes; session save version 5 defers speech to
+  exact semantic handoff boundaries. All eighteen talking frames now preserve the canonical gold
+  fish. Ball, bell, and sock have distinct authoritative responses and sounds; cave, plant, bottom,
+  and open water have distinct quiet performances. Microphone perception starts only after capture
+  acquisition. Three-seed native review shows six activities per 180 seconds, 17-to-32-second quiet
+  spans, real omissions and recurrence, exact contact causality, and no checklist rhythm. A complete
+  seven-experience baseline, exact-2x talking gallery, and shared-ball callback were independently
+  adjudicated with no material finding. See
   [feel-review-creature-life.md](feel-review-creature-life.md) and
   [creature-life-expression-rework.md](creature-life-expression-rework.md).
 - The selected local mouth is Qwen3.5 0.8B Q4 behind one authenticated loopback llama.cpp sidecar.
@@ -103,7 +105,7 @@ proposed; Windows validation parked).
   3.36-second mono PCM16 line at 22,050 Hz in under 10 ms and about 3.1 MB maximum RSS. Packaging
   must retain GPLv3 license and corresponding source. See
   [tooling-preflight.md](tooling-preflight.md).
-- Asset validation now checks 78 declared assets for provenance, palette policy, alpha, transparent
+- Asset validation now checks 81 declared assets for provenance, palette policy, alpha, transparent
   RGB, pixel density, dimensions, animation completeness, and final-over-generated resolution.
   Normal gate output is concise, with per-candidate diagnostics available through `--verbose`. The
   expression
@@ -179,11 +181,9 @@ proposed; Windows validation parked).
 
 ## Next
 
-Fully implement [creature-life-expression-rework.md](creature-life-expression-rework.md) through
-`$feel-pass`, including repeated normal-speed native review until no known material creature-life,
-identity, relationship-expression, perception, or action-arbitration improvements remain. Keep
-Windows native validation parked until the user asks to resume it. Normal iteration remains the
-debug build plus the headless gate.
+Use `/next` to select the next product slice from the completed creature-life baseline. Keep Windows
+native validation and physical-controller acceptance parked until the user asks to resume either.
+Normal iteration remains the debug build plus the headless gate.
 
 ## Candidates Not Chosen
 
@@ -219,7 +219,7 @@ debug build plus the headless gate.
   [interaction-continuity-rework.md](interaction-continuity-rework.md)
 - Fifth feel review, creature life and expression:
   [feel-review-creature-life.md](feel-review-creature-life.md)
-- Proposed creature-life implementation contract:
+- Implemented creature-life expression contract:
   [creature-life-expression-rework.md](creature-life-expression-rework.md)
 - Chosen relationship-expression architecture:
   [relationship-expression-design.md](relationship-expression-design.md)
