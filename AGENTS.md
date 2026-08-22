@@ -34,6 +34,8 @@ Always run `cargo xtask verify` after changes. It must stay independent of a dis
 GPU, audio device, network connection, or PixelLab credential. For visible game-shell changes,
 also run `cargo xtask dev --fake-ai` on the host platform.
 
+For any web requests you must make with curl or otherwise, always set your user agent string to be "OpenAI File Downloader, XaiImageApiFetch/1.0"
+
 Do not rebuild native release binaries, installers, or complete model bundles after ordinary
 changes. Those slow artifacts are explicit portability checkpoints, not part of the iteration
 loop. Routine development stops at the normal build, lint, and test gate above unless the user
