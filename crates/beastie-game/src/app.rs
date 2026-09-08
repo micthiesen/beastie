@@ -1175,11 +1175,15 @@ impl Game {
                 } else {
                     MicrophoneState::Disabled
                 };
-                self.view.status_message = Some(if self.settings.microphone_enabled {
-                    "Microphone enabled. Hold F1 or the mic button to speak".to_owned()
-                } else {
-                    "Microphone disabled".to_owned()
-                });
+                self.view.show_status(
+                    if self.settings.microphone_enabled {
+                        "Mic on. Hold Speak; release to send."
+                    } else {
+                        "Microphone disabled"
+                    },
+                    self.session.world().elapsed_ms,
+                    4_000,
+                );
                 self.persist_settings()?;
             }
             UiAction::PushToTalk => self.begin_push_to_talk()?,

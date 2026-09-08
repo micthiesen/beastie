@@ -4,68 +4,58 @@ Last updated: **2026-09-08**.
 
 ## Now
 
-- The holistic feel review is complete as a sampled visual/causal/audio audit: seven fresh native
-  experiences, 46,476 frames and an additional actual-input session. Seven accepted findings cover
-  care discoverability, voice guidance, toy composition, shelter fit, semantic ducking, reference
-  audio fidelity and deferred-language ownership. See
-  [feel-review-holistic-20260908.md](feel-review-holistic-20260908.md). Full-speed human perception,
-  listening and completely caption-free relationship assessment remain explicit gaps.
-- The aquarium now uses a compact tabletop interface: a frame-mounted nameplate, a 33-unit care
-  rail, explicit text actions, a quiet settings control and a distinct enamel Feed button. Speech
-  names its speaker and labels reactions; rename and sound settings explain their purpose.
-  See [tabletop-aquarium.md](tabletop-aquarium.md).
-- Broad leaves, asymmetric planting, a terracotta shelter and more recognizable toys replace the
-  mirrored piles and disconnected decorations. Continuous geometric surfaces and all lettering
-  remain on the ordinary-GPU ray tracer within Bevy. No sprites, font atlas or RT hardware required.
-- Native input testing exposed missing body picking and context menus covering the face. Body
-  volumes now use exact presented transforms, plants/shelter use precise mesh intersections, and
-  context placement avoids the head at opening while keeping controls stationary afterward. Simulation, saves,
-  audio ownership, offline behavior and optional worker boundaries are preserved.
-- Multiple independent code and native visual/causal reviews cover Normal/Large UI, interactions,
-  dialogue races, failure recovery and actual macOS input. The gate passes 492 tests, 27 dialogue
-  fixtures, 11 recognition fixtures and spoken-input replay. Evidence, rejected findings and
-  perception limits live in [feel-review-tabletop.md](feel-review-tabletop.md).
-- Native evidence remains macOS/Metal debug rendering. Windows/Linux native drivers, lower-end
-  GPUs, physical audio/controller feel and human full-speed aesthetic judgment remain unclaimed.
-  No distribution bundle was rebuilt. Local runtime choices remain Qwen3.5 0.8B Q4, eSpeak NG and
-  Parakeet TDT 0.6B V3 INT8, with Moonshine Tiny as the lightweight recognition fallback; see
-  [local-mouth.md](local-mouth.md) and [stt-runtime.md](stt-runtime.md).
+- All seven holistic feel findings are implemented: quieter composition and care discovery,
+  microphone guidance, staggered recognizable toys, shelter clearance, semantic sound priority,
+  faithful audio evidence and deferred words that respect current care. See
+  [implementation review](feel-review-creature-presence-20260908.md) and
+  [final contract](creature-presence-and-care.md).
+- Iteration also corrected exact toy picking, autonomous dismissal of the care invitation, a
+  permanent microphone notice and incomplete sub-frame audio evidence. Regression tests cover
+  current ownership, moving/carried save continuity, geometry and audio cancellation.
+- Native validation covers the seven baseline experiences, six saved-history cases, a second
+  quiet seed, a subtitles-off relationship sequence and real Normal/Large pointer, keyboard and
+  microphone acquisition/release. Independent visual, causal, audio and code findings are resolved.
+  Exact outcomes, evidence provenance and rejected attempts live in the implementation review.
+- The aquarium retains its tabletop interface and ordinary-GPU geometric renderer, including
+  lettering. Simulation truth, direct care, old save coordinates, offline play and optional
+  inference/TTS remain intact. See [architecture.md](architecture.md).
+- The final gate passes 516 tests, 27 dialogue fixtures, 11 STT fixtures and spoken-input replay.
+  Visible changes also passed native debug validation with fake AI.
+- Validation uses macOS Metal debug rendering. Human full-speed perception, physical listening,
+  spoken recognition quality, controller comfort and Windows/Linux/lower-end GPU behavior remain
+  unclaimed. No release binary, installer or model bundle was rebuilt.
 
 ## Next
 
-Finish the authorized implementation of
-[creature-presence-and-care.md](creature-presence-and-care.md). The user approved all changes and
-requested no further input. All seven changes are integrated, the headless gate passes, and native
-review is in progress. See [implementation review](feel-review-creature-presence-20260908.md) for
-comparisons and the rejected stale-cooldown scenario capture. No Codex goal was requested or set.
-Keep the current renderer; human aesthetic/listening and Windows/Linux/lower-end GPU claims remain
-separate from the automated and sampled evidence.
+Measure the current renderer and input path on Windows, Linux and an available lower-end GPU using
+ordinary debug builds. This closes a concrete driver/performance uncertainty before adding more
+rendering work; record host specifications, frame cadence and interaction results, without treating
+video's fixed recording rate as measured runtime performance. See
+[renderer contract](raytraced-aquarium.md) and [MVP performance targets](mvp-spec.md#performance-budget).
+This needs the actual hosts/devices; allow a few hours per platform, with driver behavior and GPU
+cost as the largest unknowns. It does not require release packaging.
 
 ## Candidates Not Chosen
 
-- **Windows/Linux and lower-end native acceptance:** a few hours per available host/device;
-  closes driver/performance uncertainty but does not answer this aesthetic calibration. Keep it
-  explicit before release.
-- **Further lighting or reconstruction features:** several days and fresh native comparisons.
-  They could add visual richness, but current reviews found no remaining material rendering defect;
-  broad hardware measurements should identify the next concrete need first.
-- **Full 3D navigation and collision:** several days or more; enables depth movement but changes
-  gameplay and readability. Pure-core fixtures can cover geometry, while perceived value needs
-  native review. The current presentation does not require a new simulation rule.
+- **Human full-speed and listening calibration:** a short observation session can assess attachment,
+  unaided discovery and mix taste beyond sampled evidence. It needs human perception; no remaining
+  concrete defect from this review justifies another speculative implementation pass.
+- **Further lighting or reconstruction features:** several days plus native comparisons. Their
+  value depends on hardware measurements and a demonstrated visual need, so they wait.
+- **Full 3D navigation and collision:** several days or more, with headless geometry tests and native
+  readability review. It changes gameplay without unblocking the current care experience.
 
 ## Learned Recently
 
-- Holistic findings, evidence limits and next contract:
-  [feel-review-holistic-20260908.md](feel-review-holistic-20260908.md),
-  [creature-presence-and-care.md](creature-presence-and-care.md).
-- Tabletop direction and user calibration: [tabletop-aquarium.md](tabletop-aquarium.md), [feel-review-tabletop.md](feel-review-tabletop.md).
-
-- Unified rendering contract/evidence: [raytraced-aquarium.md](raytraced-aquarium.md), [feel-review-raytracing.md](feel-review-raytracing.md).
-- Mesh construction and prior comparisons: [voxel-surfaces.md](voxel-surfaces.md), [feel-review-voxel-surfaces.md](feel-review-voxel-surfaces.md).
-- Renderer/art ownership: [architecture.md](architecture.md), [art-bible.md](art-bible.md).
-- Native capture/input procedures: [development-harness.md](development-harness.md), [feel-review-loop.md](feel-review-loop.md).
-- Prior UI/acting work: [voxel-craft-pass.md](voxel-craft-pass.md), [feel-review-voxel-craft.md](feel-review-voxel-craft.md).
-- Product authority: [game-design-philosophy.md](game-design-philosophy.md), [v1-plan.md](v1-plan.md).
-- Save/action/relationship semantics: [relationship-causality-rework.md](relationship-causality-rework.md),
-  [relationship-expression-design.md](relationship-expression-design.md).
-- Distribution obligations: [packaging.md](packaging.md), [distribution checklist](acceptance/distribution-checklist.md).
+- Final findings, repeated native comparisons, audio reconstruction limits and rejected input
+  diagnostics: [implementation review](feel-review-creature-presence-20260908.md).
+- Original observations and implemented design: [holistic review](feel-review-holistic-20260908.md),
+  [creature presence and care](creature-presence-and-care.md).
+- Native capture and role-aware sound evidence: [feel-review-loop.md](feel-review-loop.md),
+  [audio-direction.md](audio-direction.md).
+- Renderer, mesh and art ownership: [architecture.md](architecture.md), [art-bible.md](art-bible.md),
+  [raytraced-aquarium.md](raytraced-aquarium.md).
+- Product authority and relationship semantics: [game-design-philosophy.md](game-design-philosophy.md),
+  [relationship-causality-rework.md](relationship-causality-rework.md).
+- Local inference and recognition choices: [local-mouth.md](local-mouth.md),
+  [stt-runtime.md](stt-runtime.md).

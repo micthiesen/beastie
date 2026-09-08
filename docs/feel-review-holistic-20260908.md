@@ -264,3 +264,12 @@ contract; none is silently counted as complete.
 `cargo xtask verify` passed 492 tests, 27 dialogue fixtures, 11 STT fixtures and spoken-input
 replay. The existing macOS compact-unwind linker warning remains non-fatal. This change contains
 review documents and two evidence images only; no visible shell implementation was changed.
+
+## Implementation disposition, 2026-09-08
+
+All seven accepted findings are implemented, along with the additional issues discovered during
+integration. See the [final implementation review](feel-review-creature-presence-20260908.md) for
+H1–H7 dispositions, exact comparisons, independent reviews, saved-history breadth, a second quiet
+seed, captions-off relationship evidence and actual Normal/Large microphone/care input. The
+original observations and coverage limits above describe the pre-implementation review; the new
+review records which gaps were closed and which human/hardware judgments remain unclaimed.

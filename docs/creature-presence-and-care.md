@@ -1,6 +1,7 @@
 # Creature presence and care
 
-Status: implementation authorized on 2026-09-08; integrated native verification in progress.
+Status: implemented on 2026-09-08; native evidence and dispositions are recorded in the
+[implementation review](feel-review-creature-presence-20260908.md).
 
 Date: 2026-09-08.
 
@@ -87,6 +88,9 @@ focus, including disabled controls. If disabled actions are skipped by focus nav
 the same recovery information on a reachable companion affordance. Do not enable an unavailable
 action just to make its explanation reachable. Preserve the existing listening/recognizing
 feedback, uncertainty handling and deferred-attention semantics.
+
+Enabling/disabling confirmation is temporary and includes the hold/release instruction when
+enabled. It must not permanently occupy the status strip and suppress the state helper.
 
 Acceptance includes actual disabled hover/click and enabled hold/release input. Pure view tests
 must prove state explanations, focus reachability and Large text bounds. Real microphone capture
@@ -250,3 +254,16 @@ Do not count unavailable human listening or full-speed perception as completed a
 the synchronized feel loop. Update this contract, the review and `docs/STATE.md` to describe the
 verified result; commit and push per project policy. Do not build release binaries, installers or
 model bundles, add roadmap systems, or begin distribution/marketing work.
+
+## Recorded result
+
+H1–H7 and the implementation-discovered exact toy picking, player-only invitation dismissal,
+bounded microphone notice and honest sub-frame audio evidence changes are implemented. The
+[implementation review](feel-review-creature-presence-20260908.md) records same-seed comparisons,
+15 promoted canonical experiences, final Normal/Large actual input, independent review and
+regression evidence. Existing save coordinates and moving/carried state remain intact; no new
+migration or save version was required.
+
+The repeat native reviews found no remaining material defect in the reviewed scope. Human
+full-speed aesthetic judgment, physical listening, unaided discovery, controller comfort and
+Windows/Linux/lower-end GPU behavior remain evidence limits, not completed acceptance claims.
