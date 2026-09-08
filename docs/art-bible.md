@@ -3,10 +3,11 @@
 ## Voxel aquarium
 
 Beastie is a small three-dimensional aquarium viewed through a fixed orthographic camera. The
-composition leaves open swimming water around one recognizable creature. Dirty teal and blue
-water, plum-black depth, worn sand, algae, plants, a cave, and restrained warm accents make the
-tank feel inhabited and slightly strange. The lower boundary gives the eye somewhere to rest;
-the creature remains the visual center.
+composition leaves open swimming water around one recognizable creature. Dirty teal water, worn
+sand, broad plant leaves, a terracotta shelter and restrained warm accents make the tank feel
+inhabited and slightly strange. A low left bank and taller right planting create an asymmetric
+composition. The lower boundary gives the eye somewhere to rest; the creature remains the visual
+center.
 
 All world forms are solid geometry built from colored voxel shapes. The creature, scenery,
 food, toys, bubbles, and reaction effects use meshes. There are no sprites, sprite sheets,
@@ -55,12 +56,17 @@ Dialogue must remain readable without covering the face. Settings, food and toy 
 bindings, data management, and confirmation surfaces share the same material and spacing rules.
 Readability takes priority over making letters look like voxel blocks.
 
-The care deck groups its message field and Send control, then Speak, Feed and Settings. Icons sit
-above short labels. Creature identity stays visible beside technical status. Dark enamel surfaces,
-stepped corners and restrained warm selection accents connect the controls to the voxel world.
-Settings uses Comfort & display, Sound & speech and Controls & data pages; secondary panels provide
-local navigation and focus their own relevant action. Reset defaults to Cancel.
-
+The permanent care rail occupies only the bottom 33 of 180 layout units. A small adaptive nameplate
+sits on the tank frame and yields to speech or temporary panels. Idle behavior stays embodied;
+there is no unexplained status dot or behavior label. A quiet input field uses an underline for
+focus, with text-only Send, Speak, Feed and Settings controls. Feed has a muted olive enamel face;
+Settings and Close sit quietly on the rail. Flat enamel faces and sparse edge
+accents leave hierarchy to space, type and explicit meaning rather than repetitive stepped frames.
+Speech names its speaker and offers labeled Laugh, Disapprove and Comfort reactions. Renaming
+has its own field prompt; technical notices remain separate from creature language.
+Settings retains Comfort & display, Sound & speech and Controls & data pages; secondary panels
+provide local navigation. The visible global rail remains available across shallow panels. Reset
+defaults to Cancel. See [tabletop-aquarium.md](tabletop-aquarium.md).
 Text has authored title, identity, body, secondary, control, caption and dialogue roles. Large mode
 increases those sizes by 30 percent; panels make room for it. Every emitted text command has a
 resolved content box. Font outlines are shaped, tessellated and clipped geometrically within that box. Disabled controls

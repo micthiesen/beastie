@@ -208,3 +208,14 @@ idle host and a scenario without captures for uncontended pacing measurements.
 The headless gate parses and validates both WGSL shaders and translates them to SPIR-V, HLSL and
 MSL. This tests compiler compatibility without RT extensions, not native execution on another OS.
 Full native evidence and timing results belong in [feel-review-raytracing.md](feel-review-raytracing.md).
+
+
+## Tabletop interface acceptance
+
+The tabletop layout keeps the same 320x180 logical coordinates and world projection, but the
+persistent rail starts at y147. Current native input centers include compose (97,164), Send
+(198,164), Speak (228,164), Feed (259,164) and Settings/Close (292,164). Prefer semantic fixtures
+for broad mode coverage and actual OS events for final picking/entry evidence; do not reuse an
+old button coordinate without checking its current hit region. The 28-state craft fixture remains
+valid. See [feel-review-tabletop.md](feel-review-tabletop.md) for final UI, failure and actual-input
+evidence, including clicking the bell's newly visible loop.

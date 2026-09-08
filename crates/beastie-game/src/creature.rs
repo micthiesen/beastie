@@ -14,6 +14,8 @@ mod art;
 use art::{Acting, CREATURE, MOTION};
 
 const SEGMENTS: usize = CREATURE.segments;
+const BODY_RADII: [i32; 3] = [6, 5, 5];
+const BODY_CELL: f32 = 0.065;
 
 #[derive(Component)]
 pub(crate) enum CreaturePart {
@@ -39,6 +41,7 @@ struct Motion {
     last_ms: u64,
     yaw: f32,
     speed: f32,
+    body_pick_volumes: Vec<(Transform, Vec3)>,
 }
 
 #[derive(Resource, Default)]
@@ -54,6 +57,14 @@ impl CreatureMotion {
         } else {
             head_position(plan)
         }
+    }
+
+    /// Body picking consumes the same rendered transforms, including curvature,
+    /// taper and gait. These ellipsoids approximate the voxel body, not the tail fin.
+    pub(crate) fn body_pick_volumes(&self) -> &[(Transform, Vec3)] {
+        self.state
+            .as_ref()
+            .map_or(&[], |state| &state.body_pick_volumes)
     }
 
     fn advance(&mut self, plan: &ScenePlan) -> (Vec3, f32) {
@@ -85,6 +96,7 @@ impl CreatureMotion {
                 last_ms: now,
                 yaw: 0.0,
                 speed: 0.0,
+                body_pick_volumes: Vec::with_capacity(SEGMENTS),
             });
         }
         let state = self.state.as_mut().expect("motion initialized above");
@@ -278,9 +290,9 @@ pub(crate) fn setup_creature(
         spawn(
             CreaturePart::Body(index),
             rounded_mesh(
-                VoxelModel::ellipsoid([6, 5, 5], golden),
-                [6, 5, 5],
-                0.065,
+                VoxelModel::ellipsoid(BODY_RADII, golden),
+                BODY_RADII,
+                BODY_CELL,
                 style,
             ),
             false,
@@ -446,6 +458,7 @@ pub(crate) fn animate_creature(
         |delta| (delta.x * 0.025).clamp(-0.045, 0.045),
     );
     let gaze_y = gaze_delta.map_or(0.0, |delta| (delta.y * 0.025).clamp(-0.045, 0.045));
+    motion.body_pick_volumes.clear();
     for (part, mut transform) in &mut parts {
         let mut local = Vec3::ZERO;
         let mut scale = Vec3::ONE;
@@ -532,6 +545,10 @@ pub(crate) fn animate_creature(
                 *transform = Transform::from_translation(center)
                     .with_rotation(Quat::from_rotation_z(motion.chain.direction(index)))
                     .with_scale(Vec3::new(0.8, taper, taper));
+                motion.body_pick_volumes.push((
+                    *transform,
+                    Vec3::from_array(BODY_RADII.map(|radius| (radius as f32 + 0.5) * BODY_CELL)),
+                ));
                 continue;
             }
             CreaturePart::Tail => {
@@ -593,6 +610,63 @@ mod tests {
         )
         .0
         .creature
+    }
+
+    #[test]
+    fn body_picking_tracks_rendered_curvature_taper_and_entity_removal() {
+        let plan = beastie_view::plan(
+            &beastie_core::WorldState::new(7, "Test"),
+            &beastie_view::ViewState::default(),
+        )
+        .0;
+        let mut app = App::new();
+        app.insert_resource(SceneFrame { plan })
+            .init_resource::<CreatureMotion>()
+            .add_systems(Update, animate_creature);
+        let entities: Vec<_> = (0..SEGMENTS)
+            .map(|index| {
+                app.world_mut()
+                    .spawn((CreaturePart::Body(index), Transform::default()))
+                    .id()
+            })
+            .collect();
+        assert!(
+            app.world()
+                .resource::<CreatureMotion>()
+                .body_pick_volumes()
+                .is_empty()
+        );
+        app.update();
+        let before = app
+            .world()
+            .resource::<CreatureMotion>()
+            .body_pick_volumes()
+            .to_vec();
+        for tick in 1..=12 {
+            let mut frame = app.world_mut().resource_mut::<SceneFrame>();
+            frame.plan.simulation_remainder_ms = tick * 16;
+            frame.plan.creature.velocity.x = 400;
+            frame.plan.creature.steering = SteeringMode::Approach;
+            app.update();
+        }
+        let cached = app.world().resource::<CreatureMotion>().body_pick_volumes();
+        assert_eq!(cached.len(), SEGMENTS);
+        assert_ne!(cached, before);
+        for entity in &entities {
+            let rendered = app.world().get::<Transform>(*entity).unwrap();
+            assert!(cached.iter().any(|(transform, radii)| transform == rendered
+                && radii.abs_diff_eq(Vec3::new(0.4225, 0.3575, 0.3575), 1e-6)));
+        }
+        // A missing rendered segment must not leave an invisible click target behind.
+        app.world_mut().despawn(entities[0]);
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<CreatureMotion>()
+                .body_pick_volumes()
+                .len(),
+            SEGMENTS - 1
+        );
     }
 
     #[test]

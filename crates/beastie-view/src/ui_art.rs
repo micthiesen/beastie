@@ -2,13 +2,11 @@
 use crate::{HitRegion, Rect, RectCommand, TextCommand};
 use serde::{Deserialize, Serialize};
 
-pub(super) const UI_SHADOW: [u8; 4] = [5, 13, 20, 255];
-pub(super) const UI_EDGE: [u8; 4] = [53, 82, 85, 255];
-pub(super) const UI_EDGE_LIT: [u8; 4] = [104, 125, 116, 255];
-pub(super) const UI_PANEL: [u8; 4] = [14, 32, 42, 255];
-pub(super) const UI_PANEL_INSET: [u8; 4] = [9, 23, 32, 255];
-pub(super) const UI_BUTTON: [u8; 4] = [27, 53, 61, 255];
-pub(super) const UI_BUTTON_DISABLED: [u8; 4] = [18, 34, 43, 255];
+pub(super) const UI_EDGE: [u8; 4] = [67, 83, 81, 255];
+pub(super) const UI_PANEL: [u8; 4] = [24, 37, 39, 255];
+pub(super) const UI_PANEL_INSET: [u8; 4] = [18, 29, 31, 255];
+pub(super) const UI_BUTTON: [u8; 4] = [33, 48, 48, 255];
+pub(super) const UI_BUTTON_DISABLED: [u8; 4] = [24, 37, 39, 255];
 pub(super) const UI_CORAL: [u8; 4] = [202, 127, 99, 255];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,7 +25,7 @@ impl TextRole {
     pub fn size(self, large: bool) -> f32 {
         let normal = match self {
             Self::Title => 8.0,
-            Self::Identity => 7.5,
+            Self::Identity => 6.5,
             Self::Body | Self::Dialogue => 6.0,
             Self::Secondary => 4.8,
             Self::Control => 5.2,
@@ -131,28 +129,16 @@ pub(super) fn layout_text(text: &mut [TextCommand], rects: &[RectCommand], hits:
             }
         }
         let bounds = match t.id.as_str() {
-            "compose/summary-name" => Rect {
-                x: 17,
-                y: 135,
-                w: 68,
-                h: 14,
-            },
-            "compose/summary-behavior" => Rect {
-                x: 88,
-                y: 137,
-                w: 54,
-                h: 10,
-            },
             "compose/input-text" => Rect {
-                x: 14,
-                y: 158,
-                w: 171,
-                h: 15,
+                x: 18,
+                y: 155,
+                w: 157,
+                h: 17,
             },
             "status/message" => Rect {
-                x: 149,
-                y: 136,
-                w: 158,
+                x: 84,
+                y: 133,
+                w: 219,
                 h: 12,
             },
             _ => Rect {

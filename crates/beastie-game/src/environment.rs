@@ -13,8 +13,6 @@ struct TankArt {
     frame: [u8; 3],
     brass: [u8; 3],
     sand: [u8; 3],
-    stone: [u8; 3],
-    moss: [u8; 3],
 }
 const TANK: TankArt = TankArt {
     back_low: [13, 37, 47],
@@ -22,8 +20,6 @@ const TANK: TankArt = TankArt {
     frame: [38, 64, 67],
     brass: [164, 156, 113],
     sand: [112, 119, 93],
-    stone: [67, 94, 94],
-    moss: [67, 116, 86],
 };
 
 #[derive(Clone, Copy)]
@@ -33,55 +29,37 @@ struct FrondArt {
     bend: f32,
     color: [u8; 3],
 }
-#[allow(clippy::approx_constant)] // Authored spatial coordinates, not angles.
-const REAR_FRONDS: [FrondArt; 8] = [
+// A tall right group balances the low shelter on the left. The central water stays clear.
+const REAR_FRONDS: [FrondArt; 5] = [
     FrondArt {
-        root: Vec3::new(-7.05, -1.9, -1.65),
-        height: 2.3,
-        bend: 0.48,
-        color: [35, 78, 75],
+        root: Vec3::new(-6.88, -1.83, -1.45),
+        height: 1.30,
+        bend: -0.30,
+        color: [49, 93, 77],
     },
     FrondArt {
-        root: Vec3::new(-6.72, -1.9, -1.40),
-        height: 1.8,
-        bend: -0.32,
-        color: [43, 94, 80],
+        root: Vec3::new(-6.70, -1.83, -1.10),
+        height: 0.85,
+        bend: 0.42,
+        color: [68, 112, 86],
     },
     FrondArt {
-        root: Vec3::new(-6.28, -1.9, -1.05),
-        height: 1.5,
-        bend: 0.3,
-        color: [57, 111, 89],
+        root: Vec3::new(6.67, -1.83, -1.65),
+        height: 2.65,
+        bend: -0.65,
+        color: [56, 105, 89],
     },
     FrondArt {
-        root: Vec3::new(-7.30, -1.9, -0.72),
-        height: 1.1,
-        bend: 0.24,
-        color: [65, 120, 91],
+        root: Vec3::new(6.83, -1.83, -1.28),
+        height: 2.08,
+        bend: 0.38,
+        color: [54, 105, 85],
     },
     FrondArt {
-        root: Vec3::new(6.85, -1.9, -1.62),
-        height: 2.7,
-        bend: -0.5,
-        color: [33, 78, 77],
-    },
-    FrondArt {
-        root: Vec3::new(6.52, -1.9, -1.30),
-        height: 2.05,
-        bend: 0.36,
-        color: [43, 98, 85],
-    },
-    FrondArt {
-        root: Vec3::new(6.05, -1.9, -1.05),
-        height: 1.42,
-        bend: -0.25,
-        color: [57, 111, 88],
-    },
-    FrondArt {
-        root: Vec3::new(7.15, -1.9, -0.65),
-        height: 1.05,
-        bend: -0.32,
-        color: [69, 121, 93],
+        root: Vec3::new(6.48, -1.83, -0.90),
+        height: 1.32,
+        bend: -0.61,
+        color: [79, 126, 92],
     },
 ];
 
@@ -143,6 +121,18 @@ pub(crate) fn setup(
         Vec3::new(15.65, 0.055, 0.07),
         shade(TANK.brass, 15),
     );
+    // A solid cabinet apron remains visible beneath the bed as the compact care
+    // controls recede. It is part of the tank, so no empty background gap is exposed.
+    tank.cuboid(
+        Vec3::new(0.0, -2.95, 2.15),
+        Vec3::new(16.0, 1.35, 0.30),
+        [61, 65, 58],
+    );
+    tank.cuboid(
+        Vec3::new(0.0, -2.29, 2.20),
+        Vec3::new(16.0, 0.065, 0.34),
+        [129, 125, 99],
+    );
     // The substrate and rear ridge are one filled lattice. Shared faces disappear,
     // leaving terraces in the silhouette instead of dark channels around each grain.
     commands.spawn((
@@ -165,44 +155,29 @@ pub(crate) fn setup(
     let mut garden = Geometry::default().mesh();
     for (center, radius, color) in [
         (
-            Vec3::new(-6.75, -1.67, -0.9),
-            Vec3::new(0.75, 0.30, 0.48),
-            [77, 103, 103],
+            Vec3::new(-6.85, -1.70, -0.85),
+            Vec3::new(0.72, 0.22, 0.45),
+            [88, 108, 102],
         ),
         (
-            Vec3::new(-6.16, -1.76, -0.55),
-            Vec3::new(0.39, 0.17, 0.35),
-            [111, 122, 109],
+            Vec3::new(-6.20, -1.77, -0.45),
+            Vec3::new(0.47, 0.15, 0.35),
+            [118, 127, 110],
         ),
         (
-            Vec3::new(-5.86, -1.79, 0.18),
-            Vec3::new(0.23, 0.13, 0.25),
-            [125, 132, 110],
+            Vec3::new(-5.90, -1.82, 0.08),
+            Vec3::new(0.20, 0.09, 0.19),
+            [143, 141, 115],
         ),
         (
-            Vec3::new(6.56, -1.55, -1.0),
-            Vec3::new(0.73, 0.47, 0.43),
-            [72, 97, 101],
+            Vec3::new(6.80, -1.72, -0.95),
+            Vec3::new(0.54, 0.24, 0.36),
+            [83, 105, 99],
         ),
         (
-            Vec3::new(5.95, -1.74, -0.36),
-            Vec3::new(0.48, 0.23, 0.38),
-            [108, 119, 111],
-        ),
-        (
-            Vec3::new(5.48, -1.79, 0.17),
-            Vec3::new(0.25, 0.13, 0.23),
-            [133, 139, 113],
-        ),
-        (
-            Vec3::new(-1.35, -1.83, 0.4),
-            Vec3::new(0.17, 0.10, 0.16),
-            [140, 139, 109],
-        ),
-        (
-            Vec3::new(2.38, -1.82, -0.1),
-            Vec3::new(0.21, 0.11, 0.18),
-            [117, 126, 103],
+            Vec3::new(6.16, -1.80, -0.56),
+            Vec3::new(0.27, 0.12, 0.23),
+            [117, 129, 109],
         ),
     ] {
         garden_stone(&mut garden, center, radius, color, appearance.style());
@@ -214,15 +189,6 @@ pub(crate) fn setup(
             frond.height,
             frond.bend,
             frond.color,
-        );
-    }
-    // Joined shelves frame the scene; their stepped outer contour is intentional.
-    for side in [-1.0, 1.0] {
-        append_voxels(
-            &mut garden,
-            &shelf_model(),
-            0.05,
-            Vec3::new(side * 7.05, -1.8, -1.90),
             appearance.style(),
         );
     }
@@ -262,37 +228,40 @@ fn garden_stone(
     append_voxels(shape, &stone, cell, center, style);
 }
 
-fn garden_frond(mesh: &mut Mesh, root: Vec3, height: f32, bend: f32, color: [u8; 3]) {
-    let mut shape = Geometry::default();
-    let segments = (height / 0.075).ceil() as u32;
-    for segment in 0..segments {
-        let t = segment as f32 / segments as f32;
-        let center = root
-            + Vec3::new(
-                bend * t * t + (t * 4.5).sin() * 0.045,
-                t * height,
-                (t * 3.2).sin() * 0.16,
-            );
-        let width = 0.065 + (std::f32::consts::PI * t).sin() * 0.085;
-        shape.cuboid(center, Vec3::new(width, 0.083, 0.055), color);
-        if segment > 3 && segment % 5 == 0 {
-            let side = if segment % 10 == 0 { -1.0 } else { 1.0 };
-            for leaf in 1..=3 {
-                shape.cuboid(
-                    center
-                        + Vec3::new(
-                            side * leaf as f32 * 0.055,
-                            leaf as f32 * 0.025,
-                            side * leaf as f32 * 0.025,
-                        ),
-                    Vec3::new(0.075, 0.040, 0.050),
-                    color.map(|channel| channel.saturating_add(9)),
+/// One filled leaf lattice gives a broad silhouette without overlapping strip seams.
+fn garden_frond(
+    mesh: &mut Mesh,
+    root: Vec3,
+    height: f32,
+    bend: f32,
+    color: [u8; 3],
+    style: crate::voxel::SurfaceStyle,
+) {
+    let cell = 0.045;
+    let rows = (height / cell).ceil() as i32;
+    let mut leaf = VoxelModel::default();
+    for y in 0..=rows {
+        let t = y as f32 / rows as f32;
+        let center_x = (bend * t * t / cell).round() as i32;
+        let center_z = ((t * std::f32::consts::PI).sin() * 0.12 / cell).round() as i32;
+        let half_width = (1.0
+            + (t * std::f32::consts::PI).sin() * 3.0 * (height / 1.5).clamp(0.7, 1.3))
+        .round() as i32;
+        for x in -half_width..=half_width {
+            // A quiet midrib and folded edge communicate a leaf, not a painted stripe.
+            let fold = i32::from(x.abs() == half_width && half_width > 1);
+            for depth in 0..=1 {
+                leaf.set(
+                    [center_x + x, y, center_z - fold - depth],
+                    shade(color, if x == 0 { 7 } else { 0 }),
                 );
+            }
+            if fold > 0 {
+                leaf.set([center_x + x, y, center_z], color);
             }
         }
     }
-    mesh.merge(&shape.mesh())
-        .expect("scenery meshes share colored triangle attributes");
+    append_voxels(mesh, &leaf, cell, root, style);
 }
 
 /// Integer occupancy makes the floor continuous even where terrace heights differ.
@@ -322,21 +291,6 @@ fn substrate_model() -> VoxelModel {
     model
 }
 
-fn shelf_model() -> VoxelModel {
-    let mut model = VoxelModel::default();
-    for y in 0..13 {
-        let step = y / 3;
-        let half_width = 12 - step * 2;
-        let half_depth = 5 - step / 2;
-        for x in -half_width..=half_width {
-            for z in -half_depth..=half_depth {
-                model.set([x, y, z], shade(TANK.stone, step as i16 * 2 - 4));
-            }
-        }
-    }
-    model
-}
-
 fn append_voxels(
     mesh: &mut Mesh,
     model: &VoxelModel,
@@ -357,7 +311,7 @@ pub(crate) fn object_mesh(
         ObjectKind::Food(food) => food_mesh(food, style),
         ObjectKind::Toy(ToyId::Ball) => VoxelModel::ellipsoid([7, 7, 7], |p| {
             if p[1].abs() < 2 {
-                [240, 197, 120]
+                [210, 181, 132]
             } else if p[0] > 1 {
                 [111, 177, 163]
             } else {
@@ -387,90 +341,32 @@ pub(crate) fn object_mesh(
             for y in -7..=-4 {
                 shape.set([0, y, 0], [112, 89, 59]);
             }
-            shape.set([0, 8, 0], [103, 103, 81]);
-            shape.mesh_with_style(0.052, style)
-        }
-        ObjectKind::Toy(ToyId::Sock) => {
-            let mut geometry = Geometry::default();
-            geometry.cuboid(
-                Vec3::new(0.0, 0.12, 0.0),
-                Vec3::new(0.28, 0.48, 0.2),
-                [159, 137, 168],
-            );
-            geometry.cuboid(
-                Vec3::new(0.15, -0.12, 0.0),
-                Vec3::new(0.55, 0.22, 0.22),
-                [183, 159, 181],
-            );
-            geometry.cuboid(
-                Vec3::new(0.0, 0.3, 0.0),
-                Vec3::new(0.3, 0.07, 0.22),
-                [220, 196, 183],
-            );
-            for y in [-0.02, 0.08, 0.18] {
-                geometry.cuboid(
-                    Vec3::new(0.0, y, 0.111),
-                    Vec3::new(0.285, 0.032, 0.025),
-                    [111, 100, 134],
-                );
-            }
-            geometry.cuboid(
-                Vec3::new(0.35, -0.12, 0.0),
-                Vec3::new(0.16, 0.225, 0.225),
-                [127, 111, 145],
-            );
-            geometry.cuboid(
-                Vec3::new(-0.07, -0.12, 0.113),
-                Vec3::new(0.14, 0.14, 0.026),
-                [217, 183, 155],
-            );
-            geometry.mesh()
-        }
-        ObjectKind::Cave => {
-            let mut shape = VoxelModel::default();
-            for x in -12_i32..=12 {
-                for y in -13_i32..17 {
-                    for z in -10_i32..=4 {
-                        let outer =
-                            y < 0 || (x as f32 / 12.0).powi(2) + (y as f32 / 17.0).powi(2) <= 1.0;
-                        let doorway = x.abs() < 7 && y < 11 && z > -9;
-                        if outer && !doorway {
-                            let shade = ((x.div_euclid(5) + y.div_euclid(7) + z.div_euclid(6))
-                                .rem_euclid(3)
-                                * 3) as u8;
-                            let color = if x.abs() < 7 && y < 11 && z <= -9 {
-                                [19 + shade / 3, 35 + shade / 3, 36 + shade / 3]
-                            } else {
-                                let top = y > 10
-                                    && z > -3
-                                    && (x.div_euclid(5) + z.div_euclid(4)).rem_euclid(3) < 2;
-                                if top {
-                                    TANK.moss.map(|c| c.saturating_add(shade))
-                                } else {
-                                    TANK.stone.map(|c| c.saturating_add(shade))
-                                }
-                            };
-                            shape.set([x, y - 6, z], color);
-                        }
+            // Open suspension loop makes the bell read as an object built to ring.
+            for x in -2_i32..=2 {
+                for y in 7_i32..=11 {
+                    if x.abs() == 2 || y == 7 || y == 11 {
+                        shape.set([x, y, 0], [179, 135, 65]);
                     }
                 }
             }
-            shape.mesh_with_style(0.075, style)
+            shape.mesh_with_style(0.052, style)
         }
+        ObjectKind::Toy(ToyId::Sock) => sock_model().mesh_with_style(0.035, style),
+        ObjectKind::Cave => shelter_model().mesh_with_style(0.075, style),
         ObjectKind::Plant => {
             let mut shape = Geometry::default().mesh();
-            // At the authoritative plant center, y=-1.31 reaches the substrate. Narrow
-            // curved ribbons rise from that root rather than floating as a leaf lattice.
-            for stem in 0..7 {
+            // Broad leaves grow from the authoritative root, with a varied fan silhouette.
+            for stem in 0..5 {
                 let angle = stem as f32 * 1.35;
-                let height = 1.35 + (stem % 3) as f32 * 0.17;
-                let bend = angle.sin() * 0.38;
+                let height = 1.10 + (stem % 3) as f32 * 0.23;
+                let bend = angle.sin() * 0.45;
                 garden_frond(
                     &mut shape,
                     Vec3::new(angle.sin() * 0.10, -1.31, angle.cos() * 0.15),
                     height,
                     bend,
-                    [55 + stem * 3, 119 + stem * 4, 92 + stem * 2],
+                    [60 + stem * 4, 115 + stem * 4, 83 + stem * 2],
+                    style,
                 );
             }
             garden_stone(
@@ -483,6 +379,67 @@ pub(crate) fn object_mesh(
             shape
         }
     }
+}
+
+/// Fired-clay shelter: one connected barrel roof with a thick rolled front lip.
+/// Bottom and side bounds retain the original cave's interaction footprint.
+fn shelter_model() -> VoxelModel {
+    let mut shape = VoxelModel::default();
+    for x in -12_i32..=12 {
+        for y in -19_i32..=7 {
+            for z in -10_i32..=4 {
+                let roof_y = (y + 5).max(0) as f32;
+                let lip = z >= 3;
+                let outer_radius = if lip { 12.0 } else { 11.0 };
+                let outer =
+                    (x as f32 / outer_radius).powi(2) + (roof_y / outer_radius).powi(2) <= 1.0;
+                let opening_y = (y + 7).max(0) as f32;
+                let inner_radius = if lip { 8.0 } else { 9.0 };
+                let doorway = (x as f32 / inner_radius).powi(2) + (opening_y / 10.0).powi(2) < 1.0;
+                if outer && (!doorway || z <= -9) {
+                    let color = if doorway {
+                        [51, 47, 39]
+                    } else if z >= 3 {
+                        [167, 116, 83]
+                    } else if y > 0 {
+                        [143, 98, 72]
+                    } else {
+                        [129, 89, 67]
+                    };
+                    shape.set([x, y, z], color);
+                }
+            }
+        }
+    }
+    shape
+}
+
+fn sock_model() -> VoxelModel {
+    let mut shape = VoxelModel::default();
+    for x in -4_i32..=11 {
+        for y in -6_i32..=10 {
+            for z in -3_i32..=3 {
+                let leg = x.abs() <= 3 && y >= -3 && x * x + z * z <= 16;
+                let toe = ((x - 3) as f32 / 8.0).powi(2)
+                    + ((y + 3) as f32 / 3.2).powi(2)
+                    + (z as f32 / 3.5).powi(2)
+                    <= 1.0;
+                if leg || toe {
+                    let color = if y >= 8 {
+                        [209, 192, 169]
+                    } else if x > 7 || x < -1 && y < -1 {
+                        [123, 113, 136]
+                    } else if y == 5 || y == 6 {
+                        [171, 156, 176]
+                    } else {
+                        [148, 136, 158]
+                    };
+                    shape.set([x, y, z], color);
+                }
+            }
+        }
+    }
+    shape
 }
 
 /// Food silhouettes stay distinct even without color: berry cluster, cap/stem, pellet.

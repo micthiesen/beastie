@@ -93,14 +93,18 @@ maps through one shared transform with margins for creature volume. Presentation
 change contact or invent interactions. The shell resolves pointer rays against world volumes and
 maps food drops back onto the interaction plane. UI hit regions preserve keyboard/controller
 ordering and modal exclusion.
-Input resolves against the preceding presented scene and creature pose before simulation and
-animation publish the next frame, so clicks refer to the image the player was shown.
+Body pick ellipsoids use the exact cached rendered transforms, including curvature and taper,
+and compare world ray distance with the head and forgiving toy/food volumes. Plants and the
+shelter use cached mesh triangles after a local bounding-box test; their empty gaps cannot
+intercept a click. Scenery transforms are captured after propagation, matching the preceding
+presented frame. Input resolves before simulation and animation publish the next frame.
 
-The persistent compose bar, shallow contextual actions, food-drop mode, settings, input bindings,
+The compact persistent control rail, frame-mounted identity plate, shallow contextual actions,
+food-drop mode, settings, input bindings,
 save recovery/reset confirmation, transcript controls, and naming remain declarative UI. Exact
 need, trust and resentment values remain absent from the player summary. Panels and icons use
-geometry, including shaped outline lettering. Speech occupies the opposite side of
-the creature. Reduced motion and other accessibility settings remain part of presentation state.
+geometry, including shaped outline lettering. Speech identifies its speaker, occupies the opposite
+side of the creature and provides explicitly labeled reactions. Reduced motion and other accessibility settings remain part of presentation state.
 Text commands carry their resolved content bounds, semantic type role and disabled treatment;
 the outline tessellator shapes, fits and geometrically clips glyphs inside those bounds. Settings pages are ephemeral view
 state, while their values retain the existing versioned settings persistence. Startup recovery

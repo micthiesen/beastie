@@ -4,37 +4,40 @@ Last updated: **2026-09-08**.
 
 ## Now
 
-- The complete aquarium, creature, care deck and text use one custom ordinary-GPU ray tracer.
-  Bevy 0.19 supplies the application infrastructure; the old PBR scene, sprite and raster text/UI
-  paths are removed. Text is shaped and tessellated geometry. See
-  [raytraced-aquarium.md](raytraced-aquarium.md) and [architecture.md](architecture.md).
-- Cached mesh acceleration, near-first traversal, stable coverage samples, soft area lighting and
-  restrained indirect/reflected light preserve the authored voxel surfaces and expressive face.
-  There is no temporal accumulation, hardware RT requirement or alternate renderer toggle.
-  Simulation, saves, continuous animation and picking retain their existing ownership.
-- Multiple independent code and native visual/causal reviews cover world poses, all Normal/Large
-  UI, interactions, dialogue races, three-minute quiet life and failure recovery. The headless gate
-  passes 483 tests, 27 dialogue fixtures, 11 recognition fixtures and spoken-input replay. Actual
-  input and frame-time evidence, iteration findings and coverage limits are recorded in
-  [feel-review-raytracing.md](feel-review-raytracing.md).
-- Native evidence covers macOS/Metal debug rendering. Shader translation covers MSL, HLSL and
-  SPIR-V without optional RT capabilities; Windows/Linux native drivers, lower-end GPUs, human
-  full-speed perception and physical audio/controller feel remain explicit acceptance checkpoints.
-  Distribution bundles predate Bevy and were not rebuilt.
-- Local runtime choices remain Qwen3.5 0.8B Q4, eSpeak NG and Parakeet TDT 0.6B V3 INT8, with
-  Moonshine Tiny as the lightweight recognition fallback. See [local-mouth.md](local-mouth.md),
-  [stt-runtime.md](stt-runtime.md) and [creature-life-expression-rework.md](creature-life-expression-rework.md).
+- The aquarium now uses a compact tabletop interface: a frame-mounted nameplate, a 33-unit care
+  rail, explicit text actions, a quiet settings control and a distinct enamel Feed button. Speech
+  names its speaker and labels reactions; rename and sound settings explain their purpose.
+  See [tabletop-aquarium.md](tabletop-aquarium.md).
+- Broad leaves, asymmetric planting, a terracotta shelter and more recognizable toys replace the
+  mirrored piles and disconnected decorations. Continuous geometric surfaces and all lettering
+  remain on the ordinary-GPU ray tracer within Bevy. No sprites, font atlas or RT hardware required.
+- Native input testing exposed missing body picking and context menus covering the face. Body
+  volumes now use exact presented transforms, plants/shelter use precise mesh intersections, and
+  context placement avoids the head at opening while keeping controls stationary afterward. Simulation, saves,
+  audio ownership, offline behavior and optional worker boundaries are preserved.
+- Multiple independent code and native visual/causal reviews cover Normal/Large UI, interactions,
+  dialogue races, failure recovery and actual macOS input. The gate passes 492 tests, 27 dialogue
+  fixtures, 11 recognition fixtures and spoken-input replay. Evidence, rejected findings and
+  perception limits live in [feel-review-tabletop.md](feel-review-tabletop.md).
+- Native evidence remains macOS/Metal debug rendering. Windows/Linux native drivers, lower-end
+  GPUs, physical audio/controller feel and human full-speed aesthetic judgment remain unclaimed.
+  No distribution bundle was rebuilt. Local runtime choices remain Qwen3.5 0.8B Q4, eSpeak NG and
+  Parakeet TDT 0.6B V3 INT8, with Moonshine Tiny as the lightweight recognition fallback; see
+  [local-mouth.md](local-mouth.md) and [stt-runtime.md](stt-runtime.md).
 
 ## Next
 
-Run native renderer acceptance on Windows/Linux and a lower-end ordinary GPU, alongside live
-perception and physical audio/controller checks. This closes the largest remaining release unknown
-before adding rendering complexity; use [distribution checklist](acceptance/distribution-checklist.md)
-and the evidence boundaries in [feel-review-raytracing.md](feel-review-raytracing.md).
-Allow a few hours per available host/device; driver and hardware availability are the main unknowns.
+Calibrate the tabletop direction in live play with the user before extending the art treatment.
+The prior technical/legibility reviews missed the user's aesthetic concern, so explicit meaning,
+hierarchy and creature presence should guide the next decision. The focused evidence is in
+[feel-review-tabletop.md](feel-review-tabletop.md); this is a short native play review, not another
+renderer rewrite. Windows/Linux and lower-end GPU acceptance remain a separate release checkpoint.
 
 ## Candidates Not Chosen
 
+- **Windows/Linux and lower-end native acceptance:** a few hours per available host/device;
+  closes driver/performance uncertainty but does not answer this aesthetic calibration. Keep it
+  explicit before release.
 - **Further lighting or reconstruction features:** several days and fresh native comparisons.
   They could add visual richness, but current reviews found no remaining material rendering defect;
   broad hardware measurements should identify the next concrete need first.
@@ -43,6 +46,8 @@ Allow a few hours per available host/device; driver and hardware availability ar
   native review. The current presentation does not require a new simulation rule.
 
 ## Learned Recently
+
+- Tabletop direction and user calibration: [tabletop-aquarium.md](tabletop-aquarium.md), [feel-review-tabletop.md](feel-review-tabletop.md).
 
 - Unified rendering contract/evidence: [raytraced-aquarium.md](raytraced-aquarium.md), [feel-review-raytracing.md](feel-review-raytracing.md).
 - Mesh construction and prior comparisons: [voxel-surfaces.md](voxel-surfaces.md), [feel-review-voxel-surfaces.md](feel-review-voxel-surfaces.md).

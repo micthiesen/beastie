@@ -124,6 +124,7 @@ fn keyboard(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Independent Bevy input, scene and cached geometry resources.
 fn pointer(
     mut commands: Commands,
     window: Query<(Entity, &Window), With<PrimaryWindow>>,
@@ -131,6 +132,7 @@ fn pointer(
     buttons: Res<ButtonInput<MouseButton>>,
     frame: Res<SceneFrame>,
     motion: Res<crate::creature::CreatureMotion>,
+    scenery: Res<crate::renderer::SceneryPicking>,
     mut game: NonSendMut<Game>,
 ) {
     let Ok((window_entity, window)) = window.single() else {
@@ -145,8 +147,8 @@ fn pointer(
             Viewport::for_drawable(window.width(), window.height()).logical_point(p.x, p.y)
         })
         .map(|(x, y)| (x.floor() as i32, y.floor() as i32));
-    let hit =
-        cursor.and_then(|p| crate::renderer::pick(&frame.plan, camera, transform, p, &motion));
+    let hit = cursor
+        .and_then(|p| crate::renderer::pick(&frame.plan, camera, transform, p, &motion, &scenery));
     let cursor_icon = match hit.as_ref().map(|hit| hit.cursor) {
         Some(beastie_view::CursorKind::Pointer) => bevy::window::SystemCursorIcon::Pointer,
         Some(beastie_view::CursorKind::FoodDrop) => bevy::window::SystemCursorIcon::Crosshair,

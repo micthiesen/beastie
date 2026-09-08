@@ -15,8 +15,8 @@ use std::num::NonZeroU64;
 
 pub const LOGICAL_WIDTH: i32 = 320;
 pub const LOGICAL_HEIGHT: i32 = 180;
-pub const AQUARIUM_BOTTOM: i32 = 129;
-pub const COMPOSE_BAR_TOP: i32 = 130;
+pub const AQUARIUM_BOTTOM: i32 = 146;
+pub const COMPOSE_BAR_TOP: i32 = 147;
 pub const CREATURE_HIT_WIDTH: i32 = 52;
 pub const CREATURE_HIT_HEIGHT: i32 = 40;
 pub const SPEECH_LIFETIME_MS: u64 = 8_000;
@@ -230,6 +230,9 @@ pub struct PresentationCue {
 #[serde(deny_unknown_fields)]
 pub struct ViewState {
     pub mode: UiMode,
+    /// Context menu anchor chosen when opened, so moving creatures do not move controls.
+    #[serde(default)]
+    pub context_above: Option<bool>,
     #[serde(default)]
     pub settings_page: u8,
     /// Stable [`HitRegion::id`] selected by keyboard or controller navigation.
@@ -319,6 +322,7 @@ impl Default for ViewState {
     fn default() -> Self {
         Self {
             mode: UiMode::Compose,
+            context_above: None,
             settings_page: 0,
             focused_region: Some("compose/input".to_owned()),
             hovered_region: None,
@@ -1061,7 +1065,7 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (ScenePlan, AudioPlan) {
         &mut text,
         &mut hit_regions,
     );
-    add_temporary_mode(view, &mut rects, &mut text, &mut hit_regions);
+    add_temporary_mode(state, view, &mut rects, &mut text, &mut hit_regions);
     let close = match view.mode {
         UiMode::Settings => Some((
             Rect {
@@ -1518,31 +1522,21 @@ fn world_hit_regions(state: &WorldState, view: &ViewState) -> Vec<HitRegion> {
 fn add_persistent_bar(
     state: &WorldState,
     view: &ViewState,
-    icons: &mut Vec<IconCommand>,
+    _icons: &mut Vec<IconCommand>,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
     let summary = creature_summary(state);
     let text_scale = view.text_scale.clamp(1, 2);
-    rects.push(rect(
-        "compose/bar-shadow",
-        Rect {
-            x: 0,
-            y: 129,
-            w: 320,
-            h: 51,
-        },
-        UI_SHADOW,
-        29,
-    ));
+    // A shallow instrument rail leaves the habitat in charge of the composition.
     rects.push(rect(
         "compose/bar-edge",
         Rect {
             x: 0,
-            y: 130,
+            y: 147,
             w: 320,
-            h: 50,
+            h: 33,
         },
         UI_EDGE,
         30,
@@ -1550,94 +1544,104 @@ fn add_persistent_bar(
     rects.push(rect(
         "compose/bar",
         Rect {
-            x: 1,
-            y: 132,
-            w: 318,
-            h: 48,
+            x: 0,
+            y: 148,
+            w: 320,
+            h: 32,
         },
         UI_PANEL,
         31,
     ));
-    rects.push(rect(
-        "compose/bar-glint",
-        Rect {
-            x: 2,
-            y: 132,
-            w: 316,
-            h: 1,
-        },
-        UI_EDGE_LIT,
-        32,
-    ));
-
-    rects.push(rect(
-        "compose/mood-dot",
-        Rect {
-            x: 8,
-            y: 139,
-            w: 4,
-            h: 4,
-        },
-        mood_color(summary.mood),
-        34,
-    ));
+    if matches!(view.mode, UiMode::Compose)
+        && view
+            .speech
+            .as_deref()
+            .is_none_or(|line| line.trim().is_empty())
     {
-        text.push(label(
+        let plate_width = (summary.name.chars().count().min(13) as i32 * 5 + 12).clamp(27, 70);
+        rects.push(rect(
+            "compose/identity-plate",
+            Rect {
+                x: 12,
+                y: 7,
+                w: plate_width,
+                h: 14,
+            },
+            UI_PANEL,
+            31,
+        ));
+        rects.push(rect(
+            "compose/identity-rule",
+            Rect {
+                x: 12,
+                y: 11,
+                w: 1,
+                h: 6,
+            },
+            UI_CORAL,
+            32,
+        ));
+        let mut identity = label(
             "compose/summary-name",
-            &head_fit(&summary.name, if text_scale >= 2 { 12 } else { 16 }),
-            17,
-            135,
+            &head_fit(&summary.name, if text_scale >= 2 { 10 } else { 13 }),
+            18,
+            8,
             34,
-        ));
-        text.push(label(
-            "compose/summary-behavior",
-            &head_fit(&summary.behavior, if text_scale >= 2 { 15 } else { 20 }),
-            88,
-            137,
-            34,
-        ));
+        );
+        identity.role = TextRole::Identity;
+        identity.bounds = Some(Rect {
+            x: 18,
+            y: 8,
+            w: plate_width - 10,
+            h: 12,
+        });
+        text.push(identity);
     }
-
     let input_rect = Rect {
-        x: 8,
-        y: 153,
-        w: 184,
-        h: 23,
+        x: 12,
+        y: 154,
+        w: 170,
+        h: 19,
     };
     let microphone_rect = Rect {
-        x: 222,
-        y: 153,
-        w: 27,
-        h: 23,
+        x: 214,
+        y: 154,
+        w: 28,
+        h: 19,
     };
     let food_rect = Rect {
-        x: 253,
-        y: 153,
-        w: 27,
-        h: 23,
+        x: 246,
+        y: 154,
+        w: 26,
+        h: 19,
     };
     let settings_rect = Rect {
-        x: 284,
-        y: 153,
-        w: 28,
-        h: 23,
+        x: 276,
+        y: 154,
+        w: 32,
+        h: 19,
     };
     let send_rect = Rect {
-        x: 195,
-        y: 153,
-        w: 23,
-        h: 23,
+        x: 186,
+        y: 154,
+        w: 24,
+        h: 19,
     };
+
     add_inset("compose/input", input_rect, 31, rects);
     let input_capacity = ((input_rect.w - 17) as f32
         / (TextRole::Body.size(text_scale >= 2) * 0.56))
         .floor() as usize;
     let input_value = if view.text_buffer.is_empty() {
-        head_fit(&format!("Talk to {}...", summary.name), input_capacity)
+        if matches!(view.mode, UiMode::Rename) {
+            "New name…".to_owned()
+        } else {
+            head_fit(&format!("Talk to {}...", summary.name), input_capacity)
+        }
     } else {
         tail_fit(&view.text_buffer, input_capacity)
     };
-    text.push(label("compose/input-text", &input_value, 14, 160, 34));
+    text.push(label("compose/input-text", &input_value, 18, 159, 34));
     hits.push(hit(
         "compose/input",
         Some(UiTarget::ComposeField),
@@ -1670,12 +1674,6 @@ fn add_persistent_bar(
         31,
         rects,
     );
-    icons.push(icon(
-        "ui/button-microphone",
-        microphone_rect.x + microphone_rect.w / 2,
-        microphone_rect.y + 8,
-        35,
-    ));
     hits.push(hit(
         "compose/food",
         Some(UiTarget::Actions),
@@ -1685,12 +1683,6 @@ fn add_persistent_bar(
         "Food",
     ));
     add_button_chrome("compose/food", food_rect, true, false, 31, rects);
-    icons.push(icon(
-        "ui/button-food",
-        food_rect.x + food_rect.w / 2,
-        food_rect.y + 8,
-        35,
-    ));
     if matches!(view.mode, UiMode::Compose) {
         hits.push(hit(
             "compose/settings",
@@ -1701,12 +1693,6 @@ fn add_persistent_bar(
             "Settings",
         ));
         add_button_chrome("compose/settings", settings_rect, true, false, 31, rects);
-        icons.push(icon(
-            "ui/button-settings",
-            settings_rect.x + settings_rect.w / 2,
-            settings_rect.y + 8,
-            35,
-        ));
     } else {
         hits.push(hit(
             "compose/close",
@@ -1717,13 +1703,6 @@ fn add_persistent_bar(
             "Close",
         ));
         add_button_chrome("compose/close", settings_rect, true, false, 31, rects);
-        text.push(label(
-            "compose/close-label",
-            "x",
-            settings_rect.x + 9,
-            settings_rect.y + 7,
-            35,
-        ));
     }
     let send_action = if matches!(view.mode, UiMode::Rename) {
         UiAction::SubmitName
@@ -1735,15 +1714,15 @@ fn add_persistent_bar(
     } else {
         "Send"
     };
+    let send_enabled = !view.pending && !view.text_buffer.trim().is_empty();
     hits.push(hit(
         "compose/send",
         None,
         send_action,
         send_rect,
-        !view.pending && !view.text_buffer.trim().is_empty(),
+        send_enabled,
         send_label,
     ));
-    let send_enabled = !view.pending && !view.text_buffer.trim().is_empty();
     add_button_chrome(
         "compose/send",
         send_rect,
@@ -1752,12 +1731,6 @@ fn add_persistent_bar(
         31,
         rects,
     );
-    icons.push(icon(
-        "ui/button-send",
-        send_rect.x + send_rect.w / 2,
-        send_rect.y + 8,
-        35,
-    ));
     for (id, title, area) in [
         ("speak", "Speak", microphone_rect),
         ("feed", "Feed", food_rect),
@@ -1776,16 +1749,16 @@ fn add_persistent_bar(
             &format!("compose/control-{id}"),
             title,
             area.x + 2,
-            area.y + 15,
+            area.y + 3,
             35,
         );
         caption.bounds = Some(Rect {
             x: area.x + 2,
-            y: area.y + 15,
+            y: area.y + 2,
             w: area.w - 4,
-            h: 7,
+            h: area.h - 4,
         });
-        caption.role = TextRole::ControlCaption;
+        caption.role = TextRole::Control;
         caption.muted = (id == "send" && !send_enabled) || (id == "speak" && !microphone_available);
         text.push(caption);
     }
@@ -1818,6 +1791,7 @@ fn tail_fit(value: &str, capacity: usize) -> String {
 }
 
 fn add_temporary_mode(
+    state: &WorldState,
     view: &ViewState,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
@@ -1827,7 +1801,11 @@ fn add_temporary_mode(
         UiMode::Compose => {}
         UiMode::Context(target) => {
             let actions = contextual_actions(target);
-            add_action_strip("context", &actions, 100, rects, text, hits);
+            let (_, head_y) = world_to_logical(state.creature.aquarium.position);
+            // Avoid the head when opened; thereafter the control positions stay stable.
+            let above = view.context_above.unwrap_or(head_y > 68);
+            let row_y = if above { 21 } else { 105 };
+            add_action_strip("context", &actions, row_y, rects, text, hits);
         }
         UiMode::FoodChoice => add_action_strip(
             "food",
@@ -1877,7 +1855,7 @@ fn add_temporary_mode(
         UiMode::Settings => add_settings(view, rects, text, hits),
         UiMode::Bindings => add_bindings(view, rects, text, hits),
         UiMode::Rebinding(action) => add_rebinding(action, rects, text),
-        UiMode::Rename => add_rename(view, rects, text),
+        UiMode::Rename => add_rename(state, view, rects, text),
         UiMode::DataManagement => add_data_management(view, rects, text, hits),
         UiMode::ConfirmReset => add_reset_confirmation(rects, text, hits),
     }
@@ -1985,13 +1963,13 @@ fn add_settings(
         ),
         (
             "speech-volume",
-            "Speech",
+            "Speech volume",
             volume_label(view.speech_volume),
             UiAction::CycleSpeechVolume,
         ),
         (
             "voice",
-            "Voice",
+            "Spoken replies",
             on_off(view.voice_enabled),
             UiAction::ToggleVoice,
         ),
@@ -2064,7 +2042,12 @@ fn add_settings(
     }
 }
 
-fn add_rename(view: &ViewState, rects: &mut Vec<RectCommand>, text: &mut Vec<TextCommand>) {
+fn add_rename(
+    state: &WorldState,
+    view: &ViewState,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+) {
     add_panel_chrome(
         "rename/prompt-background",
         Rect {
@@ -2076,17 +2059,12 @@ fn add_rename(view: &ViewState, rects: &mut Vec<RectCommand>, text: &mut Vec<Tex
         25,
         rects,
     );
-    text.push(label(
-        "rename/prompt",
-        if view.text_buffer.trim().is_empty() {
-            "Type a real name"
-        } else {
-            "Enter confirms, Escape cancels"
-        },
-        82,
-        25,
-        29,
-    ));
+    let prompt = if view.text_buffer.trim().is_empty() {
+        format!("Choose a name for {}", head_fit(&state.creature.name, 16))
+    } else {
+        "Enter confirms, Escape cancels".to_owned()
+    };
+    text.push(label("rename/prompt", &prompt, 82, 25, 29));
 }
 
 fn add_data_management(
@@ -2417,9 +2395,9 @@ fn add_action_strip(
         &format!("mode/{id}-panel"),
         Rect {
             x: start,
-            y: y - 13,
+            y: y - 17,
             w: width,
-            h: 40,
+            h: 44,
         },
         25,
         rects,
@@ -2432,7 +2410,7 @@ fn add_action_strip(
             _ => "Spend a moment",
         },
         start + 7,
-        y - 9,
+        y - 13,
         29,
     ));
     for (index, action) in actions.iter().copied().enumerate() {
@@ -2583,7 +2561,7 @@ fn add_speech(
     let glyph_width = (font_size * 0.56).ceil() as i32;
     let natural_width =
         i32::try_from(layout_text.chars().count()).unwrap_or(300) * glyph_width + 18;
-    let mut width = natural_width.clamp(84, 160);
+    let mut width = natural_width.clamp(if view.text_scale >= 2 { 150 } else { 120 }, 160);
     let line_height = (font_size * 1.2).ceil() as i32;
     let mut lines = speech_line_count(layout_text, ((width - 18) / glyph_width) as usize);
     // Long captions at the large accessibility size may use the full tank width.
@@ -2591,7 +2569,7 @@ fn add_speech(
         width = 300;
         lines = speech_line_count(layout_text, ((width - 18) / glyph_width) as usize);
     }
-    let height = (lines * line_height + 16).clamp(27, 94);
+    let height = (lines * line_height + 25).clamp(36, 103);
     let panel_x = if creature_x >= LOGICAL_WIDTH / 2 {
         5
     } else {
@@ -2609,35 +2587,30 @@ fn add_speech(
         rects,
     );
     let reactions_y = 5 + height;
-    let tail_y = reactions_y + 18;
-    let tail_x = if creature_x >= LOGICAL_WIDTH / 2 {
-        panel_x + width - 12
-    } else {
-        panel_x + 3
-    };
-    rects.push(rect(
-        "speech/tail-edge",
-        Rect {
-            x: tail_x,
-            y: tail_y,
-            w: 9,
-            h: 3,
-        },
-        UI_EDGE,
-        24,
-    ));
-    rects.push(rect(
-        "speech/tail",
-        Rect {
-            x: tail_x + 2,
-            y: tail_y,
-            w: 5,
-            h: 5,
-        },
-        UI_PANEL,
-        25,
-    ));
-    text.push(label("speech/text", speech, panel_x + 9, 13, 27));
+    let mut speaker = label(
+        "speech/speaker",
+        &format!("{} says", head_fit(&state.creature.name, 16)),
+        panel_x + 9,
+        10,
+        27,
+    );
+    speaker.role = TextRole::Secondary;
+    speaker.bounds = Some(Rect {
+        x: panel_x + 9,
+        y: 8,
+        w: width - 18,
+        h: 10,
+    });
+    text.push(speaker);
+    let mut caption = label("speech/text", speech, panel_x + 9, 22, 27);
+    caption.role = TextRole::Dialogue;
+    caption.bounds = Some(Rect {
+        x: panel_x + 9,
+        y: 22,
+        w: width - 18,
+        h: height - 20,
+    });
+    text.push(caption);
     let reaction_width = (width - 16) / 3;
     for (index, reaction) in [Reaction::Laugh, Reaction::Disapprove, Reaction::Comfort]
         .into_iter()
@@ -2665,7 +2638,18 @@ fn add_speech(
             26,
             rects,
         );
-        add_reaction_icon(reaction, reaction_rect, 30, rects);
+        let shown = match reaction {
+            Reaction::Laugh => "Laugh",
+            Reaction::Disapprove => "Disapprove",
+            Reaction::Comfort => "Comfort",
+        };
+        text.push(label(
+            &format!("reaction/{}-label", reaction_name(reaction)),
+            shown,
+            reaction_rect.x + 3,
+            reaction_rect.y + 3,
+            30,
+        ));
     }
 }
 
@@ -2702,19 +2686,19 @@ fn add_status(
     };
     let text_scale = view.text_scale.clamp(1, 2);
     let glyph_width = usize::from(text_scale) * 6;
-    let fitted = head_fit(message, 170 / glyph_width * 2);
+    let fitted = head_fit(message, 218 / glyph_width * 2);
     add_panel_chrome(
         "status/background",
         Rect {
-            x: 145,
-            y: 134,
-            w: 167,
-            h: 16,
+            x: 79,
+            y: 132,
+            w: 229,
+            h: 14,
         },
         35,
         rects,
     );
-    text.push(label("status/message", &fitted, 149, 136, 39));
+    text.push(label("status/message", &fitted, 84, 135, 39));
 }
 
 fn visible_status(view: &ViewState, now_ms: u64) -> Option<&str> {
@@ -2767,6 +2751,19 @@ fn add_hover_and_focus(
         if matches!(hit_region.shape, HitShape::World(_)) {
             continue;
         }
+        if hit_region.id == "compose/input" {
+            rects.push(rect(
+                command_id,
+                Rect {
+                    y: hit_region.rect.y + hit_region.rect.h - 1,
+                    h: 1,
+                    ..hit_region.rect
+                },
+                color,
+                34,
+            ));
+            continue;
+        }
         rects.push(RectCommand {
             id: command_id.to_owned(),
             rect: grow(hit_region.rect, 1),
@@ -2789,7 +2786,7 @@ fn add_hover_and_focus(
     };
     // Text-labeled controls already explain themselves. Repeating their label in a tooltip
     // obscures neighboring settings and fields while the player is using them.
-    if !matches!(hit_region.shape, HitShape::World(_)) && !hit_region.id.starts_with("reaction/") {
+    if !matches!(hit_region.shape, HitShape::World(_)) {
         return;
     }
     let label_width =
@@ -3281,34 +3278,7 @@ fn rect(id: &str, dimensions: Rect, color: [u8; 4], layer: i16) -> RectCommand {
     }
 }
 
-fn icon(id: &str, x: i32, y: i32, layer: i16) -> IconCommand {
-    let kind = match id {
-        "ui/button-microphone" => IconKind::Microphone,
-        "ui/button-food" => IconKind::Food,
-        "ui/button-settings" => IconKind::Settings,
-        "ui/button-send" => IconKind::Send,
-        _ => unreachable!("unknown geometric icon"),
-    };
-    IconCommand {
-        id: id.to_owned(),
-        kind,
-        x,
-        y,
-        layer,
-    }
-}
-
 fn add_panel_chrome(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<RectCommand>) {
-    rects.push(rect(
-        &format!("{id}-shadow"),
-        Rect {
-            x: dimensions.x + 2,
-            y: dimensions.y + 2,
-            ..dimensions
-        },
-        UI_SHADOW,
-        layer - 2,
-    ));
     rects.push(rect(&format!("{id}-edge"), dimensions, UI_EDGE, layer - 1));
     rects.push(rect(
         id,
@@ -3321,185 +3291,23 @@ fn add_panel_chrome(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<Rect
         UI_PANEL,
         layer,
     ));
-    rects.push(rect(
-        &format!("{id}-glint"),
-        Rect {
-            x: dimensions.x + 2,
-            y: dimensions.y + 2,
-            w: dimensions.w - 4,
-            h: 1,
-        },
-        UI_EDGE_LIT,
-        layer + 1,
-    ));
-}
-
-fn add_reaction_icon(
-    reaction: Reaction,
-    dimensions: Rect,
-    layer: i16,
-    rects: &mut Vec<RectCommand>,
-) {
-    let center_x = dimensions.x + dimensions.w / 2;
-    let y = dimensions.y + 6;
-    let color = [235, 207, 148, 255];
-    match reaction {
-        Reaction::Laugh => {
-            rects.push(rect(
-                "reaction/laugh-left-eye",
-                Rect {
-                    x: center_x - 7,
-                    y,
-                    w: 3,
-                    h: 2,
-                },
-                color,
-                layer,
-            ));
-            rects.push(rect(
-                "reaction/laugh-right-eye",
-                Rect {
-                    x: center_x + 4,
-                    y,
-                    w: 3,
-                    h: 2,
-                },
-                color,
-                layer,
-            ));
-            rects.push(rect(
-                "reaction/laugh-mouth",
-                Rect {
-                    x: center_x - 6,
-                    y: y + 4,
-                    w: 12,
-                    h: 2,
-                },
-                color,
-                layer,
-            ));
-        }
-        Reaction::Disapprove => {
-            rects.push(rect(
-                "reaction/no-left-eye",
-                Rect {
-                    x: center_x - 6,
-                    y,
-                    w: 3,
-                    h: 3,
-                },
-                UI_CORAL,
-                layer,
-            ));
-            rects.push(rect(
-                "reaction/no-right-eye",
-                Rect {
-                    x: center_x + 3,
-                    y,
-                    w: 3,
-                    h: 3,
-                },
-                UI_CORAL,
-                layer,
-            ));
-            rects.push(rect(
-                "reaction/no-mouth",
-                Rect {
-                    x: center_x - 6,
-                    y: y + 6,
-                    w: 12,
-                    h: 2,
-                },
-                UI_CORAL,
-                layer,
-            ));
-        }
-        Reaction::Comfort => {
-            for (id, icon) in [
-                (
-                    "top",
-                    Rect {
-                        x: center_x - 5,
-                        y,
-                        w: 4,
-                        h: 3,
-                    },
-                ),
-                (
-                    "top-right",
-                    Rect {
-                        x: center_x + 1,
-                        y,
-                        w: 4,
-                        h: 3,
-                    },
-                ),
-                (
-                    "middle",
-                    Rect {
-                        x: center_x - 5,
-                        y: y + 2,
-                        w: 10,
-                        h: 3,
-                    },
-                ),
-                (
-                    "low",
-                    Rect {
-                        x: center_x - 3,
-                        y: y + 5,
-                        w: 6,
-                        h: 2,
-                    },
-                ),
-                (
-                    "tip",
-                    Rect {
-                        x: center_x - 1,
-                        y: y + 7,
-                        w: 2,
-                        h: 1,
-                    },
-                ),
-            ] {
-                rects.push(rect(&format!("reaction/heart-{id}"), icon, UI_CORAL, layer));
-            }
-        }
-    }
 }
 
 fn add_inset(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<RectCommand>) {
     rects.push(rect(
-        &format!("{id}-shadow"),
-        Rect {
-            x: dimensions.x + 1,
-            y: dimensions.y + 1,
-            ..dimensions
-        },
-        UI_SHADOW,
-        layer,
-    ));
-    rects.push(rect(&format!("{id}-edge"), dimensions, UI_EDGE, layer + 1));
-    rects.push(rect(
         &format!("{id}-background"),
-        Rect {
-            x: dimensions.x + 1,
-            y: dimensions.y + 1,
-            w: dimensions.w - 2,
-            h: dimensions.h - 2,
-        },
+        dimensions,
         UI_PANEL_INSET,
         layer + 2,
     ));
     rects.push(rect(
-        &format!("{id}-inner-glint"),
+        &format!("{id}-baseline"),
         Rect {
-            x: dimensions.x + 2,
-            y: dimensions.y + 2,
-            w: dimensions.w - 4,
+            y: dimensions.y + dimensions.h - 1,
             h: 1,
+            ..dimensions
         },
-        [50, 103, 105, 180],
+        UI_EDGE,
         layer + 3,
     ));
 }
@@ -3513,69 +3321,31 @@ fn add_button_chrome(
     rects: &mut Vec<RectCommand>,
 ) {
     rects.push(rect(
-        &format!("{id}-shadow"),
-        Rect {
-            x: dimensions.x + 1,
-            y: dimensions.y + 1,
-            ..dimensions
-        },
-        UI_SHADOW,
-        layer,
-    ));
-    rects.push(rect(
-        &format!("{id}-edge"),
-        dimensions,
-        if active {
-            UI_CORAL
-        } else if enabled {
-            UI_EDGE
-        } else {
-            UI_BUTTON_DISABLED
-        },
-        layer + 1,
-    ));
-    rects.push(rect(
         &format!("{id}-background"),
-        Rect {
-            x: dimensions.x + 1,
-            y: dimensions.y + 1,
-            w: dimensions.w - 2,
-            h: dimensions.h - 2,
-        },
-        if enabled {
-            UI_BUTTON
-        } else {
+        dimensions,
+        if !enabled {
             UI_BUTTON_DISABLED
+        } else {
+            match id {
+                // Care has a distinct enamel face; utility navigation rests on the rail.
+                "compose/food" => [66, 82, 64, 255],
+                "compose/settings" | "compose/close" => UI_PANEL,
+                _ => UI_BUTTON,
+            }
         },
         layer + 2,
     ));
-    rects.push(rect(
-        &format!("{id}-glint"),
-        Rect {
-            x: dimensions.x + 2,
-            y: dimensions.y + 2,
-            w: dimensions.w - 4,
-            h: 1,
-        },
-        if !enabled {
-            [41, 65, 72, 255]
-        } else if active {
-            [239, 159, 126, 230]
-        } else {
-            UI_EDGE_LIT
-        },
-        layer + 3,
-    ));
-}
-
-const fn mood_color(mood: Mood) -> [u8; 4] {
-    match mood {
-        Mood::Content => [123, 207, 177, 255],
-        Mood::Curious => [115, 191, 219, 255],
-        Mood::Hungry => [229, 168, 91, 255],
-        Mood::Sleepy => [153, 139, 195, 255],
-        Mood::Lonely => [113, 143, 179, 255],
-        Mood::Resentful => [213, 103, 91, 255],
+    if active {
+        rects.push(rect(
+            &format!("{id}-accent"),
+            Rect {
+                y: dimensions.y + dimensions.h - 1,
+                h: 1,
+                ..dimensions
+            },
+            UI_CORAL,
+            layer + 3,
+        ));
     }
 }
 
@@ -3745,10 +3515,10 @@ mod tests {
         .0;
         let panel = scene.rects.iter().find(|r| r.id == "speech/panel").unwrap();
         assert!(
-            panel.rect.h <= 30,
+            panel.rect.h <= 40,
             "short speech should not reserve several empty rows"
         );
-        assert!(panel.rect.w < 130);
+        assert!(panel.rect.w <= 150);
     }
 
     #[test]
@@ -3775,7 +3545,7 @@ mod tests {
             },
         )
         .0;
-        assert!(reaction.text.iter().any(|t| t.id == "ui/hover-label"));
+        assert!(reaction.text.iter().all(|t| t.id != "ui/hover-label"));
     }
 
     #[test]
@@ -3896,6 +3666,145 @@ mod tests {
     }
 
     #[test]
+    fn contextual_actions_keep_their_opening_anchor_while_the_creature_moves() {
+        for above in [false, true] {
+            let mut state = WorldState::new(42, "Mop");
+            let view = ViewState {
+                mode: UiMode::Context(UiTarget::Creature),
+                context_above: Some(above),
+                ..Default::default()
+            };
+            let mut opening = None;
+            for y in [0, 5000, 10_000] {
+                state.creature.aquarium.position = NormalizedPosition::new(5000, y);
+                let scene = plan(&state, &view).0;
+                let controls: Vec<_> = scene
+                    .hit_regions
+                    .iter()
+                    .filter(|h| h.id.starts_with("action/"))
+                    .map(|h| h.rect)
+                    .collect();
+                if let Some(expected) = &opening {
+                    assert_eq!(&controls, expected);
+                } else {
+                    opening = Some(controls);
+                }
+                let panel = scene
+                    .rects
+                    .iter()
+                    .find(|r| r.id == "mode/context-panel-edge")
+                    .unwrap();
+                assert!(
+                    panel.rect.y + panel.rect.h <= 132,
+                    "reserve technical feedback row"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn contextual_actions_open_clear_of_the_head_throughout_the_tank() {
+        for y in (0..=10_000).step_by(100) {
+            let mut state = WorldState::new(42, "Mop");
+            state.creature.aquarium.position = NormalizedPosition::new(5000, y);
+            let (head_x, head_y) = world_to_logical(state.creature.aquarium.position);
+            let head = Rect {
+                x: head_x - CREATURE_HIT_WIDTH / 2,
+                y: head_y - CREATURE_HIT_HEIGHT / 2,
+                w: CREATURE_HIT_WIDTH,
+                h: CREATURE_HIT_HEIGHT,
+            };
+            for text_scale in [1, 2] {
+                let scene = plan(
+                    &state,
+                    &ViewState {
+                        mode: UiMode::Context(UiTarget::Creature),
+                        text_scale,
+                        ..Default::default()
+                    },
+                )
+                .0;
+                let panel = scene
+                    .rects
+                    .iter()
+                    .find(|r| r.id == "mode/context-panel-edge")
+                    .unwrap();
+                assert!(
+                    !rects_overlap(head, panel.rect),
+                    "head at {head_y}: {:?}",
+                    panel.rect
+                );
+                assert!(panel.rect.y >= 0 && panel.rect.y + panel.rect.h <= AQUARIUM_BOTTOM);
+                for hit in scene
+                    .hit_regions
+                    .iter()
+                    .filter(|h| h.id.starts_with("action/"))
+                {
+                    assert!(
+                        hit.rect.y >= panel.rect.y
+                            && hit.rect.y + hit.rect.h <= panel.rect.y + panel.rect.h
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn speech_and_rename_text_explain_their_purpose() {
+        let state = WorldState::new(42, "Mop");
+        let rename = plan(
+            &state,
+            &ViewState {
+                mode: UiMode::Rename,
+                ..Default::default()
+            },
+        )
+        .0;
+        assert!(
+            rename
+                .text
+                .iter()
+                .any(|t| t.id == "rename/prompt" && t.text == "Choose a name for Mop")
+        );
+        assert!(
+            rename
+                .text
+                .iter()
+                .any(|t| t.id == "compose/input-text" && t.text == "New name…")
+        );
+        for text_scale in [1, 2] {
+            let speech = plan(
+                &state,
+                &ViewState {
+                    speech: Some("Hello".to_owned()),
+                    text_scale,
+                    ..Default::default()
+                },
+            )
+            .0;
+            let speaker = speech
+                .text
+                .iter()
+                .find(|t| t.id == "speech/speaker")
+                .unwrap();
+            let words = speech.text.iter().find(|t| t.id == "speech/text").unwrap();
+            assert_eq!(speaker.text, "Mop says");
+            assert!(!rects_overlap(
+                speaker.bounds.unwrap(),
+                words.bounds.unwrap()
+            ));
+            for name in ["laugh", "disapprove", "comfort"] {
+                assert!(
+                    speech
+                        .text
+                        .iter()
+                        .any(|t| t.id == format!("reaction/{name}-label"))
+                );
+            }
+        }
+    }
+
+    #[test]
     fn short_caption_fits_content_and_keeps_all_reaction_targets() {
         let state = WorldState::new(42, "Mop");
         let mut view = ViewState::default();
@@ -3907,7 +3816,7 @@ mod tests {
             .find(|r| r.id == "speech/panel-edge")
             .expect("caption panel");
         assert!(panel.rect.w < 160);
-        assert_eq!(panel.rect.h, 27);
+        assert_eq!(panel.rect.h, 36);
         let reactions: Vec<_> = full
             .hit_regions
             .iter()
@@ -4680,11 +4589,12 @@ mod tests {
                     .iter()
                     .find(|command| command.id == "compose/summary-name")
                     .expect("summary name");
-                let summary_behavior = render
-                    .text
-                    .iter()
-                    .find(|command| command.id == "compose/summary-behavior")
-                    .expect("summary behavior");
+                assert!(
+                    !render
+                        .text
+                        .iter()
+                        .any(|t| t.id == "compose/summary-behavior")
+                );
                 let input = render
                     .text
                     .iter()
@@ -4696,23 +4606,23 @@ mod tests {
                     .find(|command| command.id == "compose/input-background")
                     .expect("input background")
                     .rect;
-                assert!(text_right(summary_name) < summary_behavior.x);
-                assert!(text_right(summary_behavior) <= LOGICAL_WIDTH - 5);
+                assert!(!rects_overlap(summary_name.bounds.unwrap(), input_box));
                 assert!(text_right(input) <= input_box.x + input_box.w - 3);
                 for action in ["food", "settings", "send"] {
-                    let icon = render
-                        .icons
+                    let caption_id = if action == "food" { "feed" } else { action };
+                    let caption = render
+                        .text
                         .iter()
-                        .find(|command| command.id == format!("ui/button-{action}"))
-                        .expect("action icon");
+                        .find(|t| t.id == format!("compose/control-{caption_id}"))
+                        .expect("action caption");
                     let background = render
                         .rects
                         .iter()
                         .find(|command| command.id == format!("compose/{action}-background"))
                         .expect("action background")
                         .rect;
-                    assert!(icon.x >= background.x);
-                    assert!(icon.x + 5 <= background.x + background.w);
+                    assert!(caption.bounds.unwrap().x >= background.x);
+                    assert!(text_right(caption) <= background.x + background.w);
                     assert!(!rects_overlap(input_box, background));
                 }
             }
@@ -4848,21 +4758,16 @@ mod tests {
                 .find(|command| command.id == "status/message")
                 .expect("status message");
             assert!(text_right(message) <= status.x + status.w - 3);
-            assert!(
-                render
-                    .text
-                    .iter()
-                    .any(|command| command.id == "compose/summary-name")
-            );
-            let name = render
+            if let Some(name) = render
                 .text
                 .iter()
                 .find(|command| command.id == "compose/summary-name")
-                .unwrap();
-            assert!(!rects_overlap(
-                name.bounds.unwrap(),
-                message.bounds.unwrap()
-            ));
+            {
+                assert!(!rects_overlap(
+                    name.bounds.unwrap(),
+                    message.bounds.unwrap()
+                ));
+            }
         }
     }
 
@@ -5036,18 +4941,76 @@ mod tests {
     }
 
     #[test]
-    fn modal_hides_world_picking_and_geometry_icons_are_complete() {
+    fn compose_focus_is_an_underlined_field_and_nameplate_fits_identity() {
+        let state = WorldState::new(7, "Mop");
+        let scene = plan(
+            &state,
+            &ViewState {
+                focused_region: Some("compose/input".to_owned()),
+                ..Default::default()
+            },
+        )
+        .0;
+        let focus = scene.rects.iter().find(|r| r.id == "ui/focus").unwrap();
+        let field = scene
+            .hit_regions
+            .iter()
+            .find(|r| r.id == "compose/input")
+            .unwrap();
+        assert!(!focus.outline);
+        assert_eq!(focus.rect.h, 1);
+        assert_eq!(focus.rect.y, field.rect.y + field.rect.h - 1);
+        let plate = scene
+            .rects
+            .iter()
+            .find(|r| r.id == "compose/identity-plate")
+            .unwrap();
+        assert_eq!(plate.rect.w, 27);
+        assert_eq!(plate.rect.h, 14);
+    }
+
+    #[test]
+    fn quiet_identity_gives_way_to_speech_and_modal_content() {
+        let state = WorldState::new(7, "Mop");
+        let quiet = plan(&state, &ViewState::default()).0;
+        assert!(
+            quiet
+                .text
+                .iter()
+                .any(|t| t.id == "compose/summary-name" && t.text == "Mop")
+        );
+        assert!(
+            !quiet
+                .text
+                .iter()
+                .any(|t| t.id == "compose/summary-behavior" || t.id == "status/message")
+        );
+        for view in [
+            ViewState {
+                speech: Some("Hello".to_owned()),
+                ..Default::default()
+            },
+            ViewState {
+                mode: UiMode::Settings,
+                ..Default::default()
+            },
+        ] {
+            let scene = plan(&state, &view).0;
+            assert!(!scene.text.iter().any(|t| t.id == "compose/summary-name"));
+            assert!(!scene.rects.iter().any(|r| r.id == "compose/identity-plate"));
+        }
+    }
+
+    #[test]
+    fn modal_hides_world_picking_and_controls_have_explicit_labels() {
         let state = WorldState::new(7, "Mop");
         let scene = plan(&state, &ViewState::default()).0;
-        for kind in [
-            IconKind::Microphone,
-            IconKind::Food,
-            IconKind::Settings,
-            IconKind::Send,
-        ] {
-            assert_eq!(
-                scene.icons.iter().filter(|icon| icon.kind == kind).count(),
-                1
+        for action in ["send", "speak", "feed", "settings"] {
+            assert!(
+                scene
+                    .text
+                    .iter()
+                    .any(|text| text.id == format!("compose/control-{action}"))
             );
         }
         let modal = plan(

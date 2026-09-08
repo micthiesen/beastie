@@ -999,6 +999,12 @@ impl Game {
         }
         match action {
             UiAction::OpenContext(target) => {
+                // Choose the clear region once. Swimming must not move controls under a pointer.
+                self.view.context_above = Some(
+                    beastie_view::world_to_logical(self.session.world().creature.aquarium.position)
+                        .1
+                        > 68,
+                );
                 self.view.mode = UiMode::Context(target);
                 self.reset_focus();
             }

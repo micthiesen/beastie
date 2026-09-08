@@ -1,5 +1,5 @@
-//! Bevy's native 3D presentation. Every non-text mark is solid colored geometry.
-use std::collections::BTreeMap;
+//! Native 3D presentation. World forms, controls and lettering are ray-traced geometry.
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use beastie_core::{NormalizedPosition, ToyId};
 use beastie_view::{
@@ -65,6 +65,7 @@ impl Plugin for RendererPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ObjectMeshes>()
             .init_resource::<EffectMesh>()
+            .init_resource::<SceneryPicking>()
             .init_resource::<UiCache>()
             .init_resource::<crate::glyphs::Lettering>()
             .add_systems(Startup, (setup, crate::creature::setup_creature))
@@ -79,6 +80,13 @@ impl Plugin for RendererPlugin {
                 )
                     .chain()
                     .after(HostSet::Publish),
+            )
+            .add_systems(
+                PostUpdate,
+                sync_scenery_picking
+                    .after(bevy::asset::AssetEventSystems)
+                    .after(bevy::transform::TransformSystems::Propagate)
+                    .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
             );
     }
 }
@@ -491,29 +499,19 @@ fn sync_ui(mut ui: UiSystem) {
                 let w = r.w as f32 / UNITS;
                 let h = r.h as f32 / UNITS;
                 for y in [-h * 0.5, h * 0.5] {
-                    shape.cuboid(center + Vec3::Y * y, Vec3::new(w, 0.028, 0.02), color);
+                    shape.cuboid(center + Vec3::Y * y, Vec3::new(w, 0.014, 0.02), color);
                 }
                 for x in [-w * 0.5, w * 0.5] {
-                    shape.cuboid(center + Vec3::X * x, Vec3::new(0.028, h, 0.02), color);
+                    shape.cuboid(center + Vec3::X * x, Vec3::new(0.014, h, 0.02), color);
                 }
             } else {
-                let cut = if r.w >= 20 && r.h >= 12 && !rect.id.starts_with("compose/bar") {
-                    0.065
-                } else {
-                    0.0
-                };
-                let w = r.w as f32 / UNITS;
-                let h = r.h as f32 / UNITS;
-                shape.cuboid(center, Vec3::new(w, h - cut * 2.0, 0.02), color);
-                if cut > 0.0 {
-                    for side in [-1.0, 1.0] {
-                        shape.cuboid(
-                            center + Vec3::Y * side * (h - cut) * 0.5,
-                            Vec3::new(w - cut * 2.0, cut, 0.02),
-                            color,
-                        );
-                    }
-                }
+                // Calm continuous faces let spacing and typography establish hierarchy.
+                // Surface details are authored by the view, not added to every rectangle.
+                shape.cuboid(
+                    center,
+                    Vec3::new(r.w as f32 / UNITS, r.h as f32 / UNITS, 0.02),
+                    color,
+                );
             }
         }
         let mut replacement = shape.mesh();
@@ -851,12 +849,182 @@ pub fn pointer_world(
     ))
 }
 
+/// Only hollow/thin scenery requires exact geometry. Each shared mesh is decoded once;
+/// pointer input tests two local bounds rather than traversing the entire rendered scene.
+#[derive(Resource, Default)]
+pub(crate) struct SceneryPicking {
+    meshes: HashMap<AssetId<Mesh>, PickMesh>,
+    instances: HashMap<u64, (AssetId<Mesh>, Mat4)>,
+}
+
+impl SceneryPicking {
+    fn hit(&self, id: u64, origin: Vec3, direction: Vec3) -> Option<f32> {
+        let (mesh, inverse) = self.instances.get(&id)?;
+        self.meshes.get(mesh)?.hit(
+            inverse.transform_point3(origin),
+            inverse.transform_vector3(direction),
+        )
+    }
+}
+
+struct PickMesh {
+    min: Vec3,
+    max: Vec3,
+    triangles: Vec<[Vec3; 3]>,
+}
+
+impl PickMesh {
+    fn from_mesh(mesh: &Mesh) -> Option<Self> {
+        if mesh.primitive_topology()
+            != bevy::render::render_resource::PrimitiveTopology::TriangleList
+        {
+            return None;
+        }
+        let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION)?.as_float3()?;
+        let indices: Vec<usize> = mesh.indices().map_or_else(
+            || (0..positions.len()).collect(),
+            |indices| indices.iter().collect(),
+        );
+        let mut result = Self {
+            min: Vec3::splat(f32::INFINITY),
+            max: Vec3::splat(f32::NEG_INFINITY),
+            triangles: Vec::new(),
+        };
+        for indices in indices.chunks_exact(3) {
+            let [Some(a), Some(b), Some(c)] = [
+                positions.get(indices[0]),
+                positions.get(indices[1]),
+                positions.get(indices[2]),
+            ] else {
+                continue;
+            };
+            let vertices = [Vec3::from(*a), Vec3::from(*b), Vec3::from(*c)];
+            if !vertices.iter().all(|point| point.is_finite())
+                || (vertices[1] - vertices[0])
+                    .cross(vertices[2] - vertices[0])
+                    .length_squared()
+                    < 1e-20
+            {
+                continue;
+            }
+            for point in vertices {
+                result.min = result.min.min(point);
+                result.max = result.max.max(point);
+            }
+            result.triangles.push(vertices);
+        }
+        (!result.triangles.is_empty()).then_some(result)
+    }
+
+    fn hit(&self, origin: Vec3, direction: Vec3) -> Option<f32> {
+        if !origin.is_finite() || !direction.is_finite() || direction.length_squared() == 0.0 {
+            return None;
+        }
+        let mut near = 0.0_f32;
+        let mut far = f32::INFINITY;
+        for axis in 0..3 {
+            if direction[axis].abs() < 1e-12 {
+                if origin[axis] < self.min[axis] || origin[axis] > self.max[axis] {
+                    return None;
+                }
+            } else {
+                let a = (self.min[axis] - origin[axis]) / direction[axis];
+                let b = (self.max[axis] - origin[axis]) / direction[axis];
+                near = near.max(a.min(b));
+                far = far.min(a.max(b));
+                if near > far {
+                    return None;
+                }
+            }
+        }
+        let mut closest: Option<f32> = None;
+        for &[a, b, c] in &self.triangles {
+            let edge1 = b - a;
+            let edge2 = c - a;
+            let cross = direction.cross(edge2);
+            let determinant = edge1.dot(cross);
+            // Double-sided, like the production ray tracer. Keep local direction
+            // unnormalized so the parameter still compares against world-space targets.
+            if determinant.abs() < 1e-12 {
+                continue;
+            }
+            let delta = origin - a;
+            let u = delta.dot(cross) / determinant;
+            if !(-1e-5..=1.00001).contains(&u) {
+                continue;
+            }
+            let q = delta.cross(edge1);
+            let v = direction.dot(q) / determinant;
+            if v < -1e-5 || u + v > 1.00001 {
+                continue;
+            }
+            let distance = edge2.dot(q) / determinant;
+            if distance >= 0.0 && closest.is_none_or(|previous| distance < previous) {
+                closest = Some(distance);
+            }
+        }
+        closest
+    }
+}
+
+type SceneryInstances<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static WorldObject,
+        &'static Mesh3d,
+        &'static GlobalTransform,
+        Option<&'static InheritedVisibility>,
+    ),
+>;
+
+fn sync_scenery_picking(
+    frame: Res<SceneFrame>,
+    meshes: Res<Assets<Mesh>>,
+    mut events: MessageReader<AssetEvent<Mesh>>,
+    objects: SceneryInstances,
+    mut cache: ResMut<SceneryPicking>,
+) {
+    for event in events.read() {
+        if let AssetEvent::Modified { id } | AssetEvent::Removed { id } = event {
+            cache.meshes.remove(id);
+        }
+    }
+    cache.instances.clear();
+    let mut used = HashSet::new();
+    for (object, mesh, transform, visibility) in &objects {
+        if visibility.is_some_and(|visibility| !visibility.get())
+            || !frame.plan.objects.iter().any(|plan| {
+                plan.id == object.0 && matches!(plan.kind, ObjectKind::Plant | ObjectKind::Cave)
+            })
+        {
+            continue;
+        }
+        let inverse = transform.to_matrix().inverse();
+        if !inverse.is_finite() {
+            continue;
+        }
+        let Some(asset) = meshes.get(mesh.id()) else {
+            continue;
+        };
+        used.insert(mesh.id());
+        if let std::collections::hash_map::Entry::Vacant(entry) = cache.meshes.entry(mesh.id())
+            && let Some(geometry) = PickMesh::from_mesh(asset)
+        {
+            entry.insert(geometry);
+        }
+        cache.instances.insert(object.0, (mesh.id(), inverse));
+    }
+    cache.meshes.retain(|id, _| used.contains(id));
+}
+
 pub fn pick(
     plan: &ScenePlan,
     camera: &Camera,
     transform: &GlobalTransform,
     cursor: Vec2,
     motion: &crate::creature::CreatureMotion,
+    scenery: &SceneryPicking,
 ) -> Option<HitRegion> {
     let size = camera.logical_viewport_size()?;
     let (x, y) = Viewport::for_drawable(size.x, size.y).logical_point(cursor.x, cursor.y)?;
@@ -867,8 +1035,8 @@ pub fn pick(
     }
     let ray = camera.viewport_to_world(transform, cursor).ok()?;
     let mut selected: Option<(f32, UiTarget)> = None;
-    let mut consider = |target: UiTarget, center: Vec3, radius: Vec3| {
-        if let Some(distance) = ray_ellipsoid(ray.origin, *ray.direction, center, radius)
+    let mut consider = |target: UiTarget, distance: Option<f32>| {
+        if let Some(distance) = distance
             && selected.is_none_or(|(near, _)| distance < near)
         {
             selected = Some((distance, target));
@@ -876,20 +1044,53 @@ pub fn pick(
     };
     consider(
         UiTarget::Creature,
-        motion.position(plan),
-        Vec3::new(0.75, 0.65, 0.55),
+        ray_ellipsoid(
+            ray.origin,
+            *ray.direction,
+            motion.position(plan),
+            Vec3::new(0.75, 0.65, 0.55),
+        ),
     );
+    // The visible animal includes its articulated body, not just its face. These are
+    // the preceding presented transforms, so input cannot race the next animation step.
+    for (transform, radii) in motion.body_pick_volumes() {
+        consider(
+            UiTarget::Creature,
+            ray_transformed_ellipsoid(ray.origin, *ray.direction, transform, *radii),
+        );
+    }
     for object in &plan.objects {
-        let (target, radius) = match object.kind {
-            ObjectKind::Food(_) => (UiTarget::FoodObject(object.id), Vec3::splat(0.22)),
-            ObjectKind::Toy(toy) => (UiTarget::Toy(toy), Vec3::splat(0.42)),
-            ObjectKind::Cave => (UiTarget::Cave, Vec3::new(0.95, 0.85, 0.55)),
-            ObjectKind::Plant => (UiTarget::Plant(object.id), Vec3::new(0.5, 0.8, 0.4)),
+        let scenery_target = match object.kind {
+            ObjectKind::Plant => Some(UiTarget::Plant(object.id)),
+            ObjectKind::Cave => Some(UiTarget::Cave),
+            _ => None,
+        };
+        if let Some(target) = scenery_target {
+            consider(target, scenery.hit(object.id, ray.origin, *ray.direction));
+            continue;
+        }
+        let (target, radius, offset) = match object.kind {
+            ObjectKind::Food(_) => (
+                UiTarget::FoodObject(object.id),
+                Vec3::splat(0.22),
+                Vec3::ZERO,
+            ),
+            ObjectKind::Toy(ToyId::Bell) => (
+                UiTarget::Toy(ToyId::Bell),
+                Vec3::new(0.42, 0.65, 0.42),
+                Vec3::ZERO,
+            ),
+            ObjectKind::Toy(toy) => (UiTarget::Toy(toy), Vec3::splat(0.42), Vec3::ZERO),
+            ObjectKind::Cave | ObjectKind::Plant => unreachable!("scenery handled above"),
         };
         consider(
             target,
-            presented_object_position(object, plan, motion),
-            radius,
+            ray_ellipsoid(
+                ray.origin,
+                *ray.direction,
+                presented_object_position(object, plan, motion) + offset,
+                radius,
+            ),
         );
     }
     let target = selected
@@ -901,6 +1102,22 @@ pub fn pick(
         .find(|hit| hit.enabled && hit.shape == HitShape::World(target))
         .cloned()
 }
+fn ray_transformed_ellipsoid(
+    origin: Vec3,
+    direction: Vec3,
+    transform: &Transform,
+    radii: Vec3,
+) -> Option<f32> {
+    let inverse = transform.compute_affine().inverse();
+    // Do not normalize the transformed direction: its ray parameter remains world distance.
+    ray_ellipsoid(
+        inverse.transform_point3(origin),
+        inverse.transform_vector3(direction),
+        Vec3::ZERO,
+        radii,
+    )
+}
+
 fn ray_ellipsoid(origin: Vec3, direction: Vec3, center: Vec3, radius: Vec3) -> Option<f32> {
     let o = (origin - center) / radius;
     let d = direction / radius;
@@ -926,6 +1143,119 @@ fn ray_ellipsoid(origin: Vec3, direction: Vec3, center: Vec3, radius: Vec3) -> O
 mod tests {
     use super::*;
     #[test]
+    fn scenery_picking_leaves_plant_gaps_and_cave_openings_empty() {
+        let appearance = crate::appearance::RenderAppearance::default();
+        let plant = PickMesh::from_mesh(&object_mesh(ObjectKind::Plant, appearance)).unwrap();
+        let gap = Vec3::new(0.0, 0.20, 2.0);
+        // The former single ellipsoid invented an opaque surface between the leaves.
+        assert!(
+            ray_ellipsoid(
+                gap,
+                Vec3::NEG_Z,
+                Vec3::new(0.055, -0.5225, 0.03),
+                Vec3::new(0.60, 0.85, 0.28)
+            )
+            .is_some()
+        );
+        assert!(plant.hit(gap, Vec3::NEG_Z).is_none());
+        assert!(plant.hit(Vec3::new(0.20, 0.20, 2.0), Vec3::NEG_Z).is_some());
+        // Leaf backs are pickable too, with no culling assumption in the input path.
+        assert!(plant.hit(Vec3::new(0.20, 0.20, -2.0), Vec3::Z).is_some());
+        let cave = PickMesh::from_mesh(&object_mesh(ObjectKind::Cave, appearance)).unwrap();
+        let doorway = cave.hit(Vec3::new(0.0, -0.60, 2.0), Vec3::NEG_Z).unwrap();
+        let lip = cave.hit(Vec3::new(0.80, -0.60, 2.0), Vec3::NEG_Z).unwrap();
+        assert!(
+            doorway > 2.5 && lip < 1.8,
+            "doorway must reach the recessed back, not an invented front surface"
+        );
+    }
+
+    #[test]
+    fn scenery_picking_caches_meshes_and_preserves_transformed_world_distance() {
+        let plan = beastie_view::plan(
+            &beastie_core::WorldState::new(9, "Pick"),
+            &beastie_view::ViewState::default(),
+        )
+        .0;
+        let plant_id = plan
+            .objects
+            .iter()
+            .find(|object| object.kind == ObjectKind::Plant)
+            .unwrap()
+            .id;
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<SceneryPicking>()
+            .insert_resource(SceneFrame { plan })
+            .add_message::<AssetEvent<Mesh>>()
+            .add_systems(Update, sync_scenery_picking);
+        let mesh = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(Cuboid::new(2.0, 2.0, 2.0));
+        let transform = Transform::from_xyz(2.0, 3.0, 4.0)
+            .with_rotation(Quat::from_rotation_y(0.3))
+            .with_scale(Vec3::new(1.2, 0.7, 2.0));
+        let world_matrix = transform.to_matrix();
+        let origin = world_matrix.transform_point3(Vec3::new(0.0, 0.0, 3.0));
+        let direction = world_matrix.transform_vector3(Vec3::NEG_Z).normalize();
+        let entity = app
+            .world_mut()
+            .spawn((
+                WorldObject(plant_id),
+                Mesh3d(mesh.clone()),
+                GlobalTransform::from(transform),
+                InheritedVisibility::VISIBLE,
+            ))
+            .id();
+        app.update();
+        let cache = app.world().resource::<SceneryPicking>();
+        assert!((cache.hit(plant_id, origin, direction).unwrap() - 4.0).abs() < 1e-5);
+        let triangles = cache.meshes[&mesh.id()].triangles.as_ptr();
+        app.update();
+        assert_eq!(
+            app.world().resource::<SceneryPicking>().meshes[&mesh.id()]
+                .triangles
+                .as_ptr(),
+            triangles
+        );
+        // Replacing the asset must invalidate its decoded geometry, even when the handle stays.
+        *app.world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .get_mut(mesh.id())
+            .unwrap() = Cuboid::new(2.0, 2.0, 1.0).mesh().build();
+        app.world_mut()
+            .write_message(AssetEvent::<Mesh>::Modified { id: mesh.id() });
+        app.update();
+        assert!(
+            (app.world()
+                .resource::<SceneryPicking>()
+                .hit(plant_id, origin, direction)
+                .unwrap()
+                - 5.0)
+                .abs()
+                < 1e-5
+        );
+        // The last presented transform, including plant sway, owns the pick location.
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(GlobalTransform::from_translation(Vec3::new(20.0, 0.0, 0.0)));
+        app.update();
+        assert!(
+            app.world()
+                .resource::<SceneryPicking>()
+                .hit(plant_id, origin, direction)
+                .is_none()
+        );
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(InheritedVisibility::HIDDEN);
+        app.update();
+        let cache = app.world().resource::<SceneryPicking>();
+        assert!(cache.instances.is_empty() && cache.meshes.is_empty());
+    }
+
+    #[test]
     fn picking_uses_volume_instead_of_a_rectangular_silhouette() {
         assert!(
             ray_ellipsoid(Vec3::new(0.0, 0.0, 5.0), Vec3::NEG_Z, Vec3::ZERO, Vec3::ONE).is_some()
@@ -934,6 +1264,21 @@ mod tests {
             ray_ellipsoid(Vec3::new(0.9, 0.9, 5.0), Vec3::NEG_Z, Vec3::ZERO, Vec3::ONE).is_none()
         );
     }
+    #[test]
+    fn articulated_pick_preserves_distance_through_rotation_and_nonuniform_scale() {
+        let transform = Transform::from_xyz(2.0, 0.0, 0.0)
+            .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2))
+            .with_scale(Vec3::new(2.0, 1.0, 0.5));
+        let distance =
+            ray_transformed_ellipsoid(Vec3::new(2.0, 1.5, 5.0), Vec3::NEG_Z, &transform, Vec3::ONE)
+                .unwrap();
+        assert!((distance - (5.0 - 0.5 * (1.0_f32 - 0.75 * 0.75).sqrt())).abs() < 0.0001);
+        assert!(
+            ray_transformed_ellipsoid(Vec3::new(3.5, 0.0, 5.0), Vec3::NEG_Z, &transform, Vec3::ONE)
+                .is_none()
+        );
+    }
+
     #[test]
     fn fractional_positions_survive_projection() {
         assert!(
