@@ -4,6 +4,12 @@ Last updated: **2026-09-08**.
 
 ## Now
 
+- The holistic feel review is complete as a sampled visual/causal/audio audit: seven fresh native
+  experiences, 46,476 frames and an additional actual-input session. Seven accepted findings cover
+  care discoverability, voice guidance, toy composition, shelter fit, semantic ducking, reference
+  audio fidelity and deferred-language ownership. See
+  [feel-review-holistic-20260908.md](feel-review-holistic-20260908.md). Full-speed human perception,
+  listening and completely caption-free relationship assessment remain explicit gaps.
 - The aquarium now uses a compact tabletop interface: a frame-mounted nameplate, a 33-unit care
   rail, explicit text actions, a quiet settings control and a distinct enamel Feed button. Speech
   names its speaker and labels reactions; rename and sound settings explain their purpose.
@@ -27,11 +33,11 @@ Last updated: **2026-09-08**.
 
 ## Next
 
-Calibrate the tabletop direction in live play with the user before extending the art treatment.
-The prior technical/legibility reviews missed the user's aesthetic concern, so explicit meaning,
-hierarchy and creature presence should guide the next decision. The focused evidence is in
-[feel-review-tabletop.md](feel-review-tabletop.md); this is a short native play review, not another
-renderer rewrite. Windows/Linux and lower-end GPU acceptance remain a separate release checkpoint.
+Implement [creature-presence-and-care.md](creature-presence-and-care.md) after the user approves the
+proposed feel-pass goal. It covers the complete holistic review scope and repeated native
+adjudication. No implementation goal has been set and no runtime changes were made in the review.
+Keep the current renderer; human aesthetic/listening calibration remains necessary to claim those
+perceptual acceptance criteria. Windows/Linux and lower-end GPU acceptance remain separate.
 
 ## Candidates Not Chosen
 
@@ -47,6 +53,9 @@ renderer rewrite. Windows/Linux and lower-end GPU acceptance remain a separate r
 
 ## Learned Recently
 
+- Holistic findings, evidence limits and next contract:
+  [feel-review-holistic-20260908.md](feel-review-holistic-20260908.md),
+  [creature-presence-and-care.md](creature-presence-and-care.md).
 - Tabletop direction and user calibration: [tabletop-aquarium.md](tabletop-aquarium.md), [feel-review-tabletop.md](feel-review-tabletop.md).
 
 - Unified rendering contract/evidence: [raytraced-aquarium.md](raytraced-aquarium.md), [feel-review-raytracing.md](feel-review-raytracing.md).
