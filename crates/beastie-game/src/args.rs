@@ -56,6 +56,9 @@ pub struct Args {
     /// Directory for named native-resolution presentation captures.
     #[arg(long, requires = "script")]
     pub capture_dir: Option<PathBuf>,
+    /// Write measured wall-frame timing and ray-scene size on scripted exit.
+    #[arg(long, requires = "script")]
+    pub render_report: Option<PathBuf>,
     /// Directory for a 60 fps feel-review evidence bundle.
     #[arg(long, requires = "script")]
     pub feel_dir: Option<PathBuf>,
@@ -136,6 +139,21 @@ mod tests {
                 "fixtures/scenarios/aquarium-v1-visible.jsonl",
                 "--feel-dir",
                 "target/feel/run",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn render_report_requires_a_script() {
+        assert!(Args::try_parse_from(["game", "--render-report", "report.json"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "game",
+                "--script",
+                "run.jsonl",
+                "--render-report",
+                "report.json",
             ])
             .is_ok()
         );

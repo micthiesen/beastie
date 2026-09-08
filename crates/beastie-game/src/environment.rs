@@ -15,8 +15,6 @@ struct TankArt {
     sand: [u8; 3],
     stone: [u8; 3],
     moss: [u8; 3],
-    key_illuminance: f32,
-    fill_intensity: f32,
 }
 const TANK: TankArt = TankArt {
     back_low: [13, 37, 47],
@@ -26,8 +24,6 @@ const TANK: TankArt = TankArt {
     sand: [112, 119, 93],
     stone: [67, 94, 94],
     moss: [67, 116, 86],
-    key_illuminance: 3200.0,
-    fill_intensity: 115_000.0,
 };
 
 #[derive(Clone, Copy)]
@@ -101,34 +97,6 @@ pub(crate) fn setup(
     background: Handle<StandardMaterial>,
 ) {
     commands.insert_resource(ClearColor(Color::srgb_u8(7, 18, 25)));
-    commands.spawn((
-        DirectionalLight {
-            color: Color::srgb(1.0, 0.89, 0.74),
-            illuminance: TANK.key_illuminance,
-            shadow_depth_bias: 0.06,
-            shadow_normal_bias: 2.5,
-            shadow_maps_enabled: appearance.shadows(),
-            ..default()
-        },
-        bevy::light::CascadeShadowConfigBuilder {
-            num_cascades: 1,
-            minimum_distance: 15.0,
-            maximum_distance: 35.0,
-            ..default()
-        }
-        .build(),
-        Transform::from_xyz(-3.0, 7.0, 9.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-    commands.spawn((
-        PointLight {
-            color: Color::srgb(0.40, 0.85, 0.95),
-            intensity: TANK.fill_intensity,
-            range: 30.0,
-            shadow_maps_enabled: false,
-            ..default()
-        },
-        Transform::from_xyz(6.0, 4.0, 5.0),
-    ));
     let mut back = Geometry::default();
     // Layered teal back wall, brass-dark structural frame, and a stepped stone bed.
     for row in 0..26 {
@@ -143,8 +111,6 @@ pub(crate) fn setup(
         );
     }
     commands.spawn((
-        bevy::light::NotShadowCaster,
-        bevy::light::NotShadowReceiver,
         Mesh3d(meshes.add(appearance.mesh(back.mesh()))),
         MeshMaterial3d(background),
         Transform::default(),
@@ -180,7 +146,6 @@ pub(crate) fn setup(
     // The substrate and rear ridge are one filled lattice. Shared faces disappear,
     // leaving terraces in the silhouette instead of dark channels around each grain.
     commands.spawn((
-        bevy::light::NotShadowCaster,
         Mesh3d(
             meshes.add(appearance.mesh(substrate_model().mesh_with_style(
                 0.10,
@@ -262,13 +227,11 @@ pub(crate) fn setup(
         );
     }
     commands.spawn((
-        bevy::light::NotShadowCaster,
         Mesh3d(meshes.add(appearance.mesh(garden))),
         MeshMaterial3d(solid.clone()),
         Transform::default(),
     ));
     commands.spawn((
-        bevy::light::NotShadowCaster,
         Mesh3d(meshes.add(appearance.mesh(tank.mesh()))),
         MeshMaterial3d(solid.clone()),
         Transform::default(),

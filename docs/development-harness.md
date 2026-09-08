@@ -193,3 +193,18 @@ only alongside `--script`. Add `--feel-dir` for the standard 1280x720 recording 
 persist. Final production exceptions, including sharply meshed fine substrate, are documented in
 [voxel-surfaces.md](voxel-surfaces.md). Use canonical `xtask feel` suites for validated, hashed
 interaction and quiet-life evidence after selecting the treatment.
+
+## Unified ray-tracer acceptance
+
+The complete world and text are now computed by the custom ray tracer. Capture waits until the
+tracer has dispatched and presented before advancing scripted input. A 60-second monotonic
+readiness deadline exits with a capture failure instead of hanging on an unavailable pipeline. `--render-report PATH` on
+the built game requires `--script` and writes an opt-in JSON report on clean exit. Its percentiles
+measure actual `Time<Real>` wall-frame intervals after readiness and 30 warmup frames, including
+GPU backpressure, pacing and capture overhead. They are not GPU pass timings. Arena byte counts
+are logical aligned storage extents, not measured VRAM or total process memory. Use an otherwise
+idle host and a scenario without captures for uncontended pacing measurements.
+
+The headless gate parses and validates both WGSL shaders and translates them to SPIR-V, HLSL and
+MSL. This tests compiler compatibility without RT extensions, not native execution on another OS.
+Full native evidence and timing results belong in [feel-review-raytracing.md](feel-review-raytracing.md).

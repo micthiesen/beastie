@@ -31,7 +31,9 @@ pub enum SurfaceMaterial {
     Food,
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default)]
+#[derive(
+    Resource, Debug, Clone, Copy, Default, bevy::render::extract_resource::ExtractResource,
+)]
 pub struct RenderAppearance {
     pub treatment: SurfaceTreatment,
     pub study: LightingStudy,
@@ -49,7 +51,12 @@ impl RenderAppearance {
             SurfaceMaterial::Brass => (0.36, 0.72),
             SurfaceMaterial::Food => (0.60, 0.0),
         };
-        self.material(roughness, metallic)
+        let mut material = self.material(roughness, metallic);
+        if matches!(kind, SurfaceMaterial::Skin) && self.study != LightingStudy::Clay {
+            // Soft diffuse fill keeps tiny surface occluders from reading as dark skin seams.
+            material.diffuse_transmission = 0.4;
+        }
+        material
     }
     pub fn style(self) -> crate::voxel::SurfaceStyle {
         match self.treatment {

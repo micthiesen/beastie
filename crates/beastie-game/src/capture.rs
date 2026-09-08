@@ -11,6 +11,7 @@ use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 
 const MAX_OUTSTANDING: usize = 8;
 const WARMUP_FRAMES: u8 = 8;
+const RENDER_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const READBACK_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(crate) struct FrameSnapshot {
@@ -87,7 +88,25 @@ impl<T, R> OrderedFrames<T, R> {
 struct CaptureQueue(OrderedFrames<FrameSnapshot, Result<image::RgbaImage, String>>);
 
 #[derive(Resource, Default)]
-struct CaptureWarmup(u8);
+struct CaptureWarmup {
+    frames: u8,
+    waiting_since: Option<Instant>,
+}
+impl CaptureWarmup {
+    fn renderer_ready(&mut self, ready: bool, now: Instant) -> Result<bool, &'static str> {
+        if ready {
+            return Ok(true);
+        }
+        let started = *self.waiting_since.get_or_insert(now);
+        if now.saturating_duration_since(started) >= RENDER_READY_TIMEOUT {
+            Err(
+                "Ray renderer did not become ready within 60 seconds; check shader and GPU diagnostics",
+            )
+        } else {
+            Ok(false)
+        }
+    }
+}
 
 #[derive(Component)]
 struct CaptureSequence(u64);
@@ -113,12 +132,24 @@ fn submit_frame(
     mut game: NonSendMut<Game>,
     mut warmup: ResMut<CaptureWarmup>,
     pacing: Res<crate::host::FramePacing>,
+    ray_ready: Res<crate::raytrace::RayReady>,
 ) {
+    match warmup.renderer_ready(ray_ready.get(), Instant::now()) {
+        Ok(true) => {}
+        Ok(false) => {
+            game.frame_pending = true;
+            return;
+        }
+        Err(error) => {
+            fail(&mut game, &mut queue, error);
+            return;
+        }
+    }
     // Present the initial scene through several extraction/render cycles before advancing
-    // scripted input or naming the first screenshot. This allows fonts and GPU pipelines to load.
-    if warmup.0 < WARMUP_FRAMES {
-        warmup.0 += 1;
-        game.frame_pending = warmup.0 < WARMUP_FRAMES;
+    // scripted input or naming the first screenshot. This allows extraction and GPU submissions to settle after the tracer is ready.
+    if warmup.frames < WARMUP_FRAMES {
+        warmup.frames += 1;
+        game.frame_pending = warmup.frames < WARMUP_FRAMES;
         return;
     }
     if queue
@@ -265,5 +296,30 @@ mod tests {
         assert_eq!(queue.pop_ready(), Some((1, ())));
         assert!(queue.drained());
         assert!(queue.complete(last, ()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+    #[test]
+    fn shader_wait_is_bounded_without_consuming_capture_warmup() {
+        let start = Instant::now();
+        let mut warmup = CaptureWarmup::default();
+        assert_eq!(warmup.renderer_ready(false, start), Ok(false));
+        assert_eq!(
+            warmup.renderer_ready(false, start + Duration::from_secs(59)),
+            Ok(false)
+        );
+        assert_eq!(warmup.frames, 0);
+        assert!(
+            warmup
+                .renderer_ready(false, start + RENDER_READY_TIMEOUT)
+                .is_err()
+        );
+        assert_eq!(
+            warmup.renderer_ready(true, start + RENDER_READY_TIMEOUT),
+            Ok(true)
+        );
     }
 }

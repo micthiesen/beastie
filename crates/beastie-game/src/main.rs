@@ -10,10 +10,16 @@ mod dialogue;
 mod environment;
 mod error;
 mod feel;
+mod glyphs;
 mod host;
 mod input;
 mod microphone;
 mod process;
+mod ray_scene;
+mod ray_stats;
+#[cfg(test)]
+mod ray_validation;
+mod raytrace;
 mod recognition;
 mod renderer;
 mod save_store;
@@ -50,29 +56,37 @@ fn main() -> bevy::app::AppExit {
         .insert_resource(frame)
         .insert_non_send(game)
         .add_plugins(
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Beastie".to_owned(),
-                    resolution: bevy::window::WindowResolution::new(
-                        640 * u32::from(scale),
-                        360 * u32::from(scale),
-                    )
-                    .with_scale_factor_override(1.0),
-                    resizable: false,
-                    mode: if fullscreen {
-                        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
-                    } else {
-                        WindowMode::Windowed
-                    },
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Beastie".to_owned(),
+                        resolution: bevy::window::WindowResolution::new(
+                            640 * u32::from(scale),
+                            360 * u32::from(scale),
+                        )
+                        .with_scale_factor_override(1.0),
+                        resizable: false,
+                        mode: if fullscreen {
+                            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                        } else {
+                            WindowMode::Windowed
+                        },
+                        ..default()
+                    }),
+                    close_when_requested: false,
                     ..default()
-                }),
-                close_when_requested: false,
-                ..default()
-            }),
+                })
+                .disable::<bevy::pbr::PbrPlugin>()
+                .disable::<bevy::light::LightPlugin>(),
         )
+        // StandardMaterial is CPU-side scene data for the compute ray renderer.
+        .init_asset::<StandardMaterial>()
         .add_plugins((
             host::HostPlugin,
             renderer::RendererPlugin,
+            ray_scene::RayScenePlugin,
+            ray_stats::RayStatsPlugin(args.render_report.clone()),
+            raytrace::RayTracePlugin,
             capture::CapturePlugin,
         ))
         .run()

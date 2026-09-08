@@ -11,8 +11,8 @@ the creature remains the visual center.
 All world forms are solid geometry built from colored voxel shapes. The creature, scenery,
 food, toys, bubbles, and reaction effects use meshes. There are no sprites, sprite sheets,
 painted face textures, image planes, or raster background art. Small facial features may use
-finer geometry than the body. Text is the exception to the geometric presentation contract.
-The renderer uses Bevy; the simulation continues to own every authoritative fact.
+finer geometry than the body. Text also uses real outline triangles in the unified ray-tracing path.
+Bevy hosts the custom ordinary-compute renderer; simulation owns every authoritative fact.
 
 The fixed camera looks down twelve degrees, revealing the substrate and cave depth while retaining
 the front-facing creature. The UI is aligned to that camera independently of the world, and cannot
@@ -63,7 +63,7 @@ local navigation and focus their own relevant action. Reset defaults to Cancel.
 
 Text has authored title, identity, body, secondary, control, caption and dialogue roles. Large mode
 increases those sizes by 30 percent; panels make room for it. Every emitted text command has a
-resolved content box. Native font shaping and clipping operate within that box. Disabled controls
+resolved content box. Font outlines are shaped, tessellated and clipped geometrically within that box. Disabled controls
 dim their icon, label and surface together. Text truncation uses a Unicode ellipsis.
 
 ## Art tuning
@@ -80,10 +80,11 @@ lighting reveals the body rather than outlining its cells. Fine substrate stays 
 continuous, with a calm central bed and gentle rear-corner banks. Broad cave colors avoid checker
 noise. Explicit seams belong to construction details such as toy bands and sock stitching.
 
-Satin skin, glossy eyes, rough stone, cloth and brass have distinct material responses. Soft filtered
-shadows, warm key/cool fill and a procedural hemispherical light map establish depth. The light map
-contains six directional lighting values; it is not a sprite, skybox or painted world surface.
-Keep facial marks readable and the backdrop subdued. See [voxel-surfaces.md](voxel-surfaces.md).
+Satin skin, glossy eyes, rough stone, cloth and brass have distinct ray-traced material responses.
+Deterministic area-light samples soften shadows; environmental fill, a bounded diffuse bounce and
+rough reflections establish depth. A restrained skin fill keeps local voxel occlusion from reading
+as accidental dark seams. Keep facial marks readable and the backdrop subdued. See
+[raytraced-aquarium.md](raytraced-aquarium.md) and [voxel-surfaces.md](voxel-surfaces.md).
 
 Tune within these domain definitions before adding renderer branches. A visual recipe consumes
 typed semantic state; it cannot create a payoff, infer mood from dialogue or mutate a save.
@@ -91,7 +92,8 @@ Inspect profiles at native size and in continuous sequences, including reduced m
 
 The bundled text face is Atkinson Hyperlegible Next Medium at
 `assets/generated/ui/atkinson-hyperlegible-next-medium.ttf`. Its open counters and distinct
-letter shapes support mixed-case dialogue and controls. The font is distributed under SIL
+letter shapes support mixed-case dialogue and controls. Its outlines are embedded in the binary,
+shaped with Rustybuzz and tessellated with Lyon; no glyph images or raster text pass remain. The font is distributed under SIL
 Open Font License 1.1, preserved in `assets/licenses/atkinson-hyperlegible-next-OFL.txt` and
 `THIRD_PARTY_NOTICES`. It came from the upstream `googlefonts/atkinson-hyperlegible-next`
 repository. The font SHA-256 is

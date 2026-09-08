@@ -57,10 +57,8 @@ struct UiCache {
     width: f32,
     height: f32,
     geometry: Option<Handle<Mesh>>,
-    text_entities: BTreeMap<(String, usize), (Entity, Entity)>,
+    text_geometry: Option<Handle<Mesh>>,
 }
-#[derive(Resource)]
-struct UiFont(Handle<Font>);
 
 pub struct RendererPlugin;
 impl Plugin for RendererPlugin {
@@ -68,6 +66,7 @@ impl Plugin for RendererPlugin {
         app.init_resource::<ObjectMeshes>()
             .init_resource::<EffectMesh>()
             .init_resource::<UiCache>()
+            .init_resource::<crate::glyphs::Lettering>()
             .add_systems(Startup, (setup, crate::creature::setup_creature))
             .add_systems(
                 Update,
@@ -124,8 +123,6 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut fonts: ResMut<Assets<Font>>,
-    mut images: ResMut<Assets<Image>>,
     appearance: Res<crate::appearance::RenderAppearance>,
 ) {
     let solid = materials.add(appearance.surface(crate::appearance::SurfaceMaterial::Stone));
@@ -142,18 +139,9 @@ fn setup(
     commands.spawn((
         TankCamera,
         Camera3d::default(),
-        Msaa::Sample4,
-        bevy::light::ShadowFilteringMethod::Gaussian,
-        {
-            let mut environment = bevy::light::EnvironmentMapLight::hemispherical_gradient(
-                &mut images,
-                Color::srgb(0.95, 0.81, 0.63),
-                Color::srgb(0.33, 0.57, 0.63),
-                Color::srgb(0.18, 0.20, 0.15),
-            );
-            environment.intensity = 1000.0;
-            environment
-        },
+        Msaa::Off,
+        bevy::core_pipeline::tonemapping::Tonemapping::None,
+        bevy::render::camera::CameraRenderGraph::new(crate::raytrace::RayTracing),
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::AutoMin {
                 min_width: 16.0,
@@ -163,11 +151,6 @@ fn setup(
         }),
         Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH))
             .with_translation(Quat::from_rotation_x(CAMERA_PITCH) * Vec3::new(0.0, 0.0, 24.0)),
-        AmbientLight {
-            color: Color::srgb(0.60, 0.80, 0.88),
-            brightness: 120.0,
-            ..default()
-        },
     ));
     crate::environment::setup(
         &mut commands,
@@ -176,7 +159,6 @@ fn setup(
         *appearance,
         ui.clone(),
     );
-    commands.insert_resource(bevy::light::DirectionalLightShadowMap { size: 1024 });
     let cube = meshes.add(Cuboid::default());
     for index in 0..14 {
         commands.spawn((
@@ -186,14 +168,6 @@ fn setup(
             Transform::default(),
         ));
     }
-    let font = std::fs::read(
-        crate::app::assets_root().join("generated/ui/atkinson-hyperlegible-next-medium.ttf"),
-    )
-    .ok()
-    .map(Font::from_bytes)
-    .map(|font| fonts.add(font))
-    .unwrap_or_default();
-    commands.insert_resource(UiFont(font));
     use crate::appearance::SurfaceMaterial;
     commands.insert_resource(Palette {
         solid,
@@ -495,7 +469,7 @@ struct UiSystem<'w, 's> {
     frame: Res<'w, SceneFrame>,
     window: Single<'w, 's, &'static Window, With<PrimaryWindow>>,
     palette: Res<'w, Palette>,
-    font: Res<'w, UiFont>,
+    lettering: ResMut<'w, crate::glyphs::Lettering>,
     cache: ResMut<'w, UiCache>,
     meshes: ResMut<'w, Assets<Mesh>>,
 }
@@ -576,8 +550,7 @@ fn sync_ui(mut ui: UiSystem) {
             let material = ui.palette.ui.clone();
             ui.commands.spawn((
                 UiGeometry,
-                bevy::light::NotShadowCaster,
-                bevy::light::NotShadowReceiver,
+                crate::ray_scene::RayOverlay,
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material),
                 Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH)),
@@ -590,79 +563,53 @@ fn sync_ui(mut ui: UiSystem) {
         || ui.cache.width != ui.window.width()
         || ui.cache.height != ui.window.height();
     if text_changed {
-        let viewport = Viewport::for_drawable(ui.window.width(), ui.window.height());
-        let mut retained = BTreeMap::new();
+        let mut lettering_mesh = crate::glyphs::LetterMesh::default();
         let labels = ui.frame.plan.text.clone();
         for text in labels {
             let bounds = text_content_bounds(&text, &ui.frame.plan);
-            let font_size = fitting_font_size(&text, bounds) * viewport.scale;
-            for (index, visible) in visible_text_boxes(&text, bounds, &ui.frame.plan)
+            let to_glyph_bounds = |b: TextBox| crate::glyphs::Bounds {
+                x: b.x,
+                y: b.y,
+                w: b.w,
+                h: b.h,
+            };
+            let clips: Vec<_> = visible_text_boxes(&text, bounds, &ui.frame.plan)
                 .into_iter()
-                .enumerate()
-            {
-                let key = (text.id.clone(), index);
-                let (parent, child) = if let Some(entities) = ui.cache.text_entities.remove(&key) {
-                    entities
-                } else {
-                    let parent = ui.commands.spawn(UiText).id();
-                    let child = ui.commands.spawn_empty().id();
-                    ui.commands.entity(parent).add_child(child);
-                    (parent, child)
-                };
-                ui.commands.entity(parent).insert((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px(viewport.x + visible.x * viewport.scale),
-                        top: px(viewport.y + visible.y * viewport.scale),
-                        width: px(visible.w * viewport.scale),
-                        height: px(visible.h * viewport.scale),
-                        overflow: Overflow::clip(),
-                        ..default()
-                    },
-                    GlobalZIndex(i32::from(text.layer)),
-                ));
-                let font = ui.font.0.clone();
-                ui.commands.entity(child).insert((
-                    Text::new(&text.text),
-                    TextFont {
-                        font: font.into(),
-                        font_size: bevy::text::FontSize::Px(font_size),
-                        ..default()
-                    },
-                    TextColor({
-                        let c = if text.muted {
-                            [101, 128, 130]
-                        } else {
-                            text.role.color()
-                        };
-                        Color::srgb_u8(c[0], c[1], c[2])
-                    }),
-                    TextLayout::justify(if text.role.centered() {
-                        Justify::Center
+                .map(to_glyph_bounds)
+                .collect();
+            ui.lettering.append(
+                &mut lettering_mesh,
+                crate::glyphs::Label {
+                    text: &text.text,
+                    bounds: to_glyph_bounds(bounds),
+                    clips: &clips,
+                    size: fitting_font_size(&text, bounds),
+                    centered: text.role.centered(),
+                    color: if text.muted {
+                        [101, 128, 130]
                     } else {
-                        Justify::Left
-                    }),
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: px((bounds.x - visible.x) * viewport.scale),
-                        top: px((bounds.y - visible.y
-                            + if text.role.centered() {
-                                ((bounds.h - font_size / viewport.scale * 1.2) * 0.5).max(0.0)
-                            } else {
-                                0.0
-                            })
-                            * viewport.scale),
-                        width: px(bounds.w * viewport.scale),
-                        ..default()
+                        text.role.color()
                     },
-                ));
-                retained.insert(key, (parent, child));
+                    z: 8.08 + text.layer as f32 * 0.002,
+                },
+            );
+        }
+        let replacement = lettering_mesh.mesh();
+        if let Some(handle) = ui.cache.text_geometry.clone() {
+            if let Some(mut mesh) = ui.meshes.get_mut(&handle) {
+                *mesh = replacement;
             }
+        } else {
+            let mesh = ui.meshes.add(replacement);
+            ui.commands.spawn((
+                UiText,
+                crate::ray_scene::RayOverlay,
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(ui.palette.ui.clone()),
+                Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH)),
+            ));
+            ui.cache.text_geometry = Some(mesh);
         }
-        for (_, (parent, _)) in std::mem::take(&mut ui.cache.text_entities) {
-            ui.commands.entity(parent).despawn();
-        }
-        ui.cache.text_entities = retained;
         ui.cache.text = ui.frame.plan.text.clone();
         ui.cache.width = ui.window.width();
         ui.cache.height = ui.window.height();
@@ -877,7 +824,6 @@ fn sync_effects(
                 Mesh3d(handle.clone()),
                 MeshMaterial3d(palette.ui.clone()),
                 Transform::default(),
-                bevy::light::NotShadowCaster,
             ))
             .id();
         mesh.handle = Some(handle);

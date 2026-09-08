@@ -69,21 +69,24 @@ private-life recipes and relationship expressions remain typed, with exact seman
 Object instances retain authoritative IDs, positions, movement, carrying and responses. Expressions
 and effects never infer game outcomes from model prose.
 
-Bevy renders the tank and every creature part, object, effect and icon from colored solid geometry.
-Voxel surface meshes omit interior faces; articulated parts move continuously. A distance-sampled
-trail guides constrained body joints, with retained curvature at rest; separate facial geometry
-controls eyes, brows and mouth. The
-camera is fixed and orthographic, pitched twelve degrees to reveal depth. UI geometry uses the
-matching camera rotation and is excluded from world shadows. A 320x180 coordinate space remains
-solely for UI layout; world
-geometry and font glyphs render at window resolution, with 1280x720 native evidence captures.
+Bevy manages the native window, input, asset descriptions and continuously articulated scene.
+A custom ordinary-GPU compute ray tracer renders every visible mark, including glyph geometry.
+Voxel meshes omit interior faces and retain connected bevels. Cached local triangle hierarchies
+stay unchanged as parts move; a small instance hierarchy tracks their transforms. Revised mesh
+chunks upload independently through bounded arenas. The camera is fixed, orthographic and pitched
+twelve degrees; its same projection drives ray generation and native pointer mapping.
 
-The surface mesher shares integer lattice boundaries before conversion to world coordinates.
-Connected crease bands provide geometric bevels; rounded creature lighting normals preserve mesh
-positions. World material roles and script-only diagnostics live in `appearance.rs`. The renderer
-uses Bevy PBR, MSAA and filtered shadow maps with a procedural hemispherical environment light.
-No ray-tracing hardware or new platform feature is required. The complete surface choices and
-diagnostic exceptions are recorded in [voxel-surfaces.md](voxel-surfaces.md).
+The camera runs a dedicated compute-and-present schedule. Bevy's PBR lights, raster scene and
+UI/text render plugins are removed; StandardMaterial is only an authored CPU material description.
+A fullscreen transfer presents computed radiance through Bevy's ordinary screenshot-compatible
+output attachment. There are no sprites, font atlases or alternate raster scene paths.
+
+Lighting uses deterministic area-light visibility, environmental fill, bounded diffuse bounce and
+rough reflected scene/environment light. Authored skin fill softens local occlusion. Two world
+coverage samples and four UI samples share locally coherent illumination without sharing coverage
+or albedo. No temporal history, denoiser, ray-query extension or dedicated RT hardware is required.
+UI geometry is camera-aligned with controlled studio light and is excluded from world secondary
+rays. See [raytraced-aquarium.md](raytraced-aquarium.md) for the production contract.
 
 The authoritative aquarium remains a 2D interaction plane inside the 3D tank. Normalized position
 maps through one shared transform with margins for creature volume. Presentation depth cannot
@@ -96,16 +99,16 @@ animation publish the next frame, so clicks refer to the image the player was sh
 The persistent compose bar, shallow contextual actions, food-drop mode, settings, input bindings,
 save recovery/reset confirmation, transcript controls, and naming remain declarative UI. Exact
 need, trust and resentment values remain absent from the player summary. Panels and icons use
-geometry; text is the permitted font-rendering exception. Speech occupies the opposite side of
+geometry, including shaped outline lettering. Speech occupies the opposite side of
 the creature. Reduced motion and other accessibility settings remain part of presentation state.
 Text commands carry their resolved content bounds, semantic type role and disabled treatment;
-native rendering shapes and clips glyphs inside those bounds. Settings pages are ephemeral view
+the outline tessellator shapes, fits and geometrically clips glyphs inside those bounds. Settings pages are ephemeral view
 state, while their values retain the existing versioned settings persistence. Startup recovery
 notices are typed technical feedback and never gain creature speech or reaction controls.
 
 The sprite pipeline and image catalog are removed. Runtime assets contain only sounds, the Atkinson
 font and its license, validated by the versioned asset manifest. Generated geometry requires no
-asset credentials or network. Missing optional sounds/fonts/workers degrade without stopping
+asset credentials or network. The font is embedded at build time; missing optional sounds/workers degrade without stopping
 simulation. See [art-bible.md](art-bible.md), [audio-direction.md](audio-direction.md), and the
 [voxel migration contract](voxel-migration.md).
 

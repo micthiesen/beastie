@@ -1,5 +1,9 @@
 # Voxel surface and light contract
 
+The surface geometry decisions remain current. The subsequent unified renderer migration in
+[raytraced-aquarium.md](raytraced-aquarium.md) supersedes the PBR lighting and raster text path
+recorded below; this document preserves the comparison history.
+
 ## Outcome
 
 Make the aquarium feel like a tactile miniature world: continuous voxel forms, small exposed-edge
