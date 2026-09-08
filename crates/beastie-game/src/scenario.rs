@@ -11,6 +11,7 @@ use thiserror::Error;
 pub enum ScenarioStep {
     Session(CommandEnvelope),
     Ui(UiAction),
+    ControllerUi(UiAction),
     /// Shell-only result of attempting to acquire a bounded microphone capture.
     ///
     /// This is intentionally separate from `SpeechStarted`: an unavailable device never reaches
@@ -179,6 +180,15 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
         OpenFood,
         OpenToys,
         OpenSettings,
+        SettingsSound,
+        SettingsControls,
+        LargeText,
+        NormalText,
+        Rename,
+        Talk,
+        SelectBerry,
+        ReducedMotion,
+        CreatureActions,
         OpenBindings,
         OpenData,
         RequestReset,
@@ -191,6 +201,8 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
         version: u32,
         command: String,
         action: ScenarioUiAction,
+        #[serde(default)]
+        controller: bool,
     }
 
     let kind: CommandKind = serde_json::from_str(line).map_err(ScenarioError::Json)?;
@@ -204,13 +216,28 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
         let action = match control.action {
             ScenarioUiAction::OpenFood => UiAction::OpenFoodChoice,
             ScenarioUiAction::OpenToys => UiAction::OpenToyChoice,
-            ScenarioUiAction::OpenSettings => UiAction::OpenSettings,
+            ScenarioUiAction::OpenSettings => UiAction::SelectSettingsPage(0),
+            ScenarioUiAction::SettingsSound => UiAction::SelectSettingsPage(1),
+            ScenarioUiAction::SettingsControls => UiAction::SelectSettingsPage(2),
+            ScenarioUiAction::LargeText => UiAction::SetTextScale(2),
+            ScenarioUiAction::NormalText => UiAction::SetTextScale(1),
+            ScenarioUiAction::Rename => UiAction::Rename,
+            ScenarioUiAction::Talk => UiAction::Talk,
+            ScenarioUiAction::SelectBerry => UiAction::SelectFood(beastie_core::FoodId::Berry),
+            ScenarioUiAction::ReducedMotion => UiAction::ToggleReducedMotion,
+            ScenarioUiAction::CreatureActions => {
+                UiAction::OpenContext(beastie_view::UiTarget::Creature)
+            }
             ScenarioUiAction::OpenBindings => UiAction::OpenBindings,
             ScenarioUiAction::OpenData => UiAction::OpenDataManagement,
             ScenarioUiAction::RequestReset => UiAction::RequestReset,
             ScenarioUiAction::Close => UiAction::CancelMode,
         };
-        return Ok(ScenarioStep::Ui(action));
+        return Ok(if control.controller {
+            ScenarioStep::ControllerUi(action)
+        } else {
+            ScenarioStep::Ui(action)
+        });
     }
     if kind.command == "set_subtitles" {
         let setting: SetSubtitles = serde_json::from_str(line).map_err(ScenarioError::Json)?;
@@ -348,7 +375,7 @@ mod tests {
         ));
         assert!(matches!(
             parse_step(r#"{"version":1,"command":"ui","action":"open_settings"}"#),
-            Ok(ScenarioStep::Ui(UiAction::OpenSettings))
+            Ok(ScenarioStep::Ui(UiAction::SelectSettingsPage(0)))
         ));
         assert!(matches!(
             parse_step(r#"{"version":1,"command":"set_subtitles","enabled":false}"#),

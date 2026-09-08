@@ -1,5 +1,5 @@
 //! An articulated, solid voxel animal. Semantics come exclusively from the scene plan.
-use beastie_core::{ActivityPhase, ActivityRecipe, Facing, GazeTarget, Mood, SteeringMode};
+use beastie_core::{ActionPhase, ActivityPhase, Facing, GazeTarget, SteeringMode};
 use beastie_view::{CreaturePose, CreatureScene, PresentationCueKind, ScenePlan};
 use bevy::prelude::*;
 
@@ -9,7 +9,11 @@ use crate::{
     voxel::VoxelModel,
 };
 
-const SEGMENTS: usize = 12;
+#[path = "creature_art.rs"]
+mod art;
+use art::{Acting, CREATURE, MOTION};
+
+const SEGMENTS: usize = CREATURE.segments;
 
 #[derive(Component)]
 pub(crate) enum CreaturePart {
@@ -19,6 +23,8 @@ pub(crate) enum CreaturePart {
     Glint(f32),
     Brow(f32),
     Mouth,
+    LowerLip,
+    Tongue,
     MouthCorner(f32),
     Cheek(f32),
     Fin(f32),
@@ -115,13 +121,13 @@ impl CreatureMotion {
 
 fn golden(point: [i32; 3]) -> [u8; 3] {
     if point[1] < -3 && point[2] > 0 {
-        [250, 206, 112]
+        CREATURE.belly
     } else if point[1] > 5 {
-        [255, 194, 70]
+        CREATURE.crown
     } else if (point[0] + point[1] * 3 + point[2] * 7).rem_euclid(19) == 0 {
-        [235, 151, 46]
+        CREATURE.freckle
     } else {
-        [245, 174, 58]
+        CREATURE.body
     }
 }
 
@@ -134,14 +140,14 @@ fn fin_mesh() -> Mesh {
     for x in 0_i32..9 {
         for y in -x / 2..=x / 2 {
             let color = if x > 6 {
-                [246, 190, 87]
+                CREATURE.fin_tip
             } else {
-                [210, 127, 49]
+                CREATURE.fin_base
             };
             fin.set([x, y, 0], color);
         }
     }
-    fin.mesh(0.045)
+    fin.mesh(CREATURE.fin_cell)
 }
 
 pub(crate) fn setup_creature(
@@ -172,45 +178,55 @@ pub(crate) fn setup_creature(
     };
     spawn(
         CreaturePart::Head,
-        VoxelModel::ellipsoid([12, 10, 9], golden).mesh(0.055),
+        VoxelModel::ellipsoid(CREATURE.head_radii, golden).mesh(CREATURE.head_cell),
         false,
     );
     for side in [-1.0, 1.0] {
         spawn(
             CreaturePart::Eye(side),
-            solid([4, 5, 2], 0.044, [255, 242, 201]),
+            solid([4, 5, 2], 0.044, CREATURE.eye),
             true,
         );
         spawn(
             CreaturePart::Pupil(side),
-            solid([2, 3, 1], 0.036, [30, 40, 44]),
+            solid([2, 3, 1], 0.036, CREATURE.pupil),
             true,
         );
         spawn(
             CreaturePart::Glint(side),
-            solid([0, 0, 0], 0.039, [255, 253, 230]),
+            solid([0, 0, 0], 0.039, CREATURE.glint),
             true,
         );
         spawn(
             CreaturePart::Brow(side),
-            solid([3, 0, 1], 0.045, [121, 73, 41]),
+            solid([3, 0, 1], 0.045, CREATURE.brow),
             false,
         );
         spawn(
             CreaturePart::MouthCorner(side),
-            solid([0, 1, 0], 0.038, [100, 56, 40]),
+            solid([0, 1, 0], 0.038, CREATURE.mouth),
             true,
         );
         spawn(
             CreaturePart::Cheek(side),
-            solid([2, 1, 0], 0.039, [234, 128, 65]),
+            solid([2, 1, 0], 0.039, CREATURE.cheek),
             false,
         );
         spawn(CreaturePart::Fin(side), fin_mesh(), false);
     }
     spawn(
         CreaturePart::Mouth,
-        solid([3, 1, 1], 0.036, [85, 49, 40]),
+        solid([3, 1, 1], 0.036, CREATURE.mouth),
+        true,
+    );
+    spawn(
+        CreaturePart::LowerLip,
+        solid([2, 0, 0], 0.036, CREATURE.lip),
+        true,
+    );
+    spawn(
+        CreaturePart::Tongue,
+        solid([1, 0, 0], 0.034, CREATURE.tongue),
         true,
     );
     spawn(CreaturePart::Crest, fin_mesh(), false);
@@ -239,17 +255,6 @@ pub(crate) fn head_position(plan: &ScenePlan) -> Vec3 {
     crate::renderer::world_position(future)
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Acting {
-    eye_open: f32,
-    brow: f32,
-    smile: f32,
-    mouth: f32,
-    tilt: f32,
-    nod: f32,
-    fin: f32,
-}
-
 fn acting(
     creature: &CreatureScene,
     time: f32,
@@ -257,64 +262,10 @@ fn acting(
     reduced_motion: bool,
     reduced_shake: bool,
 ) -> Acting {
-    let mut a = match creature.mood {
-        Mood::Content => Acting {
-            eye_open: 0.9,
-            brow: 0.0,
-            smile: 0.055,
-            mouth: 0.1,
-            tilt: 0.0,
-            nod: 0.0,
-            fin: 0.0,
-        },
-        Mood::Curious => Acting {
-            eye_open: 1.12,
-            brow: 0.18,
-            smile: 0.02,
-            mouth: 0.25,
-            tilt: 0.10,
-            nod: 0.04,
-            fin: 0.12,
-        },
-        Mood::Hungry => Acting {
-            eye_open: 0.93,
-            brow: 0.13,
-            smile: -0.02,
-            mouth: 0.38,
-            tilt: -0.03,
-            nod: 0.0,
-            fin: 0.05,
-        },
-        Mood::Sleepy => Acting {
-            eye_open: 0.34,
-            brow: -0.05,
-            smile: 0.02,
-            mouth: 0.1,
-            tilt: -0.07,
-            nod: -0.07,
-            fin: -0.1,
-        },
-        Mood::Lonely => Acting {
-            eye_open: 0.68,
-            brow: 0.3,
-            smile: -0.055,
-            mouth: 0.08,
-            tilt: 0.06,
-            nod: -0.05,
-            fin: -0.12,
-        },
-        Mood::Resentful => Acting {
-            eye_open: 0.52,
-            brow: -0.28,
-            smile: -0.025,
-            mouth: 0.05,
-            tilt: -0.07,
-            nod: -0.01,
-            fin: -0.1,
-        },
-    };
+    let mut a = art::mood(creature.mood);
     if creature.pose == CreaturePose::Sleep {
         a.eye_open = 0.055;
+        a.asymmetry = 0.0;
         a.nod = -0.13;
         a.fin = -0.2;
     }
@@ -333,105 +284,71 @@ fn acting(
     if let Some(expression) = &creature.expression {
         let beat =
             (expression.elapsed_ms.saturating_add(remainder_ms) as f32 / 1_000.0 * 6.0).sin();
+        if let Some(recipe) = art::expression(expression.cue) {
+            a = recipe;
+            // Facial meaning is immediate. Only the supporting gesture eases into its pose.
+            let settle = 1.0
+                - (-(expression.elapsed_ms.saturating_add(remainder_ms) as f32)
+                    / MOTION.gesture_arrival_ms)
+                    .exp();
+            a.tilt *= settle;
+            a.nod *= settle;
+            a.fin *= settle;
+        }
         match expression.cue {
             PresentationCueKind::Recoil | PresentationCueKind::Spit => {
-                a.eye_open = 0.48;
-                a.brow = -0.3;
-                a.mouth = 0.6;
-                a.smile = -0.07;
                 a.tilt = if reduced_shake { 0.0 } else { beat * 0.12 };
-                a.nod = -0.15;
-            }
-            PresentationCueKind::Suspicion | PresentationCueKind::FoodSuspicion => {
-                a.eye_open = 0.5;
-                a.brow = -0.24;
-                a.tilt = 0.15;
-                a.smile = -0.03;
-            }
-            PresentationCueKind::Delight => {
-                a.eye_open = 0.82;
-                a.smile = 0.1;
-                a.mouth = 0.5;
-                a.fin = 0.3;
-                a.nod = 0.12;
-            }
-            PresentationCueKind::Affection | PresentationCueKind::Comfort => {
-                a.eye_open = 0.65;
-                a.smile = 0.09;
-                a.tilt = 0.12;
-                a.nod = 0.06;
-                a.fin = 0.08;
-            }
-            PresentationCueKind::Notice
-            | PresentationCueKind::PositiveNotice
-            | PresentationCueKind::PlaceNotice => {
-                a.eye_open = 1.12;
-                a.brow = 0.2;
-                a.nod = 0.09;
-            }
-            PresentationCueKind::Sleep => {
-                a.eye_open = 0.055;
-                a.nod = -0.1;
             }
             PresentationCueKind::Crumbs => {
                 a.mouth = 0.3 + beat.abs() * 0.45;
-                a.smile = 0.055;
             }
             _ => {}
         }
     }
+
     if let Some(activity) = &creature.private_life {
         let owns_expression = creature.expression.as_ref().is_none_or(|expression| {
             matches!(expression.owner, beastie_view::SemanticOwner::PrivateLife(id) if id == activity.id)
         });
         if owns_expression && activity.phase == ActivityPhase::Act {
-            let beat = (activity.elapsed_ms.saturating_add(remainder_ms) as f32 * 0.003).sin();
-            match activity.recipe {
-                ActivityRecipe::BallNudge => {
-                    a.nod = beat.abs() * 0.15;
-                    a.fin = 0.2;
-                }
-                ActivityRecipe::BellStrike => {
-                    a.tilt = beat * 0.15;
-                    a.eye_open = 1.1;
-                }
-                ActivityRecipe::SockTug => {
-                    a.nod = -beat.abs() * 0.16;
-                    a.mouth = 0.25;
-                }
-                ActivityRecipe::CaveShelter => {
-                    a.eye_open = 0.6;
-                    a.nod = -0.07;
-                    a.fin = -0.2;
-                }
-                ActivityRecipe::PlantOrbit => {
-                    a.tilt = beat * 0.14;
-                    a.brow = 0.2;
-                    a.eye_open = 1.05;
-                }
-                ActivityRecipe::BottomForage => {
-                    a.nod = -0.18;
-                    a.mouth = 0.1 + beat.abs() * 0.2;
-                }
-                ActivityRecipe::OpenWaterDrift => {
-                    a.tilt = beat * 0.04;
-                    a.eye_open = 0.8;
-                }
-            }
+            a = art::activity(
+                activity.recipe,
+                activity.elapsed_ms.saturating_add(remainder_ms),
+            );
         }
+    }
+    // Preparation belongs to the actual action phase, never a predicted payoff.
+    if creature.expression.is_none()
+        && matches!(
+            creature.action_phase,
+            Some(ActionPhase::Notice | ActionPhase::Gaze | ActionPhase::Inspect)
+        )
+    {
+        a.eye_open = a.eye_open.max(1.03);
+        a.asymmetry = 0.12;
+        a.brow = 0.2;
+        a.fin = -0.12;
+        a.nod = -0.045;
     }
     // The exact current speech owner drives these phases, so cancellation closes the mouth now.
     if creature.speaking {
-        a.mouth = [0.18, 0.75, 0.45][usize::from(creature.mouth_phase.min(2))];
+        let shape = &art::SPEECH[usize::from(creature.mouth_phase.min(2))];
+        a.mouth = shape.open;
+        a.mouth_width = shape.width;
+        a.smile *= 0.4;
     }
-    let blink = time.rem_euclid(5.7);
-    if !reduced_motion && blink < 0.15 && creature.pose != CreaturePose::Sleep {
-        a.eye_open *= (blink / 0.075 - 1.0).abs().max(0.055);
+    let blink = time.rem_euclid(MOTION.blink_period);
+    if !reduced_motion && blink < MOTION.blink_duration && creature.pose != CreaturePose::Sleep {
+        let close = (blink / (MOTION.blink_duration * 0.5) - 1.0)
+            .abs()
+            .max(0.055);
+        a.eye_open *= close;
+        a.asymmetry *= close;
     }
     if reduced_motion {
-        a.tilt *= 0.3;
-        a.nod *= 0.3;
-        a.fin *= 0.3;
+        a.tilt *= MOTION.reduced_gesture;
+        a.nod *= MOTION.reduced_gesture;
+        a.fin *= MOTION.reduced_gesture;
     }
     a
 }
@@ -469,7 +386,7 @@ pub(crate) fn animate_creature(
     let gait = if plan.reduced_motion || c.pose == CreaturePose::Sleep {
         0.0
     } else {
-        0.015 + motion.speed * 0.075
+        MOTION.idle_gait + motion.speed * MOTION.swim_gait
     };
     let gaze_x = gaze_delta.map_or(
         if to_player {
@@ -487,32 +404,50 @@ pub(crate) fn animate_creature(
         match *part {
             CreaturePart::Head => {}
             CreaturePart::Eye(side) => {
-                local = Vec3::new(side * 0.27, 0.10, 0.455);
-                scale.y = a.eye_open;
+                local = Vec3::new(side * CREATURE.eye_spacing, 0.10, 0.455);
+                scale.y = (a.eye_open + side * a.asymmetry).clamp(0.045, 1.25);
             }
             CreaturePart::Pupil(side) => {
-                local = Vec3::new(side * 0.27 + gaze_x, 0.095 + gaze_y * a.eye_open, 0.555);
-                scale.y = a.eye_open.min(1.0);
+                local = Vec3::new(
+                    side * CREATURE.eye_spacing + gaze_x,
+                    0.095 + gaze_y * a.eye_open,
+                    0.555,
+                );
+                scale.y = (a.eye_open + side * a.asymmetry).clamp(0.045, 1.0);
             }
             CreaturePart::Glint(side) => {
                 local = Vec3::new(
-                    side * 0.27 + gaze_x - 0.02,
-                    0.095 + (0.045 + gaze_y) * a.eye_open.min(1.0),
+                    side * CREATURE.eye_spacing + gaze_x - 0.02,
+                    0.095 + (0.045 + gaze_y) * (a.eye_open + side * a.asymmetry).clamp(0.045, 1.0),
                     0.611,
                 );
-                scale = Vec3::splat(a.eye_open.min(1.0));
+                scale = Vec3::splat((a.eye_open + side * a.asymmetry).clamp(0.045, 1.0));
             }
             CreaturePart::Brow(side) => {
-                local = Vec3::new(side * 0.27, 0.36, 0.46);
-                turn = Quat::from_rotation_z(side * a.brow);
+                local = Vec3::new(
+                    side * CREATURE.eye_spacing,
+                    0.36 + side * a.asymmetry * 0.12,
+                    0.46,
+                );
+                turn = Quat::from_rotation_z(side * a.brow + a.asymmetry * 0.8);
             }
             CreaturePart::Mouth => {
                 local = Vec3::new(0.0, -0.24, 0.49);
                 scale.y = 0.3 + a.mouth * 2.4;
-                scale.x = 1.0 - a.mouth * 0.18;
+                scale.x = a.mouth_width * (1.0 - a.mouth * 0.18);
+            }
+            CreaturePart::LowerLip => {
+                local = Vec3::new(0.0, -0.256 - a.mouth * 0.13, 0.538);
+                scale.x = a.mouth_width;
+                scale.y = 0.6;
+            }
+            CreaturePart::Tongue => {
+                local = Vec3::new(0.0, -0.245 - a.mouth * 0.10, 0.535);
+                // Disappears into the closed mouth, without stale speech state or entity churn.
+                scale = Vec3::new(a.mouth_width, a.mouth.clamp(0.0, 0.8), 1.0);
             }
             CreaturePart::MouthCorner(side) => {
-                local = Vec3::new(side * 0.12, -0.24 + a.smile, 0.493);
+                local = Vec3::new(side * 0.12 * a.mouth_width, -0.24 + a.smile, 0.493);
                 turn = Quat::from_rotation_z(-side * a.smile * 5.0);
             }
             CreaturePart::Cheek(side) => {
@@ -528,13 +463,16 @@ pub(crate) fn animate_creature(
                         std::f32::consts::PI
                     } else {
                         0.0
-                    } + side * (a.fin + (time * 5.0).sin() * gait * 2.5),
+                    } + side
+                        * (a.fin
+                            + side * a.asymmetry * 0.7
+                            + (time * 5.0 - side * 0.4).sin() * gait * 2.5),
                 );
             }
             CreaturePart::Crest => {
                 local = Vec3::new(-0.12, 0.50, -0.10);
                 turn = Quat::from_rotation_z(1.3);
-                scale = Vec3::new(0.8, 0.65, 1.0);
+                scale = Vec3::new(0.8, 0.65 + a.fin * 0.5, 1.0);
             }
             CreaturePart::Body(index) => {
                 let mut center = motion.chain.joint(index);
@@ -569,6 +507,7 @@ pub(crate) fn animate_creature(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use beastie_core::{ActivityRecipe, Mood};
 
     fn creature() -> CreatureScene {
         beastie_view::plan(
@@ -697,5 +636,68 @@ mod tests {
         assert!(acting(&c, 1.0, 0, false, false).eye_open > 1.0);
         c.pose = CreaturePose::Sleep;
         assert!(acting(&c, 1.0, 0, false, false).eye_open < 0.1);
+    }
+    #[test]
+    fn owned_reactions_have_distinct_face_and_fin_silhouettes() {
+        let mut c = creature();
+        let mut sample = |cue| {
+            c.expression = Some(beastie_view::ExpressionScene {
+                owner: beastie_view::SemanticOwner::DirectOutcome,
+                cue,
+                elapsed_ms: 500,
+            });
+            acting(&c, 1.0, 0, false, false)
+        };
+        let affection = sample(PresentationCueKind::Affection);
+        let curious = sample(PresentationCueKind::Notice);
+        let refusal = sample(PresentationCueKind::Recoil);
+        assert!(affection.smile > 0.08 && affection.fin > 0.1);
+        assert!(curious.eye_open > affection.eye_open + 0.3);
+        assert!(curious.asymmetry > 0.0);
+        assert!(refusal.smile < 0.0 && refusal.fin < -0.2);
+        assert!(refusal.mouth_width < affection.mouth_width);
+    }
+
+    #[test]
+    fn anticipation_does_not_imply_consumption_and_clears_at_recovery() {
+        let mut c = creature();
+        c.mood = Mood::Content;
+        c.expression = None;
+        c.action_phase = Some(ActionPhase::Inspect);
+        let prepared = acting(&c, 1.0, 0, false, false);
+        assert!(prepared.eye_open > 1.0 && prepared.fin < 0.0);
+        assert_eq!(prepared.mouth, art::mood(Mood::Content).mouth);
+        c.action_phase = Some(ActionPhase::Recover);
+        assert_eq!(acting(&c, 1.0, 0, false, false), art::mood(Mood::Content));
+    }
+
+    #[test]
+    fn reduced_motion_keeps_owned_face_but_reduces_supporting_gesture() {
+        let mut c = creature();
+        c.expression = Some(beastie_view::ExpressionScene {
+            owner: beastie_view::SemanticOwner::DirectOutcome,
+            cue: PresentationCueKind::Affection,
+            elapsed_ms: 500,
+        });
+        let normal = acting(&c, 1.0, 0, false, false);
+        let reduced = acting(&c, 1.0, 0, true, false);
+        assert_eq!(normal.eye_open, reduced.eye_open);
+        assert_eq!(normal.smile, reduced.smile);
+        assert!(reduced.fin.abs() < normal.fin.abs() * 0.5);
+        assert!(reduced.tilt.abs() < normal.tilt.abs() * 0.5);
+    }
+
+    #[test]
+    fn speech_changes_width_and_aperture_then_cancels_without_residue() {
+        let mut c = creature();
+        c.mood = Mood::Content;
+        c.speaking = true;
+        c.mouth_phase = 1;
+        let open = acting(&c, 1.0, 0, false, false);
+        c.mouth_phase = 2;
+        let round = acting(&c, 1.0, 0, false, false);
+        assert!(round.mouth_width < open.mouth_width && round.mouth < open.mouth);
+        c.speaking = false;
+        assert_eq!(acting(&c, 1.0, 0, false, false), art::mood(Mood::Content));
     }
 }

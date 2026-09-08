@@ -73,7 +73,9 @@ Bevy renders the tank and every creature part, object, effect and icon from colo
 Voxel surface meshes omit interior faces; articulated parts move continuously. A distance-sampled
 trail guides constrained body joints, with retained curvature at rest; separate facial geometry
 controls eyes, brows and mouth. The
-camera is fixed and orthographic. A 320x180 coordinate space remains solely for UI layout; world
+camera is fixed and orthographic, pitched twelve degrees to reveal depth. UI geometry uses the
+matching camera rotation and is excluded from world shadows. A 320x180 coordinate space remains
+solely for UI layout; world
 geometry and font glyphs render at window resolution, with 1280x720 native evidence captures.
 
 The authoritative aquarium remains a 2D interaction plane inside the 3D tank. Normalized position
@@ -89,6 +91,10 @@ save recovery/reset confirmation, transcript controls, and naming remain declara
 need, trust and resentment values remain absent from the player summary. Panels and icons use
 geometry; text is the permitted font-rendering exception. Speech occupies the opposite side of
 the creature. Reduced motion and other accessibility settings remain part of presentation state.
+Text commands carry their resolved content bounds, semantic type role and disabled treatment;
+native rendering shapes and clips glyphs inside those bounds. Settings pages are ephemeral view
+state, while their values retain the existing versioned settings persistence. Startup recovery
+notices are typed technical feedback and never gain creature speech or reaction controls.
 
 The sprite pipeline and image catalog are removed. Runtime assets contain only sounds, the Atkinson
 font and its license, validated by the versioned asset manifest. Generated geometry requires no

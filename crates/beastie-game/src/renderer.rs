@@ -1,22 +1,20 @@
 //! Bevy's native 3D presentation. Every non-text mark is solid colored geometry.
 use std::collections::BTreeMap;
 
-use beastie_core::{FoodId, NormalizedPosition, ToyId};
+use beastie_core::{NormalizedPosition, ToyId};
 use beastie_view::{
     HitRegion, HitShape, IconKind, ObjectKind, PresentationCueKind, ScenePlan, UiTarget,
 };
 use bevy::{camera::ScalingMode, prelude::*, window::PrimaryWindow};
 
-use crate::{
-    host::HostSet,
-    voxel::{Geometry, VoxelModel},
-};
+use crate::{environment::object_mesh, host::HostSet, voxel::Geometry};
 
 pub const LOGICAL_WIDTH: f32 = 320.0;
 pub const LOGICAL_HEIGHT: f32 = 180.0;
 pub const PRESENTATION_WIDTH: f32 = 1280.0;
 pub const PRESENTATION_HEIGHT: f32 = 720.0;
 const UNITS: f32 = 20.0;
+const CAMERA_PITCH: f32 = -12.0 * std::f32::consts::PI / 180.0;
 
 #[derive(Resource)]
 pub struct SceneFrame {
@@ -147,179 +145,15 @@ fn setup(
             },
             ..OrthographicProjection::default_3d()
         }),
-        Transform::from_xyz(0.0, 0.0, 24.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH))
+            .with_translation(Quat::from_rotation_x(CAMERA_PITCH) * Vec3::new(0.0, 0.0, 24.0)),
         AmbientLight {
             color: Color::srgb(0.60, 0.80, 0.88),
             brightness: 550.0,
             ..default()
         },
     ));
-    commands.insert_resource(ClearColor(Color::srgb_u8(7, 18, 25)));
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 4200.0,
-            shadow_maps_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(-3.0, 7.0, 9.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
-    commands.spawn((
-        PointLight {
-            color: Color::srgb(0.40, 0.85, 0.95),
-            intensity: 150_000.0,
-            range: 30.0,
-            ..default()
-        },
-        Transform::from_xyz(6.0, 4.0, 5.0),
-    ));
-    let mut back = Geometry::default();
-    // Layered teal back wall, brass-dark structural frame, and a stepped stone bed.
-    for row in 0..26 {
-        let t = row as f32 / 25.0;
-        let color = [
-            12 + (t * 10.0) as u8,
-            38 + (t * 21.0) as u8,
-            48 + (t * 21.0) as u8,
-        ];
-        back.cuboid(
-            Vec3::new(0.0, -2.0 + row as f32 * 0.25, -2.6),
-            Vec3::new(15.95, 0.255, 0.3),
-            color,
-        );
-    }
-    commands.spawn((
-        bevy::light::NotShadowCaster,
-        bevy::light::NotShadowReceiver,
-        Mesh3d(meshes.add(back.mesh())),
-        MeshMaterial3d(solid.clone()),
-        Transform::default(),
-    ));
-    let mut tank = Geometry::default();
-    tank.cuboid(
-        Vec3::new(0.0, -2.2, -0.3),
-        Vec3::new(16.0, 0.32, 4.8),
-        [63, 73, 68],
-    );
-    for side in [-1.0, 1.0] {
-        tank.cuboid(
-            Vec3::new(side * 7.88, 1.1, -0.2),
-            Vec3::new(0.18, 6.65, 4.7),
-            [40, 66, 68],
-        );
-        tank.cuboid(
-            Vec3::new(side * 7.75, 1.1, 2.1),
-            Vec3::new(0.045, 6.65, 0.08),
-            [155, 149, 109],
-        );
-    }
-    tank.cuboid(
-        Vec3::new(0.0, 4.35, -0.2),
-        Vec3::new(16.0, 0.2, 4.7),
-        [38, 68, 69],
-    );
-    tank.cuboid(
-        Vec3::new(0.0, 4.21, 2.1),
-        Vec3::new(15.65, 0.055, 0.07),
-        [181, 179, 125],
-    );
-    for x in 0..98 {
-        for z in 0..18 {
-            let hash = (x * 31 + z * 73 + x * z * 7) % 19;
-            let height = 0.06 + hash as f32 * 0.004;
-            tank.cuboid(
-                Vec3::new(
-                    -7.7 + x as f32 * 0.158,
-                    -1.97 + height * 0.5,
-                    -2.0 + z as f32 * 0.22,
-                ),
-                Vec3::new(0.154, height, 0.21),
-                [92 + hash as u8 * 2, 102 + hash as u8 * 2, 83 + hash as u8],
-            );
-        }
-    }
-    for column in 0..72 {
-        let x = -7.6 + column as f32 * 0.212;
-        let ridge = 0.42 + ((x * 0.62).sin() * 0.5 + 0.5) * 0.27;
-        for depth in 0..7 {
-            let z = -2.0 + depth as f32 * 0.20;
-            let height = ridge * (1.0 - depth as f32 / 9.0);
-            let shade = ((column * 19 + depth * 11) % 17) as u8;
-            tank.cuboid(
-                Vec3::new(x, -1.9 + height * 0.5, z),
-                Vec3::new(0.209, height, 0.198),
-                [79 + shade, 99 + shade, 84 + shade],
-            );
-        }
-    }
-    // Sparse rear clusters frame the creature's open swimming space. These are scenery,
-    // not extra simulation objects: the familiar cave and plant remain the only targets.
-    let mut garden = Geometry::default();
-    for (center, radius, color) in [
-        (
-            Vec3::new(-6.75, -1.67, -0.9),
-            Vec3::new(0.75, 0.30, 0.48),
-            [77, 103, 103],
-        ),
-        (
-            Vec3::new(-6.16, -1.76, -0.55),
-            Vec3::new(0.39, 0.17, 0.35),
-            [111, 122, 109],
-        ),
-        (
-            Vec3::new(-5.86, -1.79, 0.18),
-            Vec3::new(0.23, 0.13, 0.25),
-            [125, 132, 110],
-        ),
-        (
-            Vec3::new(6.56, -1.55, -1.0),
-            Vec3::new(0.73, 0.47, 0.43),
-            [72, 97, 101],
-        ),
-        (
-            Vec3::new(5.95, -1.74, -0.36),
-            Vec3::new(0.48, 0.23, 0.38),
-            [108, 119, 111],
-        ),
-        (
-            Vec3::new(5.48, -1.79, 0.17),
-            Vec3::new(0.25, 0.13, 0.23),
-            [133, 139, 113],
-        ),
-        (
-            Vec3::new(-1.35, -1.83, 0.4),
-            Vec3::new(0.17, 0.10, 0.16),
-            [140, 139, 109],
-        ),
-        (
-            Vec3::new(2.38, -1.82, -0.1),
-            Vec3::new(0.21, 0.11, 0.18),
-            [117, 126, 103],
-        ),
-    ] {
-        garden_stone(&mut garden, center, radius, color);
-    }
-    for (x, height, bend, color) in [
-        (-7.0, 1.9, 0.36, [43, 93, 82]),
-        (-6.60, 1.4, -0.32, [50, 109, 89]),
-        (-6.30, 1.65, 0.28, [61, 115, 95]),
-        (6.60, 2.25, -0.44, [37, 91, 85]),
-        (6.93, 1.62, 0.36, [58, 117, 96]),
-        (6.07, 1.35, -0.26, [49, 103, 91]),
-    ] {
-        garden_frond(&mut garden, Vec3::new(x, -1.9, -1.30), height, bend, color);
-    }
-    commands.spawn((
-        bevy::light::NotShadowCaster,
-        Mesh3d(meshes.add(garden.mesh())),
-        MeshMaterial3d(solid.clone()),
-        Transform::default(),
-    ));
-    commands.spawn((
-        bevy::light::NotShadowCaster,
-        Mesh3d(meshes.add(tank.mesh())),
-        MeshMaterial3d(solid.clone()),
-        Transform::default(),
-    ));
+    crate::environment::setup(&mut commands, &mut meshes, solid.clone());
     let cube = meshes.add(Cuboid::default());
     for index in 0..14 {
         commands.spawn((
@@ -340,153 +174,9 @@ fn setup(
     commands.insert_resource(Palette { solid, ui });
 }
 
-fn garden_stone(shape: &mut Geometry, center: Vec3, radius: Vec3, color: [u8; 3]) {
-    let cell = 0.10;
-    let extent = (radius / cell).ceil().as_ivec3();
-    for x in -extent.x..=extent.x {
-        for y in -extent.y..=extent.y {
-            for z in -extent.z..=extent.z {
-                let offset = Vec3::new(x as f32, y as f32, z as f32) * cell;
-                if (offset / radius).length_squared() <= 1.0 {
-                    let variation = (x * 13 + y * 7 + z * 17).rem_euclid(7) as u8;
-                    shape.cuboid(
-                        center + offset,
-                        Vec3::splat(cell),
-                        color.map(|channel| channel.saturating_add(variation)),
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn garden_frond(shape: &mut Geometry, root: Vec3, height: f32, bend: f32, color: [u8; 3]) {
-    let segments = (height / 0.075).ceil() as u32;
-    for segment in 0..segments {
-        let t = segment as f32 / segments as f32;
-        let center = root + Vec3::new(bend * t * t + (t * 4.5).sin() * 0.045, t * height, t * 0.10);
-        let width = 0.065 + (std::f32::consts::PI * t).sin() * 0.085;
-        shape.cuboid(center, Vec3::new(width, 0.083, 0.055), color);
-        if segment > 3 && segment % 5 == 0 {
-            let side = if segment % 10 == 0 { -1.0 } else { 1.0 };
-            for leaf in 1..=3 {
-                shape.cuboid(
-                    center + Vec3::new(side * leaf as f32 * 0.055, leaf as f32 * 0.025, 0.015),
-                    Vec3::new(0.075, 0.040, 0.050),
-                    color.map(|channel| channel.saturating_add(9)),
-                );
-            }
-        }
-    }
-}
-
 fn object_key(kind: ObjectKind) -> String {
     format!("{kind:?}")
 }
-fn object_mesh(kind: ObjectKind) -> Mesh {
-    match kind {
-        ObjectKind::Food(food) => {
-            let color = match food {
-                FoodId::Berry => [205, 80, 101],
-                FoodId::Mushroom => [191, 166, 121],
-                FoodId::Pellet => [143, 119, 79],
-            };
-            VoxelModel::ellipsoid([3, 3, 3], |p| if p[1] == 3 { [83, 140, 99] } else { color })
-                .mesh(0.055)
-        }
-        ObjectKind::Toy(ToyId::Ball) => VoxelModel::ellipsoid([7, 7, 7], |p| {
-            if p[1].abs() < 2 {
-                [240, 197, 120]
-            } else if p[0] > 1 {
-                [111, 177, 163]
-            } else {
-                [212, 119, 92]
-            }
-        })
-        .mesh(0.055),
-        ObjectKind::Toy(ToyId::Bell) => {
-            let mut shape = VoxelModel::default();
-            for y in 0..12 {
-                let r = 7 - y / 3;
-                for x in -r..=r {
-                    for z in -r..=r {
-                        if x * x + z * z <= r * r && (x * x + z * z >= (r - 2) * (r - 2) || y > 8) {
-                            shape.set([x, y - 5, z], [202, 158, 72]);
-                        }
-                    }
-                }
-            }
-            shape.set([0, 8, 0], [103, 103, 81]);
-            shape.mesh(0.052)
-        }
-        ObjectKind::Toy(ToyId::Sock) => {
-            let mut geometry = Geometry::default();
-            geometry.cuboid(
-                Vec3::new(0.0, 0.12, 0.0),
-                Vec3::new(0.28, 0.48, 0.2),
-                [159, 137, 168],
-            );
-            geometry.cuboid(
-                Vec3::new(0.15, -0.12, 0.0),
-                Vec3::new(0.55, 0.22, 0.22),
-                [183, 159, 181],
-            );
-            geometry.cuboid(
-                Vec3::new(0.0, 0.3, 0.0),
-                Vec3::new(0.3, 0.07, 0.22),
-                [220, 196, 183],
-            );
-            geometry.mesh()
-        }
-        ObjectKind::Cave => {
-            let mut shape = VoxelModel::default();
-            for x in -12_i32..=12 {
-                for y in -13..17 {
-                    for z in -6..=4 {
-                        let outer =
-                            y < 0 || (x as f32 / 12.0).powi(2) + (y as f32 / 17.0).powi(2) <= 1.0;
-                        let doorway = x.abs() < 7 && y < 11 && z > -5;
-                        if outer && !doorway {
-                            let shade = (x * 17 + y * 31 + z * 7_i32).rem_euclid(13) as u8;
-                            let color = if x.abs() < 7 && y < 11 && z <= -5 {
-                                [19 + shade / 3, 35 + shade / 3, 36 + shade / 3]
-                            } else {
-                                [64 + shade, 90 + shade, 88 + shade]
-                            };
-                            shape.set([x, y - 6, z], color);
-                        }
-                    }
-                }
-            }
-            shape.mesh(0.075)
-        }
-        ObjectKind::Plant => {
-            let mut shape = Geometry::default();
-            // At the authoritative plant center, y=-1.31 reaches the substrate. Narrow
-            // curved ribbons rise from that root rather than floating as a leaf lattice.
-            for stem in 0..7 {
-                let angle = stem as f32 * 1.35;
-                let height = 1.35 + (stem % 3) as f32 * 0.17;
-                let bend = angle.sin() * 0.38;
-                garden_frond(
-                    &mut shape,
-                    Vec3::new(angle.sin() * 0.10, -1.31, angle.cos() * 0.15),
-                    height,
-                    bend,
-                    [55 + stem * 3, 119 + stem * 4, 92 + stem * 2],
-                );
-            }
-            garden_stone(
-                &mut shape,
-                Vec3::new(0.0, -1.26, 0.0),
-                Vec3::new(0.26, 0.09, 0.25),
-                [108, 121, 95],
-            );
-            shape.mesh()
-        }
-    }
-}
-
 /// Use the same continuous anchor for drawing, effects, and volume picking.
 pub(crate) fn object_position(object: &beastie_view::ObjectScene, scene: &ScenePlan) -> Vec3 {
     if object.carried {
@@ -607,11 +297,9 @@ fn animate_bubbles(frame: Res<SceneFrame>, mut bubbles: Query<(&Bubble, &mut Tra
     }
 }
 
-fn icon_geometry(kind: IconKind, center: Vec3, shape: &mut Geometry) {
-    let color = [189, 211, 191];
-    let cell = 0.055;
+fn icon_geometry(kind: IconKind, center: Vec3, color: [u8; 3], shape: &mut Geometry) {
+    let cell = 0.074;
     let pattern: &[&str] = match kind {
-        IconKind::Pearl => &["  xx  ", " xxxx ", "xxxxxx", "xxxxxx", " xxxx ", "  xx  "],
         IconKind::Microphone => &[
             "  xx  ", "  xx  ", "x xx x", "x xx x", " xxxx ", "  xx  ", " xxxx ",
         ],
@@ -625,7 +313,12 @@ fn icon_geometry(kind: IconKind, center: Vec3, shape: &mut Geometry) {
         for (column, byte) in line.bytes().enumerate() {
             if byte == b'x' {
                 shape.cuboid(
-                    center + Vec3::new(column as f32 * cell, -(row as f32) * cell, 0.0),
+                    center
+                        + Vec3::new(
+                            (column as f32 - 2.5) * cell,
+                            (pattern.len() as f32 * 0.5 - 0.5 - row as f32) * cell,
+                            0.0,
+                        ),
                     Vec3::splat(cell * 0.95),
                     color,
                 );
@@ -701,72 +394,13 @@ fn text_box(rect: beastie_view::Rect) -> TextBox {
 /// Every text box belongs to a panel or button. Neighboring labels constrain columns/rows
 /// inside a panel; native glyph wrapping must never borrow the remainder of the window.
 fn text_content_bounds(text: &beastie_view::TextCommand, plan: &ScenePlan) -> TextBox {
-    let container = plan
-        .rects
-        .iter()
-        .filter(|rect| {
-            !rect.outline
-                && rect.layer <= text.layer
-                && rect.rect.w >= 8
-                && rect.rect.h >= 6
-                && rect.rect.contains(text.x, text.y)
-        })
-        .min_by_key(|rect| rect.rect.w * rect.rect.h)
-        .map(|rect| text_box(rect.rect))
-        .unwrap_or(TextBox {
-            x: 0.0,
-            y: 0.0,
-            w: LOGICAL_WIDTH,
-            h: LOGICAL_HEIGHT,
-        });
-    let x = text.x as f32;
-    let y = text.y as f32;
-    let mut right = container.x + container.w - 3.0;
-    let mut bottom = if text.id.starts_with("settings/") && text.id.ends_with("-value") {
-        container.y + container.h
-    } else {
-        container.y + container.h - 2.0
-    };
-    // A settings label is followed by its value button, which is a rect rather than
-    // another text command. Constrain the label to that control or large text can
-    // incorrectly borrow the whole modal width (for example, "Save & data").
-    for rect in &plan.rects {
-        if rect.outline
-            || rect.rect.x <= text.x
-            || rect.rect.y > text.y
-            || rect.rect.y + rect.rect.h <= text.y
-        {
-            continue;
-        }
-        right = right.min(rect.rect.x as f32 - 3.0);
-        if text.id.starts_with("settings/") && text.id.ends_with("-name") {
-            // The final settings row has no following label to establish a bottom
-            // edge, so its panel would otherwise make the label much taller than
-            // every other row at the large accessibility size.
-            bottom = bottom.min(rect.rect.y as f32 + rect.rect.h as f32 + 4.0);
-        } else if text.id.starts_with("settings/") && text.id.ends_with("-value") {
-            // Keep value text inside the button's actual background. The text starts
-            // one unit below the outer edge, and the background supplies the lower edge.
-            bottom = bottom.min(rect.rect.y as f32 + rect.rect.h as f32);
-        }
-    }
-    for next in &plan.text {
-        if next.id == text.id || next.layer != text.layer {
-            continue;
-        }
-        if next.y == text.y && next.x > text.x {
-            right = right.min(next.x as f32 - 3.0);
-        }
-        if next.y > text.y && (next.x as f32) < right && next.x >= text.x {
-            bottom = bottom.min(next.y as f32 - 1.0);
-        }
-    }
-    TextBox {
-        x,
-        y,
-        w: (right - x).max(1.0),
-        h: (bottom - y).max(1.0),
-    }
+    let _ = plan;
+    text_box(text.bounds.unwrap_or(beastie_view::Rect {
+        x: text.x,
+        y: text.y,
+        w: 300 - text.x,
+        h: 180 - text.y,
+    }))
 }
 
 fn visible_text_boxes(
@@ -792,7 +426,7 @@ fn visible_text_boxes(
 }
 
 fn fitting_font_size(text: &beastie_view::TextCommand, bounds: TextBox) -> f32 {
-    let requested = 8.0 * f32::from(text.scale);
+    let requested = text.role.size(text.scale >= 2);
     let mut size = requested.min(bounds.h / 1.2);
     // Atkinson's mean advance is about half its em. A conservative width estimate keeps
     // small controls legible without silently drawing their label across the next control.
@@ -851,21 +485,45 @@ fn sync_ui(mut ui: UiSystem) {
                     shape.cuboid(center + Vec3::X * x, Vec3::new(0.028, h, 0.02), color);
                 }
             } else {
-                shape.cuboid(
-                    center,
-                    Vec3::new(r.w as f32 / UNITS, r.h as f32 / UNITS, 0.02),
-                    color,
-                );
+                let cut = if r.w >= 20 && r.h >= 12 && !rect.id.starts_with("compose/bar") {
+                    0.065
+                } else {
+                    0.0
+                };
+                let w = r.w as f32 / UNITS;
+                let h = r.h as f32 / UNITS;
+                shape.cuboid(center, Vec3::new(w, h - cut * 2.0, 0.02), color);
+                if cut > 0.0 {
+                    for side in [-1.0, 1.0] {
+                        shape.cuboid(
+                            center + Vec3::Y * side * (h - cut) * 0.5,
+                            Vec3::new(w - cut * 2.0, cut, 0.02),
+                            color,
+                        );
+                    }
+                }
             }
         }
         for icon in &ui.frame.plan.icons {
             icon_geometry(
                 icon.kind,
                 logical_position(
-                    icon.x as f32 + 1.0,
-                    icon.y as f32 + 1.0,
+                    icon.x as f32,
+                    icon.y as f32,
                     8.05 + icon.layer as f32 * 0.002,
                 ),
+                if ui
+                    .frame
+                    .plan
+                    .hit_regions
+                    .iter()
+                    .find(|h| h.id == icon.id.replace("ui/button-", "compose/"))
+                    .is_some_and(|h| !h.enabled)
+                {
+                    [88, 114, 118]
+                } else {
+                    [216, 219, 185]
+                },
                 &mut shape,
             );
         }
@@ -879,9 +537,11 @@ fn sync_ui(mut ui: UiSystem) {
             let material = ui.palette.ui.clone();
             ui.commands.spawn((
                 UiGeometry,
+                bevy::light::NotShadowCaster,
+                bevy::light::NotShadowReceiver,
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material),
-                Transform::default(),
+                Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH)),
             ));
             ui.cache.geometry = Some(mesh);
         }
@@ -930,11 +590,29 @@ fn sync_ui(mut ui: UiSystem) {
                         font_size: bevy::text::FontSize::Px(font_size),
                         ..default()
                     },
-                    TextColor(Color::srgb_u8(228, 232, 207)),
+                    TextColor({
+                        let c = if text.muted {
+                            [101, 128, 130]
+                        } else {
+                            text.role.color()
+                        };
+                        Color::srgb_u8(c[0], c[1], c[2])
+                    }),
+                    TextLayout::justify(if text.role.centered() {
+                        Justify::Center
+                    } else {
+                        Justify::Left
+                    }),
                     Node {
                         position_type: PositionType::Absolute,
                         left: px((bounds.x - visible.x) * viewport.scale),
-                        top: px((bounds.y - visible.y) * viewport.scale),
+                        top: px((bounds.y - visible.y
+                            + if text.role.centered() {
+                                ((bounds.h - font_size / viewport.scale * 1.2) * 0.5).max(0.0)
+                            } else {
+                                0.0
+                            })
+                            * viewport.scale),
                         width: px(bounds.w * viewport.scale),
                         ..default()
                     },
@@ -1370,6 +1048,9 @@ mod ui_layout_tests {
             y: 20,
             layer: 10,
             scale: 1,
+            role: beastie_view::TextRole::Body,
+            bounds: None,
+            muted: false,
         };
         let bounds = TextBox {
             x: 10.0,
@@ -1443,6 +1124,7 @@ mod ui_layout_tests {
             &world,
             &beastie_view::ViewState {
                 mode: beastie_view::UiMode::Settings,
+                settings_page: 2,
                 text_scale: 2,
                 ..default()
             },
@@ -1458,7 +1140,7 @@ mod ui_layout_tests {
         let other = scene
             .text
             .iter()
-            .find(|text| text.id == "settings/effects-volume-name")
+            .find(|text| text.id == "settings/bindings-name")
             .expect("another settings label");
         let other_size = fitting_font_size(other, text_content_bounds(other, &scene));
         let value = scene
@@ -1471,7 +1153,7 @@ mod ui_layout_tests {
         assert!(bounds.w < 100.0);
         assert!((label_size - other_size).abs() < 0.01);
         assert!(
-            value_size >= 8.0,
+            value_size >= beastie_view::TextRole::Control.size(true) - 0.01,
             "value size {value_size}, bounds {value_bounds:?}"
         );
     }

@@ -1,0 +1,62 @@
+{"version": 1, "command": "ui", "action": "normal_text"}
+{"version": 1, "command": "ui", "action": "close"}
+{"version": 1, "command": "capture", "name": "normal-quiet"}
+{"version": 1, "command": "ui", "action": "open_food"}
+{"version": 1, "command": "capture", "name": "normal-food"}
+{"version": 1, "command": "ui", "action": "open_toys"}
+{"version": 1, "command": "capture", "name": "normal-toys"}
+{"version": 1, "command": "ui", "action": "open_settings"}
+{"version": 1, "command": "capture", "name": "normal-comfort"}
+{"version": 1, "command": "ui", "action": "settings_sound"}
+{"version": 1, "command": "capture", "name": "normal-sound"}
+{"version": 1, "command": "ui", "action": "settings_controls"}
+{"version": 1, "command": "capture", "name": "normal-controls"}
+{"version": 1, "command": "ui", "action": "open_bindings"}
+{"version": 1, "command": "capture", "name": "normal-bindings"}
+{"version": 1, "command": "ui", "action": "open_data"}
+{"version": 1, "command": "capture", "name": "normal-data"}
+{"version": 1, "command": "ui", "action": "request_reset"}
+{"version": 1, "command": "capture", "name": "normal-reset"}
+{"version": 1, "command": "ui", "action": "rename", "controller": false}
+{"version": 1, "command": "capture", "name": "normal-rename"}
+{"version": 1, "command": "ui", "action": "talk", "controller": true}
+{"version": 1, "command": "capture", "name": "normal-keyboard"}
+{"version": 1, "command": "ui", "action": "select_berry", "controller": false}
+{"version": 1, "command": "capture", "name": "normal-drop"}
+{"version": 1, "command": "ui", "action": "creature_actions"}
+{"version": 1, "command": "capture", "name": "normal-context"}
+{"version": 1, "command": "ui", "action": "large_text"}
+{"version": 1, "command": "ui", "action": "close"}
+{"version": 1, "command": "capture", "name": "large-quiet"}
+{"version": 1, "command": "ui", "action": "open_food"}
+{"version": 1, "command": "capture", "name": "large-food"}
+{"version": 1, "command": "ui", "action": "open_toys"}
+{"version": 1, "command": "capture", "name": "large-toys"}
+{"version": 1, "command": "ui", "action": "open_settings"}
+{"version": 1, "command": "capture", "name": "large-comfort"}
+{"version": 1, "command": "ui", "action": "settings_sound"}
+{"version": 1, "command": "capture", "name": "large-sound"}
+{"version": 1, "command": "ui", "action": "settings_controls"}
+{"version": 1, "command": "capture", "name": "large-controls"}
+{"version": 1, "command": "ui", "action": "open_bindings"}
+{"version": 1, "command": "capture", "name": "large-bindings"}
+{"version": 1, "command": "ui", "action": "open_data"}
+{"version": 1, "command": "capture", "name": "large-data"}
+{"version": 1, "command": "ui", "action": "request_reset"}
+{"version": 1, "command": "capture", "name": "large-reset"}
+{"version": 1, "command": "ui", "action": "rename", "controller": false}
+{"version": 1, "command": "capture", "name": "large-rename"}
+{"version": 1, "command": "ui", "action": "talk", "controller": true}
+{"version": 1, "command": "capture", "name": "large-keyboard"}
+{"version": 1, "command": "ui", "action": "select_berry", "controller": false}
+{"version": 1, "command": "capture", "name": "large-drop"}
+{"version": 1, "command": "ui", "action": "creature_actions"}
+{"version": 1, "command": "capture", "name": "large-context"}
+{"version": 1, "command": "ui", "action": "normal_text"}
+{"version": 1, "command": "ui", "action": "close"}
+{"version": 1, "command": "talk", "text": "Hello Mop."}
+{"version": 1, "command": "wait", "milliseconds": 600}
+{"version": 1, "command": "capture", "name": "normal-speech"}
+{"version": 1, "command": "ui", "action": "large_text"}
+{"version": 1, "command": "capture", "name": "large-speech"}
+{"version": 1, "command": "ui", "action": "normal_text"}

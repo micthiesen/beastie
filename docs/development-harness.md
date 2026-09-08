@@ -62,7 +62,7 @@ cargo xtask feel --suite baseline --output target/feel/baseline-before
 cargo xtask feel --suite baseline --output target/feel/baseline-after
 ```
 
-The five visible experiences record a complete 1280x720, 60 fps native presentation plus
+The seven baseline experiences record a complete 1280x720, 60 fps native presentation plus
 synchronized privacy-safe input, event, state, audio, and marker traces. The harness generates
 uniform and interaction-centered filmstrips, retains offline TTS WAVs, creates an authored reference
 mix, validates the video, and hashes the exact binary and scenario. Focused suites accept the same
@@ -93,7 +93,7 @@ cancellation, and shutdown. The default gate never downloads a model or requires
 ## What automated plans prove
 
 Display-free tests cover fixed-point world mapping, action phases, authoritative objects, integer
-asset crop/scale, six full-body moods, player-facing attention, protocol-driven speech frames,
+geometric art projection, six full-body moods, player-facing attention, protocol-driven speech frames,
 authored effects, direct-reaction cue preemption,
 persistent compose behavior, hover/focus parity, food-drop mode, controller hints, settings and
 bindings, save/reset controls, transcript controls, naming, and viewport calculations.
@@ -102,9 +102,7 @@ The visible runner proves real Bevy scene execution and direct 1280x720 GPU capt
 screenshot permissions. The 320x180 UI layout units do not limit 3D or text rendering resolution. `cargo xtask verify` stays independent of
 display, model, GPU, audio device, network, and generation credentials.
 
-Asset validation is quiet by default so gate failures stay visible. Use
-`cargo xtask asset check --verbose` for per-candidate palette, alpha, density, and resolution
-diagnostics. `cargo xtask dev --fake-ai` skips the unused dialogue-worker build and launches the
+`cargo xtask dev --fake-ai` skips the unused dialogue-worker build and launches the
 already-built game binary directly. On macOS it asks `osascript` to bring that exact process to the
 foreground when available. Noninteractive smoke and scripted runs fail with an actionable message
 after 120 seconds instead of hanging indefinitely, including real local AI and STT configurations.
@@ -169,3 +167,20 @@ For interface-only work, `fixtures/scenarios/ui-polish-visible.jsonl` drives the
 actions as real input and captures food, toy, settings, bindings, data, and reset-confirmation
 surfaces. The `ui` scenario command is intentionally allow-listed; it cannot inject arbitrary view
 state or bypass the ordinary `Game::apply_ui_action` path.
+
+The Bevy craft fixture `fixtures/scenarios/voxel-craft-ui.jsonl` captures 28 Normal/Large states,
+including settings pages, bindings, data/reset, rename, controller keyboard, food targeting,
+creature context and short speech. Run it through `cargo xtask dev --fake-ai --script` with a
+fresh `--capture-dir`. A UI command may set `"controller": true` to exercise the controller branch
+of the same action handler. This is semantic coverage, not evidence of a physical controller.
+
+For custom native input recordings, the built game accepts `--feel-dir` directly; `xtask dev`
+does not forward that flag. Prefer `cargo xtask feel` for canonical validated evidence bundles.
+Scripted runs preserve ordinary saves and preferences. The craft pass's actual macOS pointer and
+keyboard evidence is recorded in [feel-review-voxel-craft.md](feel-review-voxel-craft.md).
+
+macOS global synthetic text events can lose focus or be intercepted despite successful pointer
+input. Check recorded `KeyboardInput` and submission events, not automation exit status. Targeting
+the game's process with per-character CG key-down/up events proved both Normal and Large typing.
+This is separate from the harness's allow-listed semantic actions. If yabai interferes with a
+current Bevy run, stop it once and leave it stopped for the session, per the working agreement.

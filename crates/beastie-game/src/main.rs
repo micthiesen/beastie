@@ -6,6 +6,7 @@ mod capture;
 mod creature;
 
 mod dialogue;
+mod environment;
 mod error;
 mod feel;
 mod host;

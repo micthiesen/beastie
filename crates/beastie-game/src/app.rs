@@ -237,7 +237,7 @@ impl Game {
                 Ok(settings) => (settings, None),
                 Err(_) => (
                     UserSettings::default(),
-                    Some("settings were unreadable. using safe defaults.".to_owned()),
+                    Some("Settings unreadable. Using safe defaults.".to_owned()),
                 ),
             }
         };
@@ -324,8 +324,11 @@ impl Game {
             },
             ..ViewState::default()
         };
-        if let Some(message) = settings_message.or(load_message) {
-            view.show_speech(message, session.world().elapsed_ms);
+        if let Some(message) = settings_message {
+            view.show_status(message, session.world().elapsed_ms, 12_000);
+        }
+        if let Some(notice) = load_message {
+            present_startup_notice(&mut view, notice, session.world().elapsed_ms);
         }
         let mut audio = AudioBank::load(&assets_root);
         audio.set_gains(settings.effects_gain(), settings.speech_gain());
@@ -1073,7 +1076,14 @@ impl Game {
             }
             UiAction::OpenSettings => {
                 self.view.mode = UiMode::Settings;
-                self.reset_focus();
+                self.view.focused_region =
+                    Some(format!("settings/page-{}", self.view.settings_page.min(2)));
+            }
+            UiAction::SelectSettingsPage(page) => {
+                self.view.settings_page = page.min(2);
+                self.view.mode = UiMode::Settings;
+                self.view.focused_region =
+                    Some(format!("settings/page-{}", self.view.settings_page));
             }
             UiAction::SetTextScale(scale) => {
                 self.view.text_scale = scale.clamp(1, 2);
@@ -1484,6 +1494,13 @@ impl Game {
                         .map_err(feel_error)?;
                 }
                 self.apply_ui_action(action, false)?;
+            }
+            ScenarioStep::ControllerUi(action) => {
+                if let Some(feel) = &mut self.feel {
+                    feel.record_ui(action, self.session.world().elapsed_ms)
+                        .map_err(feel_error)?;
+                }
+                self.apply_ui_action(action, true)?;
             }
             ScenarioStep::MicrophoneAcquisition(outcome) => {
                 let outcome = match outcome {
@@ -1970,14 +1987,29 @@ impl Game {
     }
 }
 
-fn load_session(store: &SaveStore) -> (GameSession, Option<String>, bool, bool) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupNotice {
+    WelcomeBack,
+    Technical(&'static str),
+}
+
+fn present_startup_notice(view: &mut ViewState, notice: StartupNotice, now_ms: u64) {
+    match notice {
+        StartupNotice::WelcomeBack => view.show_speech("you came back.".to_owned(), now_ms),
+        StartupNotice::Technical(message) => view.show_status(message, now_ms, 12_000),
+    }
+}
+
+fn load_session(store: &SaveStore) -> (GameSession, Option<StartupNotice>, bool, bool) {
     let loaded = match store.load_recoverable() {
         Ok(Some(loaded)) => loaded,
         Ok(None) => return (GameSession::new(42, "Mop"), None, false, true),
         Err(_) => {
             return (
                 GameSession::new(42, "Mop"),
-                Some("save box would not open.".to_owned()),
+                Some(StartupNotice::Technical(
+                    "Save unavailable. Your existing files are unchanged.",
+                )),
                 false,
                 false,
             );
@@ -1991,18 +2023,20 @@ fn load_session(store: &SaveStore) -> (GameSession, Option<String>, bool, bool) 
         Ok((session, _)) if recovered => match store.promote_backup() {
             Ok(true) => (
                 session,
-                Some("found the spare save. we're okay.".to_owned()),
+                Some(StartupNotice::Technical("Recovered the last-good save.")),
                 true,
                 true,
             ),
             _ => (
                 session,
-                Some("found the spare, but couldn't repair the save box.".to_owned()),
+                Some(StartupNotice::Technical(
+                    "Backup loaded. Save repair failed.",
+                )),
                 true,
                 false,
             ),
         },
-        Ok((session, _)) => (session, Some("you came back.".to_owned()), true, true),
+        Ok((session, _)) => (session, Some(StartupNotice::WelcomeBack), true, true),
         Err(_) => {
             if !recovered
                 && let Ok(Some(backup)) = store.load_backup()
@@ -2011,13 +2045,15 @@ fn load_session(store: &SaveStore) -> (GameSession, Option<String>, bool, bool) 
                 return match store.promote_backup() {
                     Ok(true) => (
                         session,
-                        Some("main save was weird. used the spare.".to_owned()),
+                        Some(StartupNotice::Technical("Recovered the last-good save.")),
                         true,
                         true,
                     ),
                     _ => (
                         session,
-                        Some("spare opened, but the save box couldn't be repaired.".to_owned()),
+                        Some(StartupNotice::Technical(
+                            "Backup loaded. Save repair failed.",
+                        )),
                         true,
                         false,
                     ),
@@ -2025,7 +2061,9 @@ fn load_session(store: &SaveStore) -> (GameSession, Option<String>, bool, bool) 
             }
             (
                 GameSession::new(42, "Mop"),
-                Some("old save smelled wrong. left it alone.".to_owned()),
+                Some(StartupNotice::Technical(
+                    "Save unreadable. Your existing files are unchanged.",
+                )),
                 false,
                 false,
             )
@@ -2326,6 +2364,22 @@ mod tests {
     use crate::settings::TextSpeed;
 
     #[test]
+    fn startup_recovery_is_technical_feedback_without_creature_speech() {
+        let mut view = beastie_view::ViewState::default();
+        super::present_startup_notice(
+            &mut view,
+            super::StartupNotice::Technical("Recovered the last-good save."),
+            20,
+        );
+        assert_eq!(
+            view.status_message.as_deref(),
+            Some("Recovered the last-good save.")
+        );
+        assert!(view.speech.is_none());
+        assert!(view.cue_queue.is_empty());
+    }
+
+    #[test]
     fn toy_ui_actions_map_to_typed_play_commands() {
         assert_eq!(
             play_command(ToyId::Ball),
@@ -2575,7 +2629,7 @@ mod tests {
         let (mut session, message, resumed, save_enabled) = load_session(&store);
         assert!(resumed);
         assert!(save_enabled);
-        assert_eq!(message.as_deref(), Some("you came back."));
+        assert_eq!(message, Some(super::StartupNotice::WelcomeBack));
         assert_eq!(session.world().creature.name, "Mop");
         assert_eq!(session.world().creature.memories.len(), 5);
         assert!(!session.world().aquarium.objects.is_empty());

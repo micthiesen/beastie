@@ -14,6 +14,11 @@ painted face textures, image planes, or raster background art. Small facial feat
 finer geometry than the body. Text is the exception to the geometric presentation contract.
 The renderer uses Bevy; the simulation continues to own every authoritative fact.
 
+The fixed camera looks down twelve degrees, revealing the substrate and cave depth while retaining
+the front-facing creature. The UI is aligned to that camera independently of the world, and cannot
+cast shadows into the aquarium. Camera changes must preserve the shared ray/interaction-plane
+mapping and be checked with actual pointer input.
+
 Voxel shapes move and rotate continuously through space. They do not snap to a world voxel
 grid. Rendering at the window resolution lets geometry provide the chunky appearance without
 forcing the face and text through the former low-resolution pixel canvas. Lighting should
@@ -49,6 +54,28 @@ pointer, and controller focus. Controls and panels use geometry and text, never 
 Dialogue must remain readable without covering the face. Settings, food and toy choices,
 bindings, data management, and confirmation surfaces share the same material and spacing rules.
 Readability takes priority over making letters look like voxel blocks.
+
+The care deck groups its message field and Send control, then Speak, Feed and Settings. Icons sit
+above short labels. Creature identity stays visible beside technical status. Dark enamel surfaces,
+stepped corners and restrained warm selection accents connect the controls to the voxel world.
+Settings uses Comfort & display, Sound & speech and Controls & data pages; secondary panels provide
+local navigation and focus their own relevant action. Reset defaults to Cancel.
+
+Text has authored title, identity, body, secondary, control, caption and dialogue roles. Large mode
+increases those sizes by 30 percent; panels make room for it. Every emitted text command has a
+resolved content box. Native font shaping and clipping operate within that box. Disabled controls
+dim their icon, label and surface together. Text truncation uses a Unicode ellipsis.
+
+## Art tuning
+
+- `crates/beastie-game/src/creature_art.rs`: creature palette and proportions, motion amplitudes,
+  expression and private-life recipes, and three speech mouth shapes.
+- `crates/beastie-game/src/environment.rs`: tank palette, lighting, layered fronds and object forms.
+- `crates/beastie-view/src/ui_art.rs`: interface materials, typography roles and text layout.
+
+Tune within these domain definitions before adding renderer branches. A visual recipe consumes
+typed semantic state; it cannot create a payoff, infer mood from dialogue or mutate a save.
+Inspect profiles at native size and in continuous sequences, including reduced motion.
 
 The bundled text face is Atkinson Hyperlegible Next Medium at
 `assets/generated/ui/atkinson-hyperlegible-next-medium.ttf`. Its open counters and distinct

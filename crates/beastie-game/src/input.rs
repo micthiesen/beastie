@@ -34,6 +34,9 @@ pub fn move_focus(plan: &ScenePlan, current: Option<&str>, delta: i32) -> Option
             hit.id.starts_with("action/")
                 || hit.id.starts_with("keyboard/")
                 || hit.id.starts_with("settings/")
+                || hit.id.starts_with("bindings/")
+                || hit.id.starts_with("data/")
+                || hit.id == "reset/cancel"
                 || hit.id == "world/drop-food"
         })
     {
@@ -86,6 +89,9 @@ mod tests {
             (UiMode::FoodChoice, "action/select-berry"),
             (UiMode::ToyChoice, "action/play-ball"),
             (UiMode::OnScreenKeyboard, "keyboard/a"),
+            (UiMode::Bindings, "bindings/push-to-talk"),
+            (UiMode::DataManagement, "data/recover"),
+            (UiMode::ConfirmReset, "reset/cancel"),
         ] {
             let view = ViewState {
                 mode,

@@ -23,14 +23,9 @@ pub const SPEECH_LIFETIME_MS: u64 = 8_000;
 pub const SPEECH_RELEASE_MS: u64 = 500;
 pub const CUE_QUEUE_LIMIT: usize = 8;
 
-const UI_SHADOW: [u8; 4] = [4, 10, 16, 220];
-const UI_EDGE: [u8; 4] = [129, 112, 76, 255];
-const UI_EDGE_LIT: [u8; 4] = [190, 169, 111, 255];
-const UI_PANEL: [u8; 4] = [12, 29, 39, 248];
-const UI_PANEL_INSET: [u8; 4] = [7, 19, 29, 255];
-const UI_BUTTON: [u8; 4] = [24, 52, 61, 255];
-const UI_BUTTON_DISABLED: [u8; 4] = [19, 31, 39, 230];
-const UI_CORAL: [u8; 4] = [194, 103, 84, 255];
+mod ui_art;
+pub use ui_art::TextRole;
+use ui_art::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -84,6 +79,7 @@ pub enum UiAction {
     ClearText,
     CancelMode,
     OpenSettings,
+    SelectSettingsPage(u8),
     SetTextScale(u8),
     ToggleReducedMotion,
     ToggleReducedFlashes,
@@ -234,6 +230,8 @@ pub struct PresentationCue {
 #[serde(deny_unknown_fields)]
 pub struct ViewState {
     pub mode: UiMode,
+    #[serde(default)]
+    pub settings_page: u8,
     /// Stable [`HitRegion::id`] selected by keyboard or controller navigation.
     pub focused_region: Option<String>,
     /// Stable [`HitRegion::id`] beneath the pointer.
@@ -321,6 +319,7 @@ impl Default for ViewState {
     fn default() -> Self {
         Self {
             mode: UiMode::Compose,
+            settings_page: 0,
             focused_region: Some("compose/input".to_owned()),
             hovered_region: None,
             text_buffer: String::new(),
@@ -534,6 +533,9 @@ pub struct RectCommand {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TextCommand {
+    pub bounds: Option<Rect>,
+    pub muted: bool,
+    pub role: TextRole,
     pub id: String,
     pub text: String,
     pub x: i32,
@@ -586,7 +588,6 @@ pub enum Highlight {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IconKind {
-    Pearl,
     Microphone,
     Food,
     Settings,
@@ -1061,11 +1062,56 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (ScenePlan, AudioPlan) {
         &mut hit_regions,
     );
     add_temporary_mode(view, &mut rects, &mut text, &mut hit_regions);
+    let close = match view.mode {
+        UiMode::Settings => Some((
+            Rect {
+                x: 281,
+                y: 7,
+                w: 26,
+                h: 14,
+            },
+            UiAction::CancelMode,
+            "Close",
+        )),
+        UiMode::Bindings => Some((
+            Rect {
+                x: 243,
+                y: 17,
+                w: 30,
+                h: 14,
+            },
+            UiAction::OpenSettings,
+            "Back",
+        )),
+        UiMode::DataManagement => Some((
+            Rect {
+                x: 238,
+                y: 20,
+                w: 30,
+                h: 14,
+            },
+            UiAction::OpenSettings,
+            "Back",
+        )),
+        _ => None,
+    };
+    if let Some((area, action, title)) = close {
+        add_button_chrome("modal/close", area, true, false, 25, &mut rects);
+        hit_regions.push(hit("modal/close", None, action, area, true, title));
+        text.push(label(
+            "modal/close-label",
+            title,
+            area.x + 3,
+            area.y + 3,
+            29,
+        ));
+    }
     add_status(view, state.elapsed_ms, &mut rects, &mut text);
     add_hover_and_focus(view, &hit_regions, &mut rects, &mut text);
     for command in &mut text {
         command.scale = view.text_scale.clamp(1, 2);
     }
+    ui_art::layout_text(&mut text, &rects, &hit_regions);
     icons.sort_by_key(|command| command.layer);
     rects.sort_by_key(|command| command.layer);
     text.sort_by_key(|command| command.layer);
@@ -1479,7 +1525,6 @@ fn add_persistent_bar(
 ) {
     let summary = creature_summary(state);
     let text_scale = view.text_scale.clamp(1, 2);
-    let glyph_width = i32::from(text_scale) * 6;
     rects.push(rect(
         "compose/bar-shadow",
         Rect {
@@ -1525,73 +1570,74 @@ fn add_persistent_bar(
         32,
     ));
 
-    icons.push(icon("ui/status-pearl", 4, 132, 33));
     rects.push(rect(
         "compose/mood-dot",
         Rect {
-            x: 18,
-            y: 142,
-            w: 3,
-            h: 3,
+            x: 8,
+            y: 139,
+            w: 4,
+            h: 4,
         },
         mood_color(summary.mood),
         34,
     ));
-    if visible_status(view, state.elapsed_ms).is_none() {
+    {
         text.push(label(
             "compose/summary-name",
-            &head_fit(&summary.name, if text_scale >= 2 { 8 } else { 16 }),
-            28,
-            136,
+            &head_fit(&summary.name, if text_scale >= 2 { 12 } else { 16 }),
+            17,
+            135,
             34,
         ));
         text.push(label(
             "compose/summary-behavior",
-            &head_fit(&summary.behavior, if text_scale >= 2 { 10 } else { 22 }),
-            if text_scale >= 2 { 135 } else { 142 },
-            136,
+            &head_fit(&summary.behavior, if text_scale >= 2 { 15 } else { 20 }),
+            88,
+            137,
             34,
         ));
     }
 
     let input_rect = Rect {
-        x: 5,
+        x: 8,
         y: 153,
-        w: 203,
+        w: 184,
         h: 23,
     };
     let microphone_rect = Rect {
-        x: 213,
+        x: 222,
         y: 153,
-        w: 23,
+        w: 27,
         h: 23,
     };
     let food_rect = Rect {
-        x: 240,
+        x: 253,
         y: 153,
-        w: 23,
+        w: 27,
         h: 23,
     };
     let settings_rect = Rect {
-        x: 267,
+        x: 284,
+        y: 153,
+        w: 28,
+        h: 23,
+    };
+    let send_rect = Rect {
+        x: 195,
         y: 153,
         w: 23,
         h: 23,
     };
-    let send_rect = Rect {
-        x: 294,
-        y: 153,
-        w: 22,
-        h: 23,
-    };
     add_inset("compose/input", input_rect, 31, rects);
-    let input_capacity = usize::try_from((input_rect.w - 17) / glyph_width).unwrap_or(1);
+    let input_capacity = ((input_rect.w - 17) as f32
+        / (TextRole::Body.size(text_scale >= 2) * 0.56))
+        .floor() as usize;
     let input_value = if view.text_buffer.is_empty() {
         head_fit(&format!("Talk to {}...", summary.name), input_capacity)
     } else {
         tail_fit(&view.text_buffer, input_capacity)
     };
-    text.push(label("compose/input-text", &input_value, 11, 160, 34));
+    text.push(label("compose/input-text", &input_value, 14, 160, 34));
     hits.push(hit(
         "compose/input",
         Some(UiTarget::ComposeField),
@@ -1626,8 +1672,8 @@ fn add_persistent_bar(
     );
     icons.push(icon(
         "ui/button-microphone",
-        microphone_rect.x + 2,
-        microphone_rect.y + 2,
+        microphone_rect.x + microphone_rect.w / 2,
+        microphone_rect.y + 8,
         35,
     ));
     hits.push(hit(
@@ -1639,7 +1685,12 @@ fn add_persistent_bar(
         "Food",
     ));
     add_button_chrome("compose/food", food_rect, true, false, 31, rects);
-    icons.push(icon("ui/button-food", food_rect.x + 2, food_rect.y + 2, 35));
+    icons.push(icon(
+        "ui/button-food",
+        food_rect.x + food_rect.w / 2,
+        food_rect.y + 8,
+        35,
+    ));
     if matches!(view.mode, UiMode::Compose) {
         hits.push(hit(
             "compose/settings",
@@ -1652,8 +1703,8 @@ fn add_persistent_bar(
         add_button_chrome("compose/settings", settings_rect, true, false, 31, rects);
         icons.push(icon(
             "ui/button-settings",
-            settings_rect.x + 2,
-            settings_rect.y + 2,
+            settings_rect.x + settings_rect.w / 2,
+            settings_rect.y + 8,
             35,
         ));
     } else {
@@ -1701,7 +1752,43 @@ fn add_persistent_bar(
         31,
         rects,
     );
-    icons.push(icon("ui/button-send", send_rect.x + 2, send_rect.y + 2, 35));
+    icons.push(icon(
+        "ui/button-send",
+        send_rect.x + send_rect.w / 2,
+        send_rect.y + 8,
+        35,
+    ));
+    for (id, title, area) in [
+        ("speak", "Speak", microphone_rect),
+        ("feed", "Feed", food_rect),
+        (
+            "settings",
+            if matches!(view.mode, UiMode::Compose) {
+                "Settings"
+            } else {
+                "Close"
+            },
+            settings_rect,
+        ),
+        ("send", send_label, send_rect),
+    ] {
+        let mut caption = label(
+            &format!("compose/control-{id}"),
+            title,
+            area.x + 2,
+            area.y + 15,
+            35,
+        );
+        caption.bounds = Some(Rect {
+            x: area.x + 2,
+            y: area.y + 15,
+            w: area.w - 4,
+            h: 7,
+        });
+        caption.role = TextRole::ControlCaption;
+        caption.muted = (id == "send" && !send_enabled) || (id == "speak" && !microphone_available);
+        text.push(caption);
+    }
 }
 
 fn head_fit(value: &str, capacity: usize) -> String {
@@ -1710,8 +1797,8 @@ fn head_fit(value: &str, capacity: usize) -> String {
     }
     match capacity {
         0 => String::new(),
-        1 => "~".to_owned(),
-        _ => format!("{}~", value.chars().take(capacity - 1).collect::<String>()),
+        1 => "…".to_owned(),
+        _ => format!("{}…", value.chars().take(capacity - 1).collect::<String>()),
     }
 }
 
@@ -1722,9 +1809,9 @@ fn tail_fit(value: &str, capacity: usize) -> String {
     }
     match capacity {
         0 => String::new(),
-        1 => "~".to_owned(),
+        1 => "…".to_owned(),
         _ => format!(
-            "~{}",
+            "…{}",
             value.chars().skip(count - capacity + 1).collect::<String>()
         ),
     }
@@ -1813,7 +1900,42 @@ fn add_settings(
         25,
         rects,
     );
-    text.push(label("settings/title", "Settings", 12, 8, 29));
+    text.push(label("settings/title", "Settings", 15, 10, 29));
+    for (index, title) in ["Comfort & display", "Sound & speech", "Controls & data"]
+        .into_iter()
+        .enumerate()
+    {
+        let area = Rect {
+            x: 15 + index as i32 * 97,
+            y: 25,
+            w: 94,
+            h: 17,
+        };
+        let id = format!("settings/page-{index}");
+        hits.push(hit(
+            &id,
+            None,
+            UiAction::SelectSettingsPage(index as u8),
+            area,
+            true,
+            title,
+        ));
+        add_button_chrome(
+            &id,
+            area,
+            true,
+            usize::from(view.settings_page.min(2)) == index,
+            25,
+            rects,
+        );
+        text.push(label(
+            &format!("{id}-label"),
+            title,
+            area.x + 5,
+            area.y + 5,
+            29,
+        ));
+    }
     let settings = [
         (
             "text-scale",
@@ -1900,23 +2022,28 @@ fn add_settings(
         ),
         ("data", "Save & data", "Open", UiAction::OpenDataManagement),
     ];
-    for (index, (id, setting, value, action)) in settings.into_iter().enumerate() {
-        let column = i32::try_from(index / 8).unwrap_or_default();
-        let row = i32::try_from(index % 8).unwrap_or_default();
-        let column_x = 12 + column * 151;
-        let y = 18 + row * 13;
+    let range = match view.settings_page.min(2) {
+        0 => 0..6,
+        1 => 6..12,
+        _ => 12..15,
+    };
+    for (index, (id, setting, value, action)) in settings[range].iter().copied().enumerate() {
+        let column = index / 3;
+        let row = index % 3;
+        let column_x = 15 + column as i32 * 148;
+        let y = 49 + row as i32 * 24;
         text.push(label(
             &format!("settings/{id}-name"),
             setting,
             column_x,
-            y + 3,
+            y + 6,
             29,
         ));
         let button = Rect {
-            x: column_x + 96,
+            x: column_x + 89,
             y,
-            w: 48,
-            h: 12,
+            w: 49,
+            h: 20,
         };
         hits.push(hit(
             &format!("settings/{id}"),
@@ -1930,8 +2057,8 @@ fn add_settings(
         text.push(label(
             &format!("settings/{id}-value"),
             value,
-            button.x + 5,
-            button.y + 1,
+            button.x + 6,
+            button.y + 6,
             29,
         ));
     }
@@ -2042,12 +2169,13 @@ fn add_reset_confirmation(
         29,
         rects,
     );
+    text.push(label("reset/warning", "Reset this creature?", 57, 48, 32));
     text.push(label(
-        "reset/warning",
-        "Reset this creature? Backup stays recoverable.",
+        "reset/detail",
+        "Backup stays recoverable.",
         57,
-        48,
-        32,
+        61,
+        33,
     ));
     for (id, name, action, x) in [
         ("cancel", "Cancel", UiAction::CancelMode, 57),
@@ -2289,13 +2417,24 @@ fn add_action_strip(
         &format!("mode/{id}-panel"),
         Rect {
             x: start,
-            y,
+            y: y - 13,
             w: width,
-            h: 27,
+            h: 40,
         },
         25,
         rects,
     );
+    text.push(label(
+        &format!("mode/{id}/title"),
+        match id {
+            "food" => "Choose food",
+            "toy" => "Choose a toy",
+            _ => "Spend a moment",
+        },
+        start + 7,
+        y - 9,
+        29,
+    ));
     for (index, action) in actions.iter().copied().enumerate() {
         let button_rect = Rect {
             x: start + 2 + i32::try_from(index).unwrap_or_default() * item_width,
@@ -2440,11 +2579,12 @@ fn add_speech(
     };
     let (creature_x, _) = world_to_logical(state.creature.aquarium.position);
     let layout_text = view.speech_layout_text.as_deref().unwrap_or(speech);
-    let glyph_width = 5 * i32::from(view.text_scale.clamp(1, 2));
+    let font_size = TextRole::Dialogue.size(view.text_scale >= 2);
+    let glyph_width = (font_size * 0.56).ceil() as i32;
     let natural_width =
         i32::try_from(layout_text.chars().count()).unwrap_or(300) * glyph_width + 18;
     let mut width = natural_width.clamp(84, 160);
-    let line_height = 11 * i32::from(view.text_scale.clamp(1, 2));
+    let line_height = (font_size * 1.2).ceil() as i32;
     let mut lines = speech_line_count(layout_text, ((width - 18) / glyph_width) as usize);
     // Long captions at the large accessibility size may use the full tank width.
     if lines * line_height > 78 {
@@ -2562,19 +2702,19 @@ fn add_status(
     };
     let text_scale = view.text_scale.clamp(1, 2);
     let glyph_width = usize::from(text_scale) * 6;
-    let fitted = head_fit(message, 288 / glyph_width);
+    let fitted = head_fit(message, 170 / glyph_width * 2);
     add_panel_chrome(
         "status/background",
         Rect {
-            x: 4,
-            y: 130,
-            w: 312,
-            h: 22,
+            x: 145,
+            y: 134,
+            w: 167,
+            h: 16,
         },
         35,
         rects,
     );
-    text.push(label("status/message", &fitted, 10, 136, 39));
+    text.push(label("status/message", &fitted, 149, 136, 39));
 }
 
 fn visible_status(view: &ViewState, now_ms: u64) -> Option<&str> {
@@ -2647,6 +2787,11 @@ fn add_hover_and_focus(
     }) else {
         return;
     };
+    // Text-labeled controls already explain themselves. Repeating their label in a tooltip
+    // obscures neighboring settings and fields while the player is using them.
+    if !matches!(hit_region.shape, HitShape::World(_)) && !hit_region.id.starts_with("reaction/") {
+        return;
+    }
     let label_width =
         (i32::try_from(hit_region.label.chars().count()).unwrap_or(12) * 6 + 10).clamp(28, 140);
     let x = hit_region.rect.x.clamp(2, LOGICAL_WIDTH - label_width - 2);
@@ -3138,7 +3283,6 @@ fn rect(id: &str, dimensions: Rect, color: [u8; 4], layer: i16) -> RectCommand {
 
 fn icon(id: &str, x: i32, y: i32, layer: i16) -> IconCommand {
     let kind = match id {
-        "ui/status-pearl" => IconKind::Pearl,
         "ui/button-microphone" => IconKind::Microphone,
         "ui/button-food" => IconKind::Food,
         "ui/button-settings" => IconKind::Settings,
@@ -3163,9 +3307,9 @@ fn add_panel_chrome(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<Rect
             ..dimensions
         },
         UI_SHADOW,
-        layer,
+        layer - 2,
     ));
-    rects.push(rect(&format!("{id}-edge"), dimensions, UI_EDGE, layer + 1));
+    rects.push(rect(&format!("{id}-edge"), dimensions, UI_EDGE, layer - 1));
     rects.push(rect(
         id,
         Rect {
@@ -3175,7 +3319,7 @@ fn add_panel_chrome(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<Rect
             h: dimensions.h - 2,
         },
         UI_PANEL,
-        layer + 2,
+        layer,
     ));
     rects.push(rect(
         &format!("{id}-glint"),
@@ -3186,7 +3330,7 @@ fn add_panel_chrome(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<Rect
             h: 1,
         },
         UI_EDGE_LIT,
-        layer + 3,
+        layer + 1,
     ));
 }
 
@@ -3381,7 +3525,13 @@ fn add_button_chrome(
     rects.push(rect(
         &format!("{id}-edge"),
         dimensions,
-        if active { UI_CORAL } else { UI_EDGE },
+        if active {
+            UI_CORAL
+        } else if enabled {
+            UI_EDGE
+        } else {
+            UI_BUTTON_DISABLED
+        },
         layer + 1,
     ));
     rects.push(rect(
@@ -3407,7 +3557,9 @@ fn add_button_chrome(
             w: dimensions.w - 4,
             h: 1,
         },
-        if active {
+        if !enabled {
+            [41, 65, 72, 255]
+        } else if active {
             [239, 159, 126, 230]
         } else {
             UI_EDGE_LIT
@@ -3429,6 +3581,9 @@ const fn mood_color(mood: Mood) -> [u8; 4] {
 
 fn label(id: &str, value: &str, x: i32, y: i32, layer: i16) -> TextCommand {
     TextCommand {
+        bounds: None,
+        muted: false,
+        role: TextRole::Body,
         id: id.to_owned(),
         text: value.to_owned(),
         x,
@@ -3506,6 +3661,7 @@ fn action_id(action: UiAction) -> String {
     match action {
         UiAction::SelectFood(food) => format!("select-{}", food_name(food)),
         UiAction::Play(toy) => format!("play-{}", toy_name(toy)),
+        UiAction::OpenToyChoice => "choose-toy".to_owned(),
         UiAction::Comfort => "comfort".to_owned(),
         UiAction::Inspect => "inspect".to_owned(),
         UiAction::Rename => "rename".to_owned(),
@@ -3518,6 +3674,7 @@ fn action_label(action: UiAction) -> String {
     match action {
         UiAction::SelectFood(food) => food_name(food).to_owned(),
         UiAction::Play(toy) => format!("play {}", toy_name(toy)),
+        UiAction::OpenToyChoice => "play".to_owned(),
         UiAction::Comfort => "comfort".to_owned(),
         UiAction::Inspect => "inspect".to_owned(),
         UiAction::Rename => "rename".to_owned(),
@@ -3572,6 +3729,53 @@ mod tests {
             },
             payoff_reached: false,
         }
+    }
+
+    #[test]
+    fn short_large_caption_uses_the_actual_type_metrics() {
+        let world = WorldState::new(42, "Mop");
+        let scene = plan(
+            &world,
+            &ViewState {
+                speech: Some("hm. rude giant.".into()),
+                text_scale: 2,
+                ..ViewState::default()
+            },
+        )
+        .0;
+        let panel = scene.rects.iter().find(|r| r.id == "speech/panel").unwrap();
+        assert!(
+            panel.rect.h <= 30,
+            "short speech should not reserve several empty rows"
+        );
+        assert!(panel.rect.w < 130);
+    }
+
+    #[test]
+    fn labeled_settings_hover_keeps_neighboring_values_visible() {
+        let world = WorldState::new(42, "Mop");
+        let scene = plan(
+            &world,
+            &ViewState {
+                mode: UiMode::Settings,
+                hovered_region: Some("settings/motion".into()),
+                text_scale: 2,
+                ..ViewState::default()
+            },
+        )
+        .0;
+        assert!(scene.rects.iter().any(|r| r.id == "ui/hover"));
+        assert!(scene.text.iter().all(|t| t.id != "ui/hover-label"));
+        let reaction = plan(
+            &world,
+            &ViewState {
+                speech: Some("hello".into()),
+                hovered_region: Some("reaction/comfort".into()),
+                ..ViewState::default()
+            },
+        )
+        .0;
+        assert!(reaction.text.iter().any(|t| t.id == "ui/hover-label"));
     }
 
     #[test]
@@ -3871,7 +4075,23 @@ mod tests {
             mode: UiMode::Settings,
             ..ViewState::default()
         };
-        let plan = plan(&state, &view).0;
+        let pages: Vec<_> = (0..3)
+            .map(|settings_page| {
+                plan(
+                    &state,
+                    &ViewState {
+                        settings_page,
+                        ..view.clone()
+                    },
+                )
+                .0
+            })
+            .collect();
+        let mut plan = pages[0].clone();
+        for page in &pages[1..] {
+            plan.hit_regions.extend(page.hit_regions.clone());
+            plan.text.extend(page.text.clone());
+        }
         for id in [
             "settings/text-scale",
             "settings/motion",
@@ -4280,7 +4500,7 @@ mod tests {
     }
 
     #[test]
-    fn controls_are_explained_on_focus_instead_of_permanent_prose() {
+    fn labeled_controls_remain_explained_during_controller_focus() {
         let state = WorldState::new(7, "Mop");
         let keyboard = plan(&state, &ViewState::default()).0;
         let controller = plan(
@@ -4308,7 +4528,7 @@ mod tests {
             controller
                 .text
                 .iter()
-                .any(|text| text.id == "ui/hover-label" && text.text == "Food")
+                .any(|text| text.id == "compose/control-feed" && text.text == "Feed")
         );
     }
 
@@ -4478,7 +4698,7 @@ mod tests {
                     .rect;
                 assert!(text_right(summary_name) < summary_behavior.x);
                 assert!(text_right(summary_behavior) <= LOGICAL_WIDTH - 5);
-                assert!(text_right(input) <= input_box.x + input_box.w - 5);
+                assert!(text_right(input) <= input_box.x + input_box.w - 3);
                 for action in ["food", "settings", "send"] {
                     let icon = render
                         .icons
@@ -4492,7 +4712,7 @@ mod tests {
                         .expect("action background")
                         .rect;
                     assert!(icon.x >= background.x);
-                    assert!(icon.x + 19 <= background.x + background.w);
+                    assert!(icon.x + 5 <= background.x + background.w);
                     assert!(!rects_overlap(input_box, background));
                 }
             }
@@ -4627,23 +4847,30 @@ mod tests {
                 .iter()
                 .find(|command| command.id == "status/message")
                 .expect("status message");
-            assert!(text_right(message) <= status.x + status.w - 6);
+            assert!(text_right(message) <= status.x + status.w - 3);
             assert!(
-                render.text.iter().all(|command| {
-                    command.id != "compose/summary-name"
-                        && command.id != "compose/summary-behavior"
-                        && command.id != "compose/input-hints"
-                }),
-                "status replaces, rather than overlaps, the summary row"
+                render
+                    .text
+                    .iter()
+                    .any(|command| command.id == "compose/summary-name")
             );
+            let name = render
+                .text
+                .iter()
+                .find(|command| command.id == "compose/summary-name")
+                .unwrap();
+            assert!(!rects_overlap(
+                name.bounds.unwrap(),
+                message.bounds.unwrap()
+            ));
         }
     }
 
     fn text_right(command: &TextCommand) -> i32 {
-        command.x
-            + i32::try_from(command.text.chars().count()).unwrap_or(i32::MAX)
-                * 6
-                * i32::from(command.scale)
+        let bounds = command
+            .bounds
+            .expect("every text command has explicit bounds");
+        bounds.x + bounds.w
     }
 
     fn rects_overlap(left: Rect, right: Rect) -> bool {
@@ -4813,7 +5040,6 @@ mod tests {
         let state = WorldState::new(7, "Mop");
         let scene = plan(&state, &ViewState::default()).0;
         for kind in [
-            IconKind::Pearl,
             IconKind::Microphone,
             IconKind::Food,
             IconKind::Settings,
