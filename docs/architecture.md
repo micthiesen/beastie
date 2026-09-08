@@ -78,6 +78,13 @@ matching camera rotation and is excluded from world shadows. A 320x180 coordinat
 solely for UI layout; world
 geometry and font glyphs render at window resolution, with 1280x720 native evidence captures.
 
+The surface mesher shares integer lattice boundaries before conversion to world coordinates.
+Connected crease bands provide geometric bevels; rounded creature lighting normals preserve mesh
+positions. World material roles and script-only diagnostics live in `appearance.rs`. The renderer
+uses Bevy PBR, MSAA and filtered shadow maps with a procedural hemispherical environment light.
+No ray-tracing hardware or new platform feature is required. The complete surface choices and
+diagnostic exceptions are recorded in [voxel-surfaces.md](voxel-surfaces.md).
+
 The authoritative aquarium remains a 2D interaction plane inside the 3D tank. Normalized position
 maps through one shared transform with margins for creature volume. Presentation depth cannot
 change contact or invent interactions. The shell resolves pointer rays against world volumes and

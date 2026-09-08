@@ -1,4 +1,5 @@
 mod app;
+mod appearance;
 mod args;
 mod audio;
 mod body;
@@ -42,6 +43,10 @@ fn main() -> bevy::app::AppExit {
         plan: game.render_plan(),
     };
     App::new()
+        .insert_resource(appearance::RenderAppearance {
+            treatment: args.surface_treatment.unwrap_or_default(),
+            study: args.lighting_study.unwrap_or_default(),
+        })
         .insert_resource(frame)
         .insert_non_send(game)
         .add_plugins(

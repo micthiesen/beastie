@@ -131,11 +131,44 @@ fn golden(point: [i32; 3]) -> [u8; 3] {
     }
 }
 
-fn solid(radii: [i32; 3], cell: f32, color: [u8; 3]) -> Mesh {
-    VoxelModel::ellipsoid(radii, |_| color).mesh(cell)
+/// Keep stepped geometry while lighting follows the rounded animal volume.
+/// Some geometric normal remains so chamfers catch light without a dark cell grid.
+fn rounded_mesh(
+    model: VoxelModel,
+    radii: [i32; 3],
+    cell: f32,
+    style: crate::voxel::SurfaceStyle,
+) -> Mesh {
+    let mut mesh = model.mesh_with_style(cell, style);
+    if style == crate::voxel::SurfaceStyle::Separated {
+        return mesh;
+    }
+    let extent = Vec3::from_array(radii.map(|r| (r as f32 + 0.5) * cell));
+    let positions = mesh
+        .attribute(Mesh::ATTRIBUTE_POSITION)
+        .unwrap()
+        .as_float3()
+        .unwrap();
+    let normals = mesh
+        .attribute(Mesh::ATTRIBUTE_NORMAL)
+        .unwrap()
+        .as_float3()
+        .unwrap();
+    let normals: Vec<_> = positions
+        .iter()
+        .zip(normals)
+        .map(|(p, n)| {
+            let volume = (Vec3::from_array(*p) / (extent * extent)).normalize_or_zero();
+            (Vec3::from_array(*n) * 0.25 + volume * 0.75)
+                .normalize_or_zero()
+                .to_array()
+        })
+        .collect();
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh
 }
 
-fn fin_mesh() -> Mesh {
+fn fin_mesh(style: crate::voxel::SurfaceStyle) -> Mesh {
     let mut fin = VoxelModel::default();
     for x in 0_i32..9 {
         for y in -x / 2..=x / 2 {
@@ -147,28 +180,34 @@ fn fin_mesh() -> Mesh {
             fin.set([x, y, 0], color);
         }
     }
-    fin.mesh(CREATURE.fin_cell)
+    fin.mesh_with_style(CREATURE.fin_cell, style)
 }
 
 pub(crate) fn setup_creature(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    appearance: Res<crate::appearance::RenderAppearance>,
 ) {
     commands.init_resource::<CreatureMotion>();
-    let material = materials.add(StandardMaterial {
-        perceptual_roughness: 0.82,
-        ..default()
-    });
+    let style = appearance.style();
+    let solid = |radii, cell, color| {
+        rounded_mesh(VoxelModel::ellipsoid(radii, |_| color), radii, cell, style)
+    };
+    let material = materials.add(appearance.surface(crate::appearance::SurfaceMaterial::Skin));
+    let eye_material = materials.add(appearance.surface(crate::appearance::SurfaceMaterial::Eye));
     let face_material = materials.add(StandardMaterial {
         unlit: true,
         ..default()
     });
     let mut spawn = |part: CreaturePart, mesh: Mesh, facial: bool| {
+        let eye = matches!(part, CreaturePart::Eye(_));
         commands.spawn((
             part,
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(if facial {
+            Mesh3d(meshes.add(appearance.mesh(mesh))),
+            MeshMaterial3d(if eye {
+                eye_material.clone()
+            } else if facial {
                 face_material.clone()
             } else {
                 material.clone()
@@ -178,7 +217,12 @@ pub(crate) fn setup_creature(
     };
     spawn(
         CreaturePart::Head,
-        VoxelModel::ellipsoid(CREATURE.head_radii, golden).mesh(CREATURE.head_cell),
+        rounded_mesh(
+            VoxelModel::ellipsoid(CREATURE.head_radii, golden),
+            CREATURE.head_radii,
+            CREATURE.head_cell,
+            style,
+        ),
         false,
     );
     for side in [-1.0, 1.0] {
@@ -212,7 +256,7 @@ pub(crate) fn setup_creature(
             solid([2, 1, 0], 0.039, CREATURE.cheek),
             false,
         );
-        spawn(CreaturePart::Fin(side), fin_mesh(), false);
+        spawn(CreaturePart::Fin(side), fin_mesh(style), false);
     }
     spawn(
         CreaturePart::Mouth,
@@ -229,15 +273,20 @@ pub(crate) fn setup_creature(
         solid([1, 0, 0], 0.034, CREATURE.tongue),
         true,
     );
-    spawn(CreaturePart::Crest, fin_mesh(), false);
+    spawn(CreaturePart::Crest, fin_mesh(style), false);
     for index in 0..SEGMENTS {
         spawn(
             CreaturePart::Body(index),
-            VoxelModel::ellipsoid([6, 5, 5], golden).mesh(0.065),
+            rounded_mesh(
+                VoxelModel::ellipsoid([6, 5, 5], golden),
+                [6, 5, 5],
+                0.065,
+                style,
+            ),
             false,
         );
     }
-    spawn(CreaturePart::Tail, fin_mesh(), false);
+    spawn(CreaturePart::Tail, fin_mesh(style), false);
 }
 
 /// Continuous projection used by rendering and head picking. It never changes simulation state.
@@ -506,6 +555,34 @@ pub(crate) fn animate_creature(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rounded_lighting_preserves_geometry_and_finite_unit_normals() {
+        use crate::voxel::{SurfaceStyle, VoxelModel};
+        use bevy::prelude::*;
+        let make = || VoxelModel::ellipsoid([4, 5, 2], |_| [200, 160, 80]);
+        let original = make().mesh_with_style(0.044, SurfaceStyle::Beveled);
+        let rounded = super::rounded_mesh(make(), [4, 5, 2], 0.044, SurfaceStyle::Beveled);
+        assert_eq!(
+            original
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+                .as_float3(),
+            rounded
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+                .as_float3(),
+        );
+        for normal in rounded
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .unwrap()
+            .as_float3()
+            .unwrap()
+        {
+            let normal = Vec3::from_array(*normal);
+            assert!(normal.is_finite());
+            assert!((normal.length() - 1.0).abs() < 1e-5);
+        }
+    }
     use super::*;
     use beastie_core::{ActivityRecipe, Mood};
 

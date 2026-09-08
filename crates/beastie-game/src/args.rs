@@ -5,6 +5,12 @@ use clap::Parser;
 #[derive(Debug, Parser)]
 #[command(about = "Beastie native game shell")]
 pub struct Args {
+    /// Capture-only surface comparison; never changes saved preferences.
+    #[arg(long, hide = true, value_enum, requires = "script")]
+    pub surface_treatment: Option<crate::appearance::SurfaceTreatment>,
+    /// Capture-only isolation of lighting and color contributions.
+    #[arg(long, hide = true, value_enum, requires = "script")]
+    pub lighting_study: Option<crate::appearance::LightingStudy>,
     /// Use the deterministic fixture-backed dialogue worker.
     #[arg(long)]
     pub fake_ai: bool,
@@ -98,6 +104,27 @@ mod tests {
     use clap::Parser;
 
     use super::Args;
+
+    #[test]
+    fn surface_studies_are_script_only_and_default_to_production() {
+        assert!(Args::try_parse_from(["game", "--lighting-study", "unlit"]).is_err());
+        assert!(Args::try_parse_from(["game", "--surface-treatment", "separated"]).is_err());
+        let args = Args::try_parse_from(["game"]).unwrap();
+        assert!(args.surface_treatment.is_none());
+        assert!(args.lighting_study.is_none());
+        assert!(
+            Args::try_parse_from([
+                "game",
+                "--script",
+                "study.jsonl",
+                "--surface-treatment",
+                "beveled",
+                "--lighting-study",
+                "clay",
+            ])
+            .is_ok()
+        );
+    }
 
     #[test]
     fn feel_directory_requires_a_script() {

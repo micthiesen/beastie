@@ -26,7 +26,7 @@ const TANK: TankArt = TankArt {
     sand: [112, 119, 93],
     stone: [67, 94, 94],
     moss: [67, 116, 86],
-    key_illuminance: 4200.0,
+    key_illuminance: 3200.0,
     fill_intensity: 115_000.0,
 };
 
@@ -97,14 +97,26 @@ pub(crate) fn setup(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     solid: Handle<StandardMaterial>,
+    appearance: crate::appearance::RenderAppearance,
+    background: Handle<StandardMaterial>,
 ) {
     commands.insert_resource(ClearColor(Color::srgb_u8(7, 18, 25)));
     commands.spawn((
         DirectionalLight {
+            color: Color::srgb(1.0, 0.89, 0.74),
             illuminance: TANK.key_illuminance,
-            shadow_maps_enabled: true,
+            shadow_depth_bias: 0.06,
+            shadow_normal_bias: 2.5,
+            shadow_maps_enabled: appearance.shadows(),
             ..default()
         },
+        bevy::light::CascadeShadowConfigBuilder {
+            num_cascades: 1,
+            minimum_distance: 15.0,
+            maximum_distance: 35.0,
+            ..default()
+        }
+        .build(),
         Transform::from_xyz(-3.0, 7.0, 9.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     commands.spawn((
@@ -112,6 +124,7 @@ pub(crate) fn setup(
             color: Color::srgb(0.40, 0.85, 0.95),
             intensity: TANK.fill_intensity,
             range: 30.0,
+            shadow_maps_enabled: false,
             ..default()
         },
         Transform::from_xyz(6.0, 4.0, 5.0),
@@ -132,8 +145,8 @@ pub(crate) fn setup(
     commands.spawn((
         bevy::light::NotShadowCaster,
         bevy::light::NotShadowReceiver,
-        Mesh3d(meshes.add(back.mesh())),
-        MeshMaterial3d(solid.clone()),
+        Mesh3d(meshes.add(appearance.mesh(back.mesh()))),
+        MeshMaterial3d(background),
         Transform::default(),
     ));
     let mut tank = Geometry::default();
@@ -164,38 +177,27 @@ pub(crate) fn setup(
         Vec3::new(15.65, 0.055, 0.07),
         shade(TANK.brass, 15),
     );
-    for x in 0..98 {
-        for z in 0..18 {
-            let hash = (x * 31 + z * 73 + x * z * 7) % 19;
-            let height = 0.06 + hash as f32 * 0.004;
-            tank.cuboid(
-                Vec3::new(
-                    -7.7 + x as f32 * 0.158,
-                    -1.97 + height * 0.5,
-                    -2.0 + z as f32 * 0.22,
-                ),
-                Vec3::new(0.154, height, 0.21),
-                shade(TANK.sand, hash as i16 - 8),
-            );
-        }
-    }
-    for column in 0..72 {
-        let x = -7.6 + column as f32 * 0.212;
-        let ridge = 0.42 + ((x * 0.62).sin() * 0.5 + 0.5) * 0.27;
-        for depth in 0..7 {
-            let z = -2.0 + depth as f32 * 0.20;
-            let height = ridge * (1.0 - depth as f32 / 9.0);
-            let shade = ((column * 19 + depth * 11) % 17) as u8;
-            tank.cuboid(
-                Vec3::new(x, -1.9 + height * 0.5, z),
-                Vec3::new(0.209, height, 0.198),
-                [79 + shade, 99 + shade, 84 + shade],
-            );
-        }
-    }
+    // The substrate and rear ridge are one filled lattice. Shared faces disappear,
+    // leaving terraces in the silhouette instead of dark channels around each grain.
+    commands.spawn((
+        bevy::light::NotShadowCaster,
+        Mesh3d(
+            meshes.add(appearance.mesh(substrate_model().mesh_with_style(
+                0.10,
+                match appearance.treatment {
+                    crate::appearance::SurfaceTreatment::Separated => {
+                        crate::voxel::SurfaceStyle::Separated
+                    }
+                    _ => crate::voxel::SurfaceStyle::Sharp,
+                },
+            ))),
+        ),
+        MeshMaterial3d(solid.clone()),
+        Transform::from_xyz(0.0, -2.0, 0.0),
+    ));
     // Sparse rear clusters frame the creature's open swimming space. These are scenery,
     // not extra simulation objects: the familiar cave and plant remain the only targets.
-    let mut garden = Geometry::default();
+    let mut garden = Geometry::default().mesh();
     for (center, radius, color) in [
         (
             Vec3::new(-6.75, -1.67, -0.9),
@@ -238,7 +240,7 @@ pub(crate) fn setup(
             [117, 126, 103],
         ),
     ] {
-        garden_stone(&mut garden, center, radius, color);
+        garden_stone(&mut garden, center, radius, color, appearance.style());
     }
     for frond in REAR_FRONDS {
         garden_frond(
@@ -249,57 +251,56 @@ pub(crate) fn setup(
             frond.color,
         );
     }
-    // Three receding shelves create an oblique depth cue with a straight-on camera.
-    // Keep the middle water column empty so scenery cannot compete with the face.
+    // Joined shelves frame the scene; their stepped outer contour is intentional.
     for side in [-1.0, 1.0] {
-        for step in 0..5 {
-            let width = 1.15 - step as f32 * 0.14;
-            garden.cuboid(
-                Vec3::new(
-                    side * (7.25 - step as f32 * 0.12),
-                    -1.72 + step as f32 * 0.12,
-                    -1.90,
-                ),
-                Vec3::new(width, 0.22, 0.55 - step as f32 * 0.055),
-                shade(TANK.stone, step * 3 - 6),
-            );
-        }
+        append_voxels(
+            &mut garden,
+            &shelf_model(),
+            0.05,
+            Vec3::new(side * 7.05, -1.8, -1.90),
+            appearance.style(),
+        );
     }
     commands.spawn((
         bevy::light::NotShadowCaster,
-        Mesh3d(meshes.add(garden.mesh())),
+        Mesh3d(meshes.add(appearance.mesh(garden))),
         MeshMaterial3d(solid.clone()),
         Transform::default(),
     ));
     commands.spawn((
         bevy::light::NotShadowCaster,
-        Mesh3d(meshes.add(tank.mesh())),
+        Mesh3d(meshes.add(appearance.mesh(tank.mesh()))),
         MeshMaterial3d(solid.clone()),
         Transform::default(),
     ));
 }
 
-fn garden_stone(shape: &mut Geometry, center: Vec3, radius: Vec3, color: [u8; 3]) {
+fn garden_stone(
+    shape: &mut Mesh,
+    center: Vec3,
+    radius: Vec3,
+    color: [u8; 3],
+    style: crate::voxel::SurfaceStyle,
+) {
     let cell = 0.10;
     let extent = (radius / cell).ceil().as_ivec3();
+    let mut stone = VoxelModel::default();
     for x in -extent.x..=extent.x {
         for y in -extent.y..=extent.y {
             for z in -extent.z..=extent.z {
                 let offset = Vec3::new(x as f32, y as f32, z as f32) * cell;
                 if (offset / radius).length_squared() <= 1.0 {
-                    let variation = (x * 13 + y * 7 + z * 17).rem_euclid(7) as u8;
-                    shape.cuboid(
-                        center + offset,
-                        Vec3::splat(cell),
-                        color.map(|channel| channel.saturating_add(variation)),
-                    );
+                    // Broad strata keep the form readable without a checkerboard of cells.
+                    stone.set([x, y, z], shade(color, (y / 2).clamp(-2, 2) as i16));
                 }
             }
         }
     }
+    append_voxels(shape, &stone, cell, center, style);
 }
 
-fn garden_frond(shape: &mut Geometry, root: Vec3, height: f32, bend: f32, color: [u8; 3]) {
+fn garden_frond(mesh: &mut Mesh, root: Vec3, height: f32, bend: f32, color: [u8; 3]) {
+    let mut shape = Geometry::default();
     let segments = (height / 0.075).ceil() as u32;
     for segment in 0..segments {
         let t = segment as f32 / segments as f32;
@@ -327,11 +328,70 @@ fn garden_frond(shape: &mut Geometry, root: Vec3, height: f32, bend: f32, color:
             }
         }
     }
+    mesh.merge(&shape.mesh())
+        .expect("scenery meshes share colored triangle attributes");
 }
 
-pub(crate) fn object_mesh(kind: ObjectKind) -> Mesh {
+/// Integer occupancy makes the floor continuous even where terrace heights differ.
+fn substrate_model() -> VoxelModel {
+    let mut model = VoxelModel::default();
+    for x in -78..=78 {
+        for z in -21..=20 {
+            let world_x = x as f32 * 0.10;
+            let rear = ((-z + 2) as f32 / 23.0).clamp(0.0, 1.0);
+            let side = ((world_x.abs() - 4.2) / 3.6).clamp(0.0, 1.0);
+            let side = side * side * (3.0 - 2.0 * side);
+            // Raised banks belong at the rear corners. Keep a broad, continuous
+            // central bed so terrace highlights cannot stripe the toys and face.
+            let bank = side * rear * rear;
+            let height = 2 + (bank * (3.6 + (world_x * 0.8).sin() * 0.4)).round() as i32;
+            let tone = ((world_x * 0.72 + z as f32 * 0.12).sin() * 1.5).round() as i16;
+            let color = std::array::from_fn(|axis| {
+                let sand = TANK.sand[axis] as f32;
+                let bank_color = [96.0, 111.0, 95.0][axis];
+                (sand + (bank_color - sand) * bank * 0.7).round() as u8
+            });
+            for y in 0..height {
+                model.set([x, y, z], shade(color, tone));
+            }
+        }
+    }
+    model
+}
+
+fn shelf_model() -> VoxelModel {
+    let mut model = VoxelModel::default();
+    for y in 0..13 {
+        let step = y / 3;
+        let half_width = 12 - step * 2;
+        let half_depth = 5 - step / 2;
+        for x in -half_width..=half_width {
+            for z in -half_depth..=half_depth {
+                model.set([x, y, z], shade(TANK.stone, step as i16 * 2 - 4));
+            }
+        }
+    }
+    model
+}
+
+fn append_voxels(
+    mesh: &mut Mesh,
+    model: &VoxelModel,
+    cell: f32,
+    offset: Vec3,
+    style: crate::voxel::SurfaceStyle,
+) {
+    mesh.merge(&model.mesh_with_style(cell, style).translated_by(offset))
+        .expect("voxel meshes share colored triangle attributes");
+}
+
+pub(crate) fn object_mesh(
+    kind: ObjectKind,
+    appearance: crate::appearance::RenderAppearance,
+) -> Mesh {
+    let style = appearance.style();
     match kind {
-        ObjectKind::Food(food) => food_mesh(food),
+        ObjectKind::Food(food) => food_mesh(food, style),
         ObjectKind::Toy(ToyId::Ball) => VoxelModel::ellipsoid([7, 7, 7], |p| {
             if p[1].abs() < 2 {
                 [240, 197, 120]
@@ -341,7 +401,7 @@ pub(crate) fn object_mesh(kind: ObjectKind) -> Mesh {
                 [212, 119, 92]
             }
         })
-        .mesh(0.055),
+        .mesh_with_style(0.055, style),
         ObjectKind::Toy(ToyId::Bell) => {
             let mut shape = VoxelModel::default();
             for y in 0..12 {
@@ -365,7 +425,7 @@ pub(crate) fn object_mesh(kind: ObjectKind) -> Mesh {
                 shape.set([0, y, 0], [112, 89, 59]);
             }
             shape.set([0, 8, 0], [103, 103, 81]);
-            shape.mesh(0.052)
+            shape.mesh_with_style(0.052, style)
         }
         ObjectKind::Toy(ToyId::Sock) => {
             let mut geometry = Geometry::default();
@@ -406,17 +466,21 @@ pub(crate) fn object_mesh(kind: ObjectKind) -> Mesh {
         ObjectKind::Cave => {
             let mut shape = VoxelModel::default();
             for x in -12_i32..=12 {
-                for y in -13..17 {
-                    for z in -10..=4 {
+                for y in -13_i32..17 {
+                    for z in -10_i32..=4 {
                         let outer =
                             y < 0 || (x as f32 / 12.0).powi(2) + (y as f32 / 17.0).powi(2) <= 1.0;
                         let doorway = x.abs() < 7 && y < 11 && z > -9;
                         if outer && !doorway {
-                            let shade = (x * 17 + y * 31 + z * 7_i32).rem_euclid(13) as u8;
+                            let shade = ((x.div_euclid(5) + y.div_euclid(7) + z.div_euclid(6))
+                                .rem_euclid(3)
+                                * 3) as u8;
                             let color = if x.abs() < 7 && y < 11 && z <= -9 {
                                 [19 + shade / 3, 35 + shade / 3, 36 + shade / 3]
                             } else {
-                                let top = y > 10 && z > -3 && (x * 7 + z * 3).rem_euclid(9) < 4;
+                                let top = y > 10
+                                    && z > -3
+                                    && (x.div_euclid(5) + z.div_euclid(4)).rem_euclid(3) < 2;
                                 if top {
                                     TANK.moss.map(|c| c.saturating_add(shade))
                                 } else {
@@ -428,10 +492,10 @@ pub(crate) fn object_mesh(kind: ObjectKind) -> Mesh {
                     }
                 }
             }
-            shape.mesh(0.075)
+            shape.mesh_with_style(0.075, style)
         }
         ObjectKind::Plant => {
-            let mut shape = Geometry::default();
+            let mut shape = Geometry::default().mesh();
             // At the authoritative plant center, y=-1.31 reaches the substrate. Narrow
             // curved ribbons rise from that root rather than floating as a leaf lattice.
             for stem in 0..7 {
@@ -451,14 +515,15 @@ pub(crate) fn object_mesh(kind: ObjectKind) -> Mesh {
                 Vec3::new(0.0, -1.26, 0.0),
                 Vec3::new(0.26, 0.09, 0.25),
                 [108, 121, 95],
+                style,
             );
-            shape.mesh()
+            shape
         }
     }
 }
 
 /// Food silhouettes stay distinct even without color: berry cluster, cap/stem, pellet.
-fn food_mesh(food: FoodId) -> Mesh {
+fn food_mesh(food: FoodId, style: crate::voxel::SurfaceStyle) -> Mesh {
     let mut shape = VoxelModel::default();
     match food {
         FoodId::Berry => {
@@ -516,5 +581,45 @@ fn food_mesh(food: FoodId) -> Mesh {
             }
         }
     }
-    shape.mesh(0.045)
+    shape.mesh_with_style(0.045, style)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn substrate_has_a_complete_top_and_no_internal_base_walls() {
+        let mesh = substrate_model().mesh(0.10);
+        let positions = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let normals = mesh
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let indices: Vec<usize> = mesh.indices().unwrap().iter().collect();
+        let mut top_area = 0.0_f64;
+        for triangle in indices.chunks_exact(3) {
+            let [a, b, c] =
+                [triangle[0], triangle[1], triangle[2]].map(|index| Vec3::from(positions[index]));
+            let normal = Vec3::from(normals[triangle[0]]);
+            if normal.y > 0.99 {
+                top_area += (b - a).cross(c - a).length() as f64 * 0.5;
+            }
+            let center = (a + b + c) / 3.0;
+            if normal.y.abs() < 0.01 && center.y < 0.10 {
+                assert!(
+                    (center.x.abs() - 7.85).abs() < 0.001
+                        || (center.z + 2.15).abs() < 0.001
+                        || (center.z - 2.05).abs() < 0.001,
+                    "unexpected internal substrate wall at {center:?}"
+                );
+            }
+        }
+        assert!((top_area - 15.7 * 4.2).abs() < 0.001);
+    }
 }

@@ -72,6 +72,18 @@ dim their icon, label and surface together. Text truncation uses a Unicode ellip
   expression and private-life recipes, and three speech mouth shapes.
 - `crates/beastie-game/src/environment.rs`: tank palette, lighting, layered fronds and object forms.
 - `crates/beastie-view/src/ui_art.rs`: interface materials, typography roles and text layout.
+- `crates/beastie-game/src/appearance.rs`: world material roles and script-only surface/light studies.
+
+Continuous geometric bevels catch light at exposed shape edges. Never shrink every cell to expose
+a dark grid across the creature. Rounded animal volumes blend geometric and volume normals so
+lighting reveals the body rather than outlining its cells. Fine substrate stays sharply meshed and
+continuous, with a calm central bed and gentle rear-corner banks. Broad cave colors avoid checker
+noise. Explicit seams belong to construction details such as toy bands and sock stitching.
+
+Satin skin, glossy eyes, rough stone, cloth and brass have distinct material responses. Soft filtered
+shadows, warm key/cool fill and a procedural hemispherical light map establish depth. The light map
+contains six directional lighting values; it is not a sprite, skybox or painted world surface.
+Keep facial marks readable and the backdrop subdued. See [voxel-surfaces.md](voxel-surfaces.md).
 
 Tune within these domain definitions before adding renderer branches. A visual recipe consumes
 typed semantic state; it cannot create a payoff, infer mood from dialogue or mutate a save.

@@ -36,6 +36,11 @@ struct Bubble(usize);
 struct Palette {
     solid: Handle<StandardMaterial>,
     ui: Handle<StandardMaterial>,
+    plant: Handle<StandardMaterial>,
+    rubber: Handle<StandardMaterial>,
+    cloth: Handle<StandardMaterial>,
+    brass: Handle<StandardMaterial>,
+    food: Handle<StandardMaterial>,
 }
 #[derive(Resource, Default)]
 struct ObjectMeshes(BTreeMap<String, Handle<Mesh>>);
@@ -120,11 +125,10 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut fonts: ResMut<Assets<Font>>,
+    mut images: ResMut<Assets<Image>>,
+    appearance: Res<crate::appearance::RenderAppearance>,
 ) {
-    let solid = materials.add(StandardMaterial {
-        perceptual_roughness: 0.84,
-        ..default()
-    });
+    let solid = materials.add(appearance.surface(crate::appearance::SurfaceMaterial::Stone));
     let ui = materials.add(StandardMaterial {
         unlit: true,
         ..default()
@@ -138,6 +142,18 @@ fn setup(
     commands.spawn((
         TankCamera,
         Camera3d::default(),
+        Msaa::Sample4,
+        bevy::light::ShadowFilteringMethod::Gaussian,
+        {
+            let mut environment = bevy::light::EnvironmentMapLight::hemispherical_gradient(
+                &mut images,
+                Color::srgb(0.95, 0.81, 0.63),
+                Color::srgb(0.33, 0.57, 0.63),
+                Color::srgb(0.18, 0.20, 0.15),
+            );
+            environment.intensity = 1000.0;
+            environment
+        },
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::AutoMin {
                 min_width: 16.0,
@@ -149,11 +165,18 @@ fn setup(
             .with_translation(Quat::from_rotation_x(CAMERA_PITCH) * Vec3::new(0.0, 0.0, 24.0)),
         AmbientLight {
             color: Color::srgb(0.60, 0.80, 0.88),
-            brightness: 550.0,
+            brightness: 120.0,
             ..default()
         },
     ));
-    crate::environment::setup(&mut commands, &mut meshes, solid.clone());
+    crate::environment::setup(
+        &mut commands,
+        &mut meshes,
+        solid.clone(),
+        *appearance,
+        ui.clone(),
+    );
+    commands.insert_resource(bevy::light::DirectionalLightShadowMap { size: 1024 });
     let cube = meshes.add(Cuboid::default());
     for index in 0..14 {
         commands.spawn((
@@ -171,7 +194,16 @@ fn setup(
     .map(|font| fonts.add(font))
     .unwrap_or_default();
     commands.insert_resource(UiFont(font));
-    commands.insert_resource(Palette { solid, ui });
+    use crate::appearance::SurfaceMaterial;
+    commands.insert_resource(Palette {
+        solid,
+        ui,
+        plant: materials.add(appearance.surface(SurfaceMaterial::Plant)),
+        rubber: materials.add(appearance.surface(SurfaceMaterial::Rubber)),
+        cloth: materials.add(appearance.surface(SurfaceMaterial::Cloth)),
+        brass: materials.add(appearance.surface(SurfaceMaterial::Brass)),
+        food: materials.add(appearance.surface(SurfaceMaterial::Food)),
+    });
 }
 
 fn object_key(kind: ObjectKind) -> String {
@@ -207,11 +239,13 @@ fn presented_object_position(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Independent Bevy resources and component access.
 fn sync_objects(
     mut commands: Commands,
     frame: Res<SceneFrame>,
     palette: Res<Palette>,
     motion: Res<crate::creature::CreatureMotion>,
+    appearance: Res<crate::appearance::RenderAppearance>,
     mut cache: ResMut<ObjectMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut objects: Query<(Entity, &WorldObject, &mut Transform)>,
@@ -263,12 +297,19 @@ fn sync_objects(
         let mesh = cache
             .0
             .entry(object_key(object.kind))
-            .or_insert_with(|| meshes.add(object_mesh(object.kind)))
+            .or_insert_with(|| meshes.add(appearance.mesh(object_mesh(object.kind, *appearance))))
             .clone();
         commands.spawn((
             WorldObject(object.id),
             Mesh3d(mesh),
-            MeshMaterial3d(palette.solid.clone()),
+            MeshMaterial3d(match object.kind {
+                ObjectKind::Food(_) => palette.food.clone(),
+                ObjectKind::Toy(ToyId::Ball) => palette.rubber.clone(),
+                ObjectKind::Toy(ToyId::Bell) => palette.brass.clone(),
+                ObjectKind::Toy(ToyId::Sock) => palette.cloth.clone(),
+                ObjectKind::Plant => palette.plant.clone(),
+                ObjectKind::Cave => palette.solid.clone(),
+            }),
             Transform::from_translation(presented_object_position(object, &frame.plan, &motion)),
         ));
     }
@@ -297,7 +338,7 @@ fn animate_bubbles(frame: Res<SceneFrame>, mut bubbles: Query<(&Bubble, &mut Tra
     }
 }
 
-fn icon_geometry(kind: IconKind, center: Vec3, color: [u8; 3], shape: &mut Geometry) {
+fn icon_mesh(kind: IconKind, center: Vec3, color: [u8; 3]) -> Mesh {
     let cell = 0.074;
     let pattern: &[&str] = match kind {
         IconKind::Microphone => &[
@@ -309,22 +350,19 @@ fn icon_geometry(kind: IconKind, center: Vec3, color: [u8; 3], shape: &mut Geome
             "x     ", "xxx   ", "xxxxx ", "xxxxxx", "xxxxx ", "xxx   ", "x     ",
         ],
     };
+    let mut model = crate::voxel::VoxelModel::default();
     for (row, line) in pattern.iter().enumerate() {
         for (column, byte) in line.bytes().enumerate() {
             if byte == b'x' {
-                shape.cuboid(
-                    center
-                        + Vec3::new(
-                            (column as f32 - 2.5) * cell,
-                            (pattern.len() as f32 * 0.5 - 0.5 - row as f32) * cell,
-                            0.0,
-                        ),
-                    Vec3::splat(cell * 0.95),
-                    color,
-                );
+                model.set([column as i32, -(row as i32), 0], color);
             }
         }
     }
+    model
+        .mesh_with_style(cell, crate::voxel::SurfaceStyle::Sharp)
+        .translated_by(
+            center + Vec3::new(-2.5 * cell, (pattern.len() as f32 * 0.5 - 0.5) * cell, 0.0),
+        )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -504,30 +542,31 @@ fn sync_ui(mut ui: UiSystem) {
                 }
             }
         }
+        let mut replacement = shape.mesh();
         for icon in &ui.frame.plan.icons {
-            icon_geometry(
-                icon.kind,
-                logical_position(
-                    icon.x as f32,
-                    icon.y as f32,
-                    8.05 + icon.layer as f32 * 0.002,
-                ),
-                if ui
-                    .frame
-                    .plan
-                    .hit_regions
-                    .iter()
-                    .find(|h| h.id == icon.id.replace("ui/button-", "compose/"))
-                    .is_some_and(|h| !h.enabled)
-                {
-                    [88, 114, 118]
-                } else {
-                    [216, 219, 185]
-                },
-                &mut shape,
-            );
+            replacement
+                .merge(&icon_mesh(
+                    icon.kind,
+                    logical_position(
+                        icon.x as f32,
+                        icon.y as f32,
+                        8.05 + icon.layer as f32 * 0.002,
+                    ),
+                    if ui
+                        .frame
+                        .plan
+                        .hit_regions
+                        .iter()
+                        .find(|h| h.id == icon.id.replace("ui/button-", "compose/"))
+                        .is_some_and(|h| !h.enabled)
+                    {
+                        [88, 114, 118]
+                    } else {
+                        [216, 219, 185]
+                    },
+                ))
+                .expect("UI meshes share colored triangle attributes");
         }
-        let replacement = shape.mesh();
         if let Some(handle) = ui.cache.geometry.clone() {
             if let Some(mut mesh) = ui.meshes.get_mut(&handle) {
                 *mesh = replacement;

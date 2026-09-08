@@ -184,3 +184,12 @@ input. Check recorded `KeyboardInput` and submission events, not automation exit
 the game's process with per-character CG key-down/up events proved both Normal and Large typing.
 This is separate from the harness's allow-listed semantic actions. If yabai interferes with a
 current Bevy run, stop it once and leave it stopped for the session, per the working agreement.
+
+For surface/light comparisons, `fixtures/scenarios/voxel-surfaces.jsonl` records five poses through
+quiet attention, affection, ball play, bell response and recovery. The built game accepts
+`--surface-treatment sharp|beveled|separated` and `--lighting-study finished|unlit|no-shadows|clay`
+only alongside `--script`. Add `--feel-dir` for the standard 1280x720 recording settings; a plain
+`xtask dev` script uses the player's native window scale. These options are diagnostics and do not
+persist. Final production exceptions, including sharply meshed fine substrate, are documented in
+[voxel-surfaces.md](voxel-surfaces.md). Use canonical `xtask feel` suites for validated, hashed
+interaction and quiet-life evidence after selecting the treatment.

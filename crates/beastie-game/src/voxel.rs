@@ -1,10 +1,20 @@
 //! Colored solid geometry. Interior voxel faces are omitted before upload.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::{
     asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
 };
+
+/// Rendering treatments share the same authored occupancy and colors.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SurfaceStyle {
+    #[default]
+    Sharp,
+    Beveled,
+    /// Deliberate construction-block treatment, for visual comparisons.
+    Separated,
+}
 
 #[derive(Default)]
 pub struct VoxelModel {
@@ -34,20 +44,145 @@ impl VoxelModel {
         model
     }
 
+    #[cfg(test)]
     pub fn mesh(&self, cell_size: f32) -> Mesh {
+        self.mesh_with_style(cell_size, SurfaceStyle::Sharp)
+    }
+
+    pub fn mesh_with_style(&self, cell_size: f32, style: SurfaceStyle) -> Mesh {
+        assert!(cell_size.is_finite() && cell_size > 0.0);
         let mut geometry = Geometry::default();
+        if style == SurfaceStyle::Separated {
+            for (&point, &color) in &self.cells {
+                geometry.cuboid(
+                    Vec3::from_array(point.map(|v| v as f32 * cell_size)),
+                    Vec3::splat(cell_size * 0.88),
+                    color,
+                );
+            }
+            return geometry.mesh();
+        }
+        let mut boundary = Boundary::default();
         for (&point, &color) in &self.cells {
             for (axis, sign) in [(0, -1), (0, 1), (1, -1), (1, 1), (2, -1), (2, 1)] {
                 let mut neighbor = point;
                 neighbor[axis] += sign;
-                if self.cells.contains_key(&neighbor) {
-                    continue;
+                if !self.cells.contains_key(&neighbor) {
+                    boundary.face(point, axis, sign, color, style);
                 }
-                let center = Vec3::from_array(point.map(|v| v as f32 * cell_size));
-                geometry.face(center, Vec3::splat(cell_size), axis, sign, color);
             }
         }
-        geometry.mesh()
+        boundary.geometry(cell_size, style).mesh()
+    }
+}
+
+// Integer face coordinates are shared before conversion to world space. In particular,
+// (cell * size) +/- half_size cannot introduce different rounding on neighboring faces.
+// Bevels occupy only a narrow band beside shape edges, never coplanar color boundaries.
+const LATTICE: i64 = 1_000;
+const HALF_CELL: i64 = LATTICE / 2;
+const BEVEL_INNER: i64 = 380;
+type Point = [i64; 3];
+
+#[derive(Default)]
+struct Boundary {
+    vertices: BTreeMap<Point, BoundaryVertex>,
+    quads: Vec<([Point; 4], [u8; 3])>,
+}
+
+#[derive(Default)]
+struct BoundaryVertex {
+    neighbors: BTreeSet<Point>,
+    normals: BTreeSet<(usize, i32)>,
+}
+
+impl Boundary {
+    fn face(
+        &mut self,
+        cell: [i32; 3],
+        axis: usize,
+        sign: i32,
+        color: [u8; 3],
+        style: SurfaceStyle,
+    ) {
+        let steps: &[i64] = if style == SurfaceStyle::Beveled {
+            &[-HALF_CELL, -BEVEL_INNER, BEVEL_INNER, HALF_CELL]
+        } else {
+            &[-HALF_CELL, HALF_CELL]
+        };
+        let a = (axis + 1) % 3;
+        let b = (axis + 2) % 3;
+        for us in steps.windows(2) {
+            for vs in steps.windows(2) {
+                let mut quad = [
+                    (us[0], vs[0]),
+                    (us[1], vs[0]),
+                    (us[1], vs[1]),
+                    (us[0], vs[1]),
+                ]
+                .map(|(u, v)| {
+                    let mut p = cell.map(|c| i64::from(c) * LATTICE);
+                    p[axis] += i64::from(sign) * HALF_CELL;
+                    p[a] += u;
+                    p[b] += v;
+                    p
+                });
+                if sign < 0 {
+                    quad.reverse();
+                }
+                for i in 0..4 {
+                    let vertex = self.vertices.entry(quad[i]).or_default();
+                    vertex.normals.insert((axis, sign));
+                    vertex.neighbors.insert(quad[(i + 1) % 4]);
+                    vertex.neighbors.insert(quad[(i + 3) % 4]);
+                }
+                self.quads.push((quad, color));
+            }
+        }
+    }
+
+    fn geometry(self, cell_size: f32, style: SurfaceStyle) -> Geometry {
+        let positions: BTreeMap<_, _> = self
+            .vertices
+            .iter()
+            .map(|(&point, vertex)| {
+                let mut position = point.map(|p| p as f64);
+                if style == SurfaceStyle::Beveled && vertex.normals.len() > 1 {
+                    // One simultaneous relaxation of the connected surface creates real narrow
+                    // chamfers. Restrict displacement to crease-normal axes so an uneven grid
+                    // cannot slide a vertex along an otherwise straight edge. Concave corners
+                    // use the very same shared position, preventing cracks and overlapping caps.
+                    for (axis, coordinate) in position.iter_mut().enumerate() {
+                        if vertex
+                            .normals
+                            .iter()
+                            .any(|&(normal_axis, _)| normal_axis == axis)
+                        {
+                            *coordinate =
+                                vertex.neighbors.iter().map(|p| p[axis] as f64).sum::<f64>()
+                                    / vertex.neighbors.len() as f64;
+                        }
+                    }
+                }
+                (
+                    point,
+                    Vec3::from_array(
+                        position.map(|p| (p * f64::from(cell_size) / LATTICE as f64) as f32),
+                    ),
+                )
+            })
+            .collect();
+        let mut geometry = Geometry::default();
+        for (quad, color) in self.quads {
+            let points = quad.map(|p| positions[&p]);
+            if style == SurfaceStyle::Sharp {
+                geometry.quad(points, color);
+            } else {
+                geometry.triangle([points[0], points[1], points[2]], color);
+                geometry.triangle([points[0], points[2], points[3]], color);
+            }
+        }
+        geometry
     }
 }
 
@@ -91,6 +226,34 @@ impl Geometry {
             [0, 2, 1, 0, 3, 2]
         };
         self.indices.extend(winding.map(|index| base + index));
+    }
+
+    fn quad(&mut self, positions: [Vec3; 4], color: [u8; 3]) {
+        let base = self.positions.len() as u32;
+        let normal = (positions[1] - positions[0])
+            .cross(positions[2] - positions[0])
+            .normalize();
+        let rgba = Color::srgb_u8(color[0], color[1], color[2])
+            .to_linear()
+            .to_f32_array();
+        self.positions.extend(positions.map(|p| p.to_array()));
+        self.normals.extend([normal.to_array(); 4]);
+        self.colors.extend([rgba; 4]);
+        self.indices.extend([0, 1, 2, 0, 2, 3].map(|i| base + i));
+    }
+
+    fn triangle(&mut self, positions: [Vec3; 3], color: [u8; 3]) {
+        let base = self.positions.len() as u32;
+        let normal = (positions[1] - positions[0])
+            .cross(positions[2] - positions[0])
+            .normalize();
+        let rgba = Color::srgb_u8(color[0], color[1], color[2])
+            .to_linear()
+            .to_f32_array();
+        self.positions.extend(positions.map(|p| p.to_array()));
+        self.normals.extend([normal.to_array(); 3]);
+        self.colors.extend([rgba; 3]);
+        self.indices.extend([base, base + 1, base + 2]);
     }
 
     pub fn mesh(self) -> Mesh {
@@ -140,5 +303,178 @@ mod tests {
                 [triangle[0], triangle[1], triangle[2]].map(|i| Vec3::from(positions[i]));
             assert!((b - a).cross(c - a).dot(Vec3::from(normals[triangle[0]])) > 0.0);
         }
+    }
+    fn assert_closed_and_valid(mesh: &Mesh) {
+        let positions = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let normals = mesh
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let mut edges = BTreeMap::<([u32; 3], [u32; 3]), usize>::new();
+        let indices: Vec<_> = mesh.indices().unwrap().iter().collect();
+        let mut volume = 0.0;
+        for triangle in indices.chunks_exact(3) {
+            let [a, b, c] =
+                [triangle[0], triangle[1], triangle[2]].map(|i| Vec3::from(positions[i]));
+            let cross = (b - a).cross(c - a);
+            assert!(
+                cross.length_squared() > 1e-12,
+                "degenerate face at {a:?}, {b:?}, {c:?}"
+            );
+            for &i in triangle {
+                let normal = Vec3::from(normals[i]);
+                assert!(normal.is_finite());
+                assert!((normal.length() - 1.0).abs() < 1e-5);
+                assert!(cross.dot(normal) > 0.0);
+            }
+            volume += a.dot(b.cross(c)) / 6.0;
+            for (from, to) in [(a, b), (b, c), (c, a)] {
+                // Both sides of every edge must use bit-identical world coordinates.
+                let key = [from, to]
+                    .map(|p| p.to_array().map(|v| if v == 0.0 { 0 } else { v.to_bits() }));
+                *edges.entry((key[0], key[1])).or_default() += 1;
+            }
+        }
+        assert!(volume > 0.0);
+        for (&(from, to), &count) in &edges {
+            assert_eq!(count, 1, "duplicate oriented edge");
+            assert_eq!(edges.get(&(to, from)), Some(&1), "surface has an open edge");
+        }
+    }
+
+    #[test]
+    fn bevels_keep_convex_concave_and_color_boundaries_closed() {
+        for cells in [
+            vec![[0, 0, 0]],
+            vec![[0, 0, 0], [1, 0, 0]],
+            vec![[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+            vec![[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        ] {
+            let mut model = VoxelModel::default();
+            for (index, cell) in cells.into_iter().enumerate() {
+                model.set(cell, [index as u8 * 50, 100, 200]);
+            }
+            for style in [
+                SurfaceStyle::Sharp,
+                SurfaceStyle::Beveled,
+                SurfaceStyle::Separated,
+            ] {
+                assert_closed_and_valid(&model.mesh_with_style(0.13, style));
+            }
+        }
+    }
+
+    #[test]
+    fn bevels_preserve_coplanar_surfaces_across_color_changes() {
+        let mut model = VoxelModel::default();
+        for x in -2..=2 {
+            for y in -2..=2 {
+                model.set([x, y, 0], if x < 1 { [255; 3] } else { [120; 3] });
+            }
+        }
+        let mesh = model.mesh_with_style(1.0, SurfaceStyle::Beveled);
+        let positions = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let normals = mesh
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let mut seam_vertices = 0;
+        for (p, n) in positions.iter().zip(normals) {
+            if p[0] == 0.5 && p[1].abs() < 1.0 && p[2] > 0.0 {
+                assert_eq!(p[2], 0.5);
+                assert_eq!(*n, [0.0, 0.0, 1.0]);
+                seam_vertices += 1;
+            }
+        }
+        assert!(seam_vertices > 0);
+    }
+
+    #[test]
+    fn bevels_add_real_facets_with_a_bounded_silhouette_change() {
+        let mut model = VoxelModel::default();
+        model.set([0, 0, 0], [255; 3]);
+        let mesh = model.mesh_with_style(1.0, SurfaceStyle::Beveled);
+        let positions = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let normals = mesh
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        assert!(
+            normals
+                .iter()
+                .any(|n| n.iter().filter(|v| v.abs() > 0.1).count() > 1)
+        );
+        assert!(positions.iter().all(|p| p.iter().all(|v| v.abs() <= 0.5)));
+        assert!(positions.contains(&[0.5, 0.38, 0.38]));
+        assert!(
+            positions
+                .iter()
+                .any(|p| p.iter().all(|v| (v.abs() - 0.46).abs() < 1e-6))
+        );
+    }
+    #[test]
+    fn stepped_ellipsoids_remain_closed_after_beveling() {
+        for radii in [[2, 2, 1], [5, 4, 3], [7, 6, 4]] {
+            let model = VoxelModel::ellipsoid(radii, |_| [160, 100, 200]);
+            assert_closed_and_valid(&model.mesh_with_style(0.13, SurfaceStyle::Beveled));
+        }
+    }
+    #[test]
+    fn long_terrace_creases_do_not_divot_at_cell_boundaries() {
+        let mut model = VoxelModel::default();
+        // A long upper shelf meeting a lower flat bed exercises both convex and
+        // concave horizontal creases without introducing real contour turns.
+        for x in -12..=12 {
+            for z in -3..=3 {
+                for y in 0..if z < 0 { 3 } else { 1 } {
+                    model.set([x, y, z], [100; 3]);
+                }
+            }
+        }
+        let mesh = model.mesh_with_style(0.1, SurfaceStyle::Beveled);
+        let positions = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let normals = mesh
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let mut profiles = BTreeMap::<i32, BTreeSet<(i32, i32)>>::new();
+        for (p, n) in positions.iter().zip(normals) {
+            if p[0].abs() < 0.9 {
+                // Extruded faces must have no normal component along the straight
+                // crease. A boundary divot would tilt these faces toward +/- X.
+                assert!(n[0].abs() < 1e-5, "tilted face at {p:?}: {n:?}");
+                profiles
+                    .entry((p[0] * 100_000.0).round() as i32)
+                    .or_default()
+                    .insert((
+                        (p[1] * 100_000.0).round() as i32,
+                        (p[2] * 100_000.0).round() as i32,
+                    ));
+            }
+        }
+        let reference = profiles.values().next().unwrap();
+        assert!(profiles.len() > 20);
+        assert!(profiles.values().all(|profile| profile == reference));
+        assert_closed_and_valid(&mesh);
     }
 }
