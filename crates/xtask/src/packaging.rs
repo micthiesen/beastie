@@ -569,6 +569,7 @@ pub fn check(
         platform.game_name(),
         platform.worker_name(),
         "assets/manifest.toml",
+        "assets/generated/ui/atkinson-hyperlegible-next-medium.ttf",
         "assets/licenses/atkinson-hyperlegible-next-OFL.txt",
         "models/manifest.toml",
         "models/LICENSE",
@@ -1691,7 +1692,11 @@ sha256 = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 tracked = false
 "#,
         );
-        write_file(&root.join("assets/manifest.toml"), b"version = 1\n");
+        write_file(&root.join("assets/manifest.toml"), b"version = 2\n");
+        write_file(
+            &root.join("assets/generated/ui/atkinson-hyperlegible-next-medium.ttf"),
+            b"font fixture",
+        );
         write_file(
             &root.join("assets/licenses/atkinson-hyperlegible-next-OFL.txt"),
             b"OFL license fixture\n",
@@ -2184,7 +2189,8 @@ tracked = false
 
         let package = test_package("symlinked-asset-root");
         let outside = temporary_root("external-assets");
-        write_file(&outside.join("room/background.png"), b"not packaged");
+        write_file(&outside.join("audio/ui/select.wav"), b"not packaged");
+        fs::remove_dir_all(package.root.join("assets/generated")).unwrap();
         symlink(&outside, package.root.join("assets/generated"))
             .expect("asset-root symlink should be created");
 
@@ -2286,7 +2292,7 @@ tracked = false
             "failed platform staging directory should be cleaned"
         );
 
-        write_file(&asset_manifest, b"version = 1\n");
+        write_file(&asset_manifest, b"version = 2\n");
         build(options(&package, &package.runtime))
             .expect("the same destination should accept a corrected retry");
     }

@@ -95,7 +95,10 @@ rejected as the portable default; their exact results are in
 Pocket TTS is not a default candidate. Its use restrictions are a poor fit for a game deliberately
 designed to produce insults, spite, and crude speech.
 
-## PixelLab
+## Historical PixelLab preflight
+
+The Bevy voxel migration removed this sprite pipeline and all runtime image assets. The following
+is retained only as historical tool evidence; current art is generated solid geometry.
 
 The Codex PixelLab MCP connection completed an authenticated account check and an asynchronous
 Pixen image generation. The account is Pixel Apprentice with 2,000 subscription generations. The
@@ -126,7 +129,7 @@ palettes, and validation policy are recorded in `assets/manifest.toml`.
 - Local LLM inference: selected Qwen3.5 Q4 with a warm packaged `llama-server` runtime.
 - Local TTS generation: native, Python-free eSpeak NG process with bounded game playback and
   explicit GPL aggregate-distribution obligations.
-- PixelLab and OpenAI generation: operational; the canonical aquarium art path is integrated and
+- Historical PixelLab and OpenAI generation: operational at the time; the former aquarium art path was integrated and
   provenance-checked.
 - Headless fixture path: the canonical aquarium scenario runs without external services and remains
   part of the display-free verification strategy.

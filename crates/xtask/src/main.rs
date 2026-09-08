@@ -41,7 +41,7 @@ struct Cli {
 enum Task {
     /// Run every headless verification gate.
     Verify,
-    /// Validate or generate manifest-backed art assets.
+    /// Validate offline sound and font assets.
     Asset {
         #[command(subcommand)]
         command: AssetTask,
@@ -275,39 +275,11 @@ enum SttTask {
 
 #[derive(Debug, Subcommand)]
 enum AssetTask {
-    /// Validate asset files, metadata, palette references, and runtime readiness.
+    /// Validate sound and font files, metadata, and runtime readiness.
     Check {
         /// Print diagnostics for every resolved asset candidate.
         #[arg(long)]
         verbose: bool,
-    },
-    /// Generate one single-frame manifest asset with PixelLab.
-    Generate {
-        /// Exact manifest asset id, such as creature/sleep.
-        id: String,
-        /// Replace an existing generated candidate.
-        #[arg(long)]
-        force: bool,
-    },
-    /// Canonicalize fully transparent RGB pixels without changing visible art.
-    NormalizeAlpha {
-        /// Exact manifest asset id, or `all` for every hard-alpha runtime candidate.
-        id: String,
-    },
-    /// Render the three positive-reaction enter/exit sequences at exact 2x scale.
-    ReactionContactSheet {
-        #[arg(
-            long,
-            default_value = "target/feel/reaction-identity-contact-sheet.png"
-        )]
-        output: PathBuf,
-    },
-    /// Rebuild the six canonical talking rows from their selected mood bodies.
-    CurateTalking,
-    /// Render all normal-to-talking transitions at exact 2x scale.
-    TalkingContactSheet {
-        #[arg(long, default_value = "target/feel/talking-identity-contact-sheet.png")]
-        output: PathBuf,
     },
 }
 
@@ -353,21 +325,6 @@ fn main() -> Result<()> {
         Task::Asset {
             command: AssetTask::Check { verbose },
         } => asset::check(Path::new("assets/manifest.toml"), true, verbose),
-        Task::Asset {
-            command: AssetTask::Generate { id, force },
-        } => asset::generate(Path::new("assets/manifest.toml"), &id, force),
-        Task::Asset {
-            command: AssetTask::NormalizeAlpha { id },
-        } => asset::normalize_alpha(Path::new("assets/manifest.toml"), &id),
-        Task::Asset {
-            command: AssetTask::ReactionContactSheet { output },
-        } => asset::reaction_contact_sheet(Path::new("assets/manifest.toml"), &output),
-        Task::Asset {
-            command: AssetTask::CurateTalking,
-        } => asset::curate_talking(Path::new("assets/manifest.toml")),
-        Task::Asset {
-            command: AssetTask::TalkingContactSheet { output },
-        } => asset::talking_contact_sheet(Path::new("assets/manifest.toml"), &output),
         Task::StoreAssets {
             command: StoreAssetsTask::Build,
         } => store_assets::build(Path::new(".")),

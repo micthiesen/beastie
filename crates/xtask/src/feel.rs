@@ -1397,12 +1397,12 @@ fn verify_video(path: &Path) -> Result<()> {
     require_success("ffprobe", output.status)?;
     let description = String::from_utf8(output.stdout).context("ffprobe output was not UTF-8")?;
     ensure!(
-        description.contains("width=640"),
-        "feel video width is not 640"
+        description.contains("width=1280"),
+        "feel video width is not 1280"
     );
     ensure!(
-        description.contains("height=360"),
-        "feel video height is not 360"
+        description.contains("height=720"),
+        "feel video height is not 720"
     );
     ensure!(
         description.contains("avg_frame_rate=60/1"),
@@ -2262,7 +2262,7 @@ fn write_manifest(
             .as_ref()
             .map_or_else(|| experience_seed(experience), |(_, save)| save.world.seed),
         video_fps: 60,
-        presentation: "640x360 exact 2x logical framebuffer",
+        presentation: "1280x720 native Bevy voxel framebuffer",
         audible_mix_captured: false,
         reference_mix_generated: true,
         artifacts,

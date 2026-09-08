@@ -5,16 +5,11 @@ survey wording immediately before submission, then adapt these facts without bro
 
 ## Pre-generated AI content
 
-Beastie includes pre-generated pixel art made with OpenAI image generation and PixelLab. OpenAI
-image generation produced the aquarium concept reference. PixelLab produced the aquarium
-background, cave, plants, toys, and creature base and animation frames used by the game. Earlier
-development assets remain recorded but are not necessarily shipped or used at runtime.
-
-`assets/manifest.toml` records each asset's provider, generation identifier, prompt summary,
-dimensions, palette reference, review status, and runtime status. Generated assets are reviewed
-before selection. The asset checks enforce hard alpha, palette, dimensions, density, and animation
-contracts. Code-native pixel geometry keeps essential faces, gaze, mood, effects, food, and
-interaction cues legible when an optional overlay asset is absent.
+The Bevy migration removed the former OpenAI/PixelLab runtime images and animation frames.
+The current game renders procedural voxel meshes and geometric facial features, with a bundled
+font for text. `assets/manifest.toml` now records sounds and the font; it does not catalog images.
+Historical art-generation reviews describe removed assets. Distribution artwork outside the game
+is a separate inventory that must be checked before this draft is submitted.
 
 ## Live-generated AI content
 

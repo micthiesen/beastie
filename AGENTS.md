@@ -31,7 +31,7 @@ bundling any other pending project changes into the same push. No PRs and no ask
 ## Gate
 
 Always run `cargo xtask verify` after changes. It must stay independent of a display, model,
-GPU, audio device, network connection, or PixelLab credential. For visible game-shell changes,
+GPU, audio device, network connection, or asset generation credential. For visible game-shell changes,
 also run `cargo xtask dev --fake-ai` on the host platform.
 
 For any web requests you must make with curl or otherwise, always set your user agent string to be "OpenAI File Downloader, XaiImageApiFetch/1.0"
@@ -51,7 +51,7 @@ disabled convenience service over repeated automation busy work.
 - Stable Rust, edition 2024, pinned by `rust-toolchain.toml`.
 - Strong types, explicit return types, discriminated enums, small focused modules, and no debug
   leftovers or `println!` in library/runtime code.
-- `beastie-core` is pure sans-I/O logic: no ggez, model runtime, wall clock, filesystem, or OS
+- `beastie-core` is pure sans-I/O logic: no Bevy, model runtime, wall clock, filesystem, or OS
   dependencies. Inject time, randomness, and outside effects.
 - Saves are versioned, human-readable JSON. Protocol traffic is versioned JSONL and treated as
   untrusted input.
@@ -64,9 +64,9 @@ disabled convenience service over repeated automation busy work.
 crates/
   beastie-core/       deterministic state, behavior, memories, saves
   beastie-protocol/   AI request/reply types and validation
-  beastie-view/       RenderPlan and AudioPlan projection
+  beastie-view/       ScenePlan and AudioPlan projection
   beastie-ai-worker/  isolated local AI/TTS process boundary
-  beastie-game/       thin ggez input/update/draw shell
+  beastie-game/       Bevy input/update/3D voxel shell
   xtask/              verify, sim, dev, and future asset/eval tooling
 assets/               generated/final asset contract and provenance
 models/               pinned model metadata and hashes, not weights

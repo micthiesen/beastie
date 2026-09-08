@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub const SETTINGS_VERSION: u32 = 3;
+pub const SETTINGS_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -153,7 +153,7 @@ impl KeyBindings {
 #[serde(default, deny_unknown_fields)]
 pub struct UserSettings {
     pub version: u32,
-    /// Preferred integer scale of the fixed 640x360 presentation image.
+    /// Preferred window size in multiples of 640x360; 3D renders at native resolution.
     pub window_scale: u8,
     pub fullscreen: bool,
     pub effects_volume: u8,
@@ -169,7 +169,6 @@ pub struct UserSettings {
     pub reduced_motion: bool,
     pub reduced_flashes: bool,
     pub reduced_shake: bool,
-    pub pixel_grid: bool,
 }
 
 impl Default for UserSettings {
@@ -190,7 +189,6 @@ impl Default for UserSettings {
             reduced_motion: false,
             reduced_flashes: false,
             reduced_shake: false,
-            pixel_grid: false,
         }
     }
 }
@@ -271,7 +269,19 @@ impl SettingsStore {
 
 fn read_settings(path: &Path) -> io::Result<UserSettings> {
     let source = fs::read_to_string(path)?;
-    serde_json::from_str::<UserSettings>(&source)
+    let mut value: serde_json::Value = serde_json::from_str(&source)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if value
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|version| version <= 3)
+        && let Some(object) = value.as_object_mut()
+    {
+        // The removed raster debugging preference has no voxel equivalent. Preserve every
+        // other preference while accepting old settings without retaining a dead runtime field.
+        object.remove("pixel_grid");
+    }
+    serde_json::from_value::<UserSettings>(value)
         .map(UserSettings::sanitize)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
@@ -345,6 +355,24 @@ mod tests {
         assert_eq!(settings.window_scale, 2);
         assert!(!settings.microphone_enabled);
         assert_eq!(settings.bindings.push_to_talk, BindingKey::F1);
+    }
+
+    #[test]
+    fn raster_settings_migrate_without_losing_accessibility_or_bindings() {
+        let path = path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, r#"{"version":3,"pixel_grid":true,"reduced_motion":true,"microphone_enabled":true,"window_scale":3}"#).unwrap();
+        let settings = read_settings(&path).unwrap();
+        assert_eq!(settings.version, 4);
+        assert!(settings.reduced_motion);
+        assert!(settings.microphone_enabled);
+        assert_eq!(settings.window_scale, 3);
+        assert!(
+            !serde_json::to_string(&settings)
+                .unwrap()
+                .contains("pixel_grid")
+        );
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

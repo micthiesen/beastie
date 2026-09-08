@@ -19,7 +19,8 @@ rust-version = "1.97"
 [workspace.dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-ggez = { version = "0.10.0", default-features = false, features = ["gamepad"] }
+bevy = { version = "0.19.1", default-features = false, features = ["3d", "ui", "default_platform", "default_font", "png"] }
+directories = "6"
 image = { version = "0.25", default-features = false, features = ["png"] }
 rodio = { version = "0.22", default-features = false, features = ["playback", "wav"] }
 serde = { version = "1", features = ["derive"] }

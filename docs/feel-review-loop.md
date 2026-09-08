@@ -72,7 +72,7 @@ target/feel/<run>/
 
 The evidence has five synchronized parts:
 
-1. `session.mp4` records the complete logical framebuffer at 60 frames per second with real frame
+1. `session.mp4` records the complete native Bevy framebuffer at 60 frames per second with real frame
    timing. It preserves every transition rather than only selected checkpoints.
 2. `inputs.jsonl` records timestamped semantic and native inputs, including pointer motion, clicks,
    keys, controller actions, and speech lifecycle events.
@@ -130,8 +130,8 @@ Review at three temporal resolutions:
 2. **Interaction beats:** Inspect dense filmstrips and traces from shortly before input through
    acknowledgement, anticipation, outcome, and recovery. Measure where the intended reading becomes
    visible.
-3. **Individual frames:** Inspect composition, hierarchy, sprite coherence, spacing, text, focus,
-   hit targets, contrast, and overlap at native integer scale.
+3. **Individual frames:** Inspect composition, hierarchy, voxel silhouette coherence, spacing, text, focus,
+   hit targets, contrast, and overlap at native window scale.
 
 Do not infer feel from a single attractive checkpoint. Do not infer broken mechanics from unclear
 presentation until the authoritative trace is checked. Do not use accelerated playback to judge

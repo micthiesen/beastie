@@ -1,149 +1,99 @@
 # Beastie art bible
 
-## V1 direction
+## Voxel aquarium
 
-Beastie is an aquarium creature, not a room prop. The frame is open water with a deep, cozy-grotty
-palette: dirty teal and blue water, plum-black depth, worn sand, algae, plants, a cave, bubbles,
-and a few warm or cyan accents. The aquarium should feel inhabited and slightly strange rather than
-like a clean fish tank. The lower boundary gives the eye a place to rest, but the creature owns most
-of the swimming volume.
+Beastie is a small three-dimensional aquarium viewed through a fixed orthographic camera. The
+composition leaves open swimming water around one recognizable creature. Dirty teal and blue
+water, plum-black depth, worn sand, algae, plants, a cave, and restrained warm accents make the
+tank feel inhabited and slightly strange. The lower boundary gives the eye somewhere to rest;
+the creature remains the visual center.
 
-The hero creature is one recognizable 80x80 source rig rendered at an exact 2x logical scale. Its
-whole sprite carries mood as well as motion: content, curious, hungry, sleepy, lonely, and resentful
-each have side-facing and player-facing art, while swim, accepted eating, food rejection, sleep,
-play, noticing, toy refusal, comfort, affection, and speech use their own curated full-body frames.
-The face must never look pasted onto a neutral body. Eyes, mouth, fins, tail, posture, outline,
-palette, and shading act together in every normal runtime pose.
-Small bubbles, hearts, attention marks, crumbs, sand, wake, and sleep marks are authored sprites,
-not rectangle overlays. Gaze leads body turns; attention toward the player uses the south-facing
-state. A bespoke hero reaction is preferable to a generic pose when a moment matters. Horizontal
-flips are allowed only for side poses whose lighting and asymmetry remain credible.
+All world forms are solid geometry built from colored voxel shapes. The creature, scenery,
+food, toys, bubbles, and reaction effects use meshes. There are no sprites, sprite sheets,
+painted face textures, image planes, or raster background art. Small facial features may use
+finer geometry than the body. Text is the exception to the geometric presentation contract.
+The renderer uses Bevy; the simulation continues to own every authoritative fact.
 
-Animation projects authoritative semantic state. A food-consumed event selects accepted-eating
-acting, a food rejection selects disgust, a toy rejection selects toy refusal, and accepted comfort
-selects its own trusting transition. Presentation never guesses those outcomes from dialogue or
-from a generic mood. Low-priority punctuation such as crumbs may yield to a new conversation;
-direct refusal and comfort remain immediate. Every short reaction starts on its first authored
-frame, holds its last frame, and is kept inside the visible aquarium even when world movement has
-reached a permissive edge.
+Voxel shapes move and rotate continuously through space. They do not snap to a world voxel
+grid. Rendering at the window resolution lets geometry provide the chunky appearance without
+forcing the face and text through the former low-resolution pixel canvas. Lighting should
+reveal the creature's form while preserving readable eyes and mouth against the water.
 
-Generated art is curated as if it were handcrafted. A provider result is source material, not an
-automatic acceptance. Inspect every frame at native size and at the actual 2x aquarium scale;
-reject identity drift, accidental props, expression changes, invented colors, edge clipping, and
-loops whose silhouette jumps. It is valid to use a clean static state with deterministic buoyancy
-when animation generation damages a fragile expression. Curated frame repetition is preferable to
-a more varied but incoherent loop. Repeated prompt violations are a reason to retain the stronger
-existing animation, not to promote the least-bad reroll. The renderer's simple code-native
-creature remains only a missing-asset safety net and is never layered over shipped hero art.
+## Creature identity and acting
 
-## Interface language
+The hero is one coherent animal with an expressive head, articulated body, and trailing tail.
+Head silhouette, eye spacing, warm body colors, fin placement, and body proportions establish
+identity across all moods. The face should read at ordinary gameplay size. Extra tiny cubes
+that disappear at that size do not count as additional expression.
 
-The interface belongs to the aquarium rather than a terminal laid over it. Its compact interaction
-deck uses midnight teal glass, aged brass edges, sea-glass highlights, and warm coral only for an
-available primary action. The permanent surface contains one creature pearl, name, current visible
-behavior, the always-focused message well, and three icon-led actions. Keyboard instructions are
-not permanent prose. Hover and controller focus reveal the semantic label only when it is useful.
+Gaze, pupils, eyelids, brows, mouth, head tilt, fins, tail, and posture work together. Content,
+curious, hungry, sleepy, lonely, and resentful states should have distinct readable expression
+without replacing the creature's identity. Speech opens and closes geometric mouth features;
+it does not swap an image onto the head. Looking toward the player may lead the body's turn.
 
-Panels use four explicit depth bands: shadow, brass edge, dark inset, then a one-pixel lit rim.
-Authored icons sit above those bands; text sits above the panel that owns it; hover/focus and
-temporary status sit above ordinary chrome. Speech chooses the side opposite the creature so a
-caption or reaction row cannot cover the face. Settings, food/toy trays, bindings, data management,
-the on-screen keyboard, and destructive confirmation reuse the same material and depth rules.
+Body segments follow the creature's motion smoothly with consistent spacing and restrained
+lag. Turning, stopping, settling, and idle pauses matter as much as swimming. Tail and fin
+motion should support the action rather than continue at one busy amplitude in every state.
+Reduced-motion settings should preserve semantic expression while reducing decorative motion.
 
-Runtime text uses Atkinson Hyperlegible Next Medium at 16 presentation pixels. Its open counters,
-distinct letter shapes, and real text metrics make ordinary mixed-case dialogue readable without
-turning the aquarium into a terminal or requiring the world art to be regenerated. The runtime
-loads `assets/generated/ui/atkinson-hyperlegible-next-medium.ttf` once and retains the hard-pixel
-built-in face only as a missing or corrupt asset fallback. The font is distributed under the SIL
+Animation projects authoritative state and typed events. Accepted eating, food rejection,
+toy refusal, play, comfort, affection, and sleep need distinguishable acting. Presentation
+must not infer an outcome from generated prose or a generic mood. Direct interaction feedback
+must remain immediate and interrupt incompatible decorative reactions. Keep the full creature
+inside the visible tank at simulation boundaries, including its trailing body and effects.
+
+## Interface and text
+
+The interface uses dark teal surfaces, warm restrained highlights, and clear keyboard,
+pointer, and controller focus. Controls and panels use geometry and text, never image icons.
+Dialogue must remain readable without covering the face. Settings, food and toy choices,
+bindings, data management, and confirmation surfaces share the same material and spacing rules.
+Readability takes priority over making letters look like voxel blocks.
+
+The bundled text face is Atkinson Hyperlegible Next Medium at
+`assets/generated/ui/atkinson-hyperlegible-next-medium.ttf`. Its open counters and distinct
+letter shapes support mixed-case dialogue and controls. The font is distributed under SIL
 Open Font License 1.1, preserved in `assets/licenses/atkinson-hyperlegible-next-OFL.txt` and
-`THIRD_PARTY_NOTICES`. The checked-in font came from the upstream
-`googlefonts/atkinson-hyperlegible-next` repository and has SHA-256
-`dd50b08b3c560846097d23baaaf6a97ffa20dd077115d23c59df68083b9ea05e`; the bundled license has
-SHA-256 `aca6a428580965d2297d1b718042dd427c2a9443ece3b0d02d758e161e0c4030`.
+`THIRD_PARTY_NOTICES`. It came from the upstream `googlefonts/atkinson-hyperlegible-next`
+repository. The font SHA-256 is
+`dd50b08b3c560846097d23baaaf6a97ffa20dd077115d23c59df68083b9ea05e`; the license SHA-256 is
+`aca6a428580965d2297d1b718042dd427c2a9443ece3b0d02d758e161e0c4030`.
 
-## Pixel contract
+## File-backed asset contract
 
-- World composition and declarative plan coordinates remain 320x180. The game projects every
-  world pixel exactly 2x onto a 640x360 presentation image, then rasterizes text and UI details at
-  presentation resolution.
-- Native hero state and speech art uses an 80x80 transparent canvas. Provider padding is cropped
-  symmetrically only after proving every opaque pixel remains inside that canonical canvas.
-- Use nearest-neighbor sampling, fixed 16:9 window sizes, integer presentation scales, and
-  intentional letterboxing. Never bake a bilinear resize into a runtime PNG.
-- Runtime pixel art has hard alpha edges: every alpha is exactly 0 or 255. Opaque backgrounds are
-  fully opaque. Transparent sprites must contain transparent pixels.
-- Every opaque RGB pixel must be in the declared palette or within its explicitly declared
-  `palette_tolerance`. Nearby provider colors are a documented exception, not a reason to loosen
-  the V1 defaults.
-- A candidate must stay under its declared `max_colors`. Isolated interpolation colors, excessive
-  unique colors, partial-alpha fringes, and inconsistent animation frames fail the asset gate.
-- `native_pixel_density`, when known, is positive and must be the same policy for every frame in an
-  animation. Frames keep identical dimensions and the same declared palette policy.
+`assets/manifest.toml` version 2 lists sounds and text fonts. World art is procedural geometry
+and does not appear in this manifest. The former sprite catalog, palettes, image files,
+PixelLab integration, frame curation, and image promotion commands have been removed.
+Historical reviews describe past builds and are not instructions to restore their assets.
 
-The canonical V1 policy for new aquarium art is:
+Sound IDs retain their stable paths. For example, `audio/ui/select` resolves to
+`assets/final/audio/ui/select.wav` when present, otherwise to
+`assets/generated/audio/ui/select.wav`. The gate validates both existing candidates, including
+a generated sound shadowed by a final file. Each sound records its PCM format, runtime status,
+and a repository provenance document. Every shippable sound must have status `runtime`.
+Fonts declare their file and license paths.
 
-```toml
-max_colors = 32
-palette_tolerance = 0
-alpha_policy = "hard"
-native_pixel_density = 1
-```
+Run the contract after changes:
 
-Provider-generated MVP art can use a measured, asset-specific tolerance and color ceiling when its
-manifest records that exception. Do not copy that exception into new aquarium entries.
-The selected V1 aquarium background has one measured exception: 34 exact declared colors instead
-of 32. Its props use 10 to 15 colors and the creature base uses exactly 32. Generated motion and
-expression frames use measured per-asset ceilings to preserve cohesive shading and identity. Every
-aquarium runtime asset still uses an exact declared palette with zero tolerance, hard alpha, and
-native density 1; these measured ceilings are not permission for later assets to grow their
-palettes.
-Large `status = "reference"` concept images are provenance inputs rather than runtime candidates;
-they still need valid dimensions and transparency metadata but are not subject to the runtime color
-ceiling.
-
-The asset checker returns color and alpha diagnostics for each decoded candidate, including opaque
-pixel count, transparent and partial-alpha counts, hidden RGB behind transparent pixels, unique
-colors, maximum palette distance, and isolated interpolation pixels. `cargo xtask asset
-normalize-alpha all` canonicalizes transparent RGB to black so future compositors cannot expose a
-white fringe. These numbers are the first evidence to inspect when a capture looks soft.
-
-## Manifest and promotion
-
-Every shippable PNG has an entry in `assets/manifest.toml`. An ID such as `creature/idle` resolves
-to `assets/final/creature/idle.png` when present, otherwise to `assets/generated/creature/idle.png`.
-Final art therefore replaces generated art without changing runtime IDs. Multi-frame assets use
-zero-based files such as `creature/swim-0.png` and `creature/swim-1.png`; `frames` declares the
-required count. Each frame is validated, including a generated frame hidden by a final promotion.
-
-Use `status = "runtime"` only after every required frame exists and has been deliberately selected.
-Use `status = "generated"` while reviewing generated output, `status = "planned"` before
-generation, and `status = "reference"` for direct style images that are not runtime-loaded. The
-final verification gate rejects planned or generated runtime entries.
-
-Each non-planned entry records the generator, date, prompt summary, seed (or an honest
-`provider-managed` marker), terms snapshot, reference images, and human modifications. Keep
-provider job IDs whenever the service exposes them. A final file never excuses a corrupt generated
-source left in the asset history.
-
-Run the contract after any art change:
-
-```bash
+```sh
 cargo xtask asset check
 cargo xtask verify
 ```
 
-The check validates manifest structure, unique safe IDs, referenced palettes and style files,
-available generated and final candidates, exact dimensions, hard alpha, palette distance, color
-counts, interpolation artifacts, frame completeness, provenance, final-over-generated resolution,
-and WAV format. `cargo xtask verify` runs the same strict runtime gate without requiring a display,
-model, GPU, audio device, network connection, or PixelLab credential.
+The asset check validates safe unique sound IDs, provenance, WAV encoding and format, font
+table bounds, and nonempty font licenses. It rejects image files anywhere under `assets/`,
+even when absent from the manifest. It requires no display, model, GPU, audio device, or network.
+Steam store imagery and operating-system app icons live separately under `steam/assets/`;
+they are distribution artwork and never world-rendering inputs.
 
-## MVP provenance
+## Visual acceptance
 
-The MVP established the original cozy-grotty language: warm lamplight, deep plum shadows, scuffed
-furniture, dirty neutrals, and sharp cyan electronic accents. Its fixed, mostly straight-on
-dollhouse view and the window as the main source of environmental variation remain useful history,
-not the V1 composition. The approved MVP references are `assets/style/room-concept.png` and
-`assets/style/furniture-anchor.png`; they establish material wear, lighting, and scale and are not
-loaded by the game. The selected unanimated creature pose remains a provenance reference while
-runtime animation and the V1 layered rig replace it.
+Exercise the native game after visible changes with `cargo xtask dev --fake-ai`. Inspect the
+actual gameplay window, not only isolated geometry or enlarged screenshots. Review ordinary
+idle life, smooth turns and stops, the face during speech, direct food and toy outcomes,
+relationship expression, overlays, and edge positions. A frame can look attractive while
+motion or interruption feels wrong, so inspect both still captures and sustained play.
+
+Keep simulation truth, offline operation, and degraded AI/audio operation intact. Lighting,
+face detail, body motion, and composition are successful when they make this particular
+creature easier to understand and care about.

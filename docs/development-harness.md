@@ -5,7 +5,7 @@ coordinates. Coordinate input is reserved for pointer mapping and real-device ac
 
 ## Shared session boundary
 
-`beastie-session::GameSession` is used by the headless adapter and the visible ggez shell. It owns
+`beastie-session::GameSession` is used by the headless adapter and the visible Bevy shell. It owns
 world state, RNG, semantic commands, observations, dialogue-request construction, and checkpoints.
 The game shell owns persistent files, backups, settings, transcripts, wall-clock time, workers,
 audio, windows, and real input devices.
@@ -62,7 +62,7 @@ cargo xtask feel --suite baseline --output target/feel/baseline-before
 cargo xtask feel --suite baseline --output target/feel/baseline-after
 ```
 
-The five visible experiences record a complete 640x360, 60 fps logical presentation plus
+The five visible experiences record a complete 1280x720, 60 fps native presentation plus
 synchronized privacy-safe input, event, state, audio, and marker traces. The harness generates
 uniform and interaction-centered filmstrips, retains offline TTS WAVs, creates an authored reference
 mix, validates the video, and hashes the exact binary and scenario. Focused suites accept the same
@@ -98,9 +98,8 @@ authored effects, direct-reaction cue preemption,
 persistent compose behavior, hover/focus parity, food-drop mode, controller hints, settings and
 bindings, save/reset controls, transcript controls, naming, and viewport calculations.
 
-The visible runner proves real plan execution and direct 640x360 presentation capture without OS
-screenshot permissions. The underlying plan remains 320x180, so the capture also proves the exact
-2x world projection and native-resolution UI pass. `cargo xtask verify` stays independent of
+The visible runner proves real Bevy scene execution and direct 1280x720 GPU capture without OS
+screenshot permissions. The 320x180 UI layout units do not limit 3D or text rendering resolution. `cargo xtask verify` stays independent of
 display, model, GPU, audio device, network, and generation credentials.
 
 Asset validation is quiet by default so gate failures stay visible. Use
@@ -112,9 +111,10 @@ after 120 seconds instead of hanging indefinitely, including real local AI and S
 
 ## Native host evidence
 
-The development Mac has previously proven:
+Before the Bevy migration, the development Mac proved the following. This historical evidence
+does not certify the new renderer:
 
-- native ggez launch, window discovery, focus, and rendered-window capture;
+- native pre-migration shell launch, window discovery, focus, and rendered-window capture;
 - real pointer selection through the food flow;
 - real keyboard text entry and Talk submission;
 - direct logical framebuffer PNG capture;

@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::error::{GameError, GameResult};
+use crate::host::KeyStroke;
 use beastie_core::{GameEvent, NamingTarget, NormalizedPosition, ToyId};
 use beastie_protocol::{
     MouthTiming, RecognitionOutcome, SpeechInputFailure, TranscriptRecord,
@@ -12,18 +14,10 @@ use beastie_session::{
     SessionSave, SpokenInputStatus,
 };
 use beastie_view::{
-    AudioCommand, AudioCue, BindableAction, BindingLabels, CursorKind, MicrophoneState,
-    PresentationChannel, RenderPlan, SPEECH_RELEASE_MS, SemanticOwner, UiAction, UiMode, ViewState,
-    logical_to_world, plan,
+    AudioCommand, AudioCue, BindableAction, BindingLabels, MicrophoneState, PresentationChannel,
+    SPEECH_RELEASE_MS, ScenePlan, SemanticOwner, UiAction, UiMode, ViewState, plan,
 };
-use ggez::conf::{FullscreenType, WindowMode};
-use ggez::event::{Button, EventHandler, GamepadId};
-use ggez::graphics::{Canvas, Color, DrawParam, Image, Sampler};
-use ggez::input::keyboard::KeyInput;
-use ggez::input::mouse::MouseButton;
-use ggez::winit::keyboard::{Key, NamedKey};
-use ggez::winit::window::CursorIcon;
-use ggez::{Context, GameError, GameResult};
+use bevy::input::keyboard::Key;
 
 use crate::args::Args;
 use crate::audio::{AmbientBubbleSchedule, AudioBank, sound_for_cue};
@@ -32,15 +26,9 @@ use crate::feel::{
     AudioTraceFrame, DialogueHealthTrace, DialogueTraceOwner, FeelRecorder, PresentationTraceState,
     SpeechTraceOwner,
 };
-use crate::input::{
-    action_at_with_assets, append_text, cursor_at_with_assets, focused_action, move_focus,
-    region_at_with_assets,
-};
+use crate::input::{append_text, focused_action, move_focus};
 use crate::microphone::{MicrophoneCapture, MicrophoneError, PrivateAudioRoot};
 use crate::recognition::{RecognitionManager, RecognitionWorkerConfig, speech_failure};
-use crate::renderer::{
-    AssetCatalog, Viewport, execute_plan, presentation_rgba, save_presentation_png,
-};
 use crate::save_store::{LoadedSave, SaveStore};
 use crate::scenario::{MicrophoneAcquisition, ScenarioRunner, ScenarioStep};
 use crate::settings::{BindingKey, KeyBindings, SettingsStore, TextScale, TextSpeed, UserSettings};
@@ -139,11 +127,8 @@ const fn dialogue_trace_owner(owner: DialogueOwner) -> DialogueTraceOwner {
 pub struct Game {
     session: GameSession,
     view: ViewState,
-    presentation_frame: Image,
-    assets: AssetCatalog,
     audio: AudioBank,
     queued_audio: Vec<AudioCommand>,
-    viewport: Viewport,
     dialogue: DialogueManager,
     dialogue_generation: u64,
     active_dialogue_owner: Option<DialogueOwner>,
@@ -177,12 +162,16 @@ pub struct Game {
     speech_animation: Option<SpeechAnimation>,
     transcript_export_path: PathBuf,
     renaming_with_osk: bool,
+    pub(crate) quit_requested: bool,
+    pub(crate) failed: bool,
+    /// Backpressure only: ordinary asynchronous screenshots never pause gameplay.
+    pub(crate) frame_pending: bool,
+    capture_outstanding: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CaptureState {
     RenderPending(String),
-    ReadbackReady(String),
 }
 
 /// The shell must establish capture before it tells the simulation that Mop perceived speech.
@@ -232,10 +221,13 @@ const fn microphone_acquisition_label(outcome: MicrophoneAcquisitionOutcome) -> 
 }
 
 impl Game {
-    pub fn new(ctx: &mut Context, args: &Args) -> GameResult<Self> {
+    pub fn new(args: &Args) -> GameResult<Self> {
         let assets_root = assets_root();
-        let save_store = SaveStore::new(ctx.fs.user_config_dir().join("saves").join("main.json"));
-        let settings_store = SettingsStore::new(ctx.fs.user_config_dir().join("settings.json"));
+        let directories = directories::ProjectDirs::from("", "Michael Thiesen", "beastie")
+            .ok_or_else(|| GameError::Config("No local configuration directory".to_owned()))?;
+        let config_dir = directories.config_dir();
+        let save_store = SaveStore::new(config_dir.join("saves").join("main.json"));
+        let settings_store = SettingsStore::new(config_dir.join("settings.json"));
         let (settings, settings_message) = if args.feel_dir.is_some() {
             // Feel evidence must not inherit the operator's accessibility, window, audio, or
             // microphone preferences. Comparisons need one explicit, repeatable presentation.
@@ -252,14 +244,14 @@ impl Game {
         if args.new_game {
             save_store
                 .reset()
-                .map_err(|error| GameError::FilesystemError(error.to_string()))?;
+                .map_err(|error| GameError::Filesystem(error.to_string()))?;
         }
         let tts = TtsManager::new(TtsWorkerConfig::discover(
             args.tts && settings.voice_enabled,
-            ctx.fs.user_config_dir().join("tts-cache"),
+            config_dir.join("tts-cache"),
         ));
-        let stt_audio_root = PrivateAudioRoot::prepare(ctx.fs.user_config_dir().join("stt-input"))
-            .map_err(|error| GameError::FilesystemError(error.to_string()))?;
+        let stt_audio_root = PrivateAudioRoot::prepare(config_dir.join("stt-input"))
+            .map_err(|error| GameError::Filesystem(error.to_string()))?;
         let recognition = RecognitionManager::new(RecognitionWorkerConfig::discover(
             args.fake_ai,
             stt_audio_root.path(),
@@ -272,12 +264,12 @@ impl Game {
         let (session, load_message, _resumed, save_enabled) =
             if let Some(path) = &args.feel_initial_save {
                 let source = std::fs::read_to_string(path)
-                    .map_err(|error| GameError::FilesystemError(error.to_string()))?;
+                    .map_err(|error| GameError::Filesystem(error.to_string()))?;
                 let save = SessionSave::from_json(&source)
-                    .map_err(|error| GameError::ConfigError(error.to_string()))?;
+                    .map_err(|error| GameError::Config(error.to_string()))?;
                 let resumed_at_ms = save.saved_at_ms;
                 let (session, progress) = GameSession::resume(save, resumed_at_ms)
-                    .map_err(|error| GameError::ConfigError(error.to_string()))?;
+                    .map_err(|error| GameError::Config(error.to_string()))?;
                 debug_assert_eq!(progress.applied_ms, 0);
                 (session, None, false, false)
             } else if args.script.is_some() {
@@ -303,7 +295,7 @@ impl Game {
                 ScenarioRunner::load(path, capture_dir)
             })
             .transpose()
-            .map_err(|error| GameError::ConfigError(error.to_string()))?;
+            .map_err(|error| GameError::Config(error.to_string()))?;
         let feel = args
             .feel_dir
             .clone()
@@ -311,7 +303,6 @@ impl Game {
             .transpose()
             .map_err(feel_error)?;
         let mut view = ViewState {
-            pixel_grid: settings.pixel_grid,
             text_scale: u8::from(matches!(settings.text_scale, TextScale::Large)) + 1,
             reduced_motion: settings.reduced_motion,
             reduced_flashes: settings.reduced_flashes,
@@ -336,31 +327,20 @@ impl Game {
         if let Some(message) = settings_message.or(load_message) {
             view.show_speech(message, session.world().elapsed_ms);
         }
-        ctx.gfx
-            .window()
-            .set_cursor_hittest(true)
-            .map_err(|error| GameError::WindowError(error.to_string()))?;
-        let (width, height) = ctx.gfx.drawable_size();
         let mut audio = AudioBank::load(&assets_root);
         audio.set_gains(settings.effects_gain(), settings.speech_gain());
         let transcripts = TranscriptStore::new(
-            ctx.fs.user_config_dir().join("transcripts/playtest.jsonl"),
+            config_dir.join("transcripts/playtest.jsonl"),
             args.transcript || settings.transcript_enabled,
         );
-        let transcript_export_path = ctx
-            .fs
-            .user_config_dir()
-            .join("transcripts/beastie-playtest-export.jsonl");
+        let transcript_export_path = config_dir.join("transcripts/beastie-playtest-export.jsonl");
         let bubble_schedule =
             AmbientBubbleSchedule::new(session.world().seed, session.world().elapsed_ms);
         let game = Self {
             session,
             view,
-            presentation_frame: Image::new_canvas_image(ctx, 640, 360, 1),
-            assets: AssetCatalog::load(ctx, &assets_root),
             audio,
             queued_audio: Vec::new(),
-            viewport: Viewport::for_drawable(width, height),
             dialogue: DialogueManager::new(WorkerConfig::from_environment(
                 args.fake_ai,
                 args.ai_timeout_ms.map_or_else(
@@ -402,48 +382,146 @@ impl Game {
             speech_animation: None,
             transcript_export_path,
             renaming_with_osk: false,
+            quit_requested: false,
+            failed: false,
+            frame_pending: true,
+            capture_outstanding: 0,
         };
-        game.apply_window_settings(ctx)?;
         if let Some(destination) = &args.export_transcript {
             game.transcripts
                 .export(destination)
-                .map_err(|error| GameError::FilesystemError(error.to_string()))?;
+                .map_err(|error| GameError::Filesystem(error.to_string()))?;
         }
         Ok(game)
     }
 
-    fn render_plan(&self) -> RenderPlan {
+    pub(crate) fn render_plan(&self) -> ScenePlan {
         plan(self.session.world(), &self.view).0
     }
 
-    fn apply_window_settings(&self, ctx: &mut Context) -> GameResult {
-        let mode = if self.settings.fullscreen {
-            WindowMode::default()
-                .fullscreen_type(FullscreenType::Desktop)
-                .resizable(false)
-        } else {
-            let (width, height) = Viewport::window_dimensions(self.settings.window_scale);
-            WindowMode::default()
-                .dimensions(width, height)
-                .resizable(false)
+    pub(crate) fn is_scripted(&self) -> bool {
+        self.scenario.is_some()
+    }
+    pub(crate) fn window_settings(&self) -> (bool, u8) {
+        (self.settings.fullscreen, self.settings.window_scale)
+    }
+    pub(crate) fn take_window_settings_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.window_settings_dirty)
+    }
+    pub(crate) fn needs_capture(&self) -> bool {
+        self.capture.is_some() || self.feel.is_some()
+    }
+    pub(crate) fn capture_path(&self) -> Option<PathBuf> {
+        let CaptureState::RenderPending(name) = self.capture.as_ref()?;
+        Some(
+            self.scenario
+                .as_ref()?
+                .capture_dir
+                .join(format!("{name}.png")),
+        )
+    }
+    pub(crate) fn presentation_trace(&self) -> PresentationTraceState {
+        PresentationTraceState {
+            subtitles_enabled: self.settings.subtitles,
+            active_dialogue_owner: self.active_dialogue_owner.map(dialogue_trace_owner),
+            caption_owner: self
+                .view
+                .speech
+                .as_ref()
+                .and(self.active_dialogue_owner)
+                .map(dialogue_trace_owner),
+            pending_mouth_owner: self.pending_tts.as_ref().map(PendingTts::trace_owner),
+            active_mouth_owner: self.active_speech_owner,
+        }
+    }
+    pub(crate) fn begin_capture(&mut self) -> crate::capture::FrameSnapshot {
+        let snapshot = crate::capture::FrameSnapshot {
+            world: self.session.world().clone(),
+            view: self.view.clone(),
+            presentation: self.presentation_trace(),
+            path: self.capture_path(),
+            feel_frame: self.feel.as_mut().map(FeelRecorder::schedule_frame),
         };
-        ctx.gfx.set_mode(mode)
+        self.capture = None;
+        self.capture_outstanding += 1;
+        snapshot
+    }
+
+    pub(crate) fn record_rendered_frame(
+        &mut self,
+        snapshot: &crate::capture::FrameSnapshot,
+        rgba: &[u8],
+    ) -> GameResult {
+        if let Some(index) = snapshot.feel_frame {
+            self.feel
+                .as_mut()
+                .ok_or_else(|| {
+                    GameError::Config("Capture completed after recorder shutdown".to_owned())
+                })?
+                .record_frame(
+                    index,
+                    rgba,
+                    &snapshot.world,
+                    &snapshot.view,
+                    snapshot.presentation,
+                )
+                .map_err(feel_error)?;
+        }
+        self.capture_outstanding = self.capture_outstanding.saturating_sub(1);
+        Ok(())
+    }
+
+    pub(crate) fn captures_drained(&self) -> bool {
+        self.capture_outstanding == 0
+    }
+
+    pub(crate) fn fail_captures(&mut self) {
+        self.failed = true;
+        self.quit_requested = true;
+        self.capture_outstanding = 0;
+        self.frame_pending = false;
+    }
+
+    pub(crate) fn finalize_capture(&mut self) -> GameResult {
+        if self.captures_drained()
+            && let Some(mut feel) = self.feel.take()
+        {
+            feel.finish().map_err(feel_error)?;
+        }
+        Ok(())
+    }
+
+    /// Counts submitted presentation frames, independently of GPU completion latency.
+    pub(crate) fn finish_frame(&mut self) -> GameResult {
+        if let Some(frames) = &mut self.smoke_frames {
+            *frames = frames.saturating_sub(1);
+            if *frames == 0 {
+                self.quit_requested = true;
+            }
+        }
+        if self.scenario.is_some() && !self.stay_open && self.finished_frames >= 3 {
+            self.quit_requested = true;
+        }
+        Ok(())
     }
 
     fn persist_settings(&self) -> GameResult {
+        if self.scenario.is_some() {
+            return Ok(());
+        }
         self.settings_store
             .store(&self.settings)
-            .map_err(|error| GameError::FilesystemError(error.to_string()))
+            .map_err(|error| GameError::Filesystem(error.to_string()))
     }
 
-    fn toggle_fullscreen(&mut self, ctx: &mut Context) -> GameResult {
+    fn toggle_fullscreen(&mut self) -> GameResult {
         self.settings.fullscreen = !self.settings.fullscreen;
         self.view.fullscreen = self.settings.fullscreen;
-        self.apply_window_settings(ctx)?;
+        self.window_settings_dirty = true;
         self.persist_settings()
     }
 
-    fn change_window_scale(&mut self, ctx: &mut Context, delta: i8) -> GameResult {
+    fn change_window_scale(&mut self, delta: i8) -> GameResult {
         if self.settings.fullscreen {
             return Ok(());
         }
@@ -451,7 +529,7 @@ impl Game {
             .saturating_add(i16::from(delta))
             .clamp(1, 6) as u8;
         self.view.window_scale = self.settings.window_scale;
-        self.apply_window_settings(ctx)?;
+        self.window_settings_dirty = true;
         self.persist_settings()
     }
 
@@ -511,7 +589,7 @@ impl Game {
             .map_err(session_error)?;
         self.save_store
             .store(&save)
-            .map_err(|error| GameError::FilesystemError(error.to_string()))
+            .map_err(|error| GameError::Filesystem(error.to_string()))
     }
 
     fn begin_push_to_talk(&mut self) -> GameResult {
@@ -816,7 +894,7 @@ impl Game {
         );
         if turn.fallback {
             self.view.show_status(
-                "Local thoughts unavailable. Using a simple response.".to_owned(),
+                "Local AI unavailable".to_owned(),
                 self.session.world().elapsed_ms,
                 5_000,
             );
@@ -839,7 +917,7 @@ impl Game {
         );
         self.transcripts
             .append(&transcript)
-            .map_err(|error| GameError::FilesystemError(error.to_string()))?;
+            .map_err(|error| GameError::Filesystem(error.to_string()))?;
         self.view.mode = UiMode::Compose;
         self.view.focused_region = Some("reaction/laugh".to_owned());
         Ok(())
@@ -1019,11 +1097,6 @@ impl Game {
             UiAction::ToggleReducedShake => {
                 self.settings.reduced_shake = !self.settings.reduced_shake;
                 self.view.reduced_shake = self.settings.reduced_shake;
-                self.persist_settings()?;
-            }
-            UiAction::TogglePixelGrid => {
-                self.settings.pixel_grid = !self.settings.pixel_grid;
-                self.view.pixel_grid = self.settings.pixel_grid;
                 self.persist_settings()?;
             }
             UiAction::CycleWindowScale => {
@@ -1304,8 +1377,7 @@ impl Game {
         self.delayed_dialogue.cancel();
         self.view.pending = false;
         if self.turn_status_owner.take().is_some()
-            && self.view.status_message.as_deref()
-                == Some("Local thoughts unavailable. Using a simple response.")
+            && self.view.status_message.as_deref() == Some("Local AI unavailable")
         {
             self.view.status_message = None;
             self.view.status_expires_at_ms = None;
@@ -1380,13 +1452,10 @@ impl Game {
         Ok(())
     }
 
-    fn drive_scenario(&mut self, ctx: &mut Context) -> GameResult {
+    fn drive_scenario(&mut self) -> GameResult {
         if (self.dialogue.is_pending() && !self.delayed_dialogue.allows_scenario_progress())
             || self.capture.is_some()
         {
-            if self.capture.is_some() {
-                ctx.gfx.window().request_redraw();
-            }
             return Ok(());
         }
         let Some(scenario) = &mut self.scenario else {
@@ -1397,7 +1466,7 @@ impl Game {
                 return Ok(());
             }
             self.finished_frames = self.finished_frames.saturating_add(1);
-            ctx.gfx.window().request_redraw();
+
             return Ok(());
         };
         match step {
@@ -1441,7 +1510,6 @@ impl Game {
             }
             ScenarioStep::Capture(name) => {
                 self.capture = Some(CaptureState::RenderPending(name));
-                ctx.gfx.window().request_redraw();
             }
             ScenarioStep::Marker(name) => {
                 if let Some(feel) = &mut self.feel {
@@ -1451,26 +1519,17 @@ impl Game {
             }
             ScenarioStep::WaitTick { milliseconds } => {
                 self.apply_command(SessionCommand::Tick { milliseconds }, false)?;
-                ctx.gfx.window().request_redraw();
             }
         }
         Ok(())
     }
 }
 
-impl EventHandler for Game {
-    fn update(&mut self, ctx: &mut Context) -> GameResult {
-        if self.window_settings_dirty {
-            self.apply_window_settings(ctx)?;
-            self.window_settings_dirty = false;
+impl Game {
+    pub(crate) fn update(&mut self, frame_delta_ms: u64, advance_frame: bool) -> GameResult {
+        if self.quit_requested {
+            return Ok(());
         }
-        let frame_delta_ms = ctx
-            .time
-            .delta()
-            .as_millis()
-            .clamp(1, 250)
-            .try_into()
-            .unwrap_or(250);
         if self
             .microphone
             .as_ref()
@@ -1481,8 +1540,11 @@ impl EventHandler for Game {
         self.poll_recognition()?;
         self.poll_dialogue()?;
         self.poll_tts()?;
+        if self.frame_pending || (self.scenario.is_some() && !advance_frame) {
+            return Ok(());
+        }
         if self.scenario.is_some() {
-            self.drive_scenario(ctx)?;
+            self.drive_scenario()?;
         } else {
             let dt_ms = frame_delta_ms;
             if dt_ms > 0 {
@@ -1492,12 +1554,6 @@ impl EventHandler for Game {
                     },
                     false,
                 )?;
-            }
-        }
-        if let Some(frames) = &mut self.smoke_frames {
-            *frames = frames.saturating_sub(1);
-            if *frames == 0 {
-                ctx.request_quit();
             }
         }
         if self.audio.speech_active() && self.view.speech.is_some() {
@@ -1602,107 +1658,56 @@ impl EventHandler for Game {
         Ok(())
     }
 
-    fn draw(&mut self, ctx: &mut Context) -> GameResult {
-        if let Some(name) = take_capture_for_readback(&mut self.capture) {
-            let directory = self
-                .scenario
-                .as_ref()
-                .map(|scenario| scenario.capture_dir.as_path())
-                .ok_or_else(|| GameError::ConfigError("capture has no scenario".to_owned()))?;
-            save_presentation_png(
-                ctx,
-                &self.presentation_frame,
-                &directory.join(format!("{name}.png")),
-            )?;
-        }
-
-        let render = self.render_plan();
-        let mut presentation = Canvas::from_image(
-            ctx,
-            self.presentation_frame.clone(),
-            Color::from_rgb(20, 18, 24),
-        );
-        execute_plan(ctx, &mut presentation, &render, &self.assets)?;
-        presentation.finish(ctx)?;
-
-        if let Some(feel) = &mut self.feel {
-            let rgba = presentation_rgba(ctx, &self.presentation_frame)?;
-            feel.record_frame(
-                &rgba,
-                self.session.world(),
-                &self.view,
-                PresentationTraceState {
-                    subtitles_enabled: self.settings.subtitles,
-                    active_dialogue_owner: self.active_dialogue_owner.map(dialogue_trace_owner),
-                    caption_owner: self
-                        .view
-                        .speech
-                        .as_ref()
-                        .and(self.active_dialogue_owner)
-                        .map(dialogue_trace_owner),
-                    pending_mouth_owner: self.pending_tts.as_ref().map(PendingTts::trace_owner),
-                    active_mouth_owner: self.active_speech_owner,
-                },
-            )
-            .map_err(feel_error)?;
-        }
-
-        if mark_capture_rendered(&mut self.capture) {
-            ctx.gfx.window().request_redraw();
-        }
-
-        let (width, height) = ctx.gfx.drawable_size();
-        self.viewport = Viewport::for_drawable(width, height);
-        let mut frame = Canvas::from_frame(ctx, Color::from_rgb(12, 11, 15));
-        frame.set_sampler(Sampler::nearest_clamp());
-        frame.draw(
-            &self.presentation_frame,
-            DrawParam::default()
-                .dest([self.viewport.x, self.viewport.y])
-                .scale([self.viewport.scale, self.viewport.scale]),
-        );
-        frame.finish(ctx)?;
-        if self.scenario.is_some() && !self.stay_open && self.finished_frames >= 3 {
-            if let Some(mut feel) = self.feel.take() {
-                feel.finish().map_err(feel_error)?;
+    pub(crate) fn pointer_moved(
+        &mut self,
+        logical: Option<(i32, i32)>,
+        world: Option<NormalizedPosition>,
+        hit: Option<&beastie_view::HitRegion>,
+    ) -> GameResult {
+        if self.pointer_logical != logical {
+            self.view.controller_active = false;
+            if let Some(feel) = &mut self.feel {
+                feel.record_native(
+                    "mouse_motion",
+                    serde_json::json!({"logical": logical}),
+                    self.session.world().elapsed_ms,
+                )
+                .map_err(feel_error)?;
             }
-            ctx.request_quit();
+        }
+        self.pointer_logical = logical;
+        self.view.hovered_region = hit.map(|hit| hit.id.clone());
+        if world != self.cursor_world {
+            self.cursor_world = world;
+            self.apply_command(SessionCommand::Cursor { position: world }, false)?;
         }
         Ok(())
     }
 
-    fn mouse_button_down_event(
+    pub(crate) fn pointer_pressed(
         &mut self,
-        _ctx: &mut Context,
-        button: MouseButton,
-        x: f32,
-        y: f32,
+        action: Option<UiAction>,
+        world: Option<NormalizedPosition>,
     ) -> GameResult {
+        self.view.controller_active = false;
         if let Some(feel) = &mut self.feel {
             feel.record_native(
                 "mouse_button_down",
-                serde_json::json!({"button": format!("{button:?}"), "x": x, "y": y}),
+                serde_json::json!({"button":"Left", "logical": self.pointer_logical}),
                 self.session.world().elapsed_ms,
             )
             .map_err(feel_error)?;
         }
-        self.view.controller_active = false;
-        if button != MouseButton::Left {
-            return Ok(());
-        }
-        let Some((x, y)) = self.viewport.logical_point(x, y) else {
-            return Ok(());
-        };
-        let render = self.render_plan();
-        if let Some(action) = action_at_with_assets(&render, &self.assets, x, y) {
+        if let Some(action) = action {
             if action == UiAction::PushToTalk {
                 self.begin_push_to_talk()?;
             } else if let UiAction::DropFood(food) = action {
-                let position = logical_to_world(x.floor() as i32, y.floor() as i32);
-                self.cursor_world = Some(position);
-                self.apply_command(SessionCommand::DropFood { food, position }, true)?;
-                self.close_menu();
-                self.queued_audio.push(ui_audio(AudioCue::UiConfirm));
+                if let Some(position) = world {
+                    self.cursor_world = Some(position);
+                    self.apply_command(SessionCommand::DropFood { food, position }, true)?;
+                    self.close_menu();
+                    self.queued_audio.push(ui_audio(AudioCue::UiConfirm));
+                }
             } else {
                 self.apply_confirmed_ui_action(action, false)?;
             }
@@ -1710,111 +1715,41 @@ impl EventHandler for Game {
         Ok(())
     }
 
-    fn mouse_button_up_event(
-        &mut self,
-        _ctx: &mut Context,
-        button: MouseButton,
-        x: f32,
-        y: f32,
-    ) -> GameResult {
+    pub(crate) fn pointer_released(&mut self) -> GameResult {
         if let Some(feel) = &mut self.feel {
             feel.record_native(
                 "mouse_button_up",
-                serde_json::json!({"button": format!("{button:?}"), "x": x, "y": y}),
+                serde_json::json!({"button":"Left", "logical": self.pointer_logical}),
                 self.session.world().elapsed_ms,
             )
             .map_err(feel_error)?;
         }
-        if button == MouseButton::Left {
-            self.end_push_to_talk()?;
-        }
-        Ok(())
+        self.end_push_to_talk()
     }
 
-    fn mouse_motion_event(
-        &mut self,
-        ctx: &mut Context,
-        x: f32,
-        y: f32,
-        _dx: f32,
-        _dy: f32,
-    ) -> GameResult {
+    pub(crate) fn key_down_event(&mut self, input: KeyStroke, repeated: bool) -> GameResult {
         if let Some(feel) = &mut self.feel {
-            feel.record_native(
-                "mouse_motion",
-                serde_json::json!({"x": x, "y": y}),
-                self.session.world().elapsed_ms,
-            )
-            .map_err(feel_error)?;
-        }
-        self.view.controller_active = false;
-        let logical = self
-            .viewport
-            .logical_point(x, y)
-            .map(|(x, y)| (x.floor() as i32, y.floor() as i32));
-        self.pointer_logical = logical;
-        let render = self.render_plan();
-        self.view.hovered_region = logical.and_then(|(x, y)| {
-            region_at_with_assets(&render, &self.assets, x as f32, y as f32)
-                .map(|region| region.id.clone())
-        });
-        let cursor = logical.map_or(CursorKind::Default, |(x, y)| {
-            cursor_at_with_assets(&render, &self.assets, x as f32, y as f32)
-        });
-        ctx.gfx.window().set_cursor(match cursor {
-            CursorKind::Default => CursorIcon::Default,
-            CursorKind::Pointer => CursorIcon::Pointer,
-            CursorKind::FoodDrop => CursorIcon::Crosshair,
-        });
-        let cursor_world = logical
-            .filter(|(_, y)| *y < beastie_view::COMPOSE_BAR_TOP)
-            .map(|(x, y)| logical_to_world(x, y));
-        if cursor_world != self.cursor_world {
-            self.cursor_world = cursor_world;
-            self.apply_command(
-                SessionCommand::Cursor {
-                    position: cursor_world,
-                },
-                false,
-            )?;
-        }
-        Ok(())
-    }
-
-    fn mouse_enter_or_leave(&mut self, _ctx: &mut Context, entered: bool) -> GameResult {
-        if !entered {
-            self.pointer_logical = None;
-            self.cursor_world = None;
-            self.view.hovered_region = None;
-            self.apply_command(SessionCommand::Cursor { position: None }, false)?;
-        }
-        Ok(())
-    }
-
-    fn key_down_event(&mut self, ctx: &mut Context, input: KeyInput, repeated: bool) -> GameResult {
-        if let Some(feel) = &mut self.feel {
-            let key = match &input.event.logical_key {
+            let key = match &input.key {
                 Key::Character(_) => "character".to_owned(),
-                Key::Named(named) => format!("{named:?}"),
-                _ => "unidentified".to_owned(),
+                other => format!("{other:?}"),
             };
             feel.record_native(
                 "key_down",
                 serde_json::json!({
                     "key": key,
                     "repeated": repeated,
-                    "control": input.mods.control_key(),
-                    "super": input.mods.super_key(),
-                    "shift": input.mods.shift_key(),
+                    "control": input.control,
+                    "super": input.super_key,
+                    "shift": input.shift,
                 }),
                 self.session.world().elapsed_ms,
             )
             .map_err(feel_error)?;
         }
         self.view.controller_active = false;
-        let key = &input.event.logical_key;
+        let key = &input.key;
         if let UiMode::Rebinding(action) = self.view.mode {
-            if matches!(key, Key::Named(NamedKey::Escape)) {
+            if matches!(key, Key::Escape) {
                 self.view.mode = UiMode::Bindings;
                 self.reset_focus();
                 return Ok(());
@@ -1826,13 +1761,13 @@ impl EventHandler for Game {
         }
         if matches!(self.view.mode, UiMode::Rename) {
             match key {
-                Key::Named(NamedKey::Escape) => self.close_menu(),
-                Key::Named(NamedKey::Enter) => self.submit_name()?,
-                Key::Named(NamedKey::Backspace) => {
+                Key::Escape => self.close_menu(),
+                Key::Enter => self.submit_name()?,
+                Key::Backspace => {
                     self.view.text_buffer.pop();
                 }
-                _ if !input.mods.control_key() && !input.mods.super_key() => {
-                    if let Some(text) = input.event.text.as_deref() {
+                _ if !input.control && !input.super_key => {
+                    if let Some(text) = input.text.as_deref() {
                         append_text(&mut self.view.text_buffer, text);
                     }
                 }
@@ -1840,18 +1775,18 @@ impl EventHandler for Game {
             }
             return Ok(());
         }
-        if input.mods.control_key() || input.mods.super_key() {
+        if input.control || input.super_key {
             match key {
                 Key::Character(character) if character.eq_ignore_ascii_case("q") => {
                     self.persist()?;
-                    ctx.request_quit();
+                    self.quit_requested = true;
                     return Ok(());
                 }
                 Key::Character(character) if character == "+" || character == "=" => {
-                    return self.change_window_scale(ctx, 1);
+                    return self.change_window_scale(1);
                 }
                 Key::Character(character) if character == "-" => {
-                    return self.change_window_scale(ctx, -1);
+                    return self.change_window_scale(-1);
                 }
                 _ => {}
             }
@@ -1863,15 +1798,10 @@ impl EventHandler for Game {
             self.activate_binding(action)?;
             return Ok(());
         }
-        if matches!(key, Key::Named(NamedKey::F11)) {
-            return self.toggle_fullscreen(ctx);
+        if matches!(key, Key::F11) {
+            return self.toggle_fullscreen();
         }
-        if matches!(key, Key::Named(NamedKey::F8)) {
-            self.settings.pixel_grid = !self.settings.pixel_grid;
-            self.view.pixel_grid = self.settings.pixel_grid;
-            return self.persist_settings();
-        }
-        if matches!(key, Key::Named(NamedKey::F6)) {
+        if matches!(key, Key::F6) {
             self.settings.voice_enabled = !self.settings.voice_enabled;
             self.view.voice_enabled = self.settings.voice_enabled;
             if !self.settings.voice_enabled {
@@ -1879,31 +1809,28 @@ impl EventHandler for Game {
             }
             return self.persist_settings();
         }
-        if matches!(key, Key::Named(NamedKey::F7)) {
+        if matches!(key, Key::F7) {
             self.settings.reduced_motion = !self.settings.reduced_motion;
             self.view.reduced_motion = self.settings.reduced_motion;
             return self.persist_settings();
         }
-        if matches!(key, Key::Named(NamedKey::F9)) {
+        if matches!(key, Key::F9) {
             self.settings.reduced_flashes = !self.settings.reduced_flashes;
             self.view.reduced_flashes = self.settings.reduced_flashes;
             return self.persist_settings();
         }
-        if matches!(key, Key::Named(NamedKey::F10)) {
+        if matches!(key, Key::F10) {
             self.settings.reduced_shake = !self.settings.reduced_shake;
             self.view.reduced_shake = self.settings.reduced_shake;
             return self.persist_settings();
         }
-        if matches!(key, Key::Named(NamedKey::F12)) {
+        if matches!(key, Key::F12) {
             self.settings.text_speed = cycle_text_speed(self.settings.text_speed);
             self.view.text_speed = text_speed_value(self.settings.text_speed);
             return self.persist_settings();
         }
-        if matches!(self.view.mode, UiMode::Compose)
-            && !repeated
-            && matches!(key, Key::Named(NamedKey::Tab))
-        {
-            self.navigate(if input.mods.shift_key() { -1 } else { 1 });
+        if matches!(self.view.mode, UiMode::Compose) && !repeated && matches!(key, Key::Tab) {
+            self.navigate(if input.shift { -1 } else { 1 });
             return Ok(());
         }
         if matches!(self.view.mode, UiMode::Compose)
@@ -1911,10 +1838,10 @@ impl EventHandler for Game {
             && !repeated
         {
             match key {
-                Key::Named(NamedKey::ArrowRight | NamedKey::ArrowDown) => self.navigate(1),
-                Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) => self.navigate(-1),
-                Key::Named(NamedKey::Enter | NamedKey::Space) => self.activate_focus(false)?,
-                Key::Named(NamedKey::Escape) => {
+                Key::ArrowRight | Key::ArrowDown => self.navigate(1),
+                Key::ArrowLeft | Key::ArrowUp => self.navigate(-1),
+                Key::Enter | Key::Space => self.activate_focus(false)?,
+                Key::Escape => {
                     self.view.focused_region = Some("compose/input".to_owned());
                 }
                 _ => {}
@@ -1923,15 +1850,15 @@ impl EventHandler for Game {
         }
         if matches!(self.view.mode, UiMode::Compose) {
             match key {
-                Key::Named(NamedKey::Escape) => {
+                Key::Escape => {
                     self.apply_ui_action(UiAction::ClearText, false)?;
                 }
-                Key::Named(NamedKey::Enter) if !self.view.pending => self.submit_text()?,
-                Key::Named(NamedKey::Backspace) => {
+                Key::Enter if !self.view.pending => self.submit_text()?,
+                Key::Backspace => {
                     self.view.text_buffer.pop();
                 }
-                _ if !input.mods.control_key() && !input.mods.super_key() => {
-                    if let Some(text) = input.event.text.as_deref() {
+                _ if !input.control && !input.super_key => {
+                    if let Some(text) = input.text.as_deref() {
                         append_text(&mut self.view.text_buffer, text);
                     }
                 }
@@ -1943,25 +1870,22 @@ impl EventHandler for Game {
             return Ok(());
         }
         match key {
-            Key::Named(NamedKey::Escape) => {
+            Key::Escape => {
                 self.close_menu();
             }
-            Key::Named(NamedKey::Tab | NamedKey::ArrowRight | NamedKey::ArrowDown) => {
-                self.navigate(1)
-            }
-            Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) => self.navigate(-1),
-            Key::Named(NamedKey::Enter | NamedKey::Space) => self.activate_focus(false)?,
+            Key::Tab | Key::ArrowRight | Key::ArrowDown => self.navigate(1),
+            Key::ArrowLeft | Key::ArrowUp => self.navigate(-1),
+            Key::Enter | Key::Space => self.activate_focus(false)?,
             _ => {}
         }
         Ok(())
     }
 
-    fn key_up_event(&mut self, _ctx: &mut Context, input: KeyInput) -> GameResult {
+    pub(crate) fn key_up_event(&mut self, input: KeyStroke) -> GameResult {
         if let Some(feel) = &mut self.feel {
-            let key = match &input.event.logical_key {
+            let key = match &input.key {
                 Key::Character(_) => "character".to_owned(),
-                Key::Named(named) => format!("{named:?}"),
-                _ => "unidentified".to_owned(),
+                other => format!("{other:?}"),
             };
             feel.record_native(
                 "key_up",
@@ -1970,22 +1894,17 @@ impl EventHandler for Game {
             )
             .map_err(feel_error)?;
         }
-        if binding_key(&input.event.logical_key) == Some(self.settings.bindings.push_to_talk)
-            || matches!(
-                input.event.logical_key,
-                Key::Named(NamedKey::Enter | NamedKey::Space)
-            )
+        if binding_key(&input.key) == Some(self.settings.bindings.push_to_talk)
+            || matches!(input.key, Key::Enter | Key::Space)
         {
             self.end_push_to_talk()?;
         }
         Ok(())
     }
 
-    fn gamepad_button_down_event(
+    pub(crate) fn gamepad_button_down_event(
         &mut self,
-        _ctx: &mut Context,
-        button: Button,
-        _id: GamepadId,
+        button: bevy::input::gamepad::GamepadButton,
     ) -> GameResult {
         if let Some(feel) = &mut self.feel {
             feel.record_native(
@@ -2000,20 +1919,20 @@ impl EventHandler for Game {
             self.reset_focus();
         }
         match button {
-            Button::DPadRight | Button::DPadDown => self.navigate(1),
-            Button::DPadLeft | Button::DPadUp => self.navigate(-1),
-            Button::South => self.activate_focus(true)?,
-            Button::East => self.close_menu(),
+            bevy::input::gamepad::GamepadButton::DPadRight
+            | bevy::input::gamepad::GamepadButton::DPadDown => self.navigate(1),
+            bevy::input::gamepad::GamepadButton::DPadLeft
+            | bevy::input::gamepad::GamepadButton::DPadUp => self.navigate(-1),
+            bevy::input::gamepad::GamepadButton::South => self.activate_focus(true)?,
+            bevy::input::gamepad::GamepadButton::East => self.close_menu(),
             _ => {}
         }
         Ok(())
     }
 
-    fn gamepad_button_up_event(
+    pub(crate) fn gamepad_button_up_event(
         &mut self,
-        _ctx: &mut Context,
-        button: Button,
-        _id: GamepadId,
+        button: bevy::input::gamepad::GamepadButton,
     ) -> GameResult {
         if let Some(feel) = &mut self.feel {
             feel.record_native(
@@ -2023,13 +1942,13 @@ impl EventHandler for Game {
             )
             .map_err(feel_error)?;
         }
-        if button == Button::South {
+        if button == bevy::input::gamepad::GamepadButton::South {
             self.end_push_to_talk()?;
         }
         Ok(())
     }
 
-    fn focus_event(&mut self, _ctx: &mut Context, gained: bool) -> GameResult {
+    pub(crate) fn focus_event(&mut self, gained: bool) -> GameResult {
         if let Some(feel) = &mut self.feel {
             feel.record_native(
                 "window_focus",
@@ -2045,14 +1964,9 @@ impl EventHandler for Game {
         Ok(())
     }
 
-    fn quit_event(&mut self, _ctx: &mut Context) -> GameResult<bool> {
+    pub(crate) fn quit_event(&mut self) -> GameResult<bool> {
         self.persist()?;
         Ok(false)
-    }
-
-    fn resize_event(&mut self, _ctx: &mut Context, width: f32, height: f32) -> GameResult {
-        self.viewport = Viewport::for_drawable(width, height);
-        Ok(())
     }
 }
 
@@ -2193,24 +2107,6 @@ fn mouth_phase(timing: MouthTiming, elapsed_ms: u64) -> u8 {
     }
 }
 
-fn mark_capture_rendered(capture: &mut Option<CaptureState>) -> bool {
-    let Some(CaptureState::RenderPending(name)) = capture.take() else {
-        return false;
-    };
-    *capture = Some(CaptureState::ReadbackReady(name));
-    true
-}
-
-fn take_capture_for_readback(capture: &mut Option<CaptureState>) -> Option<String> {
-    match capture.take() {
-        Some(CaptureState::ReadbackReady(name)) => Some(name),
-        pending => {
-            *capture = pending;
-            None
-        }
-    }
-}
-
 const fn text_speed_value(speed: TextSpeed) -> u8 {
     match speed {
         TextSpeed::Instant => 0,
@@ -2232,24 +2128,24 @@ fn binding_labels(bindings: &KeyBindings) -> BindingLabels {
 
 fn binding_key(key: &Key) -> Option<BindingKey> {
     match key {
-        Key::Named(NamedKey::Escape) => Some(BindingKey::Escape),
-        Key::Named(NamedKey::F1) => Some(BindingKey::F1),
-        Key::Named(NamedKey::F2) => Some(BindingKey::F2),
-        Key::Named(NamedKey::F3) => Some(BindingKey::F3),
-        Key::Named(NamedKey::F4) => Some(BindingKey::F4),
-        Key::Named(NamedKey::F5) => Some(BindingKey::F5),
-        Key::Named(NamedKey::F6) => Some(BindingKey::F6),
-        Key::Named(NamedKey::F7) => Some(BindingKey::F7),
-        Key::Named(NamedKey::F8) => Some(BindingKey::F8),
-        Key::Named(NamedKey::F9) => Some(BindingKey::F9),
-        Key::Named(NamedKey::F10) => Some(BindingKey::F10),
-        Key::Named(NamedKey::F11) => Some(BindingKey::F11),
-        Key::Named(NamedKey::F12) => Some(BindingKey::F12),
+        Key::Escape => Some(BindingKey::Escape),
+        Key::F1 => Some(BindingKey::F1),
+        Key::F2 => Some(BindingKey::F2),
+        Key::F3 => Some(BindingKey::F3),
+        Key::F4 => Some(BindingKey::F4),
+        Key::F5 => Some(BindingKey::F5),
+        Key::F6 => Some(BindingKey::F6),
+        Key::F7 => Some(BindingKey::F7),
+        Key::F8 => Some(BindingKey::F8),
+        Key::F9 => Some(BindingKey::F9),
+        Key::F10 => Some(BindingKey::F10),
+        Key::F11 => Some(BindingKey::F11),
+        Key::F12 => Some(BindingKey::F12),
         _ => None,
     }
 }
 
-fn assets_root() -> PathBuf {
+pub(crate) fn assets_root() -> PathBuf {
     if let Some(path) = std::env::var_os("BEASTIE_ASSETS") {
         return PathBuf::from(path);
     }
@@ -2273,11 +2169,11 @@ fn unix_time_ms() -> u64 {
 }
 
 fn session_error(error: SessionError) -> GameError {
-    GameError::CustomError(error.to_string())
+    GameError::Session(error.to_string())
 }
 
 fn feel_error(error: crate::feel::FeelError) -> GameError {
-    GameError::FilesystemError(error.to_string())
+    GameError::Filesystem(error.to_string())
 }
 
 fn play_command(toy: ToyId) -> SessionCommand {
@@ -2420,10 +2316,10 @@ mod tests {
     use beastie_view::{MicrophoneState, UiAction, ViewState};
 
     use super::{
-        CaptureState, DelayedCompletion, MicrophoneAcquisitionOutcome, apply_spoken_input_status,
-        clears_speech, command_requires_persist, effective_dialogue_text_speed, load_session,
-        mark_capture_rendered, microphone_acquisition_transition, mouth_phase, play_command,
-        revealed_text, show_dialogue_caption, spoken_input_is_pending, take_capture_for_readback,
+        DelayedCompletion, MicrophoneAcquisitionOutcome, apply_spoken_input_status, clears_speech,
+        command_requires_persist, effective_dialogue_text_speed, load_session,
+        microphone_acquisition_transition, mouth_phase, play_command, revealed_text,
+        show_dialogue_caption, spoken_input_is_pending,
     };
     use crate::dialogue::DialogueOwner;
     use crate::save_store::SaveStore;
@@ -2724,17 +2620,5 @@ mod tests {
         assert_eq!(mouth_phase(timing, 70), 0);
         assert_eq!(mouth_phase(timing, 120), 1);
         assert_eq!(mouth_phase(timing, 160), 2);
-    }
-
-    #[test]
-    fn scripted_capture_waits_for_submitted_render_before_readback() {
-        let mut capture = Some(CaptureState::RenderPending("aquarium".to_owned()));
-        assert_eq!(take_capture_for_readback(&mut capture), None);
-        assert!(mark_capture_rendered(&mut capture));
-        assert_eq!(
-            take_capture_for_readback(&mut capture).as_deref(),
-            Some("aquarium")
-        );
-        assert_eq!(capture, None);
     }
 }

@@ -19,8 +19,8 @@ fixed-point two-dimensional position and velocity. Facing, gaze, semantic destin
 and anticipation/action/recovery phases make movement legible without importing a physics or
 rendering engine. Time, randomness, cursor position, and player actions are injected.
 
-Simulation positions are normalized fixed-point values. Pixel coordinates, sprite sizes, source
-crops, and viewport scaling belong to presentation. Saves are human-readable, versioned JSON and
+Simulation positions are normalized fixed-point values. Geometry, camera projection, UI layout units,
+and viewport scaling belong to presentation. Saves are human-readable, versioned JSON and
 migrate historical room-era state into stable aquarium objects without retaining runtime room
 fields.
 
@@ -34,7 +34,7 @@ conservatively without manufacturing another payoff.
 
 ## Session and harness boundary
 
-`GameSession` sits above core and below ggez. It owns authoritative state, RNG, semantic commands,
+`GameSession` sits above core and below Bevy. It owns authoritative state, RNG, semantic commands,
 dialogue-request construction, observations, and in-memory checkpoints. Accelerated advancement
 coalesces idempotent need notifications while preserving final state, RNG, and every meaningful
 phase, memory, food, and social event.
@@ -43,7 +43,7 @@ phase, memory, food, and social event.
 JSONL scenario --> headless adapter --+
                                       +--> GameSession --> trace / state / dialogue request
 JSONL scenario --> visible adapter ---+          |
-                                                 +--> RenderPlan --> logical PNG capture
+                                                 +--> ScenePlan --> native PNG capture
 real devices -------------------------------> beastie-game input mapping
 ```
 
@@ -63,37 +63,38 @@ reaps nested worker process groups before promotion. See [feel-review-loop.md](f
 
 ## Declarative presentation
 
-`beastie-view` converts authoritative state and short-lived presentation state into serializable
-render and audio plans. It maps normalized coordinates to whole logical pixels; selects authored
-full-body mood, action, speech, and reaction sprites; queues important feedback with direct-reaction
-preemption; and emits semantic hit regions shared by pointer, keyboard, and controller.
-Accepted eating, food rejection, toy refusal, noticing, and comfort are distinct projections of
-typed simulation events rather than visual guesses derived from model text. Cue-relative playback
-starts each reaction at frame zero and holds the final frame. Dialogue supersedes stale ambient
-punctuation, while direct refusal and comfort remain immediate.
+`beastie-view` converts authoritative state and short-lived presentation state into a serializable
+`ScenePlan` and audio commands. Creature pose, gaze, mood, action phase, speech mouth timing,
+private-life recipes and relationship expressions remain typed, with exact semantic ownership.
+Object instances retain authoritative IDs, positions, movement, carrying and responses. Expressions
+and effects never infer game outcomes from model prose.
 
-The game shell projects 320x180 plan coordinates directly onto a 640x360 presentation image. World
-pixels remain exact 2x blocks, while text is rasterized natively at 16 presentation pixels and
-silhouette focus outlines may use one presentation pixel. The finished image is nearest-scaled at
-integer sizes into a fixed 16:9 window or letterboxed fullscreen. The selected background is
-cropped at 1:1 before projection to remove its generated surface opening. Shipped hero acting and
-effects are sprite art; the renderer keeps only a simple missing-asset creature and geometry
-fallback so a corrupt or absent optional file never blocks play.
+Bevy renders the tank and every creature part, object, effect and icon from colored solid geometry.
+Voxel surface meshes omit interior faces; articulated parts move continuously. A distance-sampled
+trail guides constrained body joints, with retained curvature at rest; separate facial geometry
+controls eyes, brows and mouth. The
+camera is fixed and orthographic. A 320x180 coordinate space remains solely for UI layout; world
+geometry and font glyphs render at window resolution, with 1280x720 native evidence captures.
+
+The authoritative aquarium remains a 2D interaction plane inside the 3D tank. Normalized position
+maps through one shared transform with margins for creature volume. Presentation depth cannot
+change contact or invent interactions. The shell resolves pointer rays against world volumes and
+maps food drops back onto the interaction plane. UI hit regions preserve keyboard/controller
+ordering and modal exclusion.
+Input resolves against the preceding presented scene and creature pose before simulation and
+animation publish the next frame, so clicks refer to the image the player was shown.
 
 The persistent compose bar, shallow contextual actions, food-drop mode, settings, input bindings,
-save recovery/reset confirmation, transcript controls, and naming are declarative UI. Exact need,
-trust, and resentment values never appear in the player summary. The compose deck is icon-led and
-always focused, while help is contextual to hover or controller focus rather than a permanent line
-of shortcut prose. Modal chrome, text, authored icons, status, and focus rings occupy explicit
-layer bands. Speech panels choose the side opposite the creature.
+save recovery/reset confirmation, transcript controls, and naming remain declarative UI. Exact
+need, trust and resentment values remain absent from the player summary. Panels and icons use
+geometry; text is the permitted font-rendering exception. Speech occupies the opposite side of
+the creature. Reduced motion and other accessibility settings remain part of presentation state.
 
-Runtime sprite IDs resolve through the checked asset manifest, preferring `assets/final` over
-`assets/generated`. The shell decodes image and alpha data once at startup. Sprite-linked hit
-regions sample that alpha mask and fall back to their semantic rectangle when art is absent.
-Missing image, sound, speech, model, font, or audio-device paths degrade without blocking
-deterministic play. Atkinson Hyperlegible Next loads once beside the sprite catalog, with a
-code-native bitmap fallback. See
-[art-bible.md](art-bible.md) and [audio-direction.md](audio-direction.md).
+The sprite pipeline and image catalog are removed. Runtime assets contain only sounds, the Atkinson
+font and its license, validated by the versioned asset manifest. Generated geometry requires no
+asset credentials or network. Missing optional sounds/fonts/workers degrade without stopping
+simulation. See [art-bible.md](art-bible.md), [audio-direction.md](audio-direction.md), and the
+[voxel migration contract](voxel-migration.md).
 
 ## Local mouth and voice
 

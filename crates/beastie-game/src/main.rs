@@ -1,8 +1,14 @@
 mod app;
 mod args;
 mod audio;
+mod body;
+mod capture;
+mod creature;
+
 mod dialogue;
+mod error;
 mod feel;
+mod host;
 mod input;
 mod microphone;
 mod process;
@@ -13,24 +19,55 @@ mod scenario;
 mod settings;
 mod transcript;
 mod tts;
+mod voxel;
 
 use app::Game;
 use args::Args;
+use bevy::prelude::*;
+use bevy::window::{MonitorSelection, WindowMode, WindowPlugin};
 use clap::Parser;
-use ggez::conf::{WindowMode, WindowSetup};
-use ggez::event;
-use ggez::{ContextBuilder, GameResult};
 
-fn main() -> GameResult {
+fn main() -> bevy::app::AppExit {
     let args = Args::parse();
-    let (mut ctx, event_loop) = ContextBuilder::new("beastie", "Michael Thiesen")
-        .window_setup(WindowSetup::default().title("Beastie"))
-        .window_mode(
-            WindowMode::default()
-                .dimensions(1280.0, 720.0)
-                .resizable(false),
+    let game = match Game::new(&args) {
+        Ok(game) => game,
+        Err(error) => {
+            eprintln!("Beastie could not start: {error}");
+            return bevy::app::AppExit::error();
+        }
+    };
+    let (fullscreen, scale) = game.window_settings();
+    let frame = renderer::SceneFrame {
+        plan: game.render_plan(),
+    };
+    App::new()
+        .insert_resource(frame)
+        .insert_non_send(game)
+        .add_plugins(
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Beastie".to_owned(),
+                    resolution: bevy::window::WindowResolution::new(
+                        640 * u32::from(scale),
+                        360 * u32::from(scale),
+                    )
+                    .with_scale_factor_override(1.0),
+                    resizable: false,
+                    mode: if fullscreen {
+                        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                    } else {
+                        WindowMode::Windowed
+                    },
+                    ..default()
+                }),
+                close_when_requested: false,
+                ..default()
+            }),
         )
-        .build()?;
-    let game = Game::new(&mut ctx, &args)?;
-    event::run(ctx, event_loop, game)
+        .add_plugins((
+            host::HostPlugin,
+            renderer::RendererPlugin,
+            capture::CapturePlugin,
+        ))
+        .run()
 }

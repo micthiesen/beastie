@@ -47,7 +47,7 @@ pub struct Args {
     /// Replay semantic commands through a fresh, non-persistent visible game.
     #[arg(long)]
     pub script: Option<PathBuf>,
-    /// Directory for named 640x360 presentation captures.
+    /// Directory for named native-resolution presentation captures.
     #[arg(long, requires = "script")]
     pub capture_dir: Option<PathBuf>,
     /// Directory for a 60 fps feel-review evidence bundle.

@@ -17,8 +17,8 @@ beastie-session = { path = "../beastie-session" }
 beastie-view = { path = "../beastie-view" }
 clap.workspace = true
 cpal = "0.17"
-ggez.workspace = true
-font8x8 = "0.3"
+bevy.workspace = true
+directories.workspace = true
 image.workspace = true
 rodio.workspace = true
 serde.workspace = true

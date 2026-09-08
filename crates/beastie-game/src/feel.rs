@@ -64,6 +64,23 @@ pub struct AudioTraceFrame<'a> {
     pub presentation: PresentationTraceState,
 }
 
+/// Submission time advances independently from delayed or out-of-order GPU readback.
+#[derive(Default)]
+struct FrameTimeline {
+    scheduled: u64,
+    completed: u64,
+}
+impl FrameTimeline {
+    fn schedule(&mut self) -> u64 {
+        let frame = self.scheduled;
+        self.scheduled += 1;
+        frame
+    }
+    const fn playback_ms(&self) -> u64 {
+        playback_ms_for_frame(self.scheduled)
+    }
+}
+
 /// Streaming, privacy-safe evidence recorder for a visible scripted session.
 pub struct FeelRecorder {
     directory: PathBuf,
@@ -73,7 +90,7 @@ pub struct FeelRecorder {
     state: JsonlWriter,
     audio: JsonlWriter,
     ffmpeg: Option<Ffmpeg>,
-    frame_index: u64,
+    timeline: FrameTimeline,
     speech_index: u32,
 }
 
@@ -91,14 +108,14 @@ impl FeelRecorder {
             audio: JsonlWriter::create(directory.join("audio.jsonl"))?,
             ffmpeg: Some(Ffmpeg::spawn(&directory.join("session.mp4"))?),
             directory,
-            frame_index: 0,
+            timeline: FrameTimeline::default(),
             speech_index: 0,
         })
     }
 
     #[must_use]
     pub const fn playback_ms(&self) -> u64 {
-        playback_ms_for_frame(self.frame_index)
+        self.timeline.playback_ms()
     }
 
     pub fn record_command(
@@ -253,8 +270,15 @@ impl FeelRecorder {
         }))
     }
 
+    /// Reserve the current frame before asynchronous GPU readback. Commands and audio for
+    /// the next submitted frame must not depend on when older screenshots complete.
+    pub fn schedule_frame(&mut self) -> u64 {
+        self.timeline.schedule()
+    }
+
     pub fn record_frame(
         &mut self,
+        frame_index: u64,
         rgba: &[u8],
         world: &beastie_core::WorldState,
         view: &ViewState,
@@ -267,7 +291,12 @@ impl FeelRecorder {
                 expected,
             });
         }
-        let frame_index = self.frame_index;
+        if frame_index != self.timeline.completed || frame_index >= self.timeline.scheduled {
+            return Err(FeelError::FrameOrder {
+                expected: self.timeline.completed,
+                actual: frame_index,
+            });
+        }
         let playback_ms = playback_ms_for_frame(frame_index);
         self.ffmpeg
             .as_mut()
@@ -335,11 +364,17 @@ impl FeelRecorder {
             self.state.flush()?;
             write_first_frame_heartbeat(&self.directory, playback_ms, world.elapsed_ms)?;
         }
-        self.frame_index = self.frame_index.saturating_add(1);
+        self.timeline.completed = self.timeline.completed.saturating_add(1);
         Ok(())
     }
 
     pub fn finish(&mut self) -> Result<(), FeelError> {
+        if self.timeline.completed != self.timeline.scheduled {
+            return Err(FeelError::IncompleteFrames {
+                scheduled: self.timeline.scheduled,
+                completed: self.timeline.completed,
+            });
+        }
         if let Some(mut ffmpeg) = self.ffmpeg.take() {
             ffmpeg.finish()?;
         }
@@ -509,6 +544,16 @@ struct Ffmpeg {
     output: PathBuf,
 }
 
+fn terminate_encoder_process(child: &mut Child, stdin: &mut Option<ChildStdin>) {
+    // Closing stdin lets a healthy encoder finish, while kill covers recorder failures where
+    // the caller cannot run `finish`. Always wait after either path so the process is reaped.
+    drop(stdin.take());
+    if child.try_wait().ok().flatten().is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
 impl Ffmpeg {
     fn spawn(output: &Path) -> Result<Self, FeelError> {
         let mut child = Command::new("ffmpeg")
@@ -519,7 +564,7 @@ impl Ffmpeg {
                 "-pixel_format",
                 "rgba",
                 "-video_size",
-                "640x360",
+                "1280x720",
                 "-framerate",
                 "60",
                 "-i",
@@ -562,6 +607,12 @@ impl Ffmpeg {
                 status: status.to_string(),
             })
         }
+    }
+}
+
+impl Drop for Ffmpeg {
+    fn drop(&mut self) {
+        terminate_encoder_process(&mut self.child, &mut self.stdin);
     }
 }
 
@@ -609,6 +660,10 @@ fn redact_text_fields(value: &mut Value) {
 
 #[derive(Debug, Error)]
 pub enum FeelError {
+    #[error("capture frame {actual} completed out of order; expected {expected}")]
+    FrameOrder { expected: u64, actual: u64 },
+    #[error("capture ended with {completed} of {scheduled} submitted frames")]
+    IncompleteFrames { scheduled: u64, completed: u64 },
     #[error("failed to create feel directory {path}: {source}")]
     CreateDirectory {
         path: PathBuf,
@@ -655,13 +710,16 @@ pub enum FeelError {
 
 #[cfg(test)]
 mod tests {
-    use beastie_session::{CommandEnvelope, SESSION_PROTOCOL_VERSION, SessionCommand};
-    use std::fs;
-
+    #[cfg(unix)]
+    use super::terminate_encoder_process;
     use super::{
         DialogueHealthTrace, DialogueTraceOwner, FIRST_FRAME_HEARTBEAT, playback_ms_for_frame,
         redacted_command, redacted_events, write_first_frame_heartbeat,
     };
+    use beastie_session::{CommandEnvelope, SESSION_PROTOCOL_VERSION, SessionCommand};
+    use std::fs;
+    #[cfg(unix)]
+    use std::process::{Command, Stdio};
 
     #[test]
     fn frame_timestamps_follow_the_sixty_hertz_timeline() {
@@ -742,5 +800,30 @@ mod tests {
         assert_eq!(value["simulation_ms"], 250);
         assert!(!directory.join(".first-frame.json.tmp").exists());
         fs::remove_dir_all(directory).expect("cleanup");
+    }
+    #[test]
+    fn audio_and_command_time_advance_on_submission_before_readback() {
+        let mut timeline = super::FrameTimeline::default();
+        assert_eq!(timeline.schedule(), 0);
+        assert_eq!(timeline.schedule(), 1);
+        assert_eq!(timeline.completed, 0);
+        assert_eq!(timeline.playback_ms(), 33);
+        timeline.completed = 1;
+        assert_eq!(timeline.playback_ms(), 33);
+        assert_eq!(timeline.schedule(), 2);
+        assert_eq!(timeline.playback_ms(), 50);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_an_active_encoder_reaps_the_child() {
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 60"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("test encoder child");
+        let mut stdin = child.stdin.take();
+        terminate_encoder_process(&mut child, &mut stdin);
+        assert!(child.try_wait().expect("child status").is_some());
     }
 }

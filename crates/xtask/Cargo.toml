@@ -8,7 +8,6 @@ default-run = "xtask"
 
 [dependencies]
 anyhow.workspace = true
-base64 = "0.22"
 beastie-core = { path = "../beastie-core" }
 beastie-protocol = { path = "../beastie-protocol" }
 beastie-session = { path = "../beastie-session" }

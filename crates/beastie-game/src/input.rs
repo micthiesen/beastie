@@ -1,28 +1,18 @@
-use beastie_view::{CursorKind, HitRegion, RenderPlan, UiAction};
-
-use crate::renderer::{AssetCatalog, hit_region_at};
+#[cfg(test)]
+use beastie_view::HitRegion;
+use beastie_view::{ScenePlan, UiAction};
 
 pub const MAX_TALK_CHARACTERS: usize = 512;
 
 #[cfg(test)]
 #[must_use]
-pub fn action_at(plan: &RenderPlan, x: f32, y: f32) -> Option<UiAction> {
+pub fn action_at(plan: &ScenePlan, x: f32, y: f32) -> Option<UiAction> {
     region_at(plan, x, y).map(|hit| hit.action)
-}
-
-#[must_use]
-pub fn action_at_with_assets(
-    plan: &RenderPlan,
-    assets: &AssetCatalog,
-    x: f32,
-    y: f32,
-) -> Option<UiAction> {
-    region_at_with_assets(plan, assets, x, y).map(|hit| hit.action)
 }
 
 #[cfg(test)]
 #[must_use]
-pub fn region_at(plan: &RenderPlan, x: f32, y: f32) -> Option<&HitRegion> {
+pub fn region_at(plan: &ScenePlan, x: f32, y: f32) -> Option<&HitRegion> {
     plan.hit_regions
         .iter()
         .rev()
@@ -30,27 +20,7 @@ pub fn region_at(plan: &RenderPlan, x: f32, y: f32) -> Option<&HitRegion> {
 }
 
 #[must_use]
-pub fn region_at_with_assets<'a>(
-    plan: &'a RenderPlan,
-    assets: &AssetCatalog,
-    x: f32,
-    y: f32,
-) -> Option<&'a HitRegion> {
-    hit_region_at(plan, assets, x, y)
-}
-
-#[must_use]
-pub fn cursor_at_with_assets(
-    plan: &RenderPlan,
-    assets: &AssetCatalog,
-    x: f32,
-    y: f32,
-) -> CursorKind {
-    region_at_with_assets(plan, assets, x, y).map_or(CursorKind::Default, |hit| hit.cursor)
-}
-
-#[must_use]
-pub fn move_focus(plan: &RenderPlan, current: Option<&str>, delta: i32) -> Option<String> {
+pub fn move_focus(plan: &ScenePlan, current: Option<&str>, delta: i32) -> Option<String> {
     let enabled = plan
         .hit_regions
         .iter()
@@ -82,7 +52,7 @@ pub fn move_focus(plan: &RenderPlan, current: Option<&str>, delta: i32) -> Optio
 }
 
 #[must_use]
-pub fn focused_action(plan: &RenderPlan, focused: Option<&str>) -> Option<UiAction> {
+pub fn focused_action(plan: &ScenePlan, focused: Option<&str>) -> Option<UiAction> {
     let focused = focused?;
     plan.hit_regions
         .iter()
