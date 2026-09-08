@@ -5,7 +5,6 @@ description: >
   learnings in the right repository homes, decide or confirm the next step, rewrite docs/STATE.md,
   run the gate, commit, and push. Trigger on "wrap up", "conclude the session", "save state", or
   /wrap.
-user_invocable: true
 ---
 
 # Wrap (Conclude The Session)
@@ -24,7 +23,7 @@ Review the session for anything durable that is not encoded yet:
 | Prompt/dialogue behavior | versioned prompt source or `evals/dialogue/` |
 | Model/runtime benchmark or license | `models/manifest.toml` and a focused doc |
 | Asset prompt, seed, provenance, or override | `assets/manifest.toml` |
-| Repeatable agent procedure | matching `.claude/skills/` skill |
+| Repeatable agent procedure | matching `.agents/skills/` skill |
 | Cross-cutting convention or invariant | `AGENTS.md` |
 
 Write the content in its real home. `docs/STATE.md` gets only pointers and decisions. Record dead

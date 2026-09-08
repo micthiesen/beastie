@@ -222,8 +222,9 @@ pub struct DialogueHandoff {
 }
 
 /// Return the only authoritative dialogue handoff boundary.  Callers bind a deferred utterance
-/// to `owner`; a new owner or `Ready` means that owner ended rather than silently borrowing a
-/// different action.
+/// to `owner`; a new owner means the original action ended, not that its replacement is ready.
+/// New direct interactions must reach their own safe boundary before deferred language may
+/// interrupt them. Unrelated autonomous activity must not indefinitely capture waiting words.
 #[must_use]
 pub fn dialogue_handoff(state: &WorldState) -> DialogueHandoff {
     if let Some(action) = state.creature.aquarium.action.as_ref() {

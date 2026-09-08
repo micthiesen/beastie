@@ -849,8 +849,8 @@ pub fn pointer_world(
     ))
 }
 
-/// Only hollow/thin scenery requires exact geometry. Each shared mesh is decoded once;
-/// pointer input tests two local bounds rather than traversing the entire rendered scene.
+/// Hollow scenery and articulated toy silhouettes use exact presented geometry. Each
+/// shared mesh is decoded once; per-object bounds reject unrelated pointer rays cheaply.
 #[derive(Resource, Default)]
 pub(crate) struct SceneryPicking {
     meshes: HashMap<AssetId<Mesh>, PickMesh>,
@@ -995,7 +995,11 @@ fn sync_scenery_picking(
     for (object, mesh, transform, visibility) in &objects {
         if visibility.is_some_and(|visibility| !visibility.get())
             || !frame.plan.objects.iter().any(|plan| {
-                plan.id == object.0 && matches!(plan.kind, ObjectKind::Plant | ObjectKind::Cave)
+                plan.id == object.0
+                    && matches!(
+                        plan.kind,
+                        ObjectKind::Plant | ObjectKind::Cave | ObjectKind::Toy(_)
+                    )
             })
         {
             continue;
@@ -1029,7 +1033,9 @@ pub fn pick(
     let size = camera.logical_viewport_size()?;
     let (x, y) = Viewport::for_drawable(size.x, size.y).logical_point(cursor.x, cursor.y)?;
     if let Some(hit) = plan.hit_regions.iter().rev().find(|hit| {
-        hit.enabled && matches!(hit.shape, HitShape::Rect) && hit.rect.contains(x as i32, y as i32)
+        (hit.enabled || hit.id == "compose/microphone")
+            && matches!(hit.shape, HitShape::Rect)
+            && hit.rect.contains(x as i32, y as i32)
     }) {
         return Some(hit.clone());
     }
@@ -1063,6 +1069,7 @@ pub fn pick(
         let scenery_target = match object.kind {
             ObjectKind::Plant => Some(UiTarget::Plant(object.id)),
             ObjectKind::Cave => Some(UiTarget::Cave),
+            ObjectKind::Toy(toy) => Some(UiTarget::Toy(toy)),
             _ => None,
         };
         if let Some(target) = scenery_target {
@@ -1075,13 +1082,9 @@ pub fn pick(
                 Vec3::splat(0.22),
                 Vec3::ZERO,
             ),
-            ObjectKind::Toy(ToyId::Bell) => (
-                UiTarget::Toy(ToyId::Bell),
-                Vec3::new(0.42, 0.65, 0.42),
-                Vec3::ZERO,
-            ),
-            ObjectKind::Toy(toy) => (UiTarget::Toy(toy), Vec3::splat(0.42), Vec3::ZERO),
-            ObjectKind::Cave | ObjectKind::Plant => unreachable!("scenery handled above"),
+            ObjectKind::Cave | ObjectKind::Plant | ObjectKind::Toy(_) => {
+                unreachable!("mesh picking handled above")
+            }
         };
         consider(
             target,
@@ -1163,11 +1166,74 @@ mod tests {
         assert!(plant.hit(Vec3::new(0.20, 0.20, -2.0), Vec3::Z).is_some());
         let cave = PickMesh::from_mesh(&object_mesh(ObjectKind::Cave, appearance)).unwrap();
         let doorway = cave.hit(Vec3::new(0.0, -0.60, 2.0), Vec3::NEG_Z).unwrap();
-        let lip = cave.hit(Vec3::new(0.80, -0.60, 2.0), Vec3::NEG_Z).unwrap();
+        let lip = cave.hit(Vec3::new(1.15, -0.60, 2.0), Vec3::NEG_Z).unwrap();
         assert!(
-            doorway > 2.5 && lip < 1.8,
+            doorway > 3.0 && lip < 2.6,
             "doorway must reach the recessed back, not an invented front surface"
         );
+    }
+
+    #[test]
+    fn shelter_opening_clears_the_head_and_crown_at_the_rest_anchor() {
+        let cave = PickMesh::from_mesh(&object_mesh(
+            ObjectKind::Cave,
+            crate::appearance::RenderAppearance::default(),
+        ))
+        .unwrap();
+        // These rays cross the visible resting head/crown, not just the old tiny doorway.
+        // They must reach the back of the shelter instead of hitting a lip through the face.
+        for (x, y) in [(-0.65, 0.0), (0.65, 0.0), (0.0, 0.8), (0.0, -0.5)] {
+            let depth = cave.hit(Vec3::new(x, y, 2.0), Vec3::NEG_Z).unwrap();
+            assert!(
+                depth > 3.0,
+                "shelter covers the animal at ({x}, {y}): {depth}"
+            );
+        }
+    }
+
+    #[test]
+    fn toy_mesh_picking_follows_carried_rotation_and_preserves_bell_loop_gap() {
+        let bell =
+            PickMesh::from_mesh(&object_mesh(ObjectKind::Toy(ToyId::Bell), default())).unwrap();
+        assert!(bell.hit(Vec3::new(0.0, 0.47, 2.0), Vec3::NEG_Z).is_none());
+        assert!(bell.hit(Vec3::new(0.104, 0.47, 2.0), Vec3::NEG_Z).is_some());
+
+        let plan = beastie_view::plan(
+            &beastie_core::WorldState::new(9, "Pick"),
+            &beastie_view::ViewState::default(),
+        )
+        .0;
+        let sock_id = plan
+            .objects
+            .iter()
+            .find(|object| object.kind == ObjectKind::Toy(ToyId::Sock))
+            .unwrap()
+            .id;
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<SceneryPicking>()
+            .insert_resource(SceneFrame { plan })
+            .add_message::<AssetEvent<Mesh>>()
+            .add_systems(Update, sync_scenery_picking);
+        let mesh = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(object_mesh(ObjectKind::Toy(ToyId::Sock), default()));
+        let transform =
+            Transform::from_xyz(2.0, 1.0, 0.65).with_rotation(Quat::from_rotation_z(-0.15));
+        let matrix = transform.to_matrix();
+        app.world_mut().spawn((
+            WorldObject(sock_id),
+            Mesh3d(mesh),
+            GlobalTransform::from(transform),
+            InheritedVisibility::VISIBLE,
+        ));
+        app.update();
+        let cache = app.world().resource::<SceneryPicking>();
+        let cuff = matrix.transform_point3(Vec3::new(0.0, 0.043, 2.0));
+        assert!(cache.hit(sock_id, cuff, Vec3::NEG_Z).is_some());
+        let empty = matrix.transform_point3(Vec3::new(-0.5, 0.3, 2.0));
+        assert!(cache.hit(sock_id, empty, Vec3::NEG_Z).is_none());
     }
 
     #[test]

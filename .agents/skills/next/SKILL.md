@@ -5,7 +5,6 @@ description: >
   docs, and recent history; compares 2-4 candidates by what they unblock, effort, and risk;
   recommends one; and records the decision in docs/STATE.md. Trigger on "what's next", "what
   should we do next", "pick the next step", or /next.
-user_invocable: true
 ---
 
 # Next (Decide The Next Step)
@@ -44,7 +43,7 @@ Choose in this order:
 4. Run genuinely independent work in parallel when it shortens the critical path.
 
 State the recommendation in two sentences: what to build and why it beats the runner-up. Use
-`/devils-advocate` before recording a costly or contentious pivot.
+an independent design review before recording a costly or contentious pivot.
 
 ## 4. Record It
 

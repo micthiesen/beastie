@@ -7,16 +7,18 @@ pub const MAX_TALK_CHARACTERS: usize = 512;
 #[cfg(test)]
 #[must_use]
 pub fn action_at(plan: &ScenePlan, x: f32, y: f32) -> Option<UiAction> {
-    region_at(plan, x, y).map(|hit| hit.action)
+    region_at(plan, x, y)
+        .filter(|hit| hit.enabled)
+        .map(|hit| hit.action)
 }
 
 #[cfg(test)]
 #[must_use]
 pub fn region_at(plan: &ScenePlan, x: f32, y: f32) -> Option<&HitRegion> {
-    plan.hit_regions
-        .iter()
-        .rev()
-        .find(|hit| hit.enabled && hit.rect.contains(x.floor() as i32, y.floor() as i32))
+    plan.hit_regions.iter().rev().find(|hit| {
+        (hit.enabled || hit.id == "compose/microphone")
+            && hit.rect.contains(x.floor() as i32, y.floor() as i32)
+    })
 }
 
 #[must_use]
@@ -74,10 +76,38 @@ pub fn append_text(buffer: &mut String, text: &str) {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use beastie_core::{ToyId, WorldState};
     use beastie_view::{UiMode, UiTarget, ViewState, plan};
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn disabled_microphone_can_be_explained_but_never_activated() {
+        let scene = beastie_view::plan(
+            &beastie_core::WorldState::new(7, "Mop"),
+            &beastie_view::ViewState::default(),
+        )
+        .0;
+        let microphone = scene
+            .hit_regions
+            .iter()
+            .find(|h| h.id == "compose/microphone")
+            .unwrap();
+        let (x, y) = (
+            microphone.rect.x as f32 + 1.0,
+            microphone.rect.y as f32 + 1.0,
+        );
+        assert_eq!(region_at(&scene, x, y).unwrap().id, "compose/microphone");
+        assert_eq!(action_at(&scene, x, y), None);
+        assert_eq!(focused_action(&scene, Some("compose/microphone")), None);
+        let mut focused = None;
+        let mut saw_settings = false;
+        for _ in 0..scene.hit_regions.len() {
+            focused = move_focus(&scene, focused.as_deref(), 1);
+            assert_ne!(focused.as_deref(), Some("compose/microphone"));
+            saw_settings |= focused.as_deref() == Some("compose/settings");
+        }
+        assert!(saw_settings);
+    }
 
     use super::*;
 

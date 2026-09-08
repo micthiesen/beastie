@@ -56,23 +56,115 @@ const SOUND_IDS: &[&str] = &[
     CREATURE_WAKE,
 ];
 
+/// Post-arbitration source state. Bytes are retained separately by the recorder, by hash.
+#[derive(Clone, serde::Serialize)]
+pub struct PlaybackSnapshot {
+    pub playback_id: u64,
+    pub asset_sha256: String,
+    pub source: &'static str,
+    pub role: MixRole,
+    pub owner: Option<SemanticOwner>,
+    pub speech_owner: Option<crate::feel::SpeechTraceOwner>,
+    pub channel: Option<PresentationChannel>,
+    pub gain: f32,
+    pub looping: bool,
+    #[serde(skip)]
+    pub bytes: Arc<[u8]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MixRole {
+    Bed,
+    Ambience,
+    Interface,
+    Physical,
+    Creature,
+    Speech,
+}
+
+#[derive(serde::Serialize)]
+pub struct PlaybackDecision {
+    pub outcome: &'static str,
+    pub playback_id: Option<u64>,
+    pub source: &'static str,
+    pub started: Option<PlaybackSnapshot>,
+}
+
 pub struct AudioBank {
     output: Option<MixerDeviceSink>,
     sounds: BTreeMap<&'static str, Arc<[u8]>>,
-    speech: Option<Player>,
-    one_shots: Vec<ActiveOneShot>,
-    ambience: Option<Player>,
+    speech: Option<ActivePlayback>,
+    one_shots: Vec<ActivePlayback>,
+    ambience: Option<ActivePlayback>,
     effects_gain: f32,
     speech_gain: f32,
     ambience_duck: f32,
+    duck_envelope: GainEnvelope,
+    creature_envelope: GainEnvelope,
+    next_playback_id: u64,
+    decisions: Vec<PlaybackDecision>,
 }
 
-struct ActiveOneShot {
-    id: &'static str,
-    player: Player,
+struct PlaybackRequest {
+    source: &'static str,
+    bytes: Arc<[u8]>,
+    role: MixRole,
+    owner: Option<SemanticOwner>,
+    channel: Option<PresentationChannel>,
     base_gain: f32,
-    owner: SemanticOwner,
-    channel: PresentationChannel,
+    looping: bool,
+}
+
+struct ActivePlayback {
+    player: Player,
+    state: PlaybackSnapshot,
+    base_gain: f32,
+}
+
+/// A bounded linear envelope: repeated frames do not restart its attack/release.
+#[derive(Clone, Copy)]
+struct GainEnvelope {
+    value: f32,
+    start: f32,
+    target: f32,
+    elapsed_ms: u64,
+    duration_ms: u64,
+}
+impl Default for GainEnvelope {
+    fn default() -> Self {
+        Self {
+            value: 1.0,
+            start: 1.0,
+            target: 1.0,
+            elapsed_ms: 0,
+            duration_ms: 0,
+        }
+    }
+}
+impl GainEnvelope {
+    fn advance(&mut self, target: f32, delta_ms: u64, attack_ms: u64, release_ms: u64) -> f32 {
+        if self.target != target {
+            self.start = self.value;
+            self.duration_ms = if target < self.value {
+                attack_ms
+            } else {
+                release_ms
+            };
+            self.target = target;
+            self.elapsed_ms = 0;
+        }
+        self.elapsed_ms = self
+            .elapsed_ms
+            .saturating_add(delta_ms)
+            .min(self.duration_ms);
+        self.value = if self.duration_ms == 0 {
+            target
+        } else {
+            self.start + (target - self.start) * self.elapsed_ms as f32 / self.duration_ms as f32
+        };
+        self.value
+    }
 }
 
 impl AudioBank {
@@ -91,97 +183,227 @@ impl AudioBank {
             effects_gain: 0.7,
             speech_gain: 0.7,
             ambience_duck: 1.0,
+            duck_envelope: GainEnvelope::default(),
+            creature_envelope: GainEnvelope::default(),
+            next_playback_id: 1,
+            decisions: Vec::new(),
+        }
+    }
+
+    fn start(&mut self, request: PlaybackRequest) -> Option<ActivePlayback> {
+        let PlaybackRequest {
+            source,
+            bytes,
+            role,
+            owner,
+            channel,
+            base_gain,
+            looping,
+        } = request;
+        self.decisions.push(PlaybackDecision {
+            outcome: "requested",
+            playback_id: None,
+            source,
+            started: None,
+        });
+        let Some(output) = &self.output else {
+            self.decisions.push(PlaybackDecision {
+                outcome: "discarded_no_output",
+                playback_id: None,
+                source,
+                started: None,
+            });
+            return None;
+        };
+        let Ok(decoder) = Decoder::try_from(Cursor::new(Arc::clone(&bytes))) else {
+            self.decisions.push(PlaybackDecision {
+                outcome: "discarded_decode",
+                playback_id: None,
+                source,
+                started: None,
+            });
+            return None;
+        };
+        // Set gain before append, so new sources never leak a full-volume first block.
+        let player = Player::connect_new(output.mixer());
+        let gain = self.gain_for(role, base_gain);
+        player.set_volume(gain);
+        if looping {
+            player.append(decoder.repeat_infinite());
+        } else {
+            player.append(decoder);
+        }
+        let playback_id = self.next_playback_id;
+        self.next_playback_id += 1;
+        use sha2::{Digest, Sha256};
+        let active = ActivePlayback {
+            player,
+            base_gain,
+            state: PlaybackSnapshot {
+                playback_id,
+                asset_sha256: format!("{:x}", Sha256::digest(&bytes)),
+                source,
+                role,
+                owner,
+                speech_owner: None,
+                channel,
+                gain,
+                looping,
+                bytes,
+            },
+        };
+        self.decisions.push(PlaybackDecision {
+            outcome: "started",
+            playback_id: Some(playback_id),
+            source,
+            started: Some(active.state.clone()),
+        });
+        Some(active)
+    }
+
+    fn gain_for(&self, role: MixRole, base: f32) -> f32 {
+        base * match role {
+            MixRole::Speech => self.speech_gain,
+            MixRole::Bed => self.effects_gain * self.ambience_duck,
+            MixRole::Creature => self.effects_gain * self.creature_envelope.value,
+            _ => self.effects_gain,
         }
     }
 
     pub fn ensure_ambience(&mut self) {
-        if self.ambience.is_some() {
+        if self.ambience.is_some() || self.output.is_none() {
             return;
         }
-        let (Some(output), Some(bytes)) = (&self.output, self.sounds.get(UNDERWATER_LOOP)) else {
-            return;
-        };
-        let Ok(decoder) = Decoder::try_from(Cursor::new(Arc::clone(bytes))) else {
-            return;
-        };
-        let player = Player::connect_new(output.mixer());
-        player.set_volume(0.35 * self.effects_gain * self.ambience_duck);
-        player.append(decoder.repeat_infinite());
-        self.ambience = Some(player);
+        if let Some(bytes) = self.sounds.get(UNDERWATER_LOOP).cloned() {
+            self.ambience = self.start(PlaybackRequest {
+                source: UNDERWATER_LOOP,
+                bytes,
+                role: MixRole::Bed,
+                owner: None,
+                channel: None,
+                base_gain: 0.35,
+                looping: true,
+            });
+        }
     }
 
     pub fn set_gains(&mut self, effects: f32, speech: f32) {
         self.effects_gain = effects.clamp(0.0, 1.0);
         self.speech_gain = speech.clamp(0.0, 1.0);
-        if let Some(player) = &self.speech {
-            player.set_volume(self.speech_gain);
-        }
-        if let Some(player) = &self.ambience {
-            player.set_volume(0.35 * self.effects_gain * self.ambience_duck);
-        }
+        self.apply_gains();
     }
 
     pub fn play_queued(&mut self, queued: &mut Vec<AudioCommand>) {
+        let requested = queued.clone();
         reduce_audio_commands(queued);
-        let mut plays = Vec::new();
+        let mut remaining = queued.clone();
+        for command in requested {
+            if let AudioCommand::Play { cue, .. } = command {
+                if let Some(index) = remaining.iter().position(|candidate| *candidate == command) {
+                    remaining.remove(index);
+                } else if let Some(source) = sound_for_cue(cue) {
+                    self.decisions.push(PlaybackDecision {
+                        outcome: "discarded_arbitration",
+                        playback_id: None,
+                        source,
+                        started: None,
+                    });
+                }
+            }
+        }
         for command in queued.drain(..) {
             match command {
                 AudioCommand::CancelOwner { owner } => {
-                    self.cancel_where(|sound| sound.owner == owner);
+                    self.cancel_where(|sound| sound.state.owner == Some(owner))
                 }
                 AudioCommand::CancelLowerPriority { owner, channel } => {
                     self.cancel_where(|sound| {
-                        sound.channel == channel
-                            && owner_priority(sound.owner) < owner_priority(owner)
-                    });
+                        sound.state.channel == Some(channel)
+                            && sound
+                                .state
+                                .owner
+                                .is_some_and(|other| owner_priority(other) < owner_priority(owner))
+                    })
                 }
-                AudioCommand::Play { .. } => plays.push(command),
-            }
-        }
-        let Some(output) = &self.output else {
-            return;
-        };
-        for command in plays {
-            if let AudioCommand::Play {
-                owner,
-                channel,
-                cue,
-                gain_milli,
-            } = command
-            {
-                let Some(id) = sound_for_cue(cue) else {
-                    continue;
-                };
-                if id == SWIM_WAKE
-                    && self
-                        .one_shots
-                        .iter()
-                        .any(|sound| sound.id == SWIM_WAKE && !sound.player.empty())
-                {
-                    continue;
-                }
-                let Some(bytes) = self.sounds.get(id) else {
-                    continue;
-                };
-                if let Ok(player) = rodio::play(output.mixer(), Cursor::new(Arc::clone(bytes))) {
-                    let base = f32::from(gain_milli.min(1_000)) / 1_000.0;
-                    player.set_volume(base * self.effects_gain);
-                    self.one_shots.push(ActiveOneShot {
-                        id,
-                        player,
-                        base_gain: base,
-                        owner,
-                        channel,
-                    });
+                AudioCommand::Play {
+                    owner,
+                    channel,
+                    cue,
+                    gain_milli,
+                } => {
+                    let Some(source) = sound_for_cue(cue) else {
+                        continue;
+                    };
+                    if source == SWIM_WAKE
+                        && self
+                            .one_shots
+                            .iter()
+                            .any(|s| s.state.source == source && !s.player.empty())
+                    {
+                        self.decisions.push(PlaybackDecision {
+                            outcome: "discarded_rate_limit",
+                            playback_id: None,
+                            source,
+                            started: None,
+                        });
+                        continue;
+                    }
+                    let Some(bytes) = self.sounds.get(source).cloned() else {
+                        self.decisions.push(PlaybackDecision {
+                            outcome: "discarded_missing_asset",
+                            playback_id: None,
+                            source,
+                            started: None,
+                        });
+                        continue;
+                    };
+                    if matches!(source, BUBBLES_1 | BUBBLES_2)
+                        && self
+                            .one_shots
+                            .iter()
+                            .filter(|s| matches!(s.state.source, BUBBLES_1 | BUBBLES_2))
+                            .count()
+                            >= 2
+                        && let Some(index) = self
+                            .one_shots
+                            .iter()
+                            .position(|s| matches!(s.state.source, BUBBLES_1 | BUBBLES_2))
+                    {
+                        let sound = self.one_shots.remove(index);
+                        sound.player.stop();
+                        self.decisions.push(PlaybackDecision {
+                            outcome: "cancelled_overlap",
+                            playback_id: Some(sound.state.playback_id),
+                            source: sound.state.source,
+                            started: None,
+                        });
+                    }
+                    if let Some(sound) = self.start(PlaybackRequest {
+                        source,
+                        bytes,
+                        role: role_for_cue(cue),
+                        owner: Some(owner),
+                        channel: Some(channel),
+                        base_gain: f32::from(gain_milli.min(1_000)) / 1_000.0,
+                        looping: false,
+                    }) {
+                        self.one_shots.push(sound);
+                    }
                 }
             }
         }
     }
 
-    fn cancel_where(&mut self, predicate: impl Fn(&ActiveOneShot) -> bool) {
+    fn cancel_where(&mut self, predicate: impl Fn(&ActivePlayback) -> bool) {
         self.one_shots.retain(|sound| {
             if predicate(sound) {
                 sound.player.stop();
+                self.decisions.push(PlaybackDecision {
+                    outcome: "cancelled",
+                    playback_id: Some(sound.state.playback_id),
+                    source: sound.state.source,
+                    started: None,
+                });
                 false
             } else {
                 true
@@ -189,60 +411,153 @@ impl AudioBank {
         });
     }
 
-    pub fn play_speech(&mut self, wav: Arc<[u8]>) {
+    pub fn play_speech(&mut self, wav: Arc<[u8]>, owner: crate::feel::SpeechTraceOwner) -> bool {
         self.stop_speech();
-        let Some(output) = &self.output else {
-            return;
-        };
-        if let Ok(player) = rodio::play(output.mixer(), Cursor::new(wav)) {
-            player.set_volume(self.speech_gain);
-            self.speech = Some(player);
+        self.speech = self.start(PlaybackRequest {
+            source: "speech",
+            bytes: wav,
+            role: MixRole::Speech,
+            owner: None,
+            channel: None,
+            base_gain: 1.0,
+            looping: false,
+        });
+        if let Some(sound) = &mut self.speech {
+            sound.state.speech_owner = Some(owner);
+            if let Some(started) = self
+                .decisions
+                .last_mut()
+                .and_then(|decision| decision.started.as_mut())
+            {
+                started.speech_owner = Some(owner);
+            }
         }
+        self.speech.is_some()
     }
 
     pub fn stop_speech(&mut self) {
-        if let Some(player) = self.speech.take() {
-            player.stop();
+        if let Some(sound) = self.speech.take() {
+            sound.player.stop();
+            self.decisions.push(PlaybackDecision {
+                outcome: "cancelled",
+                playback_id: Some(sound.state.playback_id),
+                source: sound.state.source,
+                started: None,
+            });
         }
     }
 
-    pub fn update_ducking(&mut self, delta_ms: u64, queued_one_shot: bool) {
-        self.one_shots.retain(|sound| !sound.player.empty());
-        let speech_active = self.speech_active();
-        let one_shot_active = queued_one_shot || !self.one_shots.is_empty();
-        let target = duck_gain(speech_active, one_shot_active);
-        let transition_ms = if target < self.ambience_duck {
-            if speech_active { 45 } else { 35 }
-        } else if self.ambience_duck <= duck_gain(true, false) + 0.001 {
+    pub fn update_ducking(&mut self, delta_ms: u64) {
+        self.one_shots.retain(|sound| {
+            if sound.player.empty() {
+                self.decisions.push(PlaybackDecision {
+                    outcome: "completed",
+                    playback_id: Some(sound.state.playback_id),
+                    source: sound.state.source,
+                    started: None,
+                });
+                false
+            } else {
+                true
+            }
+        });
+        if self.speech.as_ref().is_some_and(|s| s.player.empty())
+            && let Some(sound) = self.speech.take()
+        {
+            self.decisions.push(PlaybackDecision {
+                outcome: "completed",
+                playback_id: Some(sound.state.playback_id),
+                source: sound.state.source,
+                started: None,
+            });
+        }
+        let speech_active = self.speech_active() && self.speech_gain > 0.0;
+        let creature_active = self.effects_gain > 0.0
+            && self
+                .one_shots
+                .iter()
+                .any(|s| s.state.role == MixRole::Creature && s.base_gain > 0.0);
+        let target = duck_gain(speech_active, creature_active);
+        let release_ms = if self.duck_envelope.target == duck_gain(true, false) {
             260
         } else {
             180
         };
-        self.ambience_duck = approach_gain(self.ambience_duck, target, delta_ms, transition_ms);
-        if let Some(player) = &self.ambience {
-            player.set_volume(0.35 * self.effects_gain * self.ambience_duck);
+        self.ambience_duck = self.duck_envelope.advance(
+            target,
+            delta_ms,
+            if speech_active { 45 } else { 35 },
+            release_ms,
+        );
+        self.creature_envelope.advance(
+            if speech_active { 0.562_341 } else { 1.0 },
+            delta_ms,
+            45,
+            260,
+        );
+        self.apply_gains();
+    }
+
+    fn apply_gains(&mut self) {
+        if let Some(sound) = &mut self.speech {
+            sound.state.gain = self.speech_gain;
+            sound.player.set_volume(sound.state.gain);
         }
-        let speech_effect_duck = if speech_active { 0.562_341 } else { 1.0 };
-        for sound in &self.one_shots {
-            sound
-                .player
-                .set_volume(sound.base_gain * self.effects_gain * speech_effect_duck);
+        if let Some(sound) = &mut self.ambience {
+            sound.state.gain = 0.35 * self.effects_gain * self.ambience_duck;
+            sound.player.set_volume(sound.state.gain);
+        }
+        for sound in &mut self.one_shots {
+            sound.state.gain = sound.base_gain
+                * self.effects_gain
+                * if sound.state.role == MixRole::Creature {
+                    self.creature_envelope.value
+                } else {
+                    1.0
+                };
+            sound.player.set_volume(sound.state.gain);
         }
     }
 
+    pub fn playback_snapshot(&self) -> Vec<PlaybackSnapshot> {
+        self.ambience
+            .iter()
+            .chain(self.speech.iter())
+            .chain(self.one_shots.iter())
+            .map(|s| s.state.clone())
+            .collect()
+    }
+    pub fn take_decisions(&mut self) -> Vec<PlaybackDecision> {
+        std::mem::take(&mut self.decisions)
+    }
+    pub const fn output_available(&self) -> bool {
+        self.output.is_some()
+    }
     #[must_use]
     pub fn speech_active(&self) -> bool {
-        self.speech.as_ref().is_some_and(|player| !player.empty())
+        self.speech.as_ref().is_some_and(|s| !s.player.empty())
     }
-
     #[must_use]
     pub const fn ambience_duck(&self) -> f32 {
         self.ambience_duck
     }
-
     #[must_use]
     pub fn one_shot_active(&self) -> bool {
         !self.one_shots.is_empty()
+    }
+}
+
+const fn role_for_cue(cue: AudioCue) -> MixRole {
+    match cue {
+        AudioCue::Bubble | AudioCue::BubbleAlternate => MixRole::Ambience,
+        AudioCue::UiReject | AudioCue::UiConfirm => MixRole::Interface,
+        AudioCue::Mrr
+        | AudioCue::Annoyed
+        | AudioCue::Sleep
+        | AudioCue::Affection
+        | AudioCue::Wake
+        | AudioCue::Curious => MixRole::Creature,
+        _ => MixRole::Physical,
     }
 }
 
@@ -355,13 +670,6 @@ fn duck_gain(speech_active: bool, one_shot_active: bool) -> f32 {
     } else {
         1.0
     }
-}
-
-fn approach_gain(current: f32, target: f32, delta_ms: u64, transition_ms: u64) -> f32 {
-    if delta_ms >= transition_ms || transition_ms == 0 {
-        return target;
-    }
-    current + (target - current) * delta_ms as f32 / transition_ms as f32
 }
 
 fn load_sounds(assets_root: &Path) -> BTreeMap<&'static str, Arc<[u8]>> {
@@ -566,11 +874,116 @@ mod tests {
         assert!((duck_gain(true, false) - 0.446_684).abs() < 0.000_001);
         assert_eq!(duck_gain(false, false), 1.0);
 
-        let attack = approach_gain(1.0, duck_gain(true, false), 17, 35);
+        let mut envelope = GainEnvelope::default();
+        let attack = envelope.advance(duck_gain(true, false), 17, 45, 260);
         assert!(attack < 1.0 && attack > duck_gain(true, false));
-        let settled = approach_gain(attack, duck_gain(true, false), 35, 35);
+        let settled = envelope.advance(duck_gain(true, false), 28, 45, 260);
         assert_eq!(settled, duck_gain(true, false));
-        let release = approach_gain(settled, 1.0, 17, 180);
+        let release = envelope.advance(1.0, 17, 45, 260);
         assert!(release > settled && release < 1.0);
+        assert_eq!(envelope.advance(1.0, 243, 45, 260), 1.0);
+    }
+    fn silent_bank() -> AudioBank {
+        AudioBank {
+            output: None,
+            sounds: load_sounds(&repository_assets()),
+            speech: None,
+            one_shots: Vec::new(),
+            ambience: None,
+            effects_gain: 0.7,
+            speech_gain: 0.7,
+            ambience_duck: 1.0,
+            duck_envelope: GainEnvelope::default(),
+            creature_envelope: GainEnvelope::default(),
+            next_playback_id: 1,
+            decisions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn semantic_mix_keeps_bubbles_ui_and_physical_cues_out_of_voice_priority() {
+        let mut bank = silent_bank();
+        bank.creature_envelope.value = 0.562_341;
+        for cue in [
+            AudioCue::Bubble,
+            AudioCue::BubbleAlternate,
+            AudioCue::UiConfirm,
+            AudioCue::UiReject,
+            AudioCue::FoodDrop,
+            AudioCue::FoodEat,
+            AudioCue::FoodReject,
+            AudioCue::ToyImpact,
+        ] {
+            assert_ne!(role_for_cue(cue), MixRole::Creature);
+            assert_eq!(bank.gain_for(role_for_cue(cue), 0.7), 0.7 * 0.7);
+        }
+        assert_eq!(
+            bank.gain_for(role_for_cue(AudioCue::Affection), 0.7),
+            0.7 * 0.7 * 0.562_341
+        );
+    }
+
+    #[test]
+    fn discarded_commands_and_missing_output_do_not_start_or_duck() {
+        let mut bank = silent_bank();
+        let mut commands = vec![
+            AudioCommand::play(
+                SemanticOwner::Ordinary,
+                PresentationChannel::CreatureVoice,
+                AudioCue::Affection,
+                700,
+            ),
+            AudioCommand::CancelOwner {
+                owner: SemanticOwner::Ordinary,
+            },
+        ];
+        bank.play_queued(&mut commands);
+        bank.update_ducking(100);
+        assert_eq!(bank.ambience_duck(), 1.0);
+        assert!(
+            bank.take_decisions()
+                .iter()
+                .any(|d| d.outcome == "discarded_arbitration")
+        );
+        bank.play_queued(&mut vec![AudioCommand::play(
+            SemanticOwner::Ordinary,
+            PresentationChannel::CreatureVoice,
+            AudioCue::Affection,
+            700,
+        )]);
+        bank.update_ducking(100);
+        assert_eq!(bank.ambience_duck(), 1.0);
+        assert!(bank.playback_snapshot().is_empty());
+        assert!(
+            bank.take_decisions()
+                .iter()
+                .any(|d| d.outcome == "discarded_no_output")
+        );
+        bank.sounds.clear();
+        bank.play_queued(&mut vec![AudioCommand::play(
+            SemanticOwner::Ordinary,
+            PresentationChannel::Physical,
+            AudioCue::FoodEat,
+            700,
+        )]);
+        assert!(
+            bank.take_decisions()
+                .iter()
+                .any(|d| d.outcome == "discarded_missing_asset")
+        );
+    }
+
+    #[test]
+    fn vocal_duck_finishes_at_authored_attack_and_release_boundaries() {
+        let mut envelope = GainEnvelope::default();
+        let target = duck_gain(false, true);
+        assert!(envelope.advance(target, 17, 35, 180) > target);
+        assert!(envelope.advance(target, 17, 35, 180) > target);
+        assert_eq!(envelope.advance(target, 1, 35, 180), target);
+        for _ in 0..10 {
+            envelope.advance(1.0, 17, 35, 180);
+        }
+        assert!(envelope.value < 1.0);
+        assert_eq!(envelope.advance(1.0, 10, 35, 180), 1.0);
     }
 }

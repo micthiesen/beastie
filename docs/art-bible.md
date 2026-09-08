@@ -9,6 +9,12 @@ inhabited and slightly strange. A low left bank and taller right planting create
 composition. The lower boundary gives the eye somewhere to rest; the creature remains the visual
 center.
 
+Belongings have different physical readings: a buoyant ball, a brass bell suspended from its own
+cork float, and bent soft cloth close to the substrate. New aquariums stagger their canonical
+positions instead of using a horizontal display row. Saved positions remain untouched. The
+shelter arch sits behind the interaction plane, with an opening large enough for the resting
+head and crown; the face and connected body remain in front of the rim during peeks.
+
 All world forms are solid geometry built from colored voxel shapes. The creature, scenery,
 food, toys, bubbles, and reaction effects use meshes. There are no sprites, sprite sheets,
 painted face textures, image planes, or raster background art. Small facial features may use

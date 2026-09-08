@@ -163,7 +163,10 @@ fn pointer(
     let result = game.pointer_moved(logical, world, hit.as_ref());
     handle(result, &mut game);
     if buttons.just_pressed(MouseButton::Left) {
-        let result = game.pointer_pressed(hit.as_ref().map(|hit| hit.action), world);
+        let result = game.pointer_pressed(
+            hit.as_ref().filter(|hit| hit.enabled).map(|hit| hit.action),
+            world,
+        );
         handle(result, &mut game);
     }
     if buttons.just_released(MouseButton::Left) {

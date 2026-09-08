@@ -1,6 +1,6 @@
 # Creature presence and care
 
-Status: proposed implementation contract, pending user approval.
+Status: implementation authorized on 2026-09-08; integrated native verification in progress.
 
 Date: 2026-09-08.
 
@@ -126,6 +126,14 @@ plants. A single clean rest screenshot cannot close the finding. Keep exact pres
 picking, actual leaf gaps and nearest-hit ordering.
 
 ### Acceptance and persistence
+
+Implementation decision: new aquarium defaults are Ball `(4800, 7650)`, Bell `(6650, 8700)` and
+Sock `(8250, 10000)` in both object and mutable-toy state. These are constructor defaults only;
+there is no save migration or schema bump. Existing saved positions and in-flight ownership are
+retained. The bell carries its own cork float at every position, the ball reads as buoyant, and
+the bent cloth can remain suspended at a saved midwater anchor without implying an attachment.
+New cloth placement brings its lower fold close to the substrate. Shelter geometry extends
+behind the interaction plane and clears the existing head/crown without changing the rest target.
 
 - Same-seed first-five-minutes and quiet-observation comparisons show coherent resting objects
   and shelter occupation at 1280x720, including the original 03:00 shelter frame.

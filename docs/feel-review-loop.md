@@ -78,11 +78,14 @@ The evidence has five synchronized parts:
    keys, controller actions, and speech lifecycle events.
 3. `events.jsonl` and `state.jsonl` align authoritative simulation events and selected presentation
    state with the recording. They explain causality without treating presentation as truth.
-4. `audio.jsonl` records cue, speech, active-player, and ambience-duck timing. Speech WAVs are
-   retained inside the evidence directory. `session-audio-reference.mp4` mixes those speech files
-   and authored cues at their recorded times so an agent can review synchronized sound without a
-   system-audio device. It is explicitly a reference mix, not a claim that host output was captured;
-   `manifest.json` records that distinction.
+4. `audio.jsonl` records requested/discarded/accepted playback, semantic roles, owners, gains and
+   active source lifetimes after arbitration. Content-addressed `audio-*.wav` files retain the
+   actual resolved bytes. `reference-mix.wav` reconstructs accepted sources with frame-clock
+   cancellation and recorded duck/settings gains. `audio-reconstruction.json` records output
+   availability and pre-limiter peaks; clipping, missing/tampered assets and accepted starts that
+   end between snapshots reject the evidence instead of silently guessing. Device buffering is
+   not captured. `session-audio-reference.mp4` synchronizes this reconstruction with the video;
+   it is never a claim of captured host sound, and no-output runs remain silent.
 5. `filmstrips/` contains uniformly sampled session overviews plus dense, event-aligned frame
    sequences around every interaction. `review.md` links findings to these artifacts.
 

@@ -3113,6 +3113,104 @@ mod tests {
     }
 
     #[test]
+    fn new_toy_catalogue_and_mutable_positions_agree() {
+        let world = WorldState::new(42, "Belongings");
+        for toy in [ToyId::Ball, ToyId::Bell, ToyId::Sock] {
+            assert_eq!(
+                toy_position(&world, toy),
+                world.aquarium.toy_states[&toy].position
+            );
+        }
+    }
+
+    #[test]
+    fn moving_ball_and_carried_sock_save_with_exact_continuation() {
+        for (toy, recipe, response) in [
+            (
+                ToyId::Ball,
+                ActivityRecipe::BallNudge,
+                ToyResponse::BallNudged,
+            ),
+            (
+                ToyId::Sock,
+                ActivityRecipe::SockTug,
+                ToyResponse::SockTugged,
+            ),
+        ] {
+            let mut world = WorldState::new(212, "KeptBelongings");
+            let mut rng = SeededRandom::new(212);
+            // A saved habitat can differ from today's defaults. Preserve its catalogue
+            // anchor as well as the mutable response position and velocity.
+            let saved_position = NormalizedPosition::new(4137, 8123);
+            for object in world.aquarium.objects.values_mut() {
+                if let WorldObject::Toy {
+                    toy: candidate,
+                    position,
+                } = object
+                    && *candidate == toy
+                {
+                    *position = saved_position;
+                }
+            }
+            world.aquarium.toy_states.get_mut(&toy).unwrap().position = saved_position;
+            world.creature.needs.curiosity = 0.9;
+            world.creature.traits.fussiness = 0.1;
+            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+            // Pin a valid noticed activity, then let normal approach/contact rules create
+            // the moving or carried state rather than fabricating its payoff receipt.
+            let activity = world.creature.private_life.active.as_mut().unwrap();
+            activity.kind = PrivateLifeKind::ToyPlay(toy);
+            activity.recipe = recipe;
+            activity.subject = Some(ActivitySubject::Toy(toy));
+            let activity_id = activity.id;
+            let mut reached_contact = false;
+            for _ in 0..30 {
+                let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+                if events.contains(&GameEvent::ToyObjectResponded {
+                    toy,
+                    activity_id,
+                    response,
+                }) {
+                    reached_contact = true;
+                    break;
+                }
+            }
+            assert!(reached_contact, "{toy:?} must reach its real payoff");
+            let object = &world.aquarium.toy_states[&toy];
+            match toy {
+                ToyId::Ball => assert_ne!(object.velocity, NormalizedVelocity::default()),
+                ToyId::Sock => assert!(object.carried),
+                ToyId::Bell => unreachable!(),
+            }
+            assert_eq!(object.last_contact_activity, Some(activity_id));
+            let json = SaveGame::capture(&world, &rng).to_json().unwrap();
+            let (mut resumed, mut resumed_rng) = SaveGame::from_json(&json).unwrap().resume();
+            assert_eq!(resumed, world);
+            assert_eq!(toy_position(&resumed, toy), saved_position);
+
+            for _ in 0..10 {
+                let expected = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+                let actual = step(&mut resumed, &[], SIMULATION_TICK_MS, &mut resumed_rng);
+                assert_eq!(actual, expected);
+                assert_eq!(resumed, world);
+                assert!(
+                    !actual.iter().any(|event| matches!(event,
+                        GameEvent::ToyObjectResponded { activity_id: id, .. } if *id == activity_id
+                    )),
+                    "resuming must not repeat a saved payoff"
+                );
+            }
+            assert!(!resumed.aquarium.toy_states[&toy].carried);
+            if toy == ToyId::Ball {
+                assert_eq!(
+                    resumed.aquarium.toy_states[&toy].velocity,
+                    NormalizedVelocity::default()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn dialogue_handoff_binds_exact_owner_and_safe_boundaries() {
         let mut world = WorldState::new(212, "Boundary");
         world.creature.needs.curiosity = 0.9;

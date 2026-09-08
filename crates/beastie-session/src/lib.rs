@@ -856,15 +856,25 @@ impl GameSession {
             return Ok(());
         }
         let handoff = dialogue_handoff(&self.world);
-        let owner_finished = owner.is_some() && handoff.owner != *owner;
-        // A cooldown-only deferral has no action promise to preserve. Do not let a private-life
-        // activity selected on a later tick capture an utterance that was already waiting.
-        let boundary_ready = owner.is_none()
-            || owner_finished
-            || matches!(
-                handoff.state,
-                DialogueHandoffState::Ready | DialogueHandoffState::SafeBoundary
-            );
+        let current_direct_action = match handoff.owner {
+            Some(DialogueActionOwner::Food(_)) => true,
+            Some(DialogueActionOwner::Toy(_) | DialogueActionOwner::Refusal(_)) => self
+                .world
+                .creature
+                .interaction_state
+                .toy_interaction
+                .as_ref()
+                .is_some_and(|interaction| interaction.origin == ToyOrigin::Player),
+            _ => false,
+        };
+        // Ending the original owner does not finish a newer direct interaction. Its own
+        // contact/recovery boundary still matters, even for cooldown-only deferral. Unrelated
+        // private life may not repeatedly capture words that were already waiting.
+        let boundary_ready = matches!(
+            handoff.state,
+            DialogueHandoffState::Ready | DialogueHandoffState::SafeBoundary
+        ) || (!current_direct_action
+            && (owner.is_none() || handoff.owner != *owner));
         if !boundary_ready {
             return Ok(());
         }
@@ -2698,6 +2708,333 @@ mod tests {
         let ready = submitted.expect("deferred response becomes ready after toy contact");
         assert!(saw_contact);
         assert_eq!(ready.spoken_input, Some(SpokenInputStatus::Submitted));
+    }
+
+    fn waiting_language(channel: InputChannel, behind_toy: bool) -> GameSession {
+        let mut session = GameSession::new(532, "Patient");
+        // Keep the pre-pass habitat that exposed the owner race, independent of new-save art.
+        for (toy, x) in [
+            (ToyId::Ball, 5000),
+            (ToyId::Bell, 6500),
+            (ToyId::Sock, 8000),
+        ] {
+            let legacy_position = NormalizedPosition::new(x, 8900);
+            session
+                .world
+                .aquarium
+                .toy_states
+                .get_mut(&toy)
+                .unwrap()
+                .position = legacy_position;
+            for object in session.world.aquarium.objects.values_mut() {
+                if let beastie_core::WorldObject::Toy {
+                    toy: candidate,
+                    position,
+                } = object
+                    && *candidate == toy
+                {
+                    *position = legacy_position;
+                }
+            }
+        }
+        session.world.creature.traits.sociability = 1.0;
+        session.world.creature.relationship.bond = 1.0;
+        session.world.creature.relationship.resentment = 0.0;
+        session
+            .world
+            .creature
+            .toy_preferences
+            .insert(ToyId::Ball, 0.8);
+        if behind_toy {
+            session
+                .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
+                .unwrap();
+        } else {
+            session.world.creature.conversation.next_talk_at_ms = SIMULATION_TICK_MS;
+        }
+        let text = "remember the berry".to_owned();
+        let queued = match channel {
+            InputChannel::Typed => session
+                .apply(command(SessionCommand::Talk { text }))
+                .unwrap(),
+            InputChannel::Spoken => {
+                session
+                    .apply(command(SessionCommand::SpeechStarted))
+                    .unwrap();
+                session
+                    .apply(command(SessionCommand::SpeechCandidate {
+                        text,
+                        confidence: AcousticConfidence::new(900).unwrap(),
+                    }))
+                    .unwrap();
+                session.apply(command(SessionCommand::SpeechEnded)).unwrap()
+            }
+        };
+        assert!(queued.events.contains(&GameEvent::UtteranceDeferred));
+        assert!(queued.dialogue_request.is_none());
+        session
+    }
+
+    #[test]
+    fn deferred_language_waits_for_replacement_play_refusal_and_food() {
+        for channel in [InputChannel::Typed, InputChannel::Spoken] {
+            for replacement in 0..3 {
+                let mut session = waiting_language(channel, true);
+                session
+                    .world
+                    .creature
+                    .toy_preferences
+                    .insert(ToyId::Bell, if replacement == 1 { -1.0 } else { 0.8 });
+                let command_to_replace = if replacement == 2 {
+                    SessionCommand::DropFood {
+                        food: FoodId::Berry,
+                        position: NormalizedPosition::new(7200, 1800),
+                    }
+                } else {
+                    SessionCommand::Play { toy: ToyId::Bell }
+                };
+                let receipt = session.apply(command(command_to_replace)).unwrap();
+                let replacement_owner = dialogue_handoff(&session.world).owner;
+                assert!(replacement_owner.is_some());
+                let body_before = session.world.creature.aquarium.clone();
+                let interaction_before = session
+                    .world
+                    .creature
+                    .interaction_state
+                    .toy_interaction
+                    .clone();
+                let early = session
+                    .apply(command(SessionCommand::Tick { milliseconds: 0 }))
+                    .unwrap();
+                assert!(
+                    early.dialogue_request.is_none(),
+                    "replacement {replacement} must keep its body"
+                );
+                assert_eq!(session.world.creature.aquarium, body_before);
+                assert_eq!(
+                    session.world.creature.interaction_state.toy_interaction,
+                    interaction_before
+                );
+                assert_eq!(dialogue_handoff(&session.world).owner, replacement_owner);
+
+                // The body survives persistence; the private waiting words deliberately do not.
+                let save = session.capture(0).to_json().unwrap();
+                let (resumed, _) = GameSession::resume_json(&save, 0).unwrap();
+                assert_eq!(dialogue_handoff(&resumed.world).owner, replacement_owner);
+                assert_eq!(
+                    resumed.world.creature.aquarium.destination,
+                    body_before.destination
+                );
+                assert!(matches!(resumed.spoken_input, SpokenInputState::Idle));
+
+                let mut events = receipt.events;
+                let mut delivered = false;
+                for _ in 0..60 {
+                    let next = session
+                        .apply(command(SessionCommand::Tick {
+                            milliseconds: SIMULATION_TICK_MS,
+                        }))
+                        .unwrap();
+                    events.extend(next.events);
+                    if next.dialogue_request.is_some() {
+                        delivered = true;
+                        break;
+                    }
+                }
+                assert!(
+                    delivered,
+                    "replacement {replacement} must eventually release words"
+                );
+                assert!(!events.iter().any(|event| matches!(
+                    event,
+                    GameEvent::ToyInteractionInterrupted {
+                        toy: ToyId::Bell,
+                        ..
+                    }
+                )));
+                match replacement {
+                    0 => assert_eq!(
+                        events
+                            .iter()
+                            .filter(|event| matches!(
+                                event,
+                                GameEvent::ToyPlayed {
+                                    toy: ToyId::Bell,
+                                    ..
+                                }
+                            ))
+                            .count(),
+                        1
+                    ),
+                    1 => {
+                        assert_eq!(
+                            events
+                                .iter()
+                                .filter(|event| matches!(
+                                    event,
+                                    GameEvent::ToyRejected {
+                                        toy: ToyId::Bell,
+                                        ..
+                                    }
+                                ))
+                                .count(),
+                            1
+                        );
+                        assert!(!events.iter().any(|event| matches!(
+                            event,
+                            GameEvent::ToyPlayed { .. } | GameEvent::ToyContacted { .. }
+                        )));
+                        assert!(
+                            session
+                                .world
+                                .creature
+                                .interaction_state
+                                .last_resolved_toy_interaction
+                                .is_none()
+                        );
+                    }
+                    _ => assert_eq!(
+                        events
+                            .iter()
+                            .filter(|event| matches!(event, GameEvent::FoodConsumed(FoodId::Berry)))
+                            .count(),
+                        1
+                    ),
+                }
+                assert_eq!(session.world.creature.development.interactions.talks, 1);
+            }
+        }
+    }
+
+    #[test]
+    fn cooldown_only_speech_also_respects_new_direct_play() {
+        let mut session = waiting_language(InputChannel::Spoken, false);
+        session
+            .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
+            .unwrap();
+        let owner = dialogue_handoff(&session.world).owner;
+        let early = session
+            .apply(command(SessionCommand::Tick {
+                milliseconds: SIMULATION_TICK_MS,
+            }))
+            .unwrap();
+        assert!(early.dialogue_request.is_none());
+        assert_eq!(dialogue_handoff(&session.world).owner, owner);
+        assert!(matches!(
+            session.spoken_input,
+            SpokenInputState::Deferred { .. }
+        ));
+    }
+
+    #[test]
+    fn completed_owner_does_not_let_unrelated_private_life_capture_waiting_words() {
+        let mut session = waiting_language(InputChannel::Typed, true);
+        // Advance the body independently, as when a single session tick crosses both the
+        // original toy's recovery and the start of a new private activity.
+        for _ in 0..30 {
+            step(
+                &mut session.world,
+                &[],
+                SIMULATION_TICK_MS,
+                &mut session.random,
+            );
+            if matches!(
+                dialogue_handoff(&session.world).owner,
+                Some(DialogueActionOwner::PrivateLife(_))
+            ) {
+                break;
+            }
+        }
+        let handoff = dialogue_handoff(&session.world);
+        assert!(matches!(
+            handoff.owner,
+            Some(DialogueActionOwner::PrivateLife(_))
+        ));
+        assert_eq!(handoff.state, DialogueHandoffState::WaitingForContact);
+        let released = session
+            .apply(command(SessionCommand::Tick { milliseconds: 0 }))
+            .unwrap();
+        assert!(released.dialogue_request.is_some());
+        assert!(matches!(session.spoken_input, SpokenInputState::Idle));
+    }
+
+    #[test]
+    fn autonomous_toy_interest_does_not_capture_cooldown_only_words() {
+        let mut session = waiting_language(InputChannel::Spoken, false);
+        session
+            .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
+            .unwrap();
+        // Autonomous toy interactions are also valid canonical owners (including in saves),
+        // but carry no newer player action that should take precedence over waiting language.
+        session
+            .world
+            .creature
+            .interaction_state
+            .toy_interaction
+            .as_mut()
+            .unwrap()
+            .origin = ToyOrigin::Autonomous;
+        let released = session
+            .apply(command(SessionCommand::Tick {
+                milliseconds: SIMULATION_TICK_MS,
+            }))
+            .unwrap();
+        assert!(released.dialogue_request.is_some());
+        assert_eq!(released.spoken_input, Some(SpokenInputStatus::Submitted));
+    }
+
+    #[test]
+    fn repeated_direct_replacement_keeps_original_language_expiry_and_care_immediate() {
+        for channel in [InputChannel::Typed, InputChannel::Spoken] {
+            let mut session = waiting_language(channel, true);
+            session
+                .world
+                .creature
+                .toy_preferences
+                .insert(ToyId::Bell, -1.0);
+            // Start near the existing deadline so repeated replacements can be exercised
+            // before this distant refusal finishes its approach.
+            if let SpokenInputState::Deferred { expires_at_ms, .. } = &session.spoken_input {
+                session.world.elapsed_ms = expires_at_ms - 2 * SIMULATION_TICK_MS;
+            }
+            let mut expired = false;
+            for _ in 0..DEFERRED_UTTERANCE_MAX_MS / SIMULATION_TICK_MS {
+                let care = session.apply(command(SessionCommand::Comfort)).unwrap();
+                assert!(care.events.contains(&GameEvent::Comforted));
+                // A new refusal replaces comfort immediately, even while old words wait.
+                let rejection = session
+                    .apply(command(SessionCommand::Play { toy: ToyId::Bell }))
+                    .unwrap();
+                assert!(
+                    rejection
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, GameEvent::ToyRejected { .. }))
+                );
+                let owner = dialogue_handoff(&session.world).owner;
+                let next = session
+                    .apply(command(SessionCommand::Tick {
+                        milliseconds: SIMULATION_TICK_MS,
+                    }))
+                    .unwrap();
+                assert!(next.dialogue_request.is_none());
+                assert_eq!(dialogue_handoff(&session.world).owner, owner);
+                if matches!(session.spoken_input, SpokenInputState::Idle) {
+                    expired = true;
+                    match channel {
+                        InputChannel::Typed => {
+                            assert!(next.events.contains(&GameEvent::TalkIgnored))
+                        }
+                        InputChannel::Spoken => {
+                            assert_eq!(next.spoken_input, Some(SpokenInputStatus::Expired))
+                        }
+                    }
+                    break;
+                }
+            }
+            assert!(expired);
+            assert_eq!(session.world.creature.development.interactions.talks, 0);
+        }
     }
 
     #[test]

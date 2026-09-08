@@ -960,15 +960,24 @@ impl Game {
                     if let Some(feel) = &mut self.feel {
                         feel.record_speech(&wav, trace_owner, self.session.world().elapsed_ms)
                             .map_err(feel_error)?;
+                    }
+                    let started = self.audio.play_speech(wav, trace_owner);
+                    if let Some(feel) = &mut self.feel {
                         feel.record_tts_lifecycle(
-                            "speech_playback_started",
+                            if started {
+                                "speech_playback_started"
+                            } else {
+                                "speech_playback_unavailable"
+                            },
                             trace_owner,
                             Some(true),
                             self.session.world().elapsed_ms,
                         )
                         .map_err(feel_error)?;
                     }
-                    self.audio.play_speech(wav);
+                    if !started {
+                        return Ok(());
+                    }
                     self.active_speech_owner = Some(trace_owner);
                     self.speech_animation = Some(SpeechAnimation {
                         owner: pending.owner,
@@ -983,6 +992,10 @@ impl Game {
     }
 
     fn apply_ui_action(&mut self, action: UiAction, controller: bool) -> GameResult {
+        self.view.compose_engaged = matches!(
+            action,
+            UiAction::FocusCompose | UiAction::Talk | UiAction::TypeCharacter(_)
+        );
         if matches!(
             action,
             UiAction::OpenContext(_)
@@ -1345,6 +1358,7 @@ impl Game {
 
     fn close_menu(&mut self) {
         self.renaming_with_osk = false;
+        self.view.compose_engaged = false;
         self.view.mode = UiMode::Compose;
         self.view.focused_region = Some("compose/input".to_owned());
     }
@@ -1455,6 +1469,7 @@ impl Game {
         let plan = self.render_plan();
         let previous = self.view.focused_region.clone();
         self.view.focused_region = move_focus(&plan, self.view.focused_region.as_deref(), delta);
+        self.view.compose_engaged = self.view.focused_region.as_deref() == Some("compose/input");
         if self.view.focused_region != previous {
             self.queued_audio.push(ui_audio(AudioCue::UiReject));
         }
@@ -1604,15 +1619,15 @@ impl Game {
                 700,
             ));
         }
-        let queued_one_shot = self
-            .queued_audio
-            .iter()
-            .any(|command| matches!(command, AudioCommand::Play { .. }));
+        let requested_audio = self.feel.as_ref().map(|_| self.queued_audio.clone());
         self.audio.ensure_ambience();
-        self.audio.update_ducking(frame_delta_ms, queued_one_shot);
+        self.audio.play_queued(&mut self.queued_audio);
+        self.audio.update_ducking(frame_delta_ms);
+        let decisions = self.audio.take_decisions();
         if let Some(feel) = &mut self.feel {
-            let cue_ids = self
-                .queued_audio
+            let commands = requested_audio.as_deref().unwrap_or_default();
+            let playback = self.audio.playback_snapshot();
+            let cue_ids = commands
                 .iter()
                 .filter_map(|command| match command {
                     AudioCommand::Play { cue, .. } => sound_for_cue(*cue),
@@ -1621,8 +1636,13 @@ impl Game {
                 .collect::<Vec<_>>();
             feel.record_audio(
                 AudioTraceFrame {
-                    commands: &self.queued_audio,
+                    commands,
                     cue_ids: &cue_ids,
+                    playback: &playback,
+                    decisions: &decisions,
+                    output_available: self.audio.output_available(),
+                    effects_gain: self.settings.effects_gain(),
+                    speech_gain: self.settings.speech_gain(),
                     speech_active: self.audio.speech_active(),
                     one_shot_active: self.audio.one_shot_active(),
                     ambience_duck: self.audio.ambience_duck(),
@@ -1644,7 +1664,6 @@ impl Game {
             )
             .map_err(feel_error)?;
         }
-        self.audio.play_queued(&mut self.queued_audio);
         if !self.audio.speech_active() {
             self.speech_animation = None;
             if let Some(owner) = self.active_speech_owner.take()
@@ -1791,6 +1810,7 @@ impl Game {
                 }
                 _ if !input.control && !input.super_key => {
                     if let Some(text) = input.text.as_deref() {
+                        self.view.compose_engaged = true;
                         append_text(&mut self.view.text_buffer, text);
                     }
                 }

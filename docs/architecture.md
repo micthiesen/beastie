@@ -94,9 +94,10 @@ change contact or invent interactions. The shell resolves pointer rays against w
 maps food drops back onto the interaction plane. UI hit regions preserve keyboard/controller
 ordering and modal exclusion.
 Body pick ellipsoids use the exact cached rendered transforms, including curvature and taper,
-and compare world ray distance with the head and forgiving toy/food volumes. Plants and the
+and compare world ray distance with the head and forgiving food volumes. Toys, plants and the
 shelter use cached mesh triangles after a local bounding-box test; their empty gaps cannot
-intercept a click. Scenery transforms are captured after propagation, matching the preceding
+intercept a click, and carried cloth or a swaying bell uses its actual silhouette. Object transforms
+are captured after propagation, matching the preceding
 presented frame. Input resolves before simulation and animation publish the next frame.
 
 The compact persistent control rail, frame-mounted identity plate, shallow contextual actions,

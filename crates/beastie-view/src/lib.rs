@@ -240,6 +240,12 @@ pub struct ViewState {
     /// Stable [`HitRegion::id`] beneath the pointer.
     pub hovered_region: Option<String>,
     pub text_buffer: String,
+    /// Explicit editing engagement, separate from the default keyboard input destination.
+    #[serde(default)]
+    pub compose_engaged: bool,
+    /// Session-only guidance, dismissed by an observed care interaction.
+    #[serde(default)]
+    pub care_guidance_dismissed: bool,
     pub pending: bool,
     pub speech: Option<String>,
     /// Full utterance keeps the caption bounds steady during progressive text reveal.
@@ -327,6 +333,8 @@ impl Default for ViewState {
             focused_region: Some("compose/input".to_owned()),
             hovered_region: None,
             text_buffer: String::new(),
+            compose_engaged: false,
+            care_guidance_dismissed: false,
             pending: false,
             speech: None,
             speech_layout_text: None,
@@ -390,6 +398,23 @@ impl ViewState {
     /// Projects an authoritative event batch and returns its owned audio commands.
     pub fn observe_events(&mut self, events: &[GameEvent], now_ms: u64) -> AudioPlan {
         self.expire(now_ms);
+        if events.iter().any(|event| {
+            matches!(
+                event,
+                GameEvent::FoodDropped { .. }
+                    | GameEvent::ToyPlayAccepted {
+                        origin: beastie_core::ToyOrigin::Player,
+                        ..
+                    }
+                    | GameEvent::ToyRejected {
+                        origin: beastie_core::ToyOrigin::Player,
+                        ..
+                    }
+                    | GameEvent::Comforted
+            )
+        }) {
+            self.care_guidance_dismissed = true;
+        }
         for event in events {
             match event {
                 GameEvent::RelationshipBeatInterrupted(motif)
@@ -1111,7 +1136,7 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (ScenePlan, AudioPlan) {
         ));
     }
     add_status(view, state.elapsed_ms, &mut rects, &mut text);
-    add_hover_and_focus(view, &hit_regions, &mut rects, &mut text);
+    add_hover_and_focus(view, state.elapsed_ms, &hit_regions, &mut rects, &mut text);
     for command in &mut text {
         command.scale = view.text_scale.clamp(1, 2);
     }
@@ -1459,7 +1484,7 @@ fn world_hit_regions(state: &WorldState, view: &ViewState) -> Vec<HitRegion> {
             h: CREATURE_HIT_HEIGHT,
         },
         enabled: true,
-        label: state.creature.name.clone(),
+        label: format!("{} · care and play", head_fit(&state.creature.name, 18)),
         cursor: CursorKind::Pointer,
         shape: HitShape::World(UiTarget::Creature),
     }];
@@ -1511,7 +1536,10 @@ fn world_hit_regions(state: &WorldState, view: &ViewState) -> Vec<HitRegion> {
                 h: 20,
             },
             enabled: true,
-            label,
+            label: match target {
+                UiTarget::Toy(_) => format!("{} · play", head_fit(&label, 22)),
+                _ => label,
+            },
             cursor: CursorKind::Pointer,
             shape: HitShape::World(target),
         });
@@ -1628,7 +1656,14 @@ fn add_persistent_bar(
         h: 19,
     };
 
-    add_inset("compose/input", input_rect, 31, rects);
+    let editing = view.compose_engaged
+        || !view.text_buffer.is_empty()
+        || view.pending
+        || matches!(view.mode, UiMode::Rename | UiMode::OnScreenKeyboard)
+        || (view.controller_active && view.focused_region.as_deref() == Some("compose/input"));
+    if editing {
+        add_inset("compose/input", input_rect, 31, rects);
+    }
     let input_capacity = ((input_rect.w - 17) as f32
         / (TextRole::Body.size(text_scale >= 2) * 0.56))
         .floor() as usize;
@@ -1641,7 +1676,43 @@ fn add_persistent_bar(
     } else {
         tail_fit(&view.text_buffer, input_capacity)
     };
-    text.push(label("compose/input-text", &input_value, 18, 159, 34));
+    let mut input_text = label("compose/input-text", &input_value, 18, 159, 34);
+    input_text.role = if editing {
+        TextRole::Body
+    } else {
+        TextRole::Secondary
+    };
+    input_text.bounds = Some(Rect {
+        x: 18,
+        y: 155,
+        w: 157,
+        h: 17,
+    });
+    text.push(input_text);
+    if !view.care_guidance_dismissed
+        && matches!(view.mode, UiMode::Compose)
+        && view.speech.is_none()
+        && visible_status(view, state.elapsed_ms).is_none()
+        && view.hovered_region.is_none()
+        && matches!(view.focused_region.as_deref(), None | Some("compose/input"))
+        && !editing
+    {
+        let mut invitation = label(
+            "compose/care-invitation",
+            &format!("Select {} or a toy", head_fit(&summary.name, 18)),
+            18,
+            138,
+            34,
+        );
+        invitation.role = TextRole::Secondary;
+        invitation.bounds = Some(Rect {
+            x: 18,
+            y: 136,
+            w: 210,
+            h: 10,
+        });
+        text.push(invitation);
+    }
     hits.push(hit(
         "compose/input",
         Some(UiTarget::ComposeField),
@@ -2349,12 +2420,16 @@ fn text_speed_label(speed: u8) -> &'static str {
 
 fn microphone_label(state: MicrophoneState) -> &'static str {
     match state {
-        MicrophoneState::Disabled => "Microphone disabled in Settings",
-        MicrophoneState::Idle => "Hold to talk",
+        MicrophoneState::Disabled => "Mic off. Enable: Settings > Sound & speech.",
+        MicrophoneState::Idle => "Hold to talk; release to send.",
         MicrophoneState::Listening => "Listening; release to send",
         MicrophoneState::Recognizing => "Recognizing speech",
-        MicrophoneState::Unavailable => "Microphone unavailable",
-        MicrophoneState::Error => "Microphone error; text remains available",
+        MicrophoneState::Unavailable => {
+            "Microphone unavailable. Check your input device; text still works."
+        }
+        MicrophoneState::Error => {
+            "Microphone error. Check your input device and retry; text still works."
+        }
     }
 }
 
@@ -2685,20 +2760,28 @@ fn add_status(
         return;
     };
     let text_scale = view.text_scale.clamp(1, 2);
-    let glyph_width = usize::from(text_scale) * 6;
-    let fitted = head_fit(message, 218 / glyph_width * 2);
+    let capacity = (286.0 / (TextRole::Secondary.size(text_scale >= 2) * 0.6)) as usize;
+    let fitted = head_fit(message, capacity);
     add_panel_chrome(
         "status/background",
         Rect {
-            x: 79,
+            x: 12,
             y: 132,
-            w: 229,
+            w: 296,
             h: 14,
         },
         35,
         rects,
     );
-    text.push(label("status/message", &fitted, 84, 135, 39));
+    let mut message = label("status/message", &fitted, 17, 135, 39);
+    message.role = TextRole::Secondary;
+    message.bounds = Some(Rect {
+        x: 17,
+        y: 134,
+        w: 286,
+        h: 10,
+    });
+    text.push(message);
 }
 
 fn visible_status(view: &ViewState, now_ms: u64) -> Option<&str> {
@@ -2707,8 +2790,12 @@ fn visible_status(view: &ViewState, now_ms: u64) -> Option<&str> {
         .or(match view.microphone_state {
             MicrophoneState::Listening => Some("Listening... release to send."),
             MicrophoneState::Recognizing => Some("Working out what you said..."),
-            MicrophoneState::Unavailable => Some("Microphone unavailable. Text still works."),
-            MicrophoneState::Error => Some("Speech input failed. Text still works."),
+            MicrophoneState::Unavailable => {
+                Some("Microphone unavailable. Check input device. Text still works.")
+            }
+            MicrophoneState::Error => {
+                Some("Speech input failed. Check input device and retry. Text still works.")
+            }
             MicrophoneState::Disabled | MicrophoneState::Idle => None,
         })
         .or(view.transcript_status.as_deref())
@@ -2723,6 +2810,7 @@ fn visible_status(view: &ViewState, now_ms: u64) -> Option<&str> {
 
 fn add_hover_and_focus(
     view: &ViewState,
+    now_ms: u64,
     hits: &[HitRegion],
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
@@ -2752,6 +2840,9 @@ fn add_hover_and_focus(
             continue;
         }
         if hit_region.id == "compose/input" {
+            if !view.compose_engaged && view.text_buffer.is_empty() && !view.controller_active {
+                continue;
+            }
             rects.push(rect(
                 command_id,
                 Rect {
@@ -2773,20 +2864,59 @@ fn add_hover_and_focus(
         });
     }
 
-    let described = view.hovered_region.as_deref().or_else(|| {
-        view.controller_active
-            .then_some(view.focused_region.as_deref())
-            .flatten()
-    });
-    let Some(hit_region) = described.and_then(|id| {
-        hits.iter()
-            .find(|hit_region| hit_region.id == id && hit_region.enabled)
-    }) else {
+    let described = view
+        .hovered_region
+        .as_deref()
+        .or(view.focused_region.as_deref());
+    let Some(hit_region) =
+        described.and_then(|id| hits.iter().find(|hit_region| hit_region.id == id))
+    else {
         return;
     };
+    let microphone_help = hit_region.id == "compose/microphone"
+        || (hit_region.id == "compose/settings"
+            && matches!(
+                view.microphone_state,
+                MicrophoneState::Disabled | MicrophoneState::Unavailable | MicrophoneState::Error
+            ));
+    if microphone_help {
+        // Actual receipt, recognition uncertainty and technical feedback own this strip.
+        if visible_status(view, now_ms).is_some() {
+            return;
+        }
+        // A stateful gesture needs more than its short title. Settings is a reachable
+        // companion when focus navigation correctly skips the disabled microphone.
+        add_panel_chrome(
+            "ui/microphone-help-background",
+            Rect {
+                x: 12,
+                y: 132,
+                w: 296,
+                h: 14,
+            },
+            36,
+            rects,
+        );
+        let mut help = label(
+            "ui/microphone-help",
+            microphone_label(view.microphone_state),
+            17,
+            135,
+            38,
+        );
+        help.role = TextRole::Secondary;
+        help.bounds = Some(Rect {
+            x: 17,
+            y: 134,
+            w: 286,
+            h: 10,
+        });
+        text.push(help);
+        return;
+    }
     // Text-labeled controls already explain themselves. Repeating their label in a tooltip
     // obscures neighboring settings and fields while the player is using them.
-    if !matches!(hit_region.shape, HitShape::World(_)) {
+    if !hit_region.enabled || !matches!(hit_region.shape, HitShape::World(_)) {
         return;
     }
     let label_width =
@@ -4735,10 +4865,10 @@ mod tests {
                 .expect("status background")
                 .rect;
             let compose = render
-                .rects
+                .hit_regions
                 .iter()
-                .find(|command| command.id == "compose/input-background")
-                .expect("compose background")
+                .find(|command| command.id == "compose/input")
+                .expect("compose field")
                 .rect;
             assert!(!rects_overlap(status, compose));
             for panel in render
@@ -4946,6 +5076,7 @@ mod tests {
         let scene = plan(
             &state,
             &ViewState {
+                compose_engaged: true,
                 focused_region: Some("compose/input".to_owned()),
                 ..Default::default()
             },
@@ -4967,6 +5098,227 @@ mod tests {
             .unwrap();
         assert_eq!(plate.rect.w, 27);
         assert_eq!(plate.rect.h, 14);
+    }
+
+    #[test]
+    fn quiet_compose_keeps_its_hit_target_and_care_guidance_yields_to_care() {
+        let state = WorldState::new(7, "Mop");
+        let mut view = ViewState::default();
+        let quiet = plan(&state, &view).0;
+        assert!(quiet.text.iter().any(|t| t.id == "compose/care-invitation"));
+        assert!(
+            !quiet
+                .rects
+                .iter()
+                .any(|r| r.id == "compose/input-background")
+        );
+        for scale in [1, 2] {
+            view.text_scale = scale;
+            view.compose_engaged = true;
+            let editing = plan(&state, &view).0;
+            assert_eq!(
+                quiet
+                    .hit_regions
+                    .iter()
+                    .find(|h| h.id == "compose/input")
+                    .unwrap()
+                    .rect,
+                editing
+                    .hit_regions
+                    .iter()
+                    .find(|h| h.id == "compose/input")
+                    .unwrap()
+                    .rect
+            );
+            assert!(
+                editing
+                    .text
+                    .iter()
+                    .any(|t| t.id == "compose/input-text" && t.role == TextRole::Body)
+            );
+            assert!(
+                !editing
+                    .text
+                    .iter()
+                    .any(|t| t.id == "compose/care-invitation")
+            );
+        }
+        view.compose_engaged = false;
+        view.observe_events(&[GameEvent::Comforted], 0);
+        assert!(
+            !plan(&state, &view)
+                .0
+                .text
+                .iter()
+                .any(|t| t.id == "compose/care-invitation")
+        );
+        view.hovered_region = Some("target/creature".into());
+        assert!(
+            plan(&state, &view)
+                .0
+                .text
+                .iter()
+                .any(|t| t.id == "ui/hover-label" && t.text.contains("care and play"))
+        );
+    }
+
+    #[test]
+    fn autonomous_play_does_not_dismiss_the_players_care_invitation() {
+        let world = WorldState::new(7, "Mop");
+        let mut view = ViewState::default();
+        view.observe_events(
+            &[GameEvent::ToyPlayed {
+                toy: ToyId::Ball,
+                interaction_id: NonZeroU64::new(1).unwrap(),
+                origin: beastie_core::ToyOrigin::Autonomous,
+            }],
+            0,
+        );
+        assert!(
+            plan(&world, &view)
+                .0
+                .text
+                .iter()
+                .any(|t| t.id == "compose/care-invitation")
+        );
+        view.observe_events(
+            &[GameEvent::ToyPlayAccepted {
+                toy: ToyId::Ball,
+                interaction_id: NonZeroU64::new(2).unwrap(),
+                origin: beastie_core::ToyOrigin::Player,
+            }],
+            0,
+        );
+        assert!(
+            !plan(&world, &view)
+                .0
+                .text
+                .iter()
+                .any(|t| t.id == "compose/care-invitation")
+        );
+    }
+
+    #[test]
+    fn microphone_help_survives_disabled_hover_and_reachable_settings_focus() {
+        let state = WorldState::new(7, "Mop");
+        for scale in [1, 2] {
+            for microphone in [
+                MicrophoneState::Disabled,
+                MicrophoneState::Idle,
+                MicrophoneState::Listening,
+                MicrophoneState::Recognizing,
+                MicrophoneState::Unavailable,
+                MicrophoneState::Error,
+            ] {
+                let mut view = ViewState {
+                    text_scale: scale,
+                    microphone_enabled: microphone != MicrophoneState::Disabled,
+                    microphone_state: microphone,
+                    hovered_region: Some("compose/microphone".into()),
+                    ..Default::default()
+                };
+                let scene = plan(&state, &view).0;
+                let status = visible_status(&view, 0);
+                let description_id = if status.is_some() {
+                    "status/message"
+                } else {
+                    "ui/microphone-help"
+                };
+                let help = scene.text.iter().find(|t| t.id == description_id).unwrap();
+                assert_eq!(
+                    help.text,
+                    status.unwrap_or_else(|| microphone_label(microphone))
+                );
+                assert_eq!(help.role, TextRole::Secondary);
+                assert_eq!(
+                    help.bounds.unwrap(),
+                    Rect {
+                        x: 17,
+                        y: 134,
+                        w: 286,
+                        h: 10
+                    }
+                );
+                assert_eq!(
+                    scene
+                        .text
+                        .iter()
+                        .filter(|t| t.id == "status/message" || t.id == "ui/microphone-help")
+                        .count(),
+                    1
+                );
+                if matches!(
+                    microphone,
+                    MicrophoneState::Disabled
+                        | MicrophoneState::Unavailable
+                        | MicrophoneState::Error
+                ) {
+                    assert!(
+                        !scene
+                            .hit_regions
+                            .iter()
+                            .find(|h| h.id == "compose/microphone")
+                            .unwrap()
+                            .enabled
+                    );
+                    view.hovered_region = None;
+                    view.focused_region = Some("compose/settings".into());
+                    assert!(
+                        plan(&state, &view)
+                            .0
+                            .text
+                            .iter()
+                            .any(|t| t.id == description_id)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn microphone_hover_never_covers_existing_feedback_or_modal_controls() {
+        let state = WorldState::new(7, "Mop");
+        for mode in [UiMode::Compose, UiMode::Settings, UiMode::FoodChoice] {
+            let mut view = ViewState {
+                mode,
+                hovered_region: Some("compose/microphone".into()),
+                text_scale: 2,
+                ..Default::default()
+            };
+            let scene = plan(&state, &view).0;
+            let help = scene
+                .text
+                .iter()
+                .find(|t| t.id == "ui/microphone-help")
+                .unwrap()
+                .bounds
+                .unwrap();
+            assert!(help.y >= 132 && help.y + help.h <= AQUARIUM_BOTTOM);
+            for hit in scene
+                .hit_regions
+                .iter()
+                .filter(|h| matches!(h.shape, HitShape::Rect))
+            {
+                assert!(!rects_overlap(help, hit.rect));
+            }
+            view.show_status("I heard only part of that. Please try again.", 0, 4000);
+            let scene = plan(&state, &view).0;
+            assert!(!scene.text.iter().any(|t| t.id == "ui/microphone-help"));
+            assert!(
+                scene
+                    .text
+                    .iter()
+                    .any(|t| t.id == "status/message" && t.text.contains("only part"))
+            );
+            view.expire(4001);
+            assert!(
+                plan(&state, &view)
+                    .0
+                    .text
+                    .iter()
+                    .any(|t| t.id == "ui/microphone-help")
+            );
+        }
     }
 
     #[test]

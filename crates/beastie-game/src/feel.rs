@@ -55,6 +55,11 @@ pub struct PresentationTraceState {
 }
 
 pub struct AudioTraceFrame<'a> {
+    pub playback: &'a [crate::audio::PlaybackSnapshot],
+    pub decisions: &'a [crate::audio::PlaybackDecision],
+    pub output_available: bool,
+    pub effects_gain: f32,
+    pub speech_gain: f32,
     pub commands: &'a [beastie_view::AudioCommand],
     pub cue_ids: &'a [&'a str],
     pub speech_active: bool,
@@ -92,6 +97,7 @@ pub struct FeelRecorder {
     ffmpeg: Option<Ffmpeg>,
     timeline: FrameTimeline,
     speech_index: u32,
+    retained_audio: std::collections::BTreeSet<String>,
 }
 
 impl FeelRecorder {
@@ -110,6 +116,7 @@ impl FeelRecorder {
             directory,
             timeline: FrameTimeline::default(),
             speech_index: 0,
+            retained_audio: std::collections::BTreeSet::new(),
         })
     }
 
@@ -196,11 +203,31 @@ impl FeelRecorder {
         frame: AudioTraceFrame<'_>,
         simulation_ms: u64,
     ) -> Result<(), FeelError> {
+        for source in frame.playback.iter().chain(
+            frame
+                .decisions
+                .iter()
+                .filter_map(|decision| decision.started.as_ref()),
+        ) {
+            if self.retained_audio.insert(source.asset_sha256.clone()) {
+                let path = self
+                    .directory
+                    .join(format!("audio-{}.wav", source.asset_sha256));
+                fs::write(&path, &source.bytes)
+                    .map_err(|source| FeelError::WriteTrace { path, source })?;
+            }
+        }
         self.audio.write(&json!({
             "version": FORMAT_VERSION,
             "playback_ms": self.playback_ms(),
             "simulation_ms": simulation_ms,
             "kind": "cues",
+            "playback_schema": 1,
+            "playback": frame.playback,
+            "decisions": frame.decisions,
+            "output_available": frame.output_available,
+            "effects_gain": frame.effects_gain,
+            "speech_gain": frame.speech_gain,
             "cue_ids": frame.cue_ids,
             "commands": frame.commands,
             "speech_active": frame.speech_active,
@@ -321,6 +348,8 @@ impl FeelRecorder {
                 relationship: &world.creature.relationship,
                 relationship_expression: &world.creature.relationship_expression,
                 private_life: &world.creature.private_life,
+                dialogue_handoff: beastie_core::dialogue_handoff(world),
+                toy_interaction: world.creature.interaction_state.toy_interaction.as_ref(),
                 toy_states: &world.aquarium.toy_states,
                 development: &world.creature.development,
                 routines: &world.creature.routines,
@@ -467,6 +496,8 @@ struct CreatureFrame<'a> {
     /// Exact activity identity, selection evidence, phase, and contact state. This is simulation
     /// truth, not a presentation inference from the status label.
     private_life: &'a beastie_core::PrivateLifeState,
+    dialogue_handoff: beastie_core::DialogueHandoff,
+    toy_interaction: Option<&'a beastie_core::ToyInteraction>,
     toy_states: &'a std::collections::BTreeMap<beastie_core::ToyId, beastie_core::ToyObjectState>,
     development: &'a beastie_core::Development,
     routines: &'a [beastie_core::Routine],

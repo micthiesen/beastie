@@ -22,6 +22,7 @@ use serde::Serialize;
 mod asset;
 mod dialogue_eval;
 mod feel;
+mod feel_audio;
 mod packaging;
 mod store_assets;
 mod stt_eval;

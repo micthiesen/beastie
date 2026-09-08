@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const FEEL_SCHEMA_VERSION: u32 = 1;
-const MANIFEST_VERSION: u32 = 6;
+const MANIFEST_VERSION: u32 = 7;
 const RUN_TIMEOUT_GRACE: Duration = Duration::from_secs(60);
 const FIRST_FRAME_HEARTBEAT: &str = "first-frame.json";
 const MIN_STARTUP_TIMEOUT: Duration = Duration::from_millis(250);
@@ -139,6 +139,11 @@ const RELATIONSHIP_OVER_TIME_NO_AI: Experience = Experience {
     fake_ai: false,
     tts_requested: false,
     fixture_dialogue_delay_ms: None,
+};
+const RELATIONSHIP_OVER_TIME_NONVERBAL: Experience = Experience {
+    id: "relationship-over-time-nonverbal",
+    scenario: "fixtures/scenarios/feel/relationship-over-time-nonverbal.jsonl",
+    ..RELATIONSHIP_OVER_TIME_NO_AI
 };
 const TRUSTED_BERRY_MARKERS: &[RequiredMotifMarker] = &[RequiredMotifMarker {
     name: "trusted-berry",
@@ -407,7 +412,11 @@ fn experiences(suite: FeelSuite) -> Vec<Experience> {
         FeelSuite::InteractionChain => vec![INTERACTION_CHAIN, DIALOGUE_RACES],
         FeelSuite::BadConditions => vec![BAD_CONDITIONS],
         FeelSuite::RelationshipOverTime => {
-            vec![RELATIONSHIP_OVER_TIME, RELATIONSHIP_OVER_TIME_NO_AI]
+            vec![
+                RELATIONSHIP_OVER_TIME,
+                RELATIONSHIP_OVER_TIME_NO_AI,
+                RELATIONSHIP_OVER_TIME_NONVERBAL,
+            ]
         }
         FeelSuite::RelationshipBreadth => vec![
             TRUSTED_BERRY,
@@ -1000,11 +1009,88 @@ fn finalize_attempt(
     let markers = read_markers(&directory.join("markers.jsonl"))?;
     validate_required_motifs(directory, experience, &markers)?;
     validate_dialogue_race_evidence(directory, experience, &markers)?;
+    validate_lived_outcomes(experience.id, &read_jsonl(&directory.join("events.jsonl"))?)?;
     validate_relationship_breadth_causality(directory, experience)?;
     validate_relationship_evidence(directory, experience, &markers)?;
     generate_filmstrips(directory, &markers)?;
     write_review(directory, experience, &markers)?;
     write_manifest(directory, experience, suite, game)
+}
+
+/// Labels are not outcome evidence: require the named baseline beats to actually resolve.
+fn validate_lived_outcomes(experience: &str, records: &[serde_json::Value]) -> Result<()> {
+    if !matches!(experience, "interaction-chain" | "bad-conditions") {
+        return Ok(());
+    }
+    let events = records
+        .iter()
+        .flat_map(|record| record["events"].as_array().into_iter().flatten());
+    let rejected: BTreeSet<u64> = events
+        .clone()
+        .filter(|event| {
+            event["kind"] == "toy_rejected"
+                && event["value"]["toy"] == "bell"
+                && event["value"]["origin"] == "player"
+        })
+        .filter_map(|event| event["value"]["interaction_id"].as_u64())
+        .collect();
+    let required = if experience == "interaction-chain" {
+        2
+    } else {
+        1
+    };
+    ensure!(
+        rejected.len() >= required,
+        "{experience} did not reach {required} distinct player bell refusals"
+    );
+    ensure!(
+        !events.clone().any(|event| event["kind"] == "toy_played"
+            && event["value"]["interaction_id"]
+                .as_u64()
+                .is_some_and(|id| rejected.contains(&id))),
+        "a rejected toy interaction also resolved as positive play"
+    );
+    for record in records {
+        let Some(events) = record["events"].as_array() else {
+            continue;
+        };
+        if record["spoken_input"]["status"] == "submitted"
+            && events.iter().any(|event| event["kind"] == "talk_accepted")
+        {
+            ensure!(
+                !events
+                    .iter()
+                    .any(|event| event["kind"] == "toy_interaction_interrupted"
+                        && event["value"]["interaction_id"]
+                            .as_u64()
+                            .is_some_and(|id| rejected.contains(&id))),
+                "deferred dialogue interrupted a live refusal before its safe boundary"
+            );
+        }
+    }
+    ensure!(
+        events
+            .clone()
+            .any(|event| event["kind"] == "utterance_deferred"),
+        "{experience} never actually deferred speech"
+    );
+    if experience == "bad-conditions" {
+        ensure!(
+            records
+                .iter()
+                .any(|record| record["kind"] == "dialogue_health"
+                    && record["health"]["fallback"] == true
+                    && record["health"]["fallback_reason"] == "worker_unavailable"),
+            "bad-conditions did not exercise unavailable-worker fallback"
+        );
+        ensure!(
+            records.iter().any(|record| record["spoken_input"]["status"]
+                == "infrastructure_failure"
+                && record["spoken_input"]["failure"] == "recognizer_unavailable"),
+            "bad-conditions did not exercise recognizer failure"
+        );
+    }
+    Ok(())
 }
 
 fn marker_named<'a>(markers: &'a [Marker], name: &str) -> Result<&'a Marker> {
@@ -1413,69 +1499,7 @@ fn verify_video(path: &Path) -> Result<()> {
 
 fn generate_reference_mix(directory: &Path) -> Result<()> {
     let duration = video_duration_seconds(&directory.join("session.mp4"))?;
-    let ambience = resolve_audio_asset("environment/underwater-loop")?;
-    let mut inputs = vec![(ambience, 0_u64, 0.245_f32, true)];
-    let trace = File::open(directory.join("audio.jsonl"))?;
-    for (line_number, line) in BufReader::new(trace).lines().enumerate() {
-        let value: serde_json::Value = serde_json::from_str(&line?)
-            .with_context(|| format!("invalid audio trace line {}", line_number + 1))?;
-        let playback_ms = value["playback_ms"].as_u64().unwrap_or_default();
-        if let Some(cues) = value["cue_ids"].as_array() {
-            for cue in cues.iter().filter_map(serde_json::Value::as_str) {
-                let path = resolve_audio_asset(cue)?;
-                let gain = if cue.starts_with("ui/") {
-                    0.315
-                } else if cue == "movement/swim-wake" {
-                    0.378
-                } else {
-                    0.49
-                };
-                inputs.push((path, playback_ms, gain, false));
-            }
-        }
-        if let Some(path) = value["path"].as_str() {
-            let speech = directory.join(path);
-            ensure!(
-                speech.is_file(),
-                "recorded speech is missing: {}",
-                speech.display()
-            );
-            inputs.push((speech, playback_ms, 0.7, false));
-        }
-    }
-
-    let mut command = Command::new("ffmpeg");
-    command.args(["-y", "-v", "error"]);
-    for (path, _, _, looping) in &inputs {
-        if *looping {
-            command.args(["-stream_loop", "-1"]);
-        }
-        command.arg("-i").arg(path);
-    }
-    let mut filters = Vec::new();
-    let mut labels = String::new();
-    for (index, (_, delay_ms, gain, _)) in inputs.iter().enumerate() {
-        let label = format!("a{index}");
-        filters.push(format!(
-            "[{index}:a]volume={gain},adelay={delay_ms}:all=1[{label}]"
-        ));
-        labels.push_str(&format!("[{label}]"));
-    }
-    filters.push(format!(
-        "{labels}amix=inputs={}:normalize=0:dropout_transition=0,alimiter=limit=0.95,atrim=duration={duration}[mix]",
-        inputs.len()
-    ));
-    command
-        .arg("-filter_complex")
-        .arg(filters.join(";"))
-        .args(["-map", "[mix]", "-c:a", "pcm_s16le"])
-        .arg(directory.join("reference-mix.wav"));
-    require_success(
-        "ffmpeg feel reference mix",
-        command
-            .status()
-            .context("failed to generate feel reference mix")?,
-    )?;
+    crate::feel_audio::reconstruct(directory, duration.parse()?)?;
 
     require_success(
         "ffmpeg feel reference mux",
@@ -1504,19 +1528,6 @@ fn generate_reference_mix(directory: &Path) -> Result<()> {
             .status()
             .context("failed to render feel audio overview")?,
     )
-}
-
-fn resolve_audio_asset(id: &str) -> Result<PathBuf> {
-    for source in ["final", "generated"] {
-        let path = Path::new("assets")
-            .join(source)
-            .join("audio")
-            .join(format!("{id}.wav"));
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
-    bail!("feel audio asset is missing: {id}")
 }
 
 fn video_duration_seconds(video: &Path) -> Result<String> {
@@ -1794,6 +1805,17 @@ fn validate_relationship_evidence(
     );
 
     let state = read_jsonl(&directory.join("state.jsonl"))?;
+    if experience.id == "relationship-over-time-nonverbal" {
+        ensure!(
+            state
+                .iter()
+                .filter(|record| record["playback_ms"].as_u64().unwrap_or(0) > 100)
+                .all(|record| record["view"]["subtitles_enabled"] == false
+                    && record["view"]["caption_owner"].is_null()
+                    && record["view"]["active_mouth_owner"].is_null()),
+            "nonverbal relationship run displayed language or owned speech"
+        );
+    }
     let expressions = state
         .iter()
         .filter_map(|record| record.get("creature")?.get("relationship_expression"))
@@ -2199,13 +2221,14 @@ fn write_manifest(
         "state.jsonl".to_owned(),
         "audio.jsonl".to_owned(),
         "audio-overview.png".to_owned(),
+        "audio-reconstruction.json".to_owned(),
         "markers.jsonl".to_owned(),
         "review.md".to_owned(),
     ];
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with("speech-") && name.ends_with(".wav") {
+        if (name.starts_with("speech-") || name.starts_with("audio-")) && name.ends_with(".wav") {
             names.push(name);
         }
     }
@@ -2344,6 +2367,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn baseline_outcome_validation_rejects_the_old_deferred_refusal_race() {
+        let rejection = |id| serde_json::json!({"kind":"toy_rejected","value":{"interaction_id":id,"toy":"bell","origin":"player"}});
+        let mut records = vec![
+            serde_json::json!({"events":[rejection(2),rejection(3),{"kind":"utterance_deferred"}]}),
+        ];
+        validate_lived_outcomes("interaction-chain", &records).expect("two distinct refusals");
+        records.push(serde_json::json!({"spoken_input":{"status":"submitted"},"events":[
+            {"kind":"toy_interaction_interrupted","value":{"interaction_id":2}}, {"kind":"talk_accepted"}]}));
+        assert!(validate_lived_outcomes("interaction-chain", &records).is_err());
+        records.last_mut().expect("race")["spoken_input"] = serde_json::Value::Null;
+        validate_lived_outcomes("interaction-chain", &records)
+            .expect("new direct input may interrupt");
+        assert!(validate_lived_outcomes("interaction-chain", &[]).is_err());
+    }
+
+    #[test]
+    fn bad_conditions_requires_actual_failure_and_deferral_evidence() {
+        let mut records = vec![serde_json::json!({"events":[
+            {"kind":"toy_rejected","value":{"interaction_id":1,"toy":"bell","origin":"player"}},
+            {"kind":"utterance_deferred"}]})];
+        assert!(validate_lived_outcomes("bad-conditions", &records).is_err());
+        records.push(serde_json::json!({"kind":"dialogue_health","health":{"fallback":true,"fallback_reason":"worker_unavailable"}}));
+        records.push(serde_json::json!({"spoken_input":{"status":"infrastructure_failure","failure":"recognizer_unavailable"}}));
+        validate_lived_outcomes("bad-conditions", &records).expect("all failures exercised");
+    }
+
+    #[test]
     fn baseline_contains_every_required_experience_in_order() {
         let ids = experiences(FeelSuite::Baseline)
             .into_iter()
@@ -2366,9 +2416,20 @@ mod tests {
     #[test]
     fn relationship_suite_keeps_ai_on_and_off_runs_separate() {
         let experiences = experiences(FeelSuite::RelationshipOverTime);
-        assert_eq!(experiences.len(), 2);
+        assert_eq!(experiences.len(), 3);
         assert!(experiences[0].fake_ai && experiences[0].tts_requested);
         assert!(!experiences[1].fake_ai && !experiences[1].tts_requested);
+        assert!(!experiences[2].fake_ai && !experiences[2].tts_requested);
+        let nonverbal = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(experiences[2].scenario),
+        )
+        .unwrap();
+        assert!(
+            nonverbal
+                .starts_with("{\"version\":1,\"command\":\"set_subtitles\",\"enabled\":false}")
+        );
     }
 
     #[test]

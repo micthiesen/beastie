@@ -33,11 +33,13 @@ Last updated: **2026-09-08**.
 
 ## Next
 
-Implement [creature-presence-and-care.md](creature-presence-and-care.md) after the user approves the
-proposed feel-pass goal. It covers the complete holistic review scope and repeated native
-adjudication. No implementation goal has been set and no runtime changes were made in the review.
-Keep the current renderer; human aesthetic/listening calibration remains necessary to claim those
-perceptual acceptance criteria. Windows/Linux and lower-end GPU acceptance remain separate.
+Finish the authorized implementation of
+[creature-presence-and-care.md](creature-presence-and-care.md). The user approved all changes and
+requested no further input. All seven changes are integrated, the headless gate passes, and native
+review is in progress. See [implementation review](feel-review-creature-presence-20260908.md) for
+comparisons and the rejected stale-cooldown scenario capture. No Codex goal was requested or set.
+Keep the current renderer; human aesthetic/listening and Windows/Linux/lower-end GPU claims remain
+separate from the automated and sampled evidence.
 
 ## Candidates Not Chosen
 

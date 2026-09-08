@@ -1,4 +1,5 @@
-//! Tank art and reusable object definitions. These shapes never alter simulation or picking.
+//! Tank art and reusable object definitions. Shapes preserve authoritative anchors;
+//! scenery picking uses the same meshes.
 use crate::voxel::{Geometry, VoxelModel};
 use beastie_core::{FoodId, ToyId};
 use beastie_view::ObjectKind;
@@ -349,9 +350,27 @@ pub(crate) fn object_mesh(
                     }
                 }
             }
+            // A small cork float is part of this toy, not an attachment to the tank.
+            // It makes the bell's existing suspended position credible even in older saves.
+            for x in -5_i32..=5 {
+                for y in 12_i32..=15 {
+                    for z in -3_i32..=3 {
+                        if x * x + z * z <= 29 {
+                            shape.set(
+                                [x, y, z],
+                                if y == 13 {
+                                    [121, 94, 60]
+                                } else {
+                                    [185, 155, 103]
+                                },
+                            );
+                        }
+                    }
+                }
+            }
             shape.mesh_with_style(0.052, style)
         }
-        ObjectKind::Toy(ToyId::Sock) => sock_model().mesh_with_style(0.035, style),
+        ObjectKind::Toy(ToyId::Sock) => sock_model().mesh_with_style(0.043, style),
         ObjectKind::Cave => shelter_model().mesh_with_style(0.075, style),
         ObjectKind::Plant => {
             let mut shape = Geometry::default().mesh();
@@ -381,25 +400,24 @@ pub(crate) fn object_mesh(
     }
 }
 
-/// Fired-clay shelter: one connected barrel roof with a thick rolled front lip.
-/// Bottom and side bounds retain the original cave's interaction footprint.
+/// The entrance surrounds the animal's full head and crown at its canonical rest anchor.
+/// The barrel sits behind the interaction plane so a trailing body can peek out naturally.
 fn shelter_model() -> VoxelModel {
     let mut shape = VoxelModel::default();
-    for x in -12_i32..=12 {
-        for y in -19_i32..=7 {
-            for z in -10_i32..=4 {
-                let roof_y = (y + 5).max(0) as f32;
-                let lip = z >= 3;
-                let outer_radius = if lip { 12.0 } else { 11.0 };
-                let outer =
-                    (x as f32 / outer_radius).powi(2) + (roof_y / outer_radius).powi(2) <= 1.0;
+    for x in -17_i32..=17 {
+        for y in -19_i32..=17 {
+            for z in -18_i32..=-6 {
+                let roof_y = (y + 6).max(0) as f32;
+                let lip = z >= -7;
+                let outer_radius = if lip { 17.0 } else { 16.0 };
+                let outer = (x as f32 / outer_radius).powi(2) + (roof_y / 23.0).powi(2) <= 1.0;
                 let opening_y = (y + 7).max(0) as f32;
-                let inner_radius = if lip { 8.0 } else { 9.0 };
-                let doorway = (x as f32 / inner_radius).powi(2) + (opening_y / 10.0).powi(2) < 1.0;
-                if outer && (!doorway || z <= -9) {
+                let inner_radius = if lip { 14.0 } else { 15.0 };
+                let doorway = (x as f32 / inner_radius).powi(2) + (opening_y / 21.0).powi(2) < 1.0;
+                if outer && (!doorway || z <= -17) {
                     let color = if doorway {
                         [51, 47, 39]
-                    } else if z >= 3 {
+                    } else if lip {
                         [167, 116, 83]
                     } else if y > 0 {
                         [143, 98, 72]
@@ -434,7 +452,10 @@ fn sock_model() -> VoxelModel {
                     } else {
                         [148, 136, 158]
                     };
-                    shape.set([x, y, z], color);
+                    // Cloth bends under its own weight instead of standing like a boot.
+                    // The cuff remains near the contact anchor in resting and carried poses.
+                    let bend = ((10 - y) as f32 * 0.38).sin() * 3.0;
+                    shape.set([x + bend.round() as i32, y - 8, z], color);
                 }
             }
         }

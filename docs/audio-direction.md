@@ -48,8 +48,10 @@ same variant, so captures remain reproducible without exposing a clock-like alte
 - Play ordinary aquarium one-shots at 0.40 to 0.55. Keep `movement/swim-wake` at or below 0.38 and
   rate-limit it to one start cue per 700 ms so continuous motion does not become noise.
 - Let no more than two bubble one-shots overlap. If a third starts, discard the oldest or quietest.
-- On creature vocalization, duck the ambience by 4 dB with a 35 ms attack and 180 ms release. On
-  TTS, duck ambience by 7 dB and other creature cues by 5 dB, with a 45 ms attack and 260 ms release.
+- Decorative bubbles, UI and physical cues do not duck the bed. On creature vocalization, duck the ambience by 4 dB with a 35 ms attack and 180 ms release. On
+  TTS, duck ambience by 7 dB and other creature cues by 5 dB, with a 45 ms attack and 260 ms release. These linear envelopes complete within their
+  stated duration; repeated updates do not restart them. Physical and UI cues retain their gain
+  during speech, so contact and direct input remain legible.
 - Do not stack `food/spit-reject` with `creature/annoyed` at full level. Prefer the physical cue,
   then optionally play annoyance after 180 ms at half gain. Dialogue owns the loudness ceiling.
 
@@ -102,8 +104,35 @@ below 0.000001 full scale, both safely below audibility.
 
 ## Runtime integration
 
-The game disables ggez's compile-time audio feature because ggez treats failure to open the default
-output device as a fatal context error. It uses rodio directly instead, opening the default output
-sink opportunistically. Resolve each event through `assets/final/audio/<id>.wav`, then
-`assets/generated/audio/<id>.wav`, and decode/cache valid bytes once at startup. Each one-shot may
-use a detached player on the retained mixer. The output sink must outlive every player.
+The Bevy shell uses rodio directly, opening its default output sink opportunistically. Failure to
+open it leaves the game playable in silence. Resolve each cue through `assets/final/audio/<id>.wav`,
+then `assets/generated/audio/<id>.wav`; validate and cache encoded bytes at startup. Each accepted
+playback decodes those cached bytes into a retained player. Set gain before appending the source.
+The retained output sink outlives its players. Continuous ambience uses a gapless repeating decoder.
+
+Mix priority uses semantic cue roles, independently of ownership/cancellation channels. Only
+accepted, active and unmuted creature/speech sources affect ducking. Muted, missing, rejected and
+cancelled sources cannot keep the bed quiet. At most two bubble sources overlap; a third retires
+the oldest. Source ownership still governs cancellation, and a direct outcome replaces lower
+priority creature voice without cancelling unrelated physical contact sounds.
+
+## Recorded playback reconstruction
+
+Feel captures retain post-arbitration playback snapshots and decisions in `audio.jsonl`, including
+source/playback IDs, semantic and speech owners, settings, effective gain, looping, output
+availability and asset SHA-256. The exact resolved source bytes are retained as
+`audio-<sha256>.wav` and included in the manifest. Speech lifecycle records distinguish accepted
+TTS bytes from a playback that actually starts; unavailable output does not invent active speech.
+
+`reference-mix.wav` reconstructs active playback intervals and piecewise-constant frame gains from
+these records. Cancellation truncates a source, mute produces silence, and offline source
+resolution verifies retained hashes. It does not re-resolve current repository assets or synthesize
+sounds from discarded cue requests. `audio-reconstruction.json` records the pre-limiter peak and
+clipping sample count. No limiter conceals gain errors: clipping rejects the evidence. Start
+metadata and bytes survive even if a source ends before a snapshot. Such an unrepresented playback
+rejects frame-clock reconstruction explicitly, because its duration cannot safely be inferred.
+
+This is a frame-clock playback reconstruction, not captured host audio. It reproduces recorded
+start/stop/gain decisions; device buffering, hardware latency and perceived voice character still
+require host listening. An unavailable-output capture reconstructs silence and records that fact.
+Legacy cue-only captures remain historical review evidence but require recapture for this renderer.

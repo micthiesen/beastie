@@ -902,21 +902,21 @@ impl Default for AquariumState {
                 3,
                 WorldObject::Toy {
                     toy: ToyId::Ball,
-                    position: NormalizedPosition::new(5_000, 8_900),
+                    position: NormalizedPosition::new(4_800, 7_650),
                 },
             ),
             (
                 4,
                 WorldObject::Toy {
                     toy: ToyId::Bell,
-                    position: NormalizedPosition::new(6_500, 8_900),
+                    position: NormalizedPosition::new(6_650, 8_700),
                 },
             ),
             (
                 5,
                 WorldObject::Toy {
                     toy: ToyId::Sock,
-                    position: NormalizedPosition::new(8_000, 8_900),
+                    position: NormalizedPosition::new(8_250, 10_000),
                 },
             ),
         ]);
@@ -929,7 +929,7 @@ impl Default for AquariumState {
                 (
                     ToyId::Ball,
                     ToyObjectState {
-                        position: NormalizedPosition::new(5_000, 8_900),
+                        position: NormalizedPosition::new(4_800, 7_650),
                         velocity: NormalizedVelocity::default(),
                         carried: false,
                         last_response: ToyResponse::None,
@@ -939,7 +939,7 @@ impl Default for AquariumState {
                 (
                     ToyId::Bell,
                     ToyObjectState {
-                        position: NormalizedPosition::new(6_500, 8_900),
+                        position: NormalizedPosition::new(6_650, 8_700),
                         velocity: NormalizedVelocity::default(),
                         carried: false,
                         last_response: ToyResponse::None,
@@ -949,7 +949,7 @@ impl Default for AquariumState {
                 (
                     ToyId::Sock,
                     ToyObjectState {
-                        position: NormalizedPosition::new(8_000, 8_900),
+                        position: NormalizedPosition::new(8_250, 10_000),
                         velocity: NormalizedVelocity::default(),
                         carried: false,
                         last_response: ToyResponse::None,

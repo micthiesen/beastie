@@ -20,7 +20,7 @@
 {"version":1,"command":"wait","milliseconds":3000}
 {"version":1,"command":"marker","name":"06-repeat-disliked-toy"}
 {"version":1,"command":"play","toy":"bell"}
-{"version":1,"command":"wait","milliseconds":30000}
+{"version":1,"command":"wait","milliseconds":34000}
 {"version":1,"command":"marker","name":"07-return-to-life"}
 {"version":1,"command":"capture","name":"07-return-to-life"}
 {"version":1,"command":"talk","text":"Tell me one small thought."}

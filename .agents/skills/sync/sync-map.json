@@ -8,14 +8,18 @@
   },
   "resources": [
     {
-      "path": ".claude/skills/next/",
-      "peers": ["stillair"],
+      "path": ".agents/skills/next/",
+      "peers": [
+        "stillair"
+      ],
       "mode": "judgment",
       "notes": "Shared shape only: gather ground truth, enumerate candidates, recommend, and record in docs/STATE.md. Beastie uses mvp-spec.md and software/test gates; stillair uses design/build/hardware gates."
     },
     {
-      "path": ".claude/skills/wrap/",
-      "peers": ["stillair"],
+      "path": ".agents/skills/wrap/",
+      "peers": [
+        "stillair"
+      ],
       "mode": "judgment",
       "notes": "Shared shape only: sweep learnings to durable homes, decide next, rewrite STATE.md wholesale, verify, commit, and push. Each project owns its learning-routing table and gate."
     }
