@@ -1,0 +1,53 @@
+{
+  "schema_version": 2,
+  "measurement": "CPU wall-frame intervals, including GPU backpressure, pacing and capture overhead; not GPU pass timings",
+  "presentation_uncapped": true,
+  "ray_pass_measurement": "Independent asynchronous diagnostic samples; first 30 unique samples per path excluded. elapsed_gpu is hardware timestamp duration; elapsed_cpu is command recording duration. Missing GPU paths or available=false mean unavailable; zero timestamps are discarded. compute_gpu uses compute-pass boundary timestamps, excluding presentation; readbacks still in flight at exit are not included.",
+  "ray_passes": {
+    "render/ray_trace/elapsed_cpu": {
+      "available": true,
+      "samples_seen": 1099,
+      "warmup_samples": 30,
+      "measured_samples": 1069,
+      "p50_ms": 0.020041999999999997,
+      "p95_ms": 0.034083,
+      "p99_ms": 0.036583
+    },
+    "render/ray_trace/elapsed_gpu": {
+      "available": false,
+      "samples_seen": 1099,
+      "warmup_samples": 30,
+      "measured_samples": 0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null
+    }
+  },
+  "compute_gpu": {
+    "available": true,
+    "samples_seen": 1100,
+    "warmup_samples": 30,
+    "measured_samples": 1070,
+    "p50_ms": 27.458,
+    "p95_ms": 28.795792,
+    "p99_ms": 29.018375
+  },
+  "percentile_method": "nearest rank",
+  "warmup_frames": 30,
+  "total_frames": 1105,
+  "measured_frames": 1075,
+  "measured_wall_elapsed_ms": 29583.413208000005,
+  "wall_frame_p50_ms": 28.981625,
+  "wall_frame_p95_ms": 29.356208000000002,
+  "wall_frame_p99_ms": 29.602125,
+  "peak_scene": {
+    "triangle_arena_count": 956752,
+    "blas_node_arena_count": 478376,
+    "instance_count": 69,
+    "tlas_node_count": 73,
+    "geometry_arena_bytes": 153080320,
+    "instance_and_tlas_data_bytes": 14480
+  },
+  "adapter": "Apple M5 Max",
+  "backend": "Metal"
+}

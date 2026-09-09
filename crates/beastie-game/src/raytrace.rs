@@ -1,5 +1,7 @@
 //! Unified ordinary-compute rendering. The fullscreen draw only transfers computed radiance.
-use crate::ray_scene::{BvhNode, GpuInstance, RayScene, Triangle};
+use crate::ray_scene::{
+    BvhNode, GeometryTriangle, GpuInstance, RayScene, Triangle, TriangleSurface,
+};
 use bevy::{
     core_pipeline::FullscreenShader,
     ecs::schedule::ScheduleLabel,
@@ -140,10 +142,12 @@ struct Params {
     world_from_clip: Mat4,
     size: UVec4,
     water: Vec4,
+    roots: UVec4,
 }
 #[derive(Default)]
 struct FrameBuffers {
     triangles: Option<Buffer>,
+    surfaces: Option<Buffer>,
     nodes: Option<Buffer>,
     chunks: HashMap<u32, u64>,
     instances: StorageBuffer<Vec<GpuInstance>>,
@@ -158,12 +162,13 @@ fn setup_pipeline(mut commands: Commands, shaders: Res<RayShaders>, cache: Res<P
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                storage_buffer_read_only::<Vec<Triangle>>(false),
+                storage_buffer_read_only::<Vec<GeometryTriangle>>(false),
                 storage_buffer_read_only::<Vec<BvhNode>>(false),
                 storage_buffer_read_only::<Vec<GpuInstance>>(false),
                 storage_buffer_read_only::<Vec<BvhNode>>(false),
                 uniform_buffer::<Params>(false),
                 texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
+                storage_buffer_read_only::<Vec<TriangleSurface>>(false),
             ),
         ),
     );
@@ -200,6 +205,7 @@ fn render(
     fullscreen: Res<FullscreenShader>,
     queue: Res<RenderQueue>,
     device: Res<RenderDevice>,
+    gpu_timing: Option<Res<crate::ray_stats::ComputeGpuTiming>>,
     mut frame: Local<FrameBuffers>,
     mut ctx: RenderContext,
 ) {
@@ -265,7 +271,8 @@ fn render(
         let view = texture.create_view(&TextureViewDescriptor::default());
         frame.output = Some((size, texture, view));
     }
-    let triangle_bytes = u64::from(scene.triangle_count) * Triangle::min_size().get();
+    let triangle_bytes = u64::from(scene.triangle_count) * GeometryTriangle::min_size().get();
+    let surface_bytes = u64::from(scene.triangle_count) * TriangleSurface::min_size().get();
     let node_bytes = u64::from(scene.node_count) * BvhNode::min_size().get();
     let grow_triangles = ensure_buffer(
         &mut frame.triangles,
@@ -273,21 +280,44 @@ fn render(
         "ray triangles",
         &device,
     );
+    let grow_surfaces = ensure_buffer(
+        &mut frame.surfaces,
+        surface_bytes,
+        "ray triangle surfaces",
+        &device,
+    );
     let grow_nodes = ensure_buffer(&mut frame.nodes, node_bytes, "ray nodes", &device);
-    if grow_triangles || grow_nodes {
+    if let Some(timing) = &gpu_timing {
+        timing.observe_scene(
+            frame.triangles.as_ref().unwrap().size()
+                + frame.surfaces.as_ref().unwrap().size()
+                + frame.nodes.as_ref().unwrap().size(),
+            size,
+        );
+    }
+    if grow_triangles || grow_surfaces || grow_nodes {
         frame.chunks.clear();
     }
     for chunk in &scene.geometry {
         if frame.chunks.get(&chunk.triangle_offset) == Some(&chunk.revision) {
             continue;
         }
+        let geometry: Vec<_> = chunk.triangles.iter().map(Triangle::geometry).collect();
+        let surfaces: Vec<_> = chunk.triangles.iter().map(Triangle::surface).collect();
         let mut encoded = encase::StorageBuffer::new(Vec::new());
-        encoded
-            .write(chunk.triangles.as_ref())
-            .expect("triangle shader layout");
+        encoded.write(&geometry).expect("triangle shader layout");
         queue.write_buffer(
             frame.triangles.as_ref().unwrap(),
-            u64::from(chunk.triangle_offset) * Triangle::min_size().get(),
+            u64::from(chunk.triangle_offset) * GeometryTriangle::min_size().get(),
+            encoded.as_ref(),
+        );
+        let mut encoded = encase::StorageBuffer::new(Vec::new());
+        encoded
+            .write(&surfaces)
+            .expect("triangle surface shader layout");
+        queue.write_buffer(
+            frame.surfaces.as_ref().unwrap(),
+            u64::from(chunk.triangle_offset) * TriangleSurface::min_size().get(),
             encoded.as_ref(),
         );
         let mut encoded = encase::StorageBuffer::new(Vec::new());
@@ -314,6 +344,7 @@ fn render(
     frame.params.set(Params {
         world_from_clip: view.world_from_view.to_matrix() * view.clip_from_view.inverse(),
         water: water.0,
+        roots: UVec4::new(0, scene.world_root, scene.shadow_root, 0),
         size: UVec4::new(
             size.x,
             size.y,
@@ -333,6 +364,7 @@ fn render(
             frame.tlas.binding().unwrap(),
             frame.params.binding().unwrap(),
             output,
+            frame.surfaces.as_ref().unwrap().as_entire_binding(),
         )),
     );
     let transfer = device.create_bind_group(
@@ -343,16 +375,26 @@ fn render(
     let recorder = ctx.diagnostic_recorder();
     let recorder = recorder.as_deref();
     let span = recorder.time_span(ctx.command_encoder(), "ray_trace");
+    let timing_slot = gpu_timing.as_ref().and_then(|timing| timing.begin(&device));
     {
         let mut pass = ctx
             .command_encoder()
             .begin_compute_pass(&ComputePassDescriptor {
                 label: Some("trace aquarium"),
-                ..default()
+                timestamp_writes: timing_slot.as_ref().map(|slot| {
+                    wgpu::ComputePassTimestampWrites {
+                        query_set: &slot.queries,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: Some(1),
+                    }
+                }),
             });
         pass.set_pipeline(compute);
         pass.set_bind_group(0, &bind, &[]);
         pass.dispatch_workgroups(size.x.div_ceil(8), size.y.div_ceil(8), 1);
+    }
+    if let (Some(timing), Some(slot)) = (&gpu_timing, timing_slot) {
+        timing.finish(slot, ctx.command_encoder(), queue.get_timestamp_period());
     }
     if let Some(attachment) = target.out_texture_color_attachment(Some(LinearRgba::BLACK)) {
         let mut pass = ctx
@@ -386,18 +428,56 @@ fn ensure_buffer(
         size <= device.limits().max_storage_buffer_binding_size,
         "ray scene exceeds this GPU storage binding limit"
     );
-    *buffer = Some(
-        device.create_buffer(&BufferDescriptor {
-            label: Some(label),
-            size: size
-                .max(256)
-                .next_power_of_two()
-                .min(device.limits().max_storage_buffer_binding_size),
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }),
-    );
+    *buffer = Some(device.create_buffer(&BufferDescriptor {
+        label: Some(label),
+        size: geometry_buffer_capacity(size, device.limits().max_storage_buffer_binding_size),
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    }));
     true
+}
+
+// Geometry arenas already reserve per-mesh power-of-two slots. A second byte
+// power-of-two expansion can waste another 100%, especially after separating
+// 48-byte geometry from 96-byte attributes. Modest slack still amortizes growth.
+fn geometry_buffer_capacity(required: u64, limit: u64) -> u64 {
+    assert!(required <= limit);
+    required
+        .saturating_add(required / 8)
+        .max(256)
+        .next_multiple_of(256)
+        .min(limit)
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::geometry_buffer_capacity;
+
+    #[test]
+    fn geometry_capacity_covers_uploads_without_doubling_each_attribute_arena() {
+        let limit = 128 * 1024 * 1024;
+        for required in [
+            0,
+            1,
+            255,
+            256,
+            257,
+            749_520 * 48,
+            749_520 * 96,
+            limit - 1,
+            limit,
+        ] {
+            let capacity = geometry_buffer_capacity(required, limit);
+            assert!(capacity >= required && capacity <= limit);
+            assert_eq!(capacity % 256, 0);
+            assert!(capacity <= required + required / 8 + 256);
+        }
+        assert!(
+            geometry_buffer_capacity(749_520 * 48, limit)
+                + geometry_buffer_capacity(749_520 * 96, limit)
+                < 128 * 1024 * 1024
+        );
+    }
 }
 
 fn clear_target(target: &ViewTarget, ctx: &mut RenderContext) {

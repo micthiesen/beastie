@@ -50,6 +50,17 @@ impl VoxelModel {
     }
 
     pub fn mesh_with_style(&self, cell_size: f32, style: SurfaceStyle) -> Mesh {
+        self.build_mesh(cell_size, style, false)
+    }
+
+    /// Reduce planar bevel subdivisions while retaining every boundary edge.
+    /// Use only when normals remain flat: later position-dependent normal or
+    /// color generation can depend on the removed interior vertices.
+    pub fn mesh_with_flat_normals(&self, cell_size: f32, style: SurfaceStyle) -> Mesh {
+        self.build_mesh(cell_size, style, true)
+    }
+
+    fn build_mesh(&self, cell_size: f32, style: SurfaceStyle, reduce_flat_faces: bool) -> Mesh {
         assert!(cell_size.is_finite() && cell_size > 0.0);
         let mut geometry = Geometry::default();
         if style == SurfaceStyle::Separated {
@@ -72,7 +83,9 @@ impl VoxelModel {
                 }
             }
         }
-        boundary.geometry(cell_size, style).mesh()
+        boundary
+            .geometry(cell_size, style, reduce_flat_faces)
+            .mesh()
     }
 }
 
@@ -141,7 +154,7 @@ impl Boundary {
         }
     }
 
-    fn geometry(self, cell_size: f32, style: SurfaceStyle) -> Geometry {
+    fn geometry(self, cell_size: f32, style: SurfaceStyle, reduce_flat_faces: bool) -> Geometry {
         let positions: BTreeMap<_, _> = self
             .vertices
             .iter()
@@ -173,17 +186,104 @@ impl Boundary {
             })
             .collect();
         let mut geometry = Geometry::default();
-        for (quad, color) in self.quads {
-            let points = quad.map(|p| positions[&p]);
-            if style == SurfaceStyle::Sharp {
-                geometry.quad(points, color);
-            } else {
-                geometry.triangle([points[0], points[1], points[2]], color);
-                geometry.triangle([points[0], points[2], points[3]], color);
+        let face_quads = if style == SurfaceStyle::Beveled { 9 } else { 1 };
+        for face in self.quads.chunks_exact(face_quads) {
+            if reduce_flat_faces
+                && style == SurfaceStyle::Beveled
+                && let Some(triangles) = flat_face_triangles(face, &positions)
+            {
+                for triangle in triangles {
+                    geometry.triangle(triangle, face[0].1);
+                }
+                continue;
+            }
+            for &(quad, color) in face {
+                let points = quad.map(|p| positions[&p]);
+                if style == SurfaceStyle::Sharp {
+                    geometry.quad(points, color);
+                } else {
+                    geometry.triangle([points[0], points[1], points[2]], color);
+                    geometry.triangle([points[0], points[2], points[3]], color);
+                }
             }
         }
         geometry
     }
+}
+
+/// Ear clipping preserves the collinear perimeter vertices that neighboring
+/// bevel patches share. A simple two-triangle quad would leave unmatched edges.
+fn flat_face_triangles(
+    face: &[([Point; 4], [u8; 3])],
+    positions: &BTreeMap<Point, Vec3>,
+) -> Option<Vec<[Vec3; 3]>> {
+    let first = positions[&face[0].0[0]];
+    let axis = (0..3).find(|&axis| {
+        face.iter()
+            .flat_map(|(quad, _)| quad)
+            .all(|p| positions[p][axis] == first[axis])
+    })?;
+    let mut edges = BTreeMap::new();
+    for (quad, _) in face {
+        for i in 0..4 {
+            let from = quad[i];
+            let to = quad[(i + 1) % 4];
+            if edges.remove(&(to, from)).is_none() {
+                edges.insert((from, to), ());
+            }
+        }
+    }
+    let start = edges.first_key_value()?.0.0;
+    let mut point = start;
+    let mut polygon = Vec::with_capacity(edges.len());
+    loop {
+        polygon.push(positions[&point]);
+        let next = edges.keys().find(|&&(from, _)| from == point)?.1;
+        edges.remove(&(point, next));
+        point = next;
+        if point == start {
+            break;
+        }
+    }
+    if !edges.is_empty() || polygon.len() != 12 {
+        return None;
+    }
+    let a = (axis + 1) % 3;
+    let b = (axis + 2) % 3;
+    let cross = |p: Vec3, q: Vec3, r: Vec3| {
+        (f64::from(q[a]) - f64::from(p[a])) * (f64::from(r[b]) - f64::from(p[b]))
+            - (f64::from(q[b]) - f64::from(p[b])) * (f64::from(r[a]) - f64::from(p[a]))
+    };
+    let normal = face[0].0.map(|p| positions[&p]);
+    let sign = cross(normal[0], normal[1], normal[2]).signum();
+    let mut triangles = Vec::with_capacity(10);
+    while polygon.len() > 3 {
+        let ear = (0..polygon.len()).find(|&i| {
+            let previous = (i + polygon.len() - 1) % polygon.len();
+            let next = (i + 1) % polygon.len();
+            let [p, q, r] = [polygon[previous], polygon[i], polygon[next]];
+            cross(p, q, r) * sign > 0.0
+                && polygon.iter().enumerate().all(|(j, &test)| {
+                    j == previous
+                        || j == i
+                        || j == next
+                        || cross(p, q, test) * sign < 0.0
+                        || cross(q, r, test) * sign < 0.0
+                        || cross(r, p, test) * sign < 0.0
+                })
+        })?;
+        triangles.push([
+            polygon[(ear + polygon.len() - 1) % polygon.len()],
+            polygon[ear],
+            polygon[(ear + 1) % polygon.len()],
+        ]);
+        polygon.remove(ear);
+    }
+    if cross(polygon[0], polygon[1], polygon[2]) * sign <= 0.0 {
+        return None;
+    }
+    triangles.push([polygon[0], polygon[1], polygon[2]]);
+    Some(triangles)
 }
 
 /// A single mesh assembled from colored blocks, useful for scenery and raised interface panels.
@@ -259,7 +359,9 @@ impl Geometry {
     pub fn mesh(self) -> Mesh {
         Mesh::new(
             PrimitiveTopology::TriangleList,
-            RenderAssetUsages::default(),
+            // The compute renderer packs its own geometry buffers from CPU
+            // meshes. Bevy's raster mesh upload would duplicate this storage.
+            RenderAssetUsages::MAIN_WORLD,
         )
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
@@ -271,6 +373,115 @@ impl Geometry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn planar_reduction_preserves_closed_boundaries_normals_and_colors() {
+        let mut model = VoxelModel::default();
+        for x in -3..=3 {
+            for z in -3..=3 {
+                for y in 0..if z < 0 { 3 } else { 1 } {
+                    model.set(
+                        [x, y, z],
+                        if x < 1 { [180, 150, 90] } else { [90, 130, 80] },
+                    );
+                }
+            }
+        }
+        let original = model.mesh_with_style(0.13, SurfaceStyle::Beveled);
+        let reduced = model.mesh_with_flat_normals(0.13, SurfaceStyle::Beveled);
+        assert!(reduced.indices().unwrap().len() < original.indices().unwrap().len());
+        assert_closed_and_valid(&reduced);
+        let positions = |mesh: &Mesh| {
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+                .as_float3()
+                .unwrap()
+                .to_vec()
+        };
+        let original_positions = positions(&original);
+        assert!(
+            positions(&reduced)
+                .iter()
+                .all(|p| original_positions.contains(p))
+        );
+
+        // Compare area on every oriented colored plane, including all unchanged
+        // bevel facets. Retriangulation must not change appearance attributes.
+        let planes = |mesh: &Mesh| {
+            let positions = positions(mesh);
+            let normals = mesh
+                .attribute(Mesh::ATTRIBUTE_NORMAL)
+                .unwrap()
+                .as_float3()
+                .unwrap();
+            let bevy::mesh::VertexAttributeValues::Float32x4(colors) =
+                mesh.attribute(Mesh::ATTRIBUTE_COLOR).unwrap()
+            else {
+                panic!("colors")
+            };
+            let mut result = BTreeMap::<([u32; 3], u32, [u32; 4]), f64>::new();
+            let indices: Vec<_> = mesh.indices().unwrap().iter().collect();
+            for tri in indices.chunks_exact(3) {
+                let [a, b, c] = [tri[0], tri[1], tri[2]].map(|i| Vec3::from(positions[i]));
+                let mut normal = Vec3::from(normals[tri[0]]);
+                if normal.to_array().iter().filter(|&&v| v != 0.0).count() == 1 {
+                    // f32 normalization can yield 0.99999994 on an axis. Larger
+                    // triangles change that rounding, not the supporting plane.
+                    // Bound the normal error explicitly before canonicalizing
+                    // this exact axis direction for the plane-area comparison.
+                    let axis_normal = normal.map(|v| if v == 0.0 { 0.0 } else { v.signum() });
+                    assert!((normal - axis_normal).abs().max_element() <= f32::EPSILON);
+                    normal = axis_normal;
+                }
+                let canonical = |v: f32| if v == 0.0 { 0 } else { v.to_bits() };
+                let key = (
+                    normal.to_array().map(canonical),
+                    canonical(normal.dot(a)),
+                    colors[tri[0]].map(canonical),
+                );
+                *result.entry(key).or_default() += f64::from((b - a).cross(c - a).length()) * 0.5;
+            }
+            result
+        };
+        let original_planes = planes(&original);
+        let reduced_planes = planes(&reduced);
+        assert_eq!(original_planes.len(), reduced_planes.len());
+        for (key, area) in original_planes {
+            let reduced_area = reduced_planes[&key];
+            assert!(
+                (area - reduced_area).abs() < 1e-6,
+                "plane area changed: normal {:?}, distance {}, color {:?}, {area} -> {reduced_area}",
+                key.0.map(f32::from_bits),
+                f32::from_bits(key.1),
+                key.2.map(f32::from_bits)
+            );
+        }
+    }
+
+    #[test]
+    fn nonplanar_bevel_faces_and_other_styles_keep_their_triangles() {
+        let mut model = VoxelModel::default();
+        model.set([0, 0, 0], [150, 100, 80]);
+        for style in [
+            SurfaceStyle::Sharp,
+            SurfaceStyle::Beveled,
+            SurfaceStyle::Separated,
+        ] {
+            let original = model.mesh_with_style(0.13, style);
+            let reduced = model.mesh_with_flat_normals(0.13, style);
+            assert_eq!(original.indices().unwrap(), reduced.indices().unwrap());
+            for attribute in [
+                Mesh::ATTRIBUTE_POSITION,
+                Mesh::ATTRIBUTE_NORMAL,
+                Mesh::ATTRIBUTE_COLOR,
+            ] {
+                assert_eq!(
+                    original.attribute(attribute).unwrap(),
+                    reduced.attribute(attribute).unwrap()
+                );
+            }
+        }
+    }
 
     #[test]
     fn adjacent_voxels_remove_their_shared_faces() {

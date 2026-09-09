@@ -1,0 +1,727 @@
+[
+  {
+    "suite": "ui",
+    "state": "large-bindings",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 389,
+      "equal_fraction": 0.9998124035493827,
+      "mean_channel_difference": 0.002551118827160494,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-comfort",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 343,
+      "equal_fraction": 0.999834587191358,
+      "mean_channel_difference": 0.0009683641975308642,
+      "max_channel_difference": 33
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "settings_interior": {
+      "pixels": 552750,
+      "changed_pixels": 152,
+      "equal_fraction": 0.9997250113071009,
+      "mean_channel_difference": 0.0001821197045077642,
+      "max_channel_difference": 2
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-context",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 162,
+      "equal_fraction": 0.999921875,
+      "mean_channel_difference": 0.0007582626028806585,
+      "max_channel_difference": 33
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-controls",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 357,
+      "equal_fraction": 0.9998278356481481,
+      "mean_channel_difference": 0.0009739904835390946,
+      "max_channel_difference": 33
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "settings_interior": {
+      "pixels": 552750,
+      "changed_pixels": 166,
+      "equal_fraction": 0.999699683401176,
+      "mean_channel_difference": 0.0002032262927785316,
+      "max_channel_difference": 3
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-data",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 464,
+      "equal_fraction": 0.9997762345679012,
+      "mean_channel_difference": 0.003283500514403292,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-drop",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 572,
+      "equal_fraction": 0.9997241512345679,
+      "mean_channel_difference": 0.0035108024691358026,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-food",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 454,
+      "equal_fraction": 0.9997810570987654,
+      "mean_channel_difference": 0.003267746913580247,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-keyboard",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 448,
+      "equal_fraction": 0.999783950617284,
+      "mean_channel_difference": 0.003173707561728395,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "keyboard_central": {
+      "pixels": 1086800,
+      "changed_pixels": 31,
+      "equal_fraction": 0.9999714758925285,
+      "mean_channel_difference": 0.0005940988835725678,
+      "max_channel_difference": 57
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-quiet",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 572,
+      "equal_fraction": 0.9997241512345679,
+      "mean_channel_difference": 0.0035108024691358026,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-rename",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 572,
+      "equal_fraction": 0.9997241512345679,
+      "mean_channel_difference": 0.0035108024691358026,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-reset",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 570,
+      "equal_fraction": 0.9997251157407407,
+      "mean_channel_difference": 0.0034891010802469134,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-sound",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 265,
+      "equal_fraction": 0.9998722029320988,
+      "mean_channel_difference": 0.0009358924897119341,
+      "max_channel_difference": 33
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "settings_interior": {
+      "pixels": 552750,
+      "changed_pixels": 76,
+      "equal_fraction": 0.9998625056535504,
+      "mean_channel_difference": 7.538067239559776e-05,
+      "max_channel_difference": 3
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-speech",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 278,
+      "equal_fraction": 0.9998659336419753,
+      "mean_channel_difference": 0.0007433127572016461,
+      "max_channel_difference": 61
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "large-toys",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 454,
+      "equal_fraction": 0.9997810570987654,
+      "mean_channel_difference": 0.003267746913580247,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-bindings",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 389,
+      "equal_fraction": 0.9998124035493827,
+      "mean_channel_difference": 0.002551118827160494,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-comfort",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 343,
+      "equal_fraction": 0.999834587191358,
+      "mean_channel_difference": 0.0009683641975308642,
+      "max_channel_difference": 33
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "settings_interior": {
+      "pixels": 552750,
+      "changed_pixels": 152,
+      "equal_fraction": 0.9997250113071009,
+      "mean_channel_difference": 0.0001821197045077642,
+      "max_channel_difference": 2
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-context",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 162,
+      "equal_fraction": 0.999921875,
+      "mean_channel_difference": 0.0007582626028806585,
+      "max_channel_difference": 33
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-controls",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 357,
+      "equal_fraction": 0.9998278356481481,
+      "mean_channel_difference": 0.0009739904835390946,
+      "max_channel_difference": 33
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "settings_interior": {
+      "pixels": 552750,
+      "changed_pixels": 166,
+      "equal_fraction": 0.999699683401176,
+      "mean_channel_difference": 0.0002032262927785316,
+      "max_channel_difference": 3
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-data",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 464,
+      "equal_fraction": 0.9997762345679012,
+      "mean_channel_difference": 0.003283500514403292,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-drop",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 572,
+      "equal_fraction": 0.9997241512345679,
+      "mean_channel_difference": 0.0035108024691358026,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-food",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 454,
+      "equal_fraction": 0.9997810570987654,
+      "mean_channel_difference": 0.003267746913580247,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-keyboard",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 448,
+      "equal_fraction": 0.999783950617284,
+      "mean_channel_difference": 0.003173707561728395,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "keyboard_central": {
+      "pixels": 1086800,
+      "changed_pixels": 31,
+      "equal_fraction": 0.9999714758925285,
+      "mean_channel_difference": 0.0005940988835725678,
+      "max_channel_difference": 57
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-quiet",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 572,
+      "equal_fraction": 0.9997241512345679,
+      "mean_channel_difference": 0.0035108024691358026,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-rename",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 572,
+      "equal_fraction": 0.9997241512345679,
+      "mean_channel_difference": 0.0035108024691358026,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-reset",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 570,
+      "equal_fraction": 0.9997251157407407,
+      "mean_channel_difference": 0.0034891010802469134,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-sound",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 265,
+      "equal_fraction": 0.9998722029320988,
+      "mean_channel_difference": 0.0009358924897119341,
+      "max_channel_difference": 33
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "settings_interior": {
+      "pixels": 552750,
+      "changed_pixels": 76,
+      "equal_fraction": 0.9998625056535504,
+      "mean_channel_difference": 7.538067239559776e-05,
+      "max_channel_difference": 3
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-speech",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 278,
+      "equal_fraction": 0.9998659336419753,
+      "mean_channel_difference": 0.0007433127572016461,
+      "max_channel_difference": 61
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "ui",
+    "state": "normal-toys",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 454,
+      "equal_fraction": 0.9997810570987654,
+      "mean_channel_difference": 0.003267746913580247,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "gold",
+    "state": "continued",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 572,
+      "equal_fraction": 0.9997241512345679,
+      "mean_channel_difference": 0.0035108024691358026,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "gold",
+    "state": "gameplay",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 572,
+      "equal_fraction": 0.9997241512345679,
+      "mean_channel_difference": 0.0035108024691358026,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "gold",
+    "state": "selected-toy",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 573,
+      "equal_fraction": 0.9997236689814815,
+      "mean_channel_difference": 0.003512088477366255,
+      "max_channel_difference": 76
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    }
+  },
+  {
+    "suite": "gold",
+    "state": "settings-large",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 265,
+      "equal_fraction": 0.9998722029320988,
+      "mean_channel_difference": 0.0009358924897119341,
+      "max_channel_difference": 33
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "settings_interior": {
+      "pixels": 552750,
+      "changed_pixels": 76,
+      "equal_fraction": 0.9998625056535504,
+      "mean_channel_difference": 7.538067239559776e-05,
+      "max_channel_difference": 3
+    }
+  },
+  {
+    "suite": "gold",
+    "state": "settings-sound",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 265,
+      "equal_fraction": 0.9998722029320988,
+      "mean_channel_difference": 0.0009358924897119341,
+      "max_channel_difference": 33
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "settings_interior": {
+      "pixels": 552750,
+      "changed_pixels": 76,
+      "equal_fraction": 0.9998625056535504,
+      "mean_channel_difference": 7.538067239559776e-05,
+      "max_channel_difference": 3
+    }
+  },
+  {
+    "suite": "gold",
+    "state": "settings",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 343,
+      "equal_fraction": 0.999834587191358,
+      "mean_channel_difference": 0.0009683641975308642,
+      "max_channel_difference": 33
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 0,
+      "equal_fraction": 1.0,
+      "mean_channel_difference": 0.0,
+      "max_channel_difference": 0
+    },
+    "settings_interior": {
+      "pixels": 552750,
+      "changed_pixels": 152,
+      "equal_fraction": 0.9997250113071009,
+      "mean_channel_difference": 0.0001821197045077642,
+      "max_channel_difference": 2
+    }
+  },
+  {
+    "suite": "gold",
+    "state": "title-return",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 347,
+      "equal_fraction": 0.9998326581790123,
+      "mean_channel_difference": 0.0007900913065843621,
+      "max_channel_difference": 56
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 20,
+      "equal_fraction": 0.9999421296296296,
+      "mean_channel_difference": 0.00011188271604938272,
+      "max_channel_difference": 5
+    }
+  },
+  {
+    "suite": "gold",
+    "state": "title-screen",
+    "full": {
+      "pixels": 2073600,
+      "changed_pixels": 347,
+      "equal_fraction": 0.9998326581790123,
+      "mean_channel_difference": 0.0007900913065843621,
+      "max_channel_difference": 56
+    },
+    "bottom_ui": {
+      "pixels": 345600,
+      "changed_pixels": 20,
+      "equal_fraction": 0.9999421296296296,
+      "mean_channel_difference": 0.00011188271604938272,
+      "max_channel_difference": 5
+    }
+  }
+]

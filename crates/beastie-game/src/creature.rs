@@ -234,11 +234,36 @@ pub(crate) fn setup_creature(
         unlit: true,
         ..default()
     });
-    let mut spawn = |part: CreaturePart, mesh: Mesh, facial: bool| {
+    // Rigid animation only changes entity transforms. Identical parts share one
+    // mesh asset and therefore one cached BLAS in the compute renderer.
+    let mut add_mesh = |mesh| meshes.add(appearance.mesh(mesh));
+    let head = add_mesh(rounded_mesh(
+        VoxelModel::ellipsoid(CREATURE.head_radii, golden),
+        CREATURE.head_radii,
+        CREATURE.head_cell,
+        style,
+    ));
+    let eyes = add_mesh(solid([4, 5, 2], 0.044, CREATURE.eye));
+    let pupils = add_mesh(solid([2, 3, 1], 0.036, CREATURE.pupil));
+    let glints = add_mesh(solid([0, 0, 0], 0.039, CREATURE.glint));
+    let brows = add_mesh(solid([3, 0, 1], 0.045, CREATURE.brow));
+    let mouth_corners = add_mesh(solid([0, 1, 0], 0.038, CREATURE.mouth));
+    let cheeks = add_mesh(solid([2, 1, 0], 0.039, CREATURE.cheek));
+    let fin = add_mesh(fin_mesh(style));
+    let mouth = add_mesh(solid([3, 1, 1], 0.036, CREATURE.mouth));
+    let lower_lip = add_mesh(solid([2, 0, 0], 0.036, CREATURE.lip));
+    let tongue = add_mesh(solid([1, 0, 0], 0.034, CREATURE.tongue));
+    let body = add_mesh(rounded_mesh(
+        VoxelModel::ellipsoid(BODY_RADII, golden),
+        BODY_RADII,
+        BODY_CELL,
+        style,
+    ));
+    let mut spawn = |part: CreaturePart, mesh: Handle<Mesh>, facial: bool| {
         let eye = matches!(part, CreaturePart::Eye(_));
         commands.spawn((
             part,
-            Mesh3d(meshes.add(appearance.mesh(mesh))),
+            Mesh3d(mesh),
             MeshMaterial3d(if eye {
                 eye_material.clone()
             } else if facial {
@@ -249,78 +274,24 @@ pub(crate) fn setup_creature(
             Transform::default(),
         ));
     };
-    spawn(
-        CreaturePart::Head,
-        rounded_mesh(
-            VoxelModel::ellipsoid(CREATURE.head_radii, golden),
-            CREATURE.head_radii,
-            CREATURE.head_cell,
-            style,
-        ),
-        false,
-    );
+    spawn(CreaturePart::Head, head, false);
     for side in [-1.0, 1.0] {
-        spawn(
-            CreaturePart::Eye(side),
-            solid([4, 5, 2], 0.044, CREATURE.eye),
-            true,
-        );
-        spawn(
-            CreaturePart::Pupil(side),
-            solid([2, 3, 1], 0.036, CREATURE.pupil),
-            true,
-        );
-        spawn(
-            CreaturePart::Glint(side),
-            solid([0, 0, 0], 0.039, CREATURE.glint),
-            true,
-        );
-        spawn(
-            CreaturePart::Brow(side),
-            solid([3, 0, 1], 0.045, CREATURE.brow),
-            false,
-        );
-        spawn(
-            CreaturePart::MouthCorner(side),
-            solid([0, 1, 0], 0.038, CREATURE.mouth),
-            true,
-        );
-        spawn(
-            CreaturePart::Cheek(side),
-            solid([2, 1, 0], 0.039, CREATURE.cheek),
-            false,
-        );
-        spawn(CreaturePart::Fin(side), fin_mesh(style), false);
+        spawn(CreaturePart::Eye(side), eyes.clone(), true);
+        spawn(CreaturePart::Pupil(side), pupils.clone(), true);
+        spawn(CreaturePart::Glint(side), glints.clone(), true);
+        spawn(CreaturePart::Brow(side), brows.clone(), false);
+        spawn(CreaturePart::MouthCorner(side), mouth_corners.clone(), true);
+        spawn(CreaturePart::Cheek(side), cheeks.clone(), false);
+        spawn(CreaturePart::Fin(side), fin.clone(), false);
     }
-    spawn(
-        CreaturePart::Mouth,
-        solid([3, 1, 1], 0.036, CREATURE.mouth),
-        true,
-    );
-    spawn(
-        CreaturePart::LowerLip,
-        solid([2, 0, 0], 0.036, CREATURE.lip),
-        true,
-    );
-    spawn(
-        CreaturePart::Tongue,
-        solid([1, 0, 0], 0.034, CREATURE.tongue),
-        true,
-    );
-    spawn(CreaturePart::Crest, fin_mesh(style), false);
+    spawn(CreaturePart::Mouth, mouth, true);
+    spawn(CreaturePart::LowerLip, lower_lip, true);
+    spawn(CreaturePart::Tongue, tongue, true);
+    spawn(CreaturePart::Crest, fin.clone(), false);
     for index in 0..SEGMENTS {
-        spawn(
-            CreaturePart::Body(index),
-            rounded_mesh(
-                VoxelModel::ellipsoid(BODY_RADII, golden),
-                BODY_RADII,
-                BODY_CELL,
-                style,
-            ),
-            false,
-        );
+        spawn(CreaturePart::Body(index), body.clone(), false);
     }
-    spawn(CreaturePart::Tail, fin_mesh(style), false);
+    spawn(CreaturePart::Tail, fin, false);
 }
 
 /// Continuous projection used by rendering and head picking. It never changes simulation state.
@@ -629,6 +600,45 @@ pub(crate) fn animate_creature(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn identical_articulated_parts_share_mesh_assets() {
+        use bevy::prelude::*;
+        use std::collections::HashSet;
+
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<crate::appearance::RenderAppearance>()
+            .add_systems(Startup, super::setup_creature);
+        app.update();
+        let world = app.world_mut();
+        let mut parts = world.query::<(&super::CreaturePart, &Mesh3d)>();
+        let mut bodies = HashSet::new();
+        let mut fins = HashSet::new();
+        let mut body_count = 0;
+        let mut fin_count = 0;
+        for (part, mesh) in parts.iter(world) {
+            match part {
+                super::CreaturePart::Body(_) => {
+                    bodies.insert(mesh.id());
+                    body_count += 1;
+                }
+                super::CreaturePart::Fin(_)
+                | super::CreaturePart::Crest
+                | super::CreaturePart::Tail => {
+                    fins.insert(mesh.id());
+                    fin_count += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(body_count, super::SEGMENTS);
+        assert_eq!(fin_count, 4);
+        assert_eq!(bodies.len(), 1);
+        assert_eq!(fins.len(), 1);
+        assert_eq!(world.resource::<Assets<Mesh>>().len(), 12);
+    }
+
     #[test]
     fn rounded_lighting_preserves_geometry_and_finite_unit_normals() {
         use crate::voxel::{SurfaceStyle, VoxelModel};

@@ -1,0 +1,15 @@
+{"version": 1, "command": "marker", "name": "00-surface-start"}
+{"version": 1, "command": "wait", "milliseconds": 1200}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "comfort"}
+{"version": 1, "command": "wait", "milliseconds": 700}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "wait", "milliseconds": 2500}
+{"version": 1, "command": "play", "toy": "ball"}
+{"version": 1, "command": "wait", "milliseconds": 5000}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "play", "toy": "bell"}
+{"version": 1, "command": "wait", "milliseconds": 2000}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "wait", "milliseconds": 3000}
+{"version": 1, "command": "wait", "milliseconds": 750}

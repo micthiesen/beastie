@@ -1,32 +1,36 @@
 // Geometry, letters and interface all intersect in this same ordinary-compute path.
-struct Triangle { a:vec4<f32>, b:vec4<f32>, c:vec4<f32>, n0:vec4<f32>, n1:vec4<f32>, n2:vec4<f32>, c0:vec4<f32>, c1:vec4<f32>, c2:vec4<f32> }
+struct Triangle { a:vec4<f32>, e1:vec4<f32>, e2:vec4<f32> }
+struct TriangleSurface { n0:vec4<f32>, n1:vec4<f32>, n2:vec4<f32>, c0:vec4<f32>, c1:vec4<f32>, c2:vec4<f32> }
 struct Node { lo:vec3<f32>, first:u32, hi:vec3<f32>, count:u32 }
 struct Instance { world:mat4x4<f32>, inverse:mat4x4<f32>, material:vec4<f32>, tint:vec4<f32>, root:u32, transmission:f32, pad1:u32, pad2:u32 }
-struct Params { world_from_clip:mat4x4<f32>, size:vec4<u32>, water:vec4<f32> }
+struct Params { world_from_clip:mat4x4<f32>, size:vec4<u32>, water:vec4<f32>, roots:vec4<u32> }
 @group(0) @binding(0) var<storage,read> triangles:array<Triangle>;
 @group(0) @binding(1) var<storage,read> nodes:array<Node>;
 @group(0) @binding(2) var<storage,read> instances:array<Instance>;
 @group(0) @binding(3) var<storage,read> tlas:array<Node>;
 @group(0) @binding(4) var<uniform> params:Params;
 @group(0) @binding(5) var output:texture_storage_2d<rgba16float,write>;
+@group(0) @binding(6) var<storage,read> surfaces:array<TriangleSurface>;
 struct Hit { t:f32, u:f32, v:f32, triangle:u32, instance:u32 }
-fn box_hit(o:vec3<f32>, d:vec3<f32>, lo:vec3<f32>, hi:vec3<f32>, limit:f32) -> f32 {
-    // Return the entry distance, or limit for a miss. Explicit parallel slabs
-    // avoid 0 * infinity and NaNs on exact voxel boundaries.
-    var near=0.0001; var far=limit;
-    for(var axis=0u;axis<3u;axis++) {
-        if(abs(d[axis])<1e-10) {
-            if(o[axis]<lo[axis] || o[axis]>hi[axis]) { return limit; }
-        } else {
-            let a=(lo[axis]-o[axis])/d[axis]; let b=(hi[axis]-o[axis])/d[axis];
-            near=max(near,min(a,b)); far=min(far,max(a,b));
-            if(far<near) { return limit; }
-        }
-    }
+// Cache reciprocals per ray coordinate space, never once per visited box.
+// Parallel axes use finite arithmetic, including origins exactly on a slab.
+struct SlabRay { origin:vec3<f32>, inverse:vec3<f32>, parallel:vec3<bool> }
+fn slab_ray(o:vec3<f32>, d:vec3<f32>) -> SlabRay {
+    let parallel=abs(d)<vec3(1e-10);
+    return SlabRay(o,1.0/select(d,vec3(1.0),parallel),parallel);
+}
+fn box_hit(ray:SlabRay, lo:vec3<f32>, hi:vec3<f32>, limit:f32) -> f32 {
+    if(any(select(vec3(false),ray.origin<lo,ray.parallel)) || any(select(vec3(false),ray.origin>hi,ray.parallel))) { return limit; }
+    let a=(lo-ray.origin)*ray.inverse;
+    let b=(hi-ray.origin)*ray.inverse;
+    let entry=select(min(a,b),vec3(0.0001),ray.parallel);
+    let exit=select(max(a,b),vec3(limit),ray.parallel);
+    let near=max(0.0001,max(entry.x,max(entry.y,entry.z)));
+    let far=min(limit,min(exit.x,min(exit.y,exit.z)));
     return select(limit,near,far>=near);
 }
 fn triangle_hit(o:vec3<f32>, d:vec3<f32>, index:u32, closest:Hit) -> Hit {
-    let tri=triangles[index]; let e1=tri.b.xyz-tri.a.xyz; let e2=tri.c.xyz-tri.a.xyz;
+    let tri=triangles[index]; let e1=tri.e1.xyz; let e2=tri.e2.xyz;
     let p=cross(d,e2); let det=dot(e1,p);
     if(abs(det)<1e-10) { return closest; }
     let inverse_det=1.0/det;
@@ -40,19 +44,21 @@ fn triangle_hit(o:vec3<f32>, d:vec3<f32>, index:u32, closest:Hit) -> Hit {
 }
 fn trace(o:vec3<f32>, d:vec3<f32>, limit:f32, secondary:bool, any_hit:bool) -> Hit {
     var closest=Hit(limit,0.0,0.0,0u,0xffffffffu);
+    let world_ray=slab_ray(o,d);
     // Each stack stores only deferred far siblings, with their already tested
-    // entry distances. Median CPU trees have <=32 levels, hence <=31 siblings.
+    // entry distances. Depth-bounded CPU trees have <=32 levels, hence <=31 siblings.
     // Recheck the saved distance against a closer hit without repeating slabs.
     var stack:array<vec2<u32>,32>; var depth=0u;
-    var current=0u;
-    var entry=box_hit(o,d,tlas[0].lo,tlas[0].hi,closest.t);
+    var current=select(params.roots.x,select(params.roots.y,params.roots.z,any_hit),secondary);
+    if(current==0xffffffffu) { return closest; }
+    var entry=box_hit(world_ray,tlas[current].lo,tlas[current].hi,closest.t);
     loop {
         if(entry<closest.t) {
             let node=tlas[current];
             if(node.count==0u) {
                 let left=node.first; let right=left+1u;
-                let left_entry=box_hit(o,d,tlas[left].lo,tlas[left].hi,closest.t);
-                let right_entry=box_hit(o,d,tlas[right].lo,tlas[right].hi,closest.t);
+                let left_entry=box_hit(world_ray,tlas[left].lo,tlas[left].hi,closest.t);
+                let right_entry=box_hit(world_ray,tlas[right].lo,tlas[right].hi,closest.t);
                 let left_nearer=left_entry<=right_entry;
                 let near_index=select(right,left,left_nearer);
                 let far_index=select(left,right,left_nearer);
@@ -68,16 +74,17 @@ fn trace(o:vec3<f32>, d:vec3<f32>, limit:f32, secondary:bool, any_hit:bool) -> H
                     if(secondary && (instance.material.w>0.5 || (any_hit && instance.material.z>0.5))) { continue; }
                     let local_o=(instance.inverse*vec4(o,1.0)).xyz;
                     let local_d=(instance.inverse*vec4(d,0.0)).xyz;
+                    let local_ray=slab_ray(local_o,local_d);
                     var local_stack:array<vec2<u32>,32>; var local_depth=0u;
                     var local_current=instance.root;
-                    var local_entry=box_hit(local_o,local_d,nodes[local_current].lo,nodes[local_current].hi,closest.t);
+                    var local_entry=box_hit(local_ray,nodes[local_current].lo,nodes[local_current].hi,closest.t);
                     loop {
                         if(local_entry<closest.t) {
                             let n=nodes[local_current];
                             if(n.count==0u) {
                                 let left=n.first; let right=left+1u;
-                                let left_entry=box_hit(local_o,local_d,nodes[left].lo,nodes[left].hi,closest.t);
-                                let right_entry=box_hit(local_o,local_d,nodes[right].lo,nodes[right].hi,closest.t);
+                                let left_entry=box_hit(local_ray,nodes[left].lo,nodes[left].hi,closest.t);
+                                let right_entry=box_hit(local_ray,nodes[right].lo,nodes[right].hi,closest.t);
                                 let left_nearer=left_entry<=right_entry;
                                 let near_index=select(right,left,left_nearer);
                                 let far_index=select(left,right,left_nearer);
@@ -200,14 +207,15 @@ fn environment(d:vec3<f32>) -> vec3<f32> {
     return mix(vec3(0.10,0.17,0.16),vec3(0.60,0.77,0.78),clamp(d.y*0.5+0.5,0.0,1.0));
 }
 fn normal_at(hit:Hit, d:vec3<f32>) -> vec3<f32> {
-    let tri=triangles[hit.triangle];
+    let tri=surfaces[hit.triangle];
+    let geometry=triangles[hit.triangle];
     let n=tri.n0.xyz*(1.0-hit.u-hit.v)+tri.n1.xyz*hit.u+tri.n2.xyz*hit.v;
     let transformed=normalize((transpose(instances[hit.instance].inverse)*vec4(n,0.0)).xyz);
-    let geometric=(transpose(instances[hit.instance].inverse)*vec4(cross(tri.b.xyz-tri.a.xyz,tri.c.xyz-tri.a.xyz),0.0)).xyz;
+    let geometric=(transpose(instances[hit.instance].inverse)*vec4(cross(geometry.e1.xyz,geometry.e2.xyz),0.0)).xyz;
     return select(transformed,-transformed,dot(geometric,d)>0.0);
 }
 fn albedo_at(hit:Hit) -> vec3<f32> {
-    let tri=triangles[hit.triangle];
+    let tri=surfaces[hit.triangle];
     return max(vec3(0.0),(tri.c0.xyz*(1.0-hit.u-hit.v)+tri.c1.xyz*hit.u+tri.c2.xyz*hit.v)*instances[hit.instance].tint.xyz);
 }
 struct Lighting { diffuse:vec3<f32>, reflection:vec3<f32> }
@@ -224,7 +232,7 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
     // A centered overhead key avoids a broad one-sided shadow from the tank wall.
     let key=normalize(vec3(0.0,0.85,0.65));
     let triangle=triangles[hit.triangle];
-    var geometric=normalize((transpose(instances[hit.instance].inverse)*vec4(cross(triangle.b.xyz-triangle.a.xyz,triangle.c.xyz-triangle.a.xyz),0.0)).xyz);
+    var geometric=normalize((transpose(instances[hit.instance].inverse)*vec4(cross(triangle.e1.xyz,triangle.e2.xyz),0.0)).xyz);
     if(dot(geometric,d)>0.0) { geometric=-geometric; }
     let origin=p+geometric*0.008+n*0.06;
     var visible=0u; var shadow_samples=0u;

@@ -1,0 +1,96 @@
+{
+  "schema_version": 2,
+  "measurement": "CPU wall-frame intervals, including GPU backpressure, pacing and capture overhead; not GPU pass timings",
+  "presentation_uncapped": true,
+  "ray_pass_measurement": "Independent asynchronous diagnostic samples; first 30 unique samples per path excluded. elapsed_gpu is hardware timestamp duration; elapsed_cpu is command recording duration. Missing GPU paths or available=false mean unavailable; zero timestamps are discarded. compute_gpu uses compute-pass boundary timestamps, excluding presentation; readbacks still in flight at exit are not included.",
+  "ray_passes": {
+    "render/ray_trace/elapsed_cpu": {
+      "available": true,
+      "samples_seen": 1926,
+      "warmup_samples": 30,
+      "measured_samples": 1896,
+      "p50_ms": 0.020874999999999998,
+      "p95_ms": 0.035667000000000004,
+      "p99_ms": 0.040375,
+      "max_ms": 0.050875000000000004
+    },
+    "render/ray_trace/elapsed_gpu": {
+      "available": false,
+      "samples_seen": 1926,
+      "warmup_samples": 30,
+      "measured_samples": 0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "max_ms": null
+    }
+  },
+  "compute_gpu": {
+    "available": true,
+    "samples_seen": 2153,
+    "warmup_samples": 30,
+    "measured_samples": 2123,
+    "p50_ms": 10.353916,
+    "p95_ms": 10.947542,
+    "p99_ms": 11.356667,
+    "max_ms": 11.481792
+  },
+  "cpu_phase_measurement": "Per-invocation CPU elapsed time including allocations and early returns; first 30 invocations per phase excluded. Phases may run concurrently, so their durations should not be summed as frame time.",
+  "cpu_phases": {
+    "extract_scene": {
+      "available": true,
+      "samples_seen": 2166,
+      "warmup_samples": 30,
+      "measured_samples": 2136,
+      "p50_ms": 0.528292,
+      "p95_ms": 0.704291,
+      "p99_ms": 17.417917000000003,
+      "max_ms": 41.047459
+    },
+    "sync_effects": {
+      "available": true,
+      "samples_seen": 2166,
+      "warmup_samples": 30,
+      "measured_samples": 2136,
+      "p50_ms": 0.002833,
+      "p95_ms": 0.029875000000000002,
+      "p99_ms": 0.036125,
+      "max_ms": 0.214875
+    },
+    "sync_ui": {
+      "available": true,
+      "samples_seen": 2166,
+      "warmup_samples": 30,
+      "measured_samples": 2136,
+      "p50_ms": 0.016249999999999997,
+      "p95_ms": 0.0275,
+      "p99_ms": 9.016916,
+      "max_ms": 22.515459
+    }
+  },
+  "gpu_geometry_allocated_bytes": 138596096,
+  "viewport_pixels": [
+    1920,
+    1080
+  ],
+  "percentile_method": "nearest rank",
+  "warmup_frames": 30,
+  "total_frames": 2163,
+  "measured_frames": 2133,
+  "measured_wall_elapsed_ms": 21975.761874999993,
+  "wall_frame_p50_ms": 8.44975,
+  "wall_frame_p95_ms": 16.792917,
+  "wall_frame_p99_ms": 23.43675,
+  "peak_scene": {
+    "live_triangle_count": 509586,
+    "live_blas_node_count": 302967,
+    "triangle_arena_count": 797072,
+    "blas_node_arena_count": 436400,
+    "instance_count": 78,
+    "tlas_node_count": 285,
+    "geometry_arena_bytes": 128743168,
+    "instance_and_tlas_data_bytes": 22848
+  },
+  "adapter": "Apple M5 Max",
+  "backend": "Metal"
+}

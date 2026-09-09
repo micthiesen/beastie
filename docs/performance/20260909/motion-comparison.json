@@ -1,0 +1,92 @@
+{
+  "state.jsonl": {
+    "equal": true,
+    "baseline_lines": 504,
+    "final_lines": 504
+  },
+  "markers.jsonl": {
+    "equal": true,
+    "baseline_lines": 7,
+    "final_lines": 7
+  },
+  "events.jsonl": {
+    "equal": true,
+    "baseline_lines": 480,
+    "final_lines": 480
+  },
+  "inputs.jsonl": {
+    "equal": true,
+    "baseline_lines": 14,
+    "final_lines": 14
+  },
+  "audio.jsonl": {
+    "equal": true,
+    "baseline_lines": 504,
+    "final_lines": 504
+  },
+  "captures": [
+    {
+      "image": "gameplay-return.png",
+      "size": [
+        1280,
+        720
+      ],
+      "mean_absolute_8bit": 0.0009794560185185186
+    },
+    {
+      "image": "reduced-motion.png",
+      "size": [
+        1280,
+        720
+      ],
+      "mean_absolute_8bit": 0.0005656828703703704
+    },
+    {
+      "image": "selection-moving.png",
+      "size": [
+        1280,
+        720
+      ],
+      "mean_absolute_8bit": 0.000842013888888889
+    },
+    {
+      "image": "settings-moving.png",
+      "size": [
+        1280,
+        720
+      ],
+      "mean_absolute_8bit": 0.00046983506944444443
+    },
+    {
+      "image": "title-alive.png",
+      "size": [
+        1280,
+        720
+      ],
+      "mean_absolute_8bit": 0.0008521412037037036
+    },
+    {
+      "image": "water-moving.png",
+      "size": [
+        1280,
+        720
+      ],
+      "mean_absolute_8bit": 0.0007432725694444444
+    },
+    {
+      "image": "water-start.png",
+      "size": [
+        1280,
+        720
+      ],
+      "mean_absolute_8bit": 0.003271484375
+    }
+  ],
+  "encoded_video_ssim": {
+    "frames": 504,
+    "mean_all": 0.9963200198412698,
+    "minimum_frame": 315,
+    "minimum_all": 0.992086,
+    "note": "H.264 decoded video comparison includes independent compression differences; not a raw framebuffer equality test."
+  }
+}

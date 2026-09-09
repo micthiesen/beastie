@@ -70,6 +70,11 @@ fn main() -> bevy::app::AppExit {
                         )
                         .with_scale_factor_override(1.0),
                         resizable: false,
+                        present_mode: if args.render_uncapped {
+                            bevy::window::PresentMode::AutoNoVsync
+                        } else {
+                            default()
+                        },
                         mode: if fullscreen {
                             WindowMode::BorderlessFullscreen(MonitorSelection::Current)
                         } else {
@@ -89,7 +94,7 @@ fn main() -> bevy::app::AppExit {
             host::HostPlugin,
             renderer::RendererPlugin,
             ray_scene::RayScenePlugin,
-            ray_stats::RayStatsPlugin(args.render_report.clone()),
+            ray_stats::RayStatsPlugin(args.render_report.clone(), args.render_uncapped),
             raytrace::RayTracePlugin,
             capture::CapturePlugin,
         ))

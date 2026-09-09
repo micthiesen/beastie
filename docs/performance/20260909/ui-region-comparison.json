@@ -1,0 +1,136 @@
+[
+  {
+    "state": "normal-keyboard",
+    "box": [
+      100,
+      40,
+      1820,
+      760
+    ],
+    "changed_pixels": 0,
+    "max_channel_difference": 0
+  },
+  {
+    "state": "normal-rename",
+    "box": [
+      470,
+      110,
+      1450,
+      240
+    ],
+    "changed_pixels": 0,
+    "max_channel_difference": 0
+  },
+  {
+    "state": "normal-food",
+    "box": [
+      300,
+      515,
+      1620,
+      750
+    ],
+    "changed_pixels": 0,
+    "max_channel_difference": 0
+  },
+  {
+    "state": "normal-toys",
+    "box": [
+      300,
+      515,
+      1620,
+      750
+    ],
+    "changed_pixels": 0,
+    "max_channel_difference": 0
+  },
+  {
+    "state": "normal-speech",
+    "box": [
+      40,
+      40,
+      924,
+      239
+    ],
+    "changed_pixels": 0,
+    "max_channel_difference": 0
+  },
+  {
+    "state": "normal-comfort",
+    "box": [
+      1010,
+      135,
+      1835,
+      805
+    ],
+    "changed_pixels": 152,
+    "max_channel_difference": 2,
+    "maximum_changed_pixel_component": 43
+  },
+  {
+    "state": "large-keyboard",
+    "box": [
+      100,
+      40,
+      1820,
+      760
+    ],
+    "changed_pixels": 0,
+    "max_channel_difference": 0
+  },
+  {
+    "state": "large-rename",
+    "box": [
+      470,
+      110,
+      1450,
+      240
+    ],
+    "changed_pixels": 0,
+    "max_channel_difference": 0
+  },
+  {
+    "state": "large-food",
+    "box": [
+      300,
+      515,
+      1620,
+      750
+    ],
+    "changed_pixels": 0,
+    "max_channel_difference": 0
+  },
+  {
+    "state": "large-toys",
+    "box": [
+      300,
+      515,
+      1620,
+      750
+    ],
+    "changed_pixels": 0,
+    "max_channel_difference": 0
+  },
+  {
+    "state": "large-speech",
+    "box": [
+      40,
+      40,
+      924,
+      239
+    ],
+    "changed_pixels": 0,
+    "max_channel_difference": 0
+  },
+  {
+    "state": "large-comfort",
+    "box": [
+      1010,
+      135,
+      1835,
+      805
+    ],
+    "changed_pixels": 152,
+    "max_channel_difference": 2,
+    "maximum_changed_pixel_component": 43
+  }
+]

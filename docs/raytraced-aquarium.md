@@ -41,7 +41,21 @@ Windows/Linux native execution. Every accepted material finding must be fixed be
 ## Delivered implementation
 
 The production path uses cached, incrementally uploaded mesh BLAS arenas and a per-frame instance
-TLAS, with near-first traversal on ordinary compute. Six fixed area-light visibility samples
+TLAS, with near-first traversal on ordinary compute. Mesh BVHs use depth-bounded, 12-bin SAH;
+primary, world-only and shadow instance roots exclude irrelevant geometry before traversal.
+Ray reciprocals and parallel-axis masks are computed once per coordinate space. Intersection
+positions/edges occupy 48-byte records; normals and colors live in a separate 96-byte array.
+GPU buffer growth reserves modest slack instead of rounding already-reserved arenas to powers of two.
+
+Identical creature parts and canonical UI icons share immutable meshes and BVHs. Icon placement
+updates instance transforms, while exact UI/effect input caches avoid unnecessary mesh rebuilding.
+Glyph clipping skips fully hidden labels and uses contained-triangle fast paths and stack scratch.
+Provably planar voxel patches retain their perimeter and color boundaries with fewer triangles;
+rounded, position-shaded geometry keeps its original tessellation. CPU mesh assets are retained
+without duplicate raster uploads. The [performance review](renderer-performance.md) records native
+measurements, reference engines, rejected experiments and opt-in GPU/CPU reporting.
+
+ Six fixed area-light visibility samples
 (refined to twelve for mixed visibility on upward rough surfaces),
 a bounded diffuse bounce and selected glossy reflections create dimensional light without temporal
 history. Two world and four UI coverage samples preserve stable silhouettes and geometric text.

@@ -1,0 +1,62 @@
+{"version": 1, "command": "ui", "action": "normal_text"}
+{"version": 1, "command": "ui", "action": "close"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "open_food"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "open_toys"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "open_settings"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "settings_sound"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "settings_controls"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "open_bindings"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "open_data"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "request_reset"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "rename", "controller": false}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "talk", "controller": true}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "select_berry", "controller": false}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "creature_actions"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "large_text"}
+{"version": 1, "command": "ui", "action": "close"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "open_food"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "open_toys"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "open_settings"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "settings_sound"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "settings_controls"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "open_bindings"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "open_data"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "request_reset"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "rename", "controller": false}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "talk", "controller": true}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "select_berry", "controller": false}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "creature_actions"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "normal_text"}
+{"version": 1, "command": "ui", "action": "close"}
+{"version": 1, "command": "talk", "text": "Hello Mop."}
+{"version": 1, "command": "wait", "milliseconds": 600}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "large_text"}
+{"version": 1, "command": "wait", "milliseconds": 750}
+{"version": 1, "command": "ui", "action": "normal_text"}

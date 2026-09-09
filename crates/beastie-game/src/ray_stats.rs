@@ -1,9 +1,19 @@
 //! Opt-in native acceptance measurements. Wall-frame intervals include CPU work,
 //! GPU backpressure, presentation pacing and captures; they are not GPU timings.
-use std::{fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+};
 
 use bevy::{
     app::AppExit,
+    diagnostic::{DiagnosticMeasurement, DiagnosticsStore},
+    platform::time::Instant,
     prelude::*,
     render::{render_resource::ShaderType, renderer::RenderAdapterInfo},
 };
@@ -13,16 +23,25 @@ use crate::ray_scene::{BvhNode, GpuInstance, RayScene, Triangle};
 
 const WARMUP_FRAMES: u64 = 30;
 
-pub struct RayStatsPlugin(pub Option<PathBuf>);
+pub struct RayStatsPlugin(pub Option<PathBuf>, pub bool);
 
 impl Plugin for RayStatsPlugin {
     fn build(&self, app: &mut App) {
         if let Some(path) = &self.0 {
+            if !app.is_plugin_added::<bevy::render::diagnostic::RenderDiagnosticsPlugin>() {
+                app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+            }
+            let gpu = ComputeGpuTiming::default();
+            app.insert_resource(gpu.clone());
+            if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
+                render_app.insert_resource(gpu);
+            }
             app.insert_resource(FrameMeasurements {
                 path: path.clone(),
+                uncapped: self.1,
                 ..default()
             })
-            .add_systems(Last, record_and_finish);
+            .add_systems(Last, (collect_compute_timings, record_and_finish).chain());
         }
     }
 }
@@ -30,14 +49,231 @@ impl Plugin for RayStatsPlugin {
 #[derive(Resource, Default)]
 struct FrameMeasurements {
     path: PathBuf,
+    uncapped: bool,
+    ray_passes: BTreeMap<String, PassMeasurements>,
+    compute_gpu: PassMeasurements,
+    cpu_phases: BTreeMap<&'static str, PassMeasurements>,
+    gpu_geometry_allocated_bytes: u64,
+    viewport_pixels: Option<[u32; 2]>,
     frames_seen: u64,
     wall_frame_ms: Vec<f64>,
     peak_scene: SceneSize,
     written: bool,
 }
 
+/// Opt-in pass-boundary timestamps also work on Metal, where Bevy intentionally
+/// suppresses encoder timestamp writes. Four reusable slots bound readback memory;
+/// if the GPU falls behind, skip instrumentation instead of stalling rendering.
+#[derive(Resource, Clone, Default)]
+pub(crate) struct ComputeGpuTiming {
+    slots: Arc<Mutex<Vec<GpuTimingSlot>>>,
+    completed: Arc<Mutex<Vec<f64>>>,
+    cpu_completed: Arc<Mutex<Vec<CpuSample>>>,
+    geometry_bytes: Arc<AtomicU64>,
+    viewport: Arc<AtomicU64>,
+}
+
+struct CpuSample {
+    name: &'static str,
+    milliseconds: f64,
+}
+
+/// Owns its queue reference so the measured system can mutate its other inputs.
+/// Constructed only with an opt-in report resource; Drop also covers early returns.
+#[must_use]
+pub(crate) struct CpuPhaseSpan {
+    name: &'static str,
+    started: Instant,
+    completed: Arc<Mutex<Vec<CpuSample>>>,
+}
+
+impl Drop for CpuPhaseSpan {
+    fn drop(&mut self) {
+        let milliseconds = self.started.elapsed().as_secs_f64() * 1000.0;
+        self.completed.lock().unwrap().push(CpuSample {
+            name: self.name,
+            milliseconds,
+        });
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct GpuTimingSlot {
+    pub queries: wgpu::QuerySet,
+    resolve: wgpu::Buffer,
+    readback: wgpu::Buffer,
+    busy: Arc<AtomicBool>,
+}
+
+impl ComputeGpuTiming {
+    pub(crate) fn cpu_span(&self, name: &'static str) -> CpuPhaseSpan {
+        CpuPhaseSpan {
+            name,
+            started: Instant::now(),
+            completed: self.cpu_completed.clone(),
+        }
+    }
+
+    pub(crate) fn observe_scene(&self, geometry_bytes: u64, size: UVec2) {
+        self.geometry_bytes
+            .fetch_max(geometry_bytes, Ordering::Relaxed);
+        self.viewport.store(
+            (u64::from(size.x) << 32) | u64::from(size.y),
+            Ordering::Relaxed,
+        );
+    }
+
+    pub(crate) fn begin(
+        &self,
+        device: &bevy::render::renderer::RenderDevice,
+    ) -> Option<GpuTimingSlot> {
+        if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            return None;
+        }
+        let mut slots = self.slots.lock().unwrap();
+        if let Some(slot) = slots
+            .iter()
+            .find(|slot| !slot.busy.swap(true, Ordering::AcqRel))
+        {
+            return Some(slot.clone());
+        }
+        if slots.len() == 4 {
+            return None;
+        }
+        let device = device.wgpu_device();
+        let slot = GpuTimingSlot {
+            queries: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("aquarium compute timestamps"),
+                ty: wgpu::QueryType::Timestamp,
+                count: 2,
+            }),
+            resolve: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aquarium timestamp resolve"),
+                size: 16,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
+            readback: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aquarium timestamp readback"),
+                size: 16,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            busy: Arc::new(AtomicBool::new(true)),
+        };
+        slots.push(slot.clone());
+        Some(slot)
+    }
+
+    pub(crate) fn finish(
+        &self,
+        slot: GpuTimingSlot,
+        encoder: &mut wgpu::CommandEncoder,
+        period_ns: f32,
+    ) {
+        encoder.resolve_query_set(&slot.queries, 0..2, &slot.resolve, 0);
+        encoder.copy_buffer_to_buffer(&slot.resolve, 0, &slot.readback, 0, 16);
+        let readback = slot.readback.clone();
+        let completed = self.completed.clone();
+        encoder.map_buffer_on_submit(&slot.readback, wgpu::MapMode::Read, .., move |result| {
+            if result.is_ok() {
+                let bytes = readback.slice(..).get_mapped_range();
+                let start = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+                let end = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+                if let Some(elapsed) = end.checked_sub(start) {
+                    completed
+                        .lock()
+                        .unwrap()
+                        .push(elapsed as f64 * f64::from(period_ns) / 1e6);
+                }
+                drop(bytes);
+                readback.unmap();
+            }
+            slot.busy.store(false, Ordering::Release);
+        });
+    }
+}
+
+fn collect_compute_timings(
+    gpu: Res<ComputeGpuTiming>,
+    mut measurements: ResMut<FrameMeasurements>,
+) {
+    measurements.gpu_geometry_allocated_bytes = gpu.geometry_bytes.load(Ordering::Relaxed);
+    let viewport = gpu.viewport.load(Ordering::Relaxed);
+    measurements.viewport_pixels =
+        (viewport != 0).then_some([(viewport >> 32) as u32, viewport as u32]);
+    for sample in gpu.cpu_completed.lock().unwrap().drain(..) {
+        measurements
+            .cpu_phases
+            .entry(sample.name)
+            .or_default()
+            .include_value(sample.milliseconds);
+    }
+    for value in gpu.completed.lock().unwrap().drain(..) {
+        measurements.compute_gpu.include_value(value);
+    }
+}
+
+/// Bevy asynchronously publishes diagnostic frames. A frame without a new result
+/// must not repeat the last timing, and GPU and wall sample counts need not match.
+#[derive(Default)]
+struct PassMeasurements {
+    last_timestamp: Option<Instant>,
+    samples_seen: u64,
+    milliseconds: Vec<f64>,
+}
+
+impl PassMeasurements {
+    fn include(&mut self, measurement: &DiagnosticMeasurement) {
+        if self
+            .last_timestamp
+            .is_some_and(|last| measurement.time <= last)
+        {
+            return;
+        }
+        self.last_timestamp = Some(measurement.time);
+        self.include_value(measurement.value);
+    }
+
+    fn include_value(&mut self, value: f64) {
+        self.samples_seen += 1;
+        if self.samples_seen > WARMUP_FRAMES && value.is_finite() && value > 0.0 {
+            self.milliseconds.push(value);
+        }
+    }
+
+    fn report(&self) -> PassReport {
+        let mut sorted = self.milliseconds.clone();
+        sorted.sort_by(f64::total_cmp);
+        PassReport {
+            available: !sorted.is_empty(),
+            samples_seen: self.samples_seen,
+            warmup_samples: WARMUP_FRAMES.min(self.samples_seen),
+            measured_samples: sorted.len(),
+            p50_ms: percentile(&sorted, 50),
+            p95_ms: percentile(&sorted, 95),
+            p99_ms: percentile(&sorted, 99),
+            max_ms: sorted.last().copied(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct PassReport {
+    available: bool,
+    samples_seen: u64,
+    warmup_samples: u64,
+    measured_samples: usize,
+    p50_ms: Option<f64>,
+    p95_ms: Option<f64>,
+    p99_ms: Option<f64>,
+    max_ms: Option<f64>,
+}
+
 #[derive(Default, Serialize)]
 struct SceneSize {
+    live_triangle_count: u64,
+    live_blas_node_count: u64,
     triangle_arena_count: u64,
     blas_node_arena_count: u64,
     instance_count: u64,
@@ -48,6 +284,20 @@ struct SceneSize {
 
 impl SceneSize {
     fn include(&mut self, scene: &RayScene) {
+        self.live_triangle_count = self.live_triangle_count.max(
+            scene
+                .geometry
+                .iter()
+                .map(|chunk| chunk.triangles.len() as u64)
+                .sum(),
+        );
+        self.live_blas_node_count = self.live_blas_node_count.max(
+            scene
+                .geometry
+                .iter()
+                .map(|chunk| chunk.nodes.len() as u64)
+                .sum(),
+        );
         self.triangle_arena_count = self
             .triangle_arena_count
             .max(u64::from(scene.triangle_count));
@@ -69,6 +319,14 @@ impl SceneSize {
 struct FrameReport<'a> {
     schema_version: u32,
     measurement: &'static str,
+    presentation_uncapped: bool,
+    ray_pass_measurement: &'static str,
+    ray_passes: BTreeMap<String, PassReport>,
+    compute_gpu: PassReport,
+    cpu_phase_measurement: &'static str,
+    cpu_phases: BTreeMap<&'static str, PassReport>,
+    gpu_geometry_allocated_bytes: u64,
+    viewport_pixels: Option<[u32; 2]>,
     percentile_method: &'static str,
     warmup_frames: u64,
     total_frames: u64,
@@ -87,11 +345,25 @@ fn record_and_finish(
     ready: Res<crate::raytrace::RayReady>,
     scene: Res<RayScene>,
     adapter: Option<Res<RenderAdapterInfo>>,
+    diagnostics: Res<DiagnosticsStore>,
     mut measurements: ResMut<FrameMeasurements>,
     mut exits: MessageReader<AppExit>,
 ) {
     if measurements.written || !ready.get() {
         return;
+    }
+    for diagnostic in diagnostics.iter() {
+        let path = diagnostic.path().as_str();
+        if path.contains("/ray_trace/")
+            && (path.ends_with("/elapsed_gpu") || path.ends_with("/elapsed_cpu"))
+            && let Some(sample) = diagnostic.measurement()
+        {
+            measurements
+                .ray_passes
+                .entry(path.to_owned())
+                .or_default()
+                .include(sample);
+        }
     }
     measurements.frames_seen += 1;
     measurements.peak_scene.include(&scene);
@@ -106,8 +378,24 @@ fn record_and_finish(
     let mut sorted = measurements.wall_frame_ms.clone();
     sorted.sort_by(f64::total_cmp);
     let report = FrameReport {
-        schema_version: 1,
+        schema_version: 2,
         measurement: "CPU wall-frame intervals, including GPU backpressure, pacing and capture overhead; not GPU pass timings",
+        presentation_uncapped: measurements.uncapped,
+        compute_gpu: measurements.compute_gpu.report(),
+        cpu_phase_measurement: "Per-invocation CPU elapsed time including allocations and early returns; first 30 invocations per phase excluded. Phases may run concurrently, so their durations should not be summed as frame time.",
+        cpu_phases: measurements
+            .cpu_phases
+            .iter()
+            .map(|(&name, samples)| (name, samples.report()))
+            .collect(),
+        gpu_geometry_allocated_bytes: measurements.gpu_geometry_allocated_bytes,
+        viewport_pixels: measurements.viewport_pixels,
+        ray_pass_measurement: "Independent asynchronous diagnostic samples; first 30 unique samples per path excluded. elapsed_gpu is hardware timestamp duration; elapsed_cpu is command recording duration. Missing GPU paths or available=false mean unavailable; zero timestamps are discarded. compute_gpu uses compute-pass boundary timestamps, excluding presentation; readbacks still in flight at exit are not included.",
+        ray_passes: measurements
+            .ray_passes
+            .iter()
+            .map(|(path, samples)| (path.clone(), samples.report()))
+            .collect(),
         percentile_method: "nearest rank",
         warmup_frames: WARMUP_FRAMES.min(measurements.frames_seen),
         total_frames: measurements.frames_seen,
@@ -143,7 +431,70 @@ fn percentile(sorted: &[f64], percentage: usize) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::percentile;
+    use super::{DiagnosticMeasurement, Instant, PassMeasurements, WARMUP_FRAMES, percentile};
+
+    #[test]
+    fn cpu_phase_guard_records_early_returns_once_without_a_gpu() {
+        fn measured(timing: &super::ComputeGpuTiming, early: bool) {
+            let _span = timing.cpu_span("test_phase");
+            if early {
+                return;
+            }
+            std::hint::black_box(1 + 2);
+        }
+        let timing = super::ComputeGpuTiming::default();
+        measured(&timing, true);
+        measured(&timing, false);
+        let samples = timing.cpu_completed.lock().unwrap();
+        assert_eq!(samples.len(), 2);
+        assert!(
+            samples
+                .iter()
+                .all(|sample| sample.name == "test_phase" && sample.milliseconds >= 0.0)
+        );
+    }
+
+    #[test]
+    fn asynchronous_samples_skip_stale_results_and_warm_up_independently() {
+        let mut samples = PassMeasurements::default();
+        let start = Instant::now();
+        for frame in 0..WARMUP_FRAMES + 2 {
+            let sample = DiagnosticMeasurement {
+                time: start + std::time::Duration::from_millis(frame),
+                value: frame as f64,
+            };
+            samples.include(&sample);
+            samples.include(&sample);
+        }
+        samples.include(&DiagnosticMeasurement {
+            time: start,
+            value: 999.0,
+        });
+        assert_eq!(samples.samples_seen, 32);
+        assert_eq!(samples.milliseconds, [30.0, 31.0]);
+        assert_eq!(samples.report().p95_ms, Some(31.0));
+        samples.include(&DiagnosticMeasurement {
+            time: start + std::time::Duration::from_secs(1),
+            value: f64::NAN,
+        });
+        assert_eq!(samples.report().measured_samples, 2);
+    }
+
+    #[test]
+    fn suppressed_or_invalid_gpu_timestamps_are_not_reported_as_fast_frames() {
+        let mut samples = PassMeasurements::default();
+        for _ in 0..WARMUP_FRAMES + 10 {
+            samples.include_value(0.0);
+        }
+        samples.include_value(f64::NAN);
+        samples.include_value(-1.0);
+        let report = samples.report();
+        assert!(!report.available);
+        assert_eq!(report.p50_ms, None);
+        samples.include_value(8.5);
+        assert!(samples.report().available);
+        assert_eq!(samples.report().p50_ms, Some(8.5));
+    }
 
     #[test]
     fn nearest_rank_preserves_tail_outliers_and_handles_short_runs() {

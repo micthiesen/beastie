@@ -170,6 +170,12 @@ impl Lettering {
             color,
             z,
         } = label;
+        if clips.is_empty() {
+            return;
+        }
+        let rgba = Color::srgb_u8(color[0], color[1], color[2])
+            .to_linear()
+            .to_f32_array();
         let mut size = size;
         // Use measured advances, including kerning and ligatures, for the final fit.
         // This also protects unusually wide glyph strings from the legacy mean-width estimate.
@@ -215,7 +221,7 @@ impl Lettering {
                         origin + Vec2::new(v.x, -v.y) * size
                     });
                     for clip in clips {
-                        mesh.clipped_triangle(vertices, *clip, color, z);
+                        mesh.clipped_triangle(vertices, *clip, rgba, z);
                     }
                 }
                 pen += position.x_advance as f32 * size / em;
@@ -242,37 +248,63 @@ pub struct LetterMesh {
     colors: Vec<[f32; 4]>,
 }
 impl LetterMesh {
-    fn clipped_triangle(&mut self, triangle: [Vec2; 3], clip: Bounds, color: [u8; 3], z: f32) {
-        let mut polygon = triangle.to_vec();
+    fn clipped_triangle(&mut self, triangle: [Vec2; 3], clip: Bounds, rgba: [f32; 4], z: f32) {
+        let lower = Vec2::new(clip.x, clip.y);
+        let upper = Vec2::new(clip.x + clip.w, clip.y + clip.h);
+        let minimum = triangle[0].min(triangle[1]).min(triangle[2]);
+        let maximum = triangle[0].max(triangle[1]).max(triangle[2]);
+        if maximum.x < lower.x || minimum.x > upper.x || maximum.y < lower.y || minimum.y > upper.y
+        {
+            return;
+        }
+        if minimum.cmpge(lower).all() && maximum.cmple(upper).all() {
+            self.append_polygon(&triangle, rgba, z);
+            return;
+        }
+
+        // A convex triangle gains at most one vertex per rectangle half-plane,
+        // giving 3 -> 4 -> 5 -> 6 -> 7 vertices. Keep a conservative 48-slot
+        // bound so even duplicate boundary points or floating-point degeneracy
+        // exactly retain the old algorithm: each pass emits at most twice its
+        // input length, giving the unconditional bound 3 * 2^4 = 48.
+        let mut first = [Vec2::ZERO; 48];
+        let mut second = [Vec2::ZERO; 48];
+        first[..3].copy_from_slice(&triangle);
+        let (mut polygon, mut output) = (&mut first, &mut second);
+        let mut length = 3;
         for (axis, boundary, sign) in [
-            (0, clip.x, 1.0),
-            (0, clip.x + clip.w, -1.0),
-            (1, clip.y, 1.0),
-            (1, clip.y + clip.h, -1.0),
+            (0, lower.x, 1.0),
+            (0, upper.x, -1.0),
+            (1, lower.y, 1.0),
+            (1, upper.y, -1.0),
         ] {
-            if polygon.is_empty() {
+            if length == 0 {
                 return;
             }
-            let mut output = Vec::new();
-            let mut previous = polygon[polygon.len() - 1];
+            let mut output_length = 0;
+            let mut previous = polygon[length - 1];
             let mut previous_distance = (previous[axis] - boundary) * sign;
-            for &current in &polygon {
+            for &current in &polygon[..length] {
                 let distance = (current[axis] - boundary) * sign;
                 if (distance >= 0.0) != (previous_distance >= 0.0) {
                     let t = previous_distance / (previous_distance - distance);
-                    output.push(previous.lerp(current, t));
+                    output[output_length] = previous.lerp(current, t);
+                    output_length += 1;
                 }
                 if distance >= 0.0 {
-                    output.push(current);
+                    output[output_length] = current;
+                    output_length += 1;
                 }
                 previous = current;
                 previous_distance = distance;
             }
-            polygon = output;
+            std::mem::swap(&mut polygon, &mut output);
+            length = output_length;
         }
-        let rgba = Color::srgb_u8(color[0], color[1], color[2])
-            .to_linear()
-            .to_f32_array();
+        self.append_polygon(&polygon[..length], rgba, z);
+    }
+
+    fn append_polygon(&mut self, polygon: &[Vec2], rgba: [f32; 4], z: f32) {
         for index in 1..polygon.len().saturating_sub(1) {
             let mut points = [polygon[0], polygon[index], polygon[index + 1]]
                 .map(|p| Vec3::new((p.x - 160.0) / 20.0, (90.0 - p.y) / 20.0, z));
@@ -291,7 +323,7 @@ impl LetterMesh {
         let count = self.positions.len();
         Mesh::new(
             PrimitiveTopology::TriangleList,
-            RenderAssetUsages::default(),
+            RenderAssetUsages::MAIN_WORLD,
         )
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 0.0, 1.0]; count])
@@ -303,6 +335,156 @@ impl LetterMesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Preserve the old allocating Sutherland-Hodgman implementation as an
+    // independent oracle, including output ordering, winding and tiny-area cutoff.
+    fn reference_clip(triangle: [Vec2; 3], clip: Bounds, color: [u8; 3]) -> LetterMesh {
+        let mut polygon = triangle.to_vec();
+        for (axis, boundary, sign) in [
+            (0, clip.x, 1.0),
+            (0, clip.x + clip.w, -1.0),
+            (1, clip.y, 1.0),
+            (1, clip.y + clip.h, -1.0),
+        ] {
+            if polygon.is_empty() {
+                break;
+            }
+            let mut output = Vec::new();
+            let mut previous = polygon[polygon.len() - 1];
+            let mut previous_distance = (previous[axis] - boundary) * sign;
+            for &current in &polygon {
+                let distance = (current[axis] - boundary) * sign;
+                if (distance >= 0.0) != (previous_distance >= 0.0) {
+                    output.push(
+                        previous.lerp(current, previous_distance / (previous_distance - distance)),
+                    );
+                }
+                if distance >= 0.0 {
+                    output.push(current);
+                }
+                previous = current;
+                previous_distance = distance;
+            }
+            polygon = output;
+        }
+        let rgba = Color::srgb_u8(color[0], color[1], color[2])
+            .to_linear()
+            .to_f32_array();
+        let mut mesh = LetterMesh::default();
+        for index in 1..polygon.len().saturating_sub(1) {
+            let mut points = [polygon[0], polygon[index], polygon[index + 1]]
+                .map(|p| Vec3::new((p.x - 160.0) / 20.0, (90.0 - p.y) / 20.0, 8.1));
+            let area = (points[1] - points[0]).cross(points[2] - points[0]).z;
+            if area.abs() < 1e-12 {
+                continue;
+            }
+            if area < 0.0 {
+                points.swap(1, 2);
+            }
+            mesh.positions.extend(points.map(|p| p.to_array()));
+            mesh.colors.extend([rgba; 3]);
+        }
+        mesh
+    }
+
+    #[test]
+    fn stack_clipping_matches_original_vertices_colors_and_winding() {
+        let color = [17, 139, 221];
+        let rgba = Color::srgb_u8(color[0], color[1], color[2])
+            .to_linear()
+            .to_f32_array();
+        let mut compared = 0;
+        let mut state = 17_u32;
+        let mut random = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 8) as f32 / 16_777_216.0
+        };
+        for scale in [0.001, 0.1, 1.0, 20.0, 200.0] {
+            let origin = Vec2::new(13.0, -11.0);
+            let clips = [
+                Bounds {
+                    x: origin.x,
+                    y: origin.y,
+                    w: scale,
+                    h: scale,
+                },
+                Bounds {
+                    x: origin.x,
+                    y: origin.y,
+                    w: scale * 0.07,
+                    h: scale * 1.9,
+                },
+                Bounds {
+                    x: origin.x,
+                    y: origin.y,
+                    w: 0.0,
+                    h: scale,
+                },
+            ];
+            let mut triangles = vec![
+                [Vec2::ZERO, Vec2::X, Vec2::Y],
+                [Vec2::ZERO, Vec2::X, Vec2::ONE],
+                [Vec2::ZERO, Vec2::ZERO, Vec2::ONE],
+                [Vec2::splat(0.2), Vec2::new(0.8, 0.2), Vec2::new(0.2, 0.8)],
+                [
+                    Vec2::new(-1.0, -1.0),
+                    Vec2::new(-0.1, 2.0),
+                    Vec2::new(-2.0, 1.0),
+                ],
+                [
+                    Vec2::new(-2.0, 0.5),
+                    Vec2::new(0.5, 2.0),
+                    Vec2::new(2.0, -2.0),
+                ],
+            ];
+            for _ in 0..1000 {
+                triangles.push(std::array::from_fn(|_| {
+                    Vec2::new(random() * 4.0 - 1.5, random() * 4.0 - 1.5)
+                }));
+            }
+            for triangle in triangles {
+                for clip in clips {
+                    let triangle = triangle.map(|p| origin + p * scale);
+                    let mut actual = LetterMesh::default();
+                    actual.clipped_triangle(triangle, clip, rgba, 8.1);
+                    let expected = reference_clip(triangle, clip, color);
+                    assert_eq!(
+                        actual.positions, expected.positions,
+                        "triangle {triangle:?}, clip {clip:?}"
+                    );
+                    assert_eq!(actual.colors, expected.colors);
+                    compared += 1;
+                }
+            }
+        }
+        assert!(compared > 15_000);
+    }
+
+    #[test]
+    fn fully_occluded_labels_skip_shaping_and_tessellation() {
+        let mut lettering = Lettering::default();
+        let mut mesh = LetterMesh::default();
+        lettering.append(
+            &mut mesh,
+            Label {
+                text: "Hidden settings label é漢",
+                bounds: Bounds {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 100.0,
+                    h: 20.0,
+                },
+                clips: &[],
+                size: 6.0,
+                centered: false,
+                vertical_centered: false,
+                color: [200, 180, 160],
+                z: 8.1,
+            },
+        );
+        assert!(lettering.glyphs.is_empty());
+        assert!(mesh.positions.is_empty());
+    }
 
     #[test]
     fn input_text_centers_vertically_without_changing_left_padding_or_glyphs() {
@@ -446,7 +628,7 @@ mod tests {
                 Vec2::new(15.0, 30.0),
             ],
             clip,
-            [255; 3],
+            [1.0; 4],
             8.1,
         );
         assert!(!mesh.positions.is_empty());

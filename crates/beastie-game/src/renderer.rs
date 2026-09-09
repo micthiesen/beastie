@@ -53,18 +53,67 @@ struct ObjectMeshes(BTreeMap<String, Handle<Mesh>>);
 struct EffectMesh {
     handle: Option<Handle<Mesh>>,
     entity: Option<Entity>,
+    shape: EffectShape,
+    visible: bool,
 }
+
+/// Cache exact authored cuboid inputs before expanding vertices or notifying
+/// mesh observers. Equal samples retain their BLAS and GPU geometry allocation.
+#[derive(Default, PartialEq)]
+struct EffectShape(Vec<(Vec3, Vec3, [u8; 3])>);
+
+impl EffectShape {
+    fn cuboid(&mut self, center: Vec3, size: Vec3, color: [u8; 3]) {
+        self.0.push((center, size, color));
+    }
+
+    fn mesh(&self) -> Mesh {
+        let mut geometry = Geometry::default();
+        for &(center, size, color) in &self.0 {
+            geometry.cuboid(center, size, color);
+        }
+        geometry.mesh()
+    }
+}
+
 #[derive(Resource, Default)]
 struct UiCache {
     rects: Vec<beastie_view::RectCommand>,
     icons: Vec<beastie_view::IconCommand>,
     text: Vec<beastie_view::TextCommand>,
-    width: f32,
-    height: f32,
+    text_clips: Vec<Vec<TextBox>>,
+    icon_colors: Vec<[u8; 3]>,
+    icon_templates: Vec<(IconKind, [u8; 3], Handle<Mesh>)>,
+    icon_slots: Vec<Entity>,
+    icon_entity: Option<Entity>,
+    icons_visible: bool,
     geometry: Option<Handle<Mesh>>,
     text_geometry: Option<Handle<Mesh>>,
     panel_geometry: Option<Handle<Mesh>>,
     panel_entity: Option<Entity>,
+}
+
+impl UiCache {
+    fn icon(&mut self, meshes: &mut Assets<Mesh>, kind: IconKind, color: [u8; 3]) -> Handle<Mesh> {
+        // Toy models author their own colors; enabled palettes must share them.
+        let color = if matches!(kind, IconKind::Toy(_)) {
+            [0; 3]
+        } else {
+            color
+        };
+        let index = self
+            .icon_templates
+            .iter()
+            .position(|(cached_kind, cached_color, _)| {
+                *cached_kind == kind && *cached_color == color
+            })
+            .unwrap_or_else(|| {
+                let mesh = meshes.add(icon_mesh(kind, Vec3::ZERO, color));
+                self.icon_templates.push((kind, color, mesh));
+                self.icon_templates.len() - 1
+            });
+        self.icon_templates[index].2.clone()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -940,11 +989,11 @@ fn fitting_font_size(text: &beastie_view::TextCommand, bounds: TextBox) -> f32 {
 struct UiSystem<'w, 's> {
     commands: Commands<'w, 's>,
     frame: Res<'w, SceneFrame>,
-    window: Single<'w, 's, &'static Window, With<PrimaryWindow>>,
     palette: Res<'w, Palette>,
     lettering: ResMut<'w, crate::glyphs::Lettering>,
     cache: ResMut<'w, UiCache>,
     meshes: ResMut<'w, Assets<Mesh>>,
+    timing: Option<Res<'w, crate::ray_stats::ComputeGpuTiming>>,
 }
 
 /// Five joined voxel-width strips clip the corners without smooth vector geometry.
@@ -1003,9 +1052,42 @@ fn stepped_rim(shape: &mut Geometry, center: Vec3, size: Vec2, color: [u8; 3], c
 }
 
 fn sync_ui(mut ui: UiSystem) {
-    let geometry_changed =
-        ui.cache.rects != ui.frame.plan.rects || ui.cache.icons != ui.frame.plan.icons;
-    if geometry_changed {
+    let _span = ui.timing.as_ref().map(|timing| timing.cpu_span("sync_ui"));
+    let rects_changed = ui.cache.rects != ui.frame.plan.rects;
+    let icon_colors: Vec<_> = ui
+        .frame
+        .plan
+        .icons
+        .iter()
+        .map(|icon| {
+            if ui
+                .frame
+                .plan
+                .hit_regions
+                .iter()
+                .find(|hit| hit.id == icon.id.replace("ui/button-", "compose/"))
+                .is_some_and(|hit| !hit.enabled)
+            {
+                [88, 114, 118]
+            } else {
+                [216, 219, 185]
+            }
+        })
+        .collect();
+    let icons_changed =
+        ui.cache.icons != ui.frame.plan.icons || ui.cache.icon_colors != icon_colors;
+    if rects_changed {
+        let panel_changed = ui
+            .cache
+            .rects
+            .iter()
+            .filter(|rect| rect.id == "settings/panel")
+            .ne(ui
+                .frame
+                .plan
+                .rects
+                .iter()
+                .filter(|rect| rect.id == "settings/panel"));
         let mut shape = Geometry::default();
         let mut panel = Geometry::default();
         let mut has_panel = false;
@@ -1034,7 +1116,9 @@ fn sync_ui(mut ui: UiSystem) {
                 );
             let corner = if r.h > 20 { 0.050 } else { 0.025 };
             if rect.id == "settings/panel" {
-                stepped_plate(&mut panel, center, size, color, corner);
+                if panel_changed {
+                    stepped_plate(&mut panel, center, size, color, corner);
+                }
                 has_panel = true;
                 continue;
             }
@@ -1056,11 +1140,13 @@ fn sync_ui(mut ui: UiSystem) {
 
         if has_panel {
             if let Some(handle) = ui.cache.panel_geometry.clone() {
-                if let Some(mut mesh) = ui.meshes.get_mut(&handle) {
-                    *mesh = panel.mesh();
-                }
-                if let Some(entity) = ui.cache.panel_entity {
-                    ui.commands.entity(entity).insert(Visibility::Visible);
+                if panel_changed {
+                    if let Some(mut mesh) = ui.meshes.get_mut(&handle) {
+                        *mesh = panel.mesh();
+                    }
+                    if let Some(entity) = ui.cache.panel_entity {
+                        ui.commands.entity(entity).insert(Visibility::Visible);
+                    }
                 }
             } else {
                 let mesh = ui.meshes.add(panel.mesh());
@@ -1078,34 +1164,10 @@ fn sync_ui(mut ui: UiSystem) {
                 ui.cache.panel_geometry = Some(mesh);
                 ui.cache.panel_entity = Some(entity);
             }
-        } else if let Some(entity) = ui.cache.panel_entity {
+        } else if panel_changed && let Some(entity) = ui.cache.panel_entity {
             ui.commands.entity(entity).insert(Visibility::Hidden);
         }
-        let mut replacement = shape.mesh();
-        for icon in &ui.frame.plan.icons {
-            replacement
-                .merge(&icon_mesh(
-                    icon.kind,
-                    logical_position(
-                        icon.bounds.x as f32 + icon.bounds.w as f32 * 0.5,
-                        icon.bounds.y as f32 + icon.bounds.h as f32 * 0.5,
-                        8.05 + icon.layer as f32 * 0.002,
-                    ),
-                    if ui
-                        .frame
-                        .plan
-                        .hit_regions
-                        .iter()
-                        .find(|h| h.id == icon.id.replace("ui/button-", "compose/"))
-                        .is_some_and(|h| !h.enabled)
-                    {
-                        [88, 114, 118]
-                    } else {
-                        [216, 219, 185]
-                    },
-                ))
-                .expect("UI meshes share colored triangle attributes");
-        }
+        let replacement = shape.mesh();
         if let Some(handle) = ui.cache.geometry.clone() {
             if let Some(mut mesh) = ui.meshes.get_mut(&handle) {
                 *mesh = replacement;
@@ -1123,14 +1185,101 @@ fn sync_ui(mut ui: UiSystem) {
             ui.cache.geometry = Some(mesh);
         }
     }
-    let text_changed = geometry_changed
-        || ui.cache.text != ui.frame.plan.text
-        || ui.cache.width != ui.window.width()
-        || ui.cache.height != ui.window.height();
+    // One canonical asset per icon kind/palette, instanced by persistent slots.
+    // Presentation transforms belong to the parent; each slot only translates
+    // its canonical mesh. Position changes never invalidate a mesh or its BLAS.
+    if ui.frame.plan.icons.is_empty() {
+        if ui.cache.icons_visible {
+            if let Some(entity) = ui.cache.icon_entity {
+                ui.commands.entity(entity).insert(Visibility::Hidden);
+            }
+            ui.cache.icons_visible = false;
+        }
+    } else {
+        if icons_changed {
+            let parent = if let Some(entity) = ui.cache.icon_entity {
+                entity
+            } else {
+                let entity = ui
+                    .commands
+                    .spawn((
+                        UiGeometry,
+                        Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH)),
+                        Visibility::Visible,
+                    ))
+                    .id();
+                ui.cache.icon_entity = Some(entity);
+                entity
+            };
+            let icons = ui.frame.plan.icons.clone();
+            for (index, (icon, &color)) in icons.iter().zip(&icon_colors).enumerate() {
+                let center = logical_position(
+                    icon.bounds.x as f32 + icon.bounds.w as f32 * 0.5,
+                    icon.bounds.y as f32 + icon.bounds.h as f32 * 0.5,
+                    8.05 + icon.layer as f32 * 0.002,
+                );
+                let handle = ui.cache.icon(&mut ui.meshes, icon.kind, color);
+                if let Some(&entity) = ui.cache.icon_slots.get(index) {
+                    ui.commands.entity(entity).insert((
+                        Mesh3d(handle),
+                        Transform::from_translation(center),
+                        Visibility::Inherited,
+                    ));
+                } else {
+                    let entity = ui
+                        .commands
+                        .spawn((
+                            crate::ray_scene::RayOverlay,
+                            Mesh3d(handle),
+                            MeshMaterial3d(ui.palette.ui.clone()),
+                            Transform::from_translation(center),
+                            Visibility::Inherited,
+                        ))
+                        .id();
+                    ui.commands.entity(parent).add_child(entity);
+                    ui.cache.icon_slots.push(entity);
+                }
+            }
+            for &entity in &ui.cache.icon_slots[icons.len()..] {
+                ui.commands.entity(entity).insert(Visibility::Hidden);
+            }
+            ui.cache.icons = icons;
+            ui.cache.icon_colors = icon_colors;
+        }
+        if !ui.cache.icons_visible {
+            if let Some(entity) = ui.cache.icon_entity {
+                ui.commands.entity(entity).insert(Visibility::Visible);
+            }
+            ui.cache.icons_visible = true;
+        }
+    }
+    // Text uses logical coordinates. Only label inputs and their actual clipped
+    // regions affect tessellation, not rectangle colors, icons or window pixels.
+    let labels_changed = ui.cache.text != ui.frame.plan.text;
+    let clips = (labels_changed || rects_changed || ui.cache.text_geometry.is_none()).then(|| {
+        ui.frame
+            .plan
+            .text
+            .iter()
+            .map(|text| {
+                visible_text_boxes(
+                    text,
+                    text_content_bounds(text, &ui.frame.plan),
+                    &ui.frame.plan,
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    let text_changed = labels_changed
+        || ui.cache.text_geometry.is_none()
+        || clips
+            .as_ref()
+            .is_some_and(|clips| *clips != ui.cache.text_clips);
     if text_changed {
+        let clips = clips.unwrap_or_else(|| ui.cache.text_clips.clone());
         let mut lettering_mesh = crate::glyphs::LetterMesh::default();
         let labels = ui.frame.plan.text.clone();
-        for text in labels {
+        for (text, visible) in labels.into_iter().zip(&clips) {
             let bounds = text_content_bounds(&text, &ui.frame.plan);
             let to_glyph_bounds = |b: TextBox| crate::glyphs::Bounds {
                 x: b.x,
@@ -1138,10 +1287,7 @@ fn sync_ui(mut ui: UiSystem) {
                 w: b.w,
                 h: b.h,
             };
-            let clips: Vec<_> = visible_text_boxes(&text, bounds, &ui.frame.plan)
-                .into_iter()
-                .map(to_glyph_bounds)
-                .collect();
+            let clips: Vec<_> = visible.iter().copied().map(to_glyph_bounds).collect();
             ui.lettering.append(
                 &mut lettering_mesh,
                 crate::glyphs::Label {
@@ -1177,11 +1323,11 @@ fn sync_ui(mut ui: UiSystem) {
             ui.cache.text_geometry = Some(mesh);
         }
         ui.cache.text = ui.frame.plan.text.clone();
-        ui.cache.width = ui.window.width();
-        ui.cache.height = ui.window.height();
+        ui.cache.text_clips = clips;
     }
-    ui.cache.rects = ui.frame.plan.rects.clone();
-    ui.cache.icons = ui.frame.plan.icons.clone();
+    if rects_changed {
+        ui.cache.rects = ui.frame.plan.rects.clone();
+    }
 }
 
 #[allow(clippy::too_many_arguments)] // Independent Bevy resources and read-only object poses.
@@ -1194,8 +1340,12 @@ fn sync_effects(
     mut meshes: ResMut<Assets<Mesh>>,
     objects: Query<(&WorldObject, &Mesh3d, &Transform)>,
     mut measurements: ResMut<PoseMeasurements>,
+    timing: Option<Res<crate::ray_stats::ComputeGpuTiming>>,
 ) {
-    let mut shape = Geometry::default();
+    let _span = timing
+        .as_ref()
+        .map(|timing| timing.cpu_span("sync_effects"));
+    let mut shape = EffectShape::default();
     for effect in &frame.plan.effects {
         let elapsed = effect
             .elapsed_ms
@@ -1359,24 +1509,30 @@ fn sync_effects(
             }
         }
     }
-    let next = shape.mesh();
-    // Empty meshes have no allocator slots. Keep the last allocation hidden instead of asking
-    // the renderer to upload zero vertex/index buffers on every idle frame.
-    if next.count_vertices() == 0 {
-        if let Some(entity) = mesh.entity {
-            commands.entity(entity).insert(Visibility::Hidden);
+    // Keep the last nonempty shape while hidden. Reappearing unchanged brackets
+    // can reuse their mesh; moving effects still compare their exact f32 inputs.
+    if shape.0.is_empty() {
+        if mesh.visible {
+            if let Some(entity) = mesh.entity {
+                commands.entity(entity).insert(Visibility::Hidden);
+            }
+            mesh.visible = false;
         }
         return;
     }
     if let Some(handle) = &mesh.handle {
-        if let Some(mut current) = meshes.get_mut(handle) {
-            *current = next;
+        if shape != mesh.shape
+            && let Some(mut current) = meshes.get_mut(handle)
+        {
+            *current = shape.mesh();
         }
-        if let Some(entity) = mesh.entity {
+        if !mesh.visible
+            && let Some(entity) = mesh.entity
+        {
             commands.entity(entity).insert(Visibility::Visible);
         }
     } else {
-        let handle = meshes.add(next);
+        let handle = meshes.add(shape.mesh());
         let entity = commands
             .spawn((
                 EffectGeometry,
@@ -1388,6 +1544,8 @@ fn sync_effects(
         mesh.handle = Some(handle);
         mesh.entity = Some(entity);
     }
+    mesh.shape = shape;
+    mesh.visible = true;
 }
 
 /// Measure the rendered silhouette in camera-facing axes. Keeping depth separate
@@ -1730,6 +1888,546 @@ fn ray_ellipsoid(origin: Vec3, direction: Vec3, center: Vec3, radius: Vec3) -> O
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cache_test_app() -> App {
+        use bevy::asset::AssetApp;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_resource::<EffectMesh>()
+            .init_resource::<UiCache>()
+            .init_resource::<PoseMeasurements>()
+            .init_resource::<crate::creature::CreatureMotion>()
+            .init_resource::<crate::glyphs::Lettering>()
+            .insert_resource(Palette {
+                solid: default(),
+                ui: default(),
+                panel: default(),
+                plant: default(),
+                rubber: default(),
+                cloth: default(),
+                brass: default(),
+                food: default(),
+            });
+        let world = beastie_core::WorldState::new(3, "Mop");
+        let mut plan = beastie_view::plan(&world, &default()).0;
+        plan.effects.clear();
+        plan.objects.clear();
+        app.insert_resource(SceneFrame { plan });
+        app
+    }
+
+    fn changed_meshes(app: &mut App) -> Vec<AssetId<Mesh>> {
+        app.world_mut()
+            .resource_mut::<Messages<AssetEvent<Mesh>>>()
+            .drain()
+            .filter_map(|event| match event {
+                AssetEvent::Modified { id } => Some(id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn icon_cache_reuses_geometry_across_rectangles_moves_and_visibility() {
+        let mut app = cache_test_app();
+        app.add_plugins((TransformPlugin, bevy::camera::visibility::VisibilityPlugin))
+            .init_resource::<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>()
+            .add_systems(Update, sync_ui);
+        let icon = beastie_view::IconCommand {
+            id: "toy/ball".into(),
+            kind: IconKind::Toy(ToyId::Ball),
+            bounds: beastie_view::Rect {
+                x: 80,
+                y: 150,
+                w: 10,
+                h: 10,
+            },
+            layer: 1,
+        };
+        {
+            let mut frame = app.world_mut().resource_mut::<SceneFrame>();
+            frame.plan.text.clear();
+            frame.plan.rects.clear();
+            frame.plan.hit_regions.clear();
+            frame.plan.icons = vec![icon.clone()];
+        }
+        app.update();
+        let slot = app.world().resource::<UiCache>().icon_slots[0];
+        let handle = app.world().get::<Mesh3d>(slot).unwrap().0.clone();
+        let entity = app.world().resource::<UiCache>().icon_entity.unwrap();
+        assert_eq!(app.world().resource::<UiCache>().icon_templates.len(), 1);
+        assert!(app.world().get::<InheritedVisibility>(slot).unwrap().get());
+        changed_meshes(&mut app);
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .rects
+            .push(beastie_view::RectCommand {
+                id: "panel".into(),
+                rect: beastie_view::Rect {
+                    x: 0,
+                    y: 0,
+                    w: 20,
+                    h: 20,
+                },
+                color: [20, 30, 40, 255],
+                layer: 0,
+                outline: false,
+            });
+        app.update();
+        assert!(
+            !changed_meshes(&mut app).contains(&handle.id()),
+            "adding a rectangle leaves icon BLAS intact"
+        );
+        app.world_mut().resource_mut::<SceneFrame>().plan.rects[0].color[0] += 1;
+        app.update();
+        assert!(
+            !changed_meshes(&mut app).contains(&handle.id()),
+            "rectangle recoloring leaves icon BLAS intact"
+        );
+        app.world_mut().resource_mut::<SceneFrame>().plan.icons[0]
+            .bounds
+            .x += 1;
+        app.update();
+        assert!(changed_meshes(&mut app).is_empty());
+        assert_eq!(
+            app.world().resource::<UiCache>().icon_templates.len(),
+            1,
+            "moving reuses canonical voxel geometry"
+        );
+        let moved = app.world().resource::<SceneFrame>().plan.icons.clone();
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .icons
+            .clear();
+        app.update();
+        assert!(changed_meshes(&mut app).is_empty());
+        assert_eq!(
+            app.world().get::<Visibility>(entity),
+            Some(&Visibility::Hidden)
+        );
+        assert!(!app.world().get::<InheritedVisibility>(slot).unwrap().get());
+        app.world_mut().resource_mut::<SceneFrame>().plan.icons = moved;
+        app.update();
+        assert!(
+            changed_meshes(&mut app).is_empty(),
+            "same returning icon list reuses its mesh"
+        );
+        assert_eq!(
+            app.world().get::<Visibility>(entity),
+            Some(&Visibility::Visible)
+        );
+        assert!(app.world().get::<InheritedVisibility>(slot).unwrap().get());
+        app.world_mut().resource_mut::<SceneFrame>().plan.icons[0].kind = IconKind::Send;
+        app.update();
+        assert!(changed_meshes(&mut app).is_empty());
+        assert_eq!(app.world().resource::<UiCache>().icon_templates.len(), 2);
+        app.world_mut().resource_mut::<SceneFrame>().plan.icons[0].kind = icon.kind;
+        app.update();
+        assert!(changed_meshes(&mut app).is_empty());
+        assert_eq!(
+            app.world().resource::<UiCache>().icon_templates.len(),
+            2,
+            "returning to a toy never regenerates its voxel mesh"
+        );
+    }
+
+    #[test]
+    fn icon_instances_follow_title_parent_and_keep_unused_slots_hidden() {
+        let mut app = cache_test_app();
+        app.add_plugins((TransformPlugin, bevy::camera::visibility::VisibilityPlugin))
+            .init_resource::<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>()
+            .add_systems(Update, (sync_ui, sync_title).chain());
+        let first = beastie_view::IconCommand {
+            id: "same-id".into(),
+            kind: IconKind::Toy(ToyId::Ball),
+            bounds: beastie_view::Rect {
+                x: 80,
+                y: 150,
+                w: 10,
+                h: 10,
+            },
+            layer: 1,
+        };
+        let second = beastie_view::IconCommand {
+            bounds: beastie_view::Rect {
+                x: 120,
+                y: 130,
+                w: 10,
+                h: 10,
+            },
+            ..first.clone()
+        };
+        {
+            let mut frame = app.world_mut().resource_mut::<SceneFrame>();
+            frame.plan.text.clear();
+            frame.plan.rects.clear();
+            frame.plan.hit_regions.clear();
+            frame.plan.icons = vec![first, second.clone()];
+        }
+        app.update();
+        let parent = app.world().resource::<UiCache>().icon_entity.unwrap();
+        let slots = app.world().resource::<UiCache>().icon_slots.clone();
+        assert_eq!(slots.len(), 2);
+        let first_handle = app.world().get::<Mesh3d>(slots[0]).unwrap().0.clone();
+        assert_eq!(first_handle, app.world().get::<Mesh3d>(slots[1]).unwrap().0);
+        assert_eq!(app.world().resource::<UiCache>().icon_templates.len(), 1);
+        changed_meshes(&mut app);
+        for title in [false, true] {
+            app.world_mut()
+                .resource_mut::<SceneFrame>()
+                .plan
+                .title_screen = title;
+            app.update();
+            assert!(
+                changed_meshes(&mut app).is_empty(),
+                "title changes only presentation transforms"
+            );
+            let parent_matrix = app
+                .world()
+                .get::<GlobalTransform>(parent)
+                .unwrap()
+                .to_matrix();
+            for (index, icon) in app
+                .world()
+                .resource::<SceneFrame>()
+                .plan
+                .icons
+                .iter()
+                .enumerate()
+            {
+                let center = logical_position(
+                    icon.bounds.x as f32 + icon.bounds.w as f32 * 0.5,
+                    icon.bounds.y as f32 + icon.bounds.h as f32 * 0.5,
+                    8.05 + icon.layer as f32 * 0.002,
+                );
+                let original = icon_mesh(icon.kind, center, [216, 219, 185]);
+                let local = app
+                    .world()
+                    .resource::<Assets<Mesh>>()
+                    .get(&first_handle)
+                    .unwrap();
+                let world = app
+                    .world()
+                    .get::<GlobalTransform>(slots[index])
+                    .unwrap()
+                    .to_matrix();
+                let positions = |mesh: &Mesh| {
+                    mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                        .unwrap()
+                        .as_float3()
+                        .unwrap()
+                        .to_vec()
+                };
+                for (local, original) in positions(local).into_iter().zip(positions(&original)) {
+                    let actual = world.transform_point3(Vec3::from(local));
+                    let expected = parent_matrix.transform_point3(Vec3::from(original));
+                    assert!(
+                        actual.distance(expected) < 0.000003,
+                        "title={title}: icon world position changed {actual:?} vs {expected:?}"
+                    );
+                }
+            }
+        }
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .icons
+            .truncate(1);
+        app.update();
+        assert_eq!(app.world().resource::<UiCache>().icon_slots, slots);
+        assert!(
+            app.world()
+                .get::<InheritedVisibility>(slots[0])
+                .unwrap()
+                .get()
+        );
+        assert!(
+            !app.world()
+                .get::<InheritedVisibility>(slots[1])
+                .unwrap()
+                .get()
+        );
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .icons
+            .push(second);
+        app.update();
+        assert!(
+            app.world()
+                .get::<InheritedVisibility>(slots[1])
+                .unwrap()
+                .get()
+        );
+        assert_eq!(first_handle, app.world().get::<Mesh3d>(slots[1]).unwrap().0);
+        assert!(
+            changed_meshes(&mut app).is_empty(),
+            "slot count changes never mutate canonical meshes"
+        );
+    }
+
+    #[test]
+    fn canonical_icon_cache_preserves_authored_attributes_and_positions() {
+        let mut cache = UiCache::default();
+        let mut assets = Assets::<Mesh>::default();
+        let center = Vec3::new(3.371, -1.673, 8.052);
+        for kind in [
+            IconKind::Food,
+            IconKind::Microphone,
+            IconKind::Send,
+            IconKind::Settings,
+            IconKind::Toy(ToyId::Ball),
+            IconKind::Toy(ToyId::Bell),
+            IconKind::Toy(ToyId::Sock),
+        ] {
+            let handle = cache.icon(&mut assets, kind, [216, 219, 185]);
+            if matches!(kind, IconKind::Toy(_)) {
+                assert_eq!(
+                    handle,
+                    cache.icon(&mut assets, kind, [88, 114, 118]),
+                    "toy palettes share their authored colored mesh"
+                );
+            }
+            let cached = assets.get(&handle).unwrap().clone().translated_by(center);
+            let original = icon_mesh(kind, center, [216, 219, 185]);
+            let positions = |mesh: &Mesh| {
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                    .unwrap()
+                    .as_float3()
+                    .unwrap()
+                    .to_vec()
+            };
+            let cached_positions = positions(&cached);
+            let original_positions = positions(&original);
+            assert_eq!(cached_positions.len(), original_positions.len());
+            for (cached, original) in cached_positions.into_iter().zip(original_positions) {
+                assert!(
+                    Vec3::from(cached).distance(Vec3::from(original)) < 0.000001,
+                    "{kind:?} retained authored placement"
+                );
+            }
+            assert_eq!(
+                cached.indices().unwrap().iter().collect::<Vec<_>>(),
+                original.indices().unwrap().iter().collect::<Vec<_>>()
+            );
+            for attribute in [Mesh::ATTRIBUTE_NORMAL, Mesh::ATTRIBUTE_COLOR] {
+                assert_eq!(
+                    cached.attribute(attribute).unwrap(),
+                    original.attribute(attribute).unwrap()
+                );
+            }
+        }
+        assert_eq!(cache.icon_templates.len(), 7);
+    }
+
+    #[test]
+    fn exact_effect_cache_skips_mesh_mutations_but_preserves_motion_and_visibility() {
+        let mut app = cache_test_app();
+        app.add_systems(Update, sync_effects);
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .creature
+            .highlight = beastie_view::Highlight::Hover;
+        app.update();
+        let handle = app.world().resource::<EffectMesh>().handle.clone().unwrap();
+        changed_meshes(&mut app);
+        app.update();
+        assert!(
+            changed_meshes(&mut app).is_empty(),
+            "unchanged selection keeps its BLAS"
+        );
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .creature
+            .position
+            .x += 1;
+        app.update();
+        assert_eq!(
+            changed_meshes(&mut app),
+            vec![handle.id()],
+            "even one position unit updates geometry"
+        );
+        let entity = app.world().resource::<EffectMesh>().entity.unwrap();
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .creature
+            .highlight = beastie_view::Highlight::None;
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(entity),
+            Some(&Visibility::Hidden)
+        );
+        assert!(changed_meshes(&mut app).is_empty());
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .creature
+            .highlight = beastie_view::Highlight::Hover;
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(entity),
+            Some(&Visibility::Visible)
+        );
+        assert!(
+            changed_meshes(&mut app).is_empty(),
+            "reappearing unchanged selection reuses the allocation"
+        );
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .effects
+            .push(beastie_view::EffectScene {
+                owner: beastie_view::SemanticOwner::Ordinary,
+                cue: PresentationCueKind::Wake,
+                position: NormalizedPosition::new(5000, 5000),
+                target: UiTarget::Creature,
+                elapsed_ms: 0,
+            });
+        app.update();
+        changed_meshes(&mut app);
+        app.world_mut().resource_mut::<SceneFrame>().plan.elapsed_ms += 1;
+        app.update();
+        assert_eq!(
+            changed_meshes(&mut app),
+            vec![handle.id()],
+            "continuous wake animation is never frozen"
+        );
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .reduced_motion = true;
+        app.update();
+        changed_meshes(&mut app);
+        app.world_mut().resource_mut::<SceneFrame>().plan.elapsed_ms += 1;
+        app.update();
+        assert!(
+            changed_meshes(&mut app).is_empty(),
+            "suppressed wake changes no geometry"
+        );
+    }
+
+    #[test]
+    fn text_cache_ignores_icon_and_color_changes_but_tracks_clipping_and_labels() {
+        let mut app = cache_test_app();
+        app.add_systems(Update, sync_ui);
+        {
+            let mut frame = app.world_mut().resource_mut::<SceneFrame>();
+            frame.plan.text.truncate(1);
+            assert_eq!(frame.plan.text.len(), 1);
+            frame.plan.text[0].bounds = Some(beastie_view::Rect {
+                x: 10,
+                y: 10,
+                w: 100,
+                h: 20,
+            });
+            frame.plan.text[0].layer = 10;
+            frame.plan.icons = vec![beastie_view::IconCommand {
+                id: "ui/button-send".into(),
+                kind: IconKind::Send,
+                bounds: beastie_view::Rect {
+                    x: 200,
+                    y: 120,
+                    w: 10,
+                    h: 10,
+                },
+                layer: 1,
+            }];
+            frame.plan.rects = vec![beastie_view::RectCommand {
+                id: "background".into(),
+                rect: beastie_view::Rect {
+                    x: 0,
+                    y: 0,
+                    w: 320,
+                    h: 180,
+                },
+                color: [20, 30, 40, 255],
+                layer: 0,
+                outline: false,
+            }];
+            frame.plan.rects.push(beastie_view::RectCommand {
+                id: "settings/panel".into(),
+                rect: beastie_view::Rect {
+                    x: 150,
+                    y: 20,
+                    w: 100,
+                    h: 100,
+                },
+                color: [20, 30, 40, 255],
+                layer: 2,
+                outline: false,
+            });
+            frame.plan.hit_regions.truncate(1);
+            assert_eq!(frame.plan.hit_regions.len(), 1);
+            frame.plan.hit_regions[0].id = "compose/send".into();
+            frame.plan.hit_regions[0].enabled = true;
+        }
+        app.update();
+        let text = app
+            .world()
+            .resource::<UiCache>()
+            .text_geometry
+            .clone()
+            .unwrap();
+        let geometry = app.world().resource::<UiCache>().geometry.clone().unwrap();
+        let icon_slot = app.world().resource::<UiCache>().icon_slots[0];
+        let icons = app.world().get::<Mesh3d>(icon_slot).unwrap().0.clone();
+        changed_meshes(&mut app);
+        app.update();
+        assert!(changed_meshes(&mut app).is_empty());
+        app.world_mut().resource_mut::<SceneFrame>().plan.rects[0].color[0] += 1;
+        app.update();
+        assert_eq!(
+            changed_meshes(&mut app),
+            vec![geometry.id()],
+            "background color does not reshape lettering"
+        );
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .hit_regions[0]
+            .enabled = false;
+        app.update();
+        assert!(
+            changed_meshes(&mut app).is_empty(),
+            "enabled state selects a canonical asset without mutating meshes"
+        );
+        assert_ne!(
+            app.world().get::<Mesh3d>(icon_slot).unwrap().id(),
+            icons.id()
+        );
+        {
+            let mut frame = app.world_mut().resource_mut::<SceneFrame>();
+            frame.plan.rects[0].layer = 11;
+            frame.plan.rects[0].rect = beastie_view::Rect {
+                x: 10,
+                y: 10,
+                w: 50,
+                h: 20,
+            };
+        }
+        app.update();
+        let modified = changed_meshes(&mut app);
+        assert!(
+            modified.contains(&text.id()),
+            "a covering rectangle changes clipped glyphs"
+        );
+        app.world_mut().resource_mut::<SceneFrame>().plan.text[0]
+            .text
+            .push('!');
+        app.update();
+        assert_eq!(
+            changed_meshes(&mut app),
+            vec![text.id()],
+            "label edits update only text geometry"
+        );
+    }
+
     #[test]
     fn pose_measurements_preserve_translation_rotation_scale_and_asset_changes() {
         let mut meshes = Assets::<Mesh>::default();

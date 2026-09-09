@@ -159,7 +159,7 @@ pub(crate) fn setup(
     // leaving terraces in the silhouette instead of dark channels around each grain.
     commands.spawn((
         Mesh3d(
-            meshes.add(appearance.mesh(substrate_model().mesh_with_style(
+            meshes.add(appearance.mesh(substrate_model().mesh_with_flat_normals(
                 0.10,
                 match appearance.treatment {
                     crate::appearance::SurfaceTreatment::Separated => {
@@ -506,8 +506,12 @@ fn append_voxels(
     offset: Vec3,
     style: crate::voxel::SurfaceStyle,
 ) {
-    mesh.merge(&model.mesh_with_style(cell, style).translated_by(offset))
-        .expect("voxel meshes share colored triangle attributes");
+    mesh.merge(
+        &model
+            .mesh_with_flat_normals(cell, style)
+            .translated_by(offset),
+    )
+    .expect("voxel meshes share colored triangle attributes");
 }
 
 pub(crate) fn object_mesh(
@@ -526,7 +530,7 @@ pub(crate) fn object_mesh(
                 [212, 119, 92]
             }
         })
-        .mesh_with_style(0.055, style),
+        .mesh_with_flat_normals(0.055, style),
         ObjectKind::Toy(ToyId::Bell) => {
             let mut shape = VoxelModel::default();
             for y in 0..12 {
@@ -575,10 +579,10 @@ pub(crate) fn object_mesh(
                     }
                 }
             }
-            shape.mesh_with_style(0.052, style)
+            shape.mesh_with_flat_normals(0.052, style)
         }
-        ObjectKind::Toy(ToyId::Sock) => sock_model().mesh_with_style(0.043, style),
-        ObjectKind::Cave => shelter_model().mesh_with_style(0.075, style),
+        ObjectKind::Toy(ToyId::Sock) => sock_model().mesh_with_flat_normals(0.043, style),
+        ObjectKind::Cave => shelter_model().mesh_with_flat_normals(0.075, style),
         ObjectKind::Plant => {
             let mut shape = Geometry::default().mesh();
             // Broad leaves grow from the authoritative root, with a varied fan silhouette.
@@ -751,7 +755,7 @@ fn food_mesh(food: FoodId, style: crate::voxel::SurfaceStyle) -> Mesh {
             }
         }
     }
-    shape.mesh_with_style(0.045, style)
+    shape.mesh_with_flat_normals(0.045, style)
 }
 
 #[cfg(test)]

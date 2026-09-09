@@ -34,6 +34,46 @@ pub struct Triangle {
     pub c2: Vec4,
 }
 
+/// Intersection rays read only positions and precomputed edges. Surface normals
+/// and colors remain lossless in a separate array with the same triangle index.
+#[derive(Clone, Copy, Debug, ShaderType)]
+pub struct GeometryTriangle {
+    pub a: Vec4,
+    pub e1: Vec4,
+    pub e2: Vec4,
+}
+
+#[derive(Clone, Copy, Debug, ShaderType)]
+pub struct TriangleSurface {
+    pub n0: Vec4,
+    pub n1: Vec4,
+    pub n2: Vec4,
+    pub c0: Vec4,
+    pub c1: Vec4,
+    pub c2: Vec4,
+}
+
+impl Triangle {
+    pub fn geometry(&self) -> GeometryTriangle {
+        GeometryTriangle {
+            a: self.a,
+            e1: (self.b.truncate() - self.a.truncate()).extend(0.0),
+            e2: (self.c.truncate() - self.a.truncate()).extend(0.0),
+        }
+    }
+
+    pub fn surface(&self) -> TriangleSurface {
+        TriangleSurface {
+            n0: self.n0,
+            n1: self.n1,
+            n2: self.n2,
+            c0: self.c0,
+            c1: self.c1,
+            c2: self.c2,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, ShaderType)]
 pub struct BvhNode {
     pub min: Vec3,
@@ -66,14 +106,32 @@ pub struct GeometryChunk {
     pub nodes: Arc<Vec<BvhNode>>,
 }
 
-#[derive(Resource, Clone, Default, ExtractResource)]
+#[derive(Resource, Clone, ExtractResource)]
 pub struct RayScene {
     pub geometry: Vec<GeometryChunk>,
     pub triangle_count: u32,
     pub node_count: u32,
     pub instances: Vec<GpuInstance>,
     pub tlas_nodes: Vec<BvhNode>,
+    /// Auxiliary roots share the primary instance array. MAX denotes no members.
+    pub world_root: u32,
+    pub shadow_root: u32,
     pub geometry_revision: u64,
+}
+
+impl Default for RayScene {
+    fn default() -> Self {
+        Self {
+            geometry: Vec::new(),
+            triangle_count: 0,
+            node_count: 0,
+            instances: Vec::new(),
+            tlas_nodes: Vec::new(),
+            world_root: u32::MAX,
+            shadow_root: u32::MAX,
+            geometry_revision: 0,
+        }
+    }
 }
 
 pub struct RayScenePlugin;
@@ -171,7 +229,11 @@ fn extract_scene(
     query: SceneInstances,
     mut cache: ResMut<MeshCache>,
     mut scene: ResMut<RayScene>,
+    timing: Option<Res<crate::ray_stats::ComputeGpuTiming>>,
 ) {
+    let _span = timing
+        .as_ref()
+        .map(|timing| timing.cpu_span("extract_scene"));
     let modified: HashSet<_> = events
         .read()
         .filter_map(|event| match event {
@@ -294,9 +356,44 @@ fn extract_scene(
             pad2: 0,
         });
     }
-    let (nodes, order) = build_bvh(&bounds, 2);
-    scene.instances = order.into_iter().map(|index| instances[index]).collect();
+    let (nodes, order) = build_bvh_strategy(&bounds, 2, false);
+    scene.instances = order.iter().map(|&index| instances[index]).collect();
     scene.tlas_nodes = nodes;
+    let mut world = Vec::new();
+    let mut shadow = Vec::new();
+    for (index, &source) in order.iter().enumerate() {
+        let material = scene.instances[index].material;
+        if material.w <= 0.5 {
+            world.push((index, bounds[source]));
+            if material.z <= 0.5 {
+                shadow.push((index, bounds[source]));
+            }
+        }
+    }
+    scene.world_root = append_filtered_tlas(&mut scene.tlas_nodes, &world);
+    scene.shadow_root = append_filtered_tlas(&mut scene.tlas_nodes, &shadow);
+}
+
+/// Singleton leaves let each auxiliary tree retain the primary instance IDs,
+/// regardless of its own spatial permutation. Only internal child offsets move.
+fn append_filtered_tlas(nodes: &mut Vec<BvhNode>, members: &[(usize, Bounds)]) -> u32 {
+    if members.is_empty() {
+        return u32::MAX;
+    }
+    let bounds: Vec<_> = members.iter().map(|(_, bounds)| *bounds).collect();
+    let (mut auxiliary, order) = build_bvh_strategy(&bounds, 1, false);
+    let root = u32::try_from(nodes.len()).expect("TLAS root must fit shader indices");
+    u32::try_from(nodes.len() + auxiliary.len()).expect("TLAS nodes must fit shader indices");
+    for node in &mut auxiliary {
+        if node.count == 0 {
+            node.first += root;
+        } else {
+            node.first = u32::try_from(members[order[node.first as usize]].0)
+                .expect("TLAS instance must fit shader indices");
+        }
+    }
+    nodes.extend(auxiliary);
+    root
 }
 
 fn pack_chunk(blas: &mut MeshBlas, revision: u64) {
@@ -410,15 +507,20 @@ fn mesh_blas(mesh: &Mesh) -> Option<MeshBlas> {
 /// Leaves refer to contiguous ranges in the returned permutation. Internal
 /// children are allocated together so the shader derives right as left + 1.
 ///
-/// The domain below bounds both primitive and node indices: even one primitive
-/// per leaf creates at most `2 * primitive_count - 1` nodes, which fits in u32.
-/// Every split divides the primitive count at its median, so the longest path
-/// has at most `ceil(log2(primitive_count)) + 1 <= 32` nodes. Depth-first shader
-/// traversal keeps at most one pending sibling per ancestor plus the current
-/// node, hence at most 32 entries. WGSL descends directly into the near child
-/// and stacks only far siblings, so its 32-slot stacks need at most 31 entries.
-/// This bound holds for coincident centroids too: they still split by count.
+/// At most 31 edges separate root and leaf. Each accepted SAH split leaves enough
+/// depth for median splitting both children down to the requested leaf size.
+/// Median fallback therefore always fits, even for adversarial centroid spacing.
+/// Near-first shader traversal defers at most one sibling per ancestor, requiring
+/// at most 31 of its 32 stack slots. The u32 domain also bounds packed node indices.
 fn build_bvh(bounds: &[Bounds], leaf_size: usize) -> (Vec<BvhNode>, Vec<usize>) {
+    build_bvh_strategy(bounds, leaf_size, true)
+}
+
+fn build_bvh_strategy(
+    bounds: &[Bounds],
+    leaf_size: usize,
+    sah: bool,
+) -> (Vec<BvhNode>, Vec<usize>) {
     assert!(
         leaf_size > 0,
         "BVH leaves must contain at least one primitive"
@@ -431,53 +533,173 @@ fn build_bvh(bounds: &[Bounds], leaf_size: usize) -> (Vec<BvhNode>, Vec<usize>) 
         return (Vec::new(), Vec::new());
     }
     let mut order: Vec<_> = (0..bounds.len()).collect();
-    let mut nodes = vec![BvhNode::default()];
-    split_node(bounds, &mut order, 0, leaf_size, &mut nodes, 0);
-    (nodes, order)
+    let mut builder = BvhBuilder {
+        bounds,
+        leaf_size,
+        sah,
+        nodes: vec![BvhNode::default()],
+    };
+    builder.split(&mut order, 0, 0, 0);
+    (builder.nodes, order)
 }
 
-fn split_node(
-    bounds: &[Bounds],
-    order: &mut [usize],
-    offset: usize,
-    leaf_size: usize,
-    nodes: &mut Vec<BvhNode>,
-    node_index: usize,
-) {
-    let total = order
-        .iter()
-        .fold(Bounds::empty(), |total, index| total.union(bounds[*index]));
-    nodes[node_index] = BvhNode {
-        min: total.min,
-        max: total.max,
-        first: offset as u32,
-        count: order.len() as u32,
-    };
-    if order.len() <= leaf_size {
-        return;
+const SAH_BINS: usize = 12;
+const BVH_MAX_DEPTH: u32 = 31;
+
+#[derive(Clone, Copy)]
+struct SahBin {
+    bounds: Bounds,
+    count: usize,
+}
+
+impl SahBin {
+    fn empty() -> Self {
+        Self {
+            bounds: Bounds::empty(),
+            count: 0,
+        }
     }
-    let centers = order.iter().fold(Bounds::empty(), |total, index| {
-        total.point(bounds[*index].center())
-    });
-    let extent = centers.max - centers.min;
-    let axis = if extent.x >= extent.y && extent.x >= extent.z {
-        0
-    } else if extent.y >= extent.z {
-        1
-    } else {
-        2
-    };
-    let middle = order.len() / 2;
-    order.select_nth_unstable_by(middle, |left, right| {
-        bounds[*left].center()[axis].total_cmp(&bounds[*right].center()[axis])
-    });
-    let child = nodes.len();
-    nodes.extend([BvhNode::default(); 2]);
-    nodes[node_index].first = child as u32;
-    nodes[node_index].count = 0;
-    let (left, right) = order.split_at_mut(middle);
-    split_node(bounds, left, offset, leaf_size, nodes, child);
-    split_node(bounds, right, offset + middle, leaf_size, nodes, child + 1);
+
+    fn include(mut self, bounds: Bounds, count: usize) -> Self {
+        if count != 0 {
+            self.bounds = self.bounds.union(bounds);
+            self.count += count;
+        }
+        self
+    }
+
+    fn cost(self) -> f64 {
+        if self.count == 0 {
+            return 0.0;
+        }
+        let extent = (self.bounds.max - self.bounds.min).as_dvec3();
+        (extent.x * extent.y + extent.y * extent.z + extent.z * extent.x) * self.count as f64
+    }
+}
+
+struct BvhBuilder<'a> {
+    bounds: &'a [Bounds],
+    leaf_size: usize,
+    sah: bool,
+    nodes: Vec<BvhNode>,
+}
+
+impl BvhBuilder<'_> {
+    fn split(&mut self, order: &mut [usize], offset: usize, node_index: usize, depth: u32) {
+        let total = order.iter().fold(Bounds::empty(), |total, index| {
+            total.union(self.bounds[*index])
+        });
+        self.nodes[node_index] = BvhNode {
+            min: total.min,
+            max: total.max,
+            first: offset as u32,
+            count: order.len() as u32,
+        };
+        if order.len() <= self.leaf_size {
+            return;
+        }
+        assert!(
+            depth < BVH_MAX_DEPTH,
+            "BVH split exhausted shader stack budget"
+        );
+        let centers = order.iter().fold(Bounds::empty(), |total, index| {
+            total.point(self.bounds[*index].center())
+        });
+        let split = self
+            .sah
+            .then(|| self.sah_split(order, centers, depth))
+            .flatten();
+        let middle = if let Some((axis, boundary)) = split {
+            let mut middle = 0;
+            for index in 0..order.len() {
+                if bin_index(
+                    self.bounds[order[index]].center()[axis],
+                    centers.min[axis],
+                    centers.max[axis],
+                ) <= boundary
+                {
+                    order.swap(index, middle);
+                    middle += 1;
+                }
+            }
+            middle
+        } else {
+            let extent = centers.max - centers.min;
+            let axis = if extent.x >= extent.y && extent.x >= extent.z {
+                0
+            } else if extent.y >= extent.z {
+                1
+            } else {
+                2
+            };
+            let middle = order.len() / 2;
+            order.select_nth_unstable_by(middle, |left, right| {
+                self.bounds[*left].center()[axis].total_cmp(&self.bounds[*right].center()[axis])
+            });
+            middle
+        };
+        let child = self.nodes.len();
+        self.nodes.extend([BvhNode::default(); 2]);
+        self.nodes[node_index].first = child as u32;
+        self.nodes[node_index].count = 0;
+        let (left, right) = order.split_at_mut(middle);
+        self.split(left, offset, child, depth + 1);
+        self.split(right, offset + middle, child + 1, depth + 1);
+    }
+
+    fn sah_split(&self, order: &[usize], centers: Bounds, depth: u32) -> Option<(usize, usize)> {
+        // A child has 30-depth remaining edges. Median splitting can accommodate
+        // at most leaf_size * 2^(30-depth) primitives in that remaining budget.
+        let child_capacity = self
+            .leaf_size
+            .saturating_mul(1usize << (BVH_MAX_DEPTH - depth - 1));
+        let mut best = None;
+        let mut best_cost = f64::INFINITY;
+        for axis in 0..3 {
+            if centers.max[axis] <= centers.min[axis] {
+                continue;
+            }
+            let mut bins = [SahBin::empty(); SAH_BINS];
+            for &index in order {
+                let bin = bin_index(
+                    self.bounds[index].center()[axis],
+                    centers.min[axis],
+                    centers.max[axis],
+                );
+                bins[bin] = bins[bin].include(self.bounds[index], 1);
+            }
+            let mut suffix = [SahBin::empty(); SAH_BINS];
+            let mut accumulated = SahBin::empty();
+            for bin in (0..SAH_BINS).rev() {
+                accumulated = accumulated.include(bins[bin].bounds, bins[bin].count);
+                suffix[bin] = accumulated;
+            }
+            let mut left = SahBin::empty();
+            for boundary in 0..SAH_BINS - 1 {
+                left = left.include(bins[boundary].bounds, bins[boundary].count);
+                let right = suffix[boundary + 1];
+                if left.count == 0
+                    || right.count == 0
+                    || left.count > child_capacity
+                    || right.count > child_capacity
+                {
+                    continue;
+                }
+                let cost = left.cost() + right.cost();
+                if cost < best_cost {
+                    best_cost = cost;
+                    best = Some((axis, boundary));
+                }
+            }
+        }
+        best
+    }
+}
+
+fn bin_index(value: f32, min: f32, max: f32) -> usize {
+    (((f64::from(value) - f64::from(min)) / (f64::from(max) - f64::from(min)) * SAH_BINS as f64)
+        as usize)
+        .min(SAH_BINS - 1)
 }
 
 #[cfg(test)]
@@ -517,8 +739,28 @@ mod tests {
     #[test]
     fn storage_struct_strides_match_shader_arrays() {
         assert_eq!(Triangle::min_size().get(), 144);
+        assert_eq!(GeometryTriangle::min_size().get(), 48);
+        assert_eq!(TriangleSurface::min_size().get(), 96);
         assert_eq!(BvhNode::min_size().get(), 32);
         assert_eq!(GpuInstance::min_size().get(), 176);
+    }
+
+    #[test]
+    fn split_triangle_preserves_edges_and_all_surface_attributes() {
+        let blas = mesh_blas(&triangle_mesh()).unwrap();
+        for tri in blas.triangles.iter() {
+            let geometry = tri.geometry();
+            let surface = tri.surface();
+            assert_eq!(geometry.a, tri.a);
+            assert_eq!(geometry.e1.truncate(), tri.b.truncate() - tri.a.truncate());
+            assert_eq!(geometry.e2.truncate(), tri.c.truncate() - tri.a.truncate());
+            assert_eq!(
+                [
+                    surface.n0, surface.n1, surface.n2, surface.c0, surface.c1, surface.c2
+                ],
+                [tri.n0, tri.n1, tri.n2, tri.c0, tri.c1, tri.c2]
+            );
+        }
     }
 
     #[test]
@@ -591,6 +833,178 @@ mod tests {
             }
         }
         assert!(visited.into_iter().all(|value| value));
+    }
+
+    fn bounds_hit(bounds: Bounds, origin: Vec3, direction: Vec3, limit: f32) -> Option<f32> {
+        let mut near = 0.0001_f32;
+        let mut far = limit;
+        for axis in 0..3 {
+            if direction[axis].abs() < 1e-10 {
+                if origin[axis] < bounds.min[axis] || origin[axis] > bounds.max[axis] {
+                    return None;
+                }
+            } else {
+                let a = (bounds.min[axis] - origin[axis]) / direction[axis];
+                let b = (bounds.max[axis] - origin[axis]) / direction[axis];
+                near = near.max(a.min(b));
+                far = far.min(a.max(b));
+                if far < near {
+                    return None;
+                }
+            }
+        }
+        (near < limit).then_some(near)
+    }
+
+    // Exercise the shader's near-first hierarchy algorithm against primitive
+    // bounds directly, counting every node and primitive slab test as work.
+    fn hierarchy_hit(
+        bounds: &[Bounds],
+        nodes: &[BvhNode],
+        order: &[usize],
+        origin: Vec3,
+        direction: Vec3,
+    ) -> (Option<f32>, usize) {
+        let mut closest = 1e30_f32;
+        let mut stack = vec![(0, 0.0)];
+        let mut work = 0;
+        while let Some((index, entry)) = stack.pop() {
+            if entry >= closest {
+                continue;
+            }
+            let node = nodes[index];
+            if node.count != 0 {
+                for position in node.first..node.first + node.count {
+                    work += 1;
+                    if let Some(hit) =
+                        bounds_hit(bounds[order[position as usize]], origin, direction, closest)
+                    {
+                        closest = hit;
+                    }
+                }
+            } else {
+                let mut children = Vec::new();
+                for index in [node.first as usize, node.first as usize + 1] {
+                    work += 1;
+                    let child = nodes[index];
+                    if let Some(entry) = bounds_hit(
+                        Bounds {
+                            min: child.min,
+                            max: child.max,
+                        },
+                        origin,
+                        direction,
+                        closest,
+                    ) {
+                        children.push((index, entry));
+                    }
+                }
+                children.sort_by(|a, b| b.1.total_cmp(&a.1));
+                stack.extend(children);
+            }
+        }
+        ((closest < 1e30).then_some(closest), work)
+    }
+
+    #[test]
+    fn sah_traversal_matches_brute_force_for_parallel_inside_and_oblique_rays() {
+        let bounds: Vec<_> = (0..257)
+            .map(|i| {
+                let point = Vec3::new(
+                    (i % 13) as f32 - 6.0,
+                    (i % 17) as f32 - 8.0,
+                    (i % 11) as f32 - 5.0,
+                );
+                Bounds::empty()
+                    .point(point)
+                    .point(point + Vec3::new(0.2, 0.7, 0.4))
+            })
+            .collect();
+        let (nodes, order) = build_bvh(&bounds, 4);
+        for i in 0..1024 {
+            let origin = Vec3::new(
+                (i % 19) as f32 - 9.0,
+                (i % 23) as f32 - 11.0,
+                (i % 29) as f32 - 14.0,
+            );
+            for direction in [
+                Vec3::Z,
+                Vec3::NEG_X,
+                Vec3::Y,
+                Vec3::new(-0.0, 1e-12, 1.0),
+                Vec3::new(0.3, -0.2, 0.9).normalize(),
+            ] {
+                let expected = bounds
+                    .iter()
+                    .filter_map(|bounds| bounds_hit(*bounds, origin, direction, 1e30))
+                    .min_by(f32::total_cmp);
+                let actual = hierarchy_hit(&bounds, &nodes, &order, origin, direction).0;
+                assert_eq!(actual, expected, "ray {origin:?} {direction:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn sah_skips_dense_clusters_more_efficiently_than_median() {
+        let mut bounds: Vec<_> = (0..127)
+            .map(|i| {
+                let point = Vec3::new(
+                    (i % 7) as f32 * 0.1,
+                    (i % 11) as f32 * 0.1,
+                    (i % 13) as f32 * 0.1,
+                );
+                Bounds::empty()
+                    .point(point)
+                    .point(point + Vec3::splat(0.15))
+            })
+            .collect();
+        bounds.push(
+            Bounds::empty()
+                .point(Vec3::new(999.5, -0.5, -0.5))
+                .point(Vec3::new(1000.5, 0.5, 0.5)),
+        );
+        let (sah_nodes, sah_order) = build_bvh(&bounds, 4);
+        let (median_nodes, median_order) = build_bvh_strategy(&bounds, 4, false);
+        let mut sah_work = 0;
+        let mut median_work = 0;
+        for i in 0..128 {
+            let origin = Vec3::new(1000.0, i as f32 / 128.0 - 0.5, -10.0);
+            let sah = hierarchy_hit(&bounds, &sah_nodes, &sah_order, origin, Vec3::Z);
+            let median = hierarchy_hit(&bounds, &median_nodes, &median_order, origin, Vec3::Z);
+            assert_eq!(sah.0, Some(9.5));
+            assert_eq!(sah.0, median.0);
+            sah_work += sah.1;
+            median_work += median.1;
+        }
+        assert!(
+            sah_work * 2 < median_work,
+            "SAH {sah_work} vs median {median_work} slab tests"
+        );
+    }
+
+    #[test]
+    fn sah_rejects_unbalanced_split_when_only_one_depth_remains() {
+        let mut bounds = vec![Bounds::empty().point(Vec3::ZERO).point(Vec3::ONE); 7];
+        bounds.push(
+            Bounds::empty()
+                .point(Vec3::splat(100.0))
+                .point(Vec3::splat(101.0)),
+        );
+        let mut builder = BvhBuilder {
+            bounds: &bounds,
+            leaf_size: 4,
+            sah: true,
+            nodes: vec![BvhNode::default()],
+        };
+        let centers = bounds.iter().fold(Bounds::empty(), |total, bounds| {
+            total.point(bounds.center())
+        });
+        let mut order: Vec<_> = (0..8).collect();
+        assert!(builder.sah_split(&order, centers, 30).is_none());
+        builder.split(&mut order, 0, 0, 30);
+        assert_eq!(builder.nodes.len(), 3);
+        assert_eq!(builder.nodes[1].count, 4);
+        assert_eq!(builder.nodes[2].count, 4);
     }
 
     #[test]
@@ -697,6 +1111,163 @@ mod tests {
         app.update();
         assert!(app.world().resource::<MeshCache>().meshes.is_empty());
         assert!(app.world().resource::<RayScene>().geometry.is_empty());
+    }
+
+    #[test]
+    fn auxiliary_tlas_preserves_instance_ids_and_ray_categories() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<MeshCache>()
+            .init_resource::<RayScene>()
+            .add_message::<AssetEvent<Mesh>>()
+            .add_systems(Update, extract_scene);
+        let mesh = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(triangle_mesh());
+        let lit = app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial::default());
+        let unlit = app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial {
+                unlit: true,
+                ..default()
+            });
+        for (point, material, overlay) in [
+            (Vec3::new(0.0, 0.0, 3.0), lit.clone(), true),
+            (Vec3::new(0.0, 0.0, 2.0), unlit.clone(), false),
+            (Vec3::new(0.0, 0.0, 1.0), lit.clone(), false),
+            (Vec3::new(5.0, 0.0, 1.0), lit.clone(), false),
+            (Vec3::new(-5.0, 0.0, 2.0), unlit.clone(), false),
+            (Vec3::new(10.0, 0.0, 3.0), lit.clone(), true),
+        ] {
+            let mut entity = app.world_mut().spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(material),
+                GlobalTransform::from_translation(point),
+                InheritedVisibility::VISIBLE,
+            ));
+            if overlay {
+                entity.insert(RayOverlay);
+            }
+        }
+        app.update();
+        let scene = app.world().resource::<RayScene>();
+        assert_eq!(
+            scene.instances.len(),
+            6,
+            "auxiliary trees never duplicate instances"
+        );
+        let members = |root| {
+            let mut result = Vec::new();
+            let mut stack = vec![root];
+            while let Some(index) = stack.pop() {
+                let node = scene.tlas_nodes[index as usize];
+                if node.count == 0 {
+                    stack.extend([node.first, node.first + 1]);
+                } else {
+                    result.extend(node.first..node.first + node.count);
+                }
+            }
+            result.sort_unstable();
+            result
+        };
+        assert_eq!(members(0), (0..6).collect::<Vec<_>>());
+        let world: Vec<_> = scene
+            .instances
+            .iter()
+            .enumerate()
+            .filter_map(|(index, instance)| (instance.material.w <= 0.5).then_some(index as u32))
+            .collect();
+        let shadow: Vec<_> = scene
+            .instances
+            .iter()
+            .enumerate()
+            .filter_map(|(index, instance)| {
+                (instance.material.w <= 0.5 && instance.material.z <= 0.5).then_some(index as u32)
+            })
+            .collect();
+        assert_eq!(world.len(), 4);
+        assert_eq!(shadow.len(), 2);
+        assert_eq!(members(scene.world_root), world);
+        assert_eq!(members(scene.shadow_root), shadow);
+        let triangle = mesh_blas(&triangle_mesh()).unwrap().triangles[0];
+        let hit = |root| {
+            let origin = Vec3::new(0.0, 0.0, 10.0);
+            let direction = Vec3::NEG_Z;
+            let mut closest = 100.0;
+            let mut stack = vec![root];
+            while let Some(index) = stack.pop() {
+                let node = scene.tlas_nodes[index as usize];
+                if bounds_hit(
+                    Bounds {
+                        min: node.min,
+                        max: node.max,
+                    },
+                    origin,
+                    direction,
+                    closest,
+                )
+                .is_none()
+                {
+                    continue;
+                }
+                if node.count == 0 {
+                    stack.extend([node.first, node.first + 1]);
+                } else {
+                    for index in node.first..node.first + node.count {
+                        let inverse = scene.instances[index as usize].local_from_world;
+                        if let Some(t) = triangle_hit(
+                            &triangle,
+                            inverse.transform_point3(origin),
+                            inverse.transform_vector3(direction),
+                        ) {
+                            closest = closest.min(t);
+                        }
+                    }
+                }
+            }
+            closest
+        };
+        assert_eq!(hit(0), 7.0, "primary sees overlay");
+        assert_eq!(
+            hit(scene.world_root),
+            8.0,
+            "world sees unlit geometry behind overlay"
+        );
+        assert_eq!(
+            hit(scene.shadow_root),
+            9.0,
+            "shadow skips overlay and unlit geometry"
+        );
+        app.world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .get_mut(&lit)
+            .unwrap()
+            .unlit = true;
+        app.update();
+        assert_eq!(app.world().resource::<RayScene>().shadow_root, u32::MAX);
+        app.world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .get_mut(&lit)
+            .unwrap()
+            .base_color = Color::NONE;
+        app.world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .get_mut(&unlit)
+            .unwrap()
+            .base_color = Color::NONE;
+        app.update();
+        let empty = app.world().resource::<RayScene>();
+        assert!(empty.tlas_nodes.is_empty());
+        assert_eq!(empty.world_root, u32::MAX);
+        assert_eq!(empty.shadow_root, u32::MAX);
+        assert_eq!(RayScene::default().world_root, u32::MAX);
+        assert_eq!(RayScene::default().shadow_root, u32::MAX);
     }
 
     #[test]

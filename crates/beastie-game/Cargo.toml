@@ -18,6 +18,7 @@ beastie-view = { path = "../beastie-view" }
 clap.workspace = true
 cpal = "0.17"
 bevy.workspace = true
+wgpu = { version = "29.0.4", default-features = false }
 rustybuzz = "0.20"
 lyon_tessellation = "1"
 unicode-segmentation = "1.12"
