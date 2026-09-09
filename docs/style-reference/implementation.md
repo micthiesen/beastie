@@ -1,6 +1,7 @@
 # Gold-reference implementation
 
-Implemented 2026-09-09 through three native comparison passes and a final recapture.
+Implemented 2026-09-09, then refined through repeated native comparison. The
+[refinement contract and review](refinement.md) records subsequent findings and decisions.
 The original JPGs remain unchanged. The PNGs below are actual compute-rendered game
 frames, not mockups or image-generated replacements.
 
@@ -30,9 +31,16 @@ an extruded voxel Mop logo and real Continue, Settings and Quit actions. Its tal
 framing and portrait placement affect presentation only; Continue restores gameplay
 projection and object picking. Settings closes back to its originating title screen.
 
+Refinement adds curved narrow fronds, eroded rock courses, a rounded terracotta
+arch, brighter bubble glints and thinner plate rims. Title toys meet the sand using
+actual transformed mesh bounds; the smaller creature sits clear of the cave.
+Gameplay framing places the sand closer to the compact rail, with unchanged pointer
+coordinates. Utility icons retain action labels in the semantic hit plan.
+
 The shader adds animated surface reflection pools, warped caustics, sand grain,
-wavelength-dependent depth tint and sparse analytic shafts. World effects add no
-shadow or bounce rays. The settings plate uses at most one cached world-only
+wavelength-dependent depth tint and sparse analytic shafts. Water effects add no
+shadow or bounce rays. Contact darkening reuses the existing diffuse bounce,
+without an additional occlusion traversal. The settings plate uses at most one cached world-only
 continuation per pixel; its very small linear-light contribution keeps bright sand
 from overwhelming the dark panel. Ordinary text and controls remain opaque.
 
@@ -56,21 +64,29 @@ from overwhelming the dark panel. Ordinary text and controls remain opaque.
 
 `cargo xtask verify` covers formatting, lint, tests, dialogue/STT fixtures and spoken
 input replay. Shader validation translates to Metal, Vulkan and DirectX targets.
-Focused regressions cover title/modal hit isolation, toy selection, settings text
-bounds, camera/pointer alignment across window aspect ratios and the water clock
-crossing one hour without resetting.
+Focused regressions cover title/modal hit isolation, stable contextual placement,
+rotated toy grounding and selection bounds, bounded pose-cache invalidation,
+settings text bounds, camera/pointer
+alignment across window aspect ratios and the water clock crossing one hour without
+resetting.
 
 Native macOS checks exercised toy-slot selection, Play, Settings, Large text,
 category navigation, Escape, text entry/submission, title Settings, return to title,
 Continue and window close. Independent code review found no outstanding code issues.
-A seven-second scripted recording checks moving water, bubbles, selection, settings,
-reduced motion and title animation. The original frames and recording samples retain
+An eight-second scripted recording checks moving water, bubbles, selection, settings,
+reduced motion, title animation and return to gameplay. The original frames and recording samples retain
 Mop's identity label; an apparent clipped-name preview was investigated and rejected.
 
 The [recorded timing report](implemented/render-report.json) is from the final debug
 build on Apple M5 Max / Metal at 1280×720, with recording and capture overhead:
-418 measured frames, median 16.62 ms, p95 27.28 ms, p99 265.36 ms. These are wall-frame
-intervals, not GPU pass timings or an uncaptured performance benchmark. Windows,
+486 measured frames, median 16.74 ms, p95 33.58 ms, p99 514.83 ms. The same-scenario
+[before report](implemented/render-report-before.json) measured 16.66 ms / 33.44 ms
+median/p95. Peak geometry memory fell 29.2%, from 214.36 MB to 151.78 MB. Exact pose
+caching and reused-bounce contact shading retain the visual refinements within the
+previous timing envelope. These are wall-frame intervals, not GPU pass timings;
+capture and UI transitions contribute large tail spikes. An additional 1920×1080
+uncaptured debug comparison measured median 29.06 ms before / 29.61 ms after; see
+[refinement evidence](refinement.md#final-measured-acceptance). Windows,
 Linux, lower-end GPUs, physical microphone and controller hardware remain untested.
 No release binary, installer or model bundle was rebuilt.
 
@@ -82,8 +98,14 @@ cargo xtask dev --fake-ai \
   --capture-dir target/captures/gold-reference
 ```
 
-That command follows the current window-size preference. For deterministic default
-settings and animated evidence, use a new output directory:
+That command follows the current window-size preference. For validated animated evidence with deterministic default settings, use a new
+output directory:
+
+```sh
+cargo xtask feel --suite gold-reference --output target/feel/gold-reference
+```
+
+To include a wall-frame timing report in a direct capture:
 
 ```sh
 cargo run -p beastie-game --locked -- --fake-ai \

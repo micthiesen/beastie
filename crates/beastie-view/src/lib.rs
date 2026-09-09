@@ -237,6 +237,9 @@ pub struct ViewState {
     /// Context menu anchor chosen when opened, so moving creatures do not move controls.
     #[serde(default)]
     pub context_above: Option<bool>,
+    /// A toy card chooses clear water once when opened; motion never moves its buttons.
+    #[serde(default)]
+    pub context_card_anchor: Option<(i32, i32)>,
     #[serde(default)]
     pub settings_page: u8,
     /// Stable [`HitRegion::id`] selected by keyboard or controller navigation.
@@ -333,6 +336,7 @@ impl Default for ViewState {
         Self {
             mode: UiMode::Compose,
             context_above: None,
+            context_card_anchor: None,
             settings_page: 0,
             focused_region: Some("compose/input".to_owned()),
             hovered_region: None,
@@ -1830,41 +1834,25 @@ fn add_persistent_bar(
             id: format!("ui/button-{id}"),
             kind,
             x: area.x + area.w / 2,
-            y: area.y + 6,
+            y: area.y + if id == "food" { 6 } else { area.h / 2 },
             layer: 35,
         });
     }
-    for (id, title, area) in [
-        ("speak", "Speak", microphone_rect),
-        ("feed", "Feed", food_rect),
-        (
-            "settings",
-            if matches!(view.mode, UiMode::Compose) {
-                "Settings"
-            } else {
-                "Close"
-            },
-            settings_rect,
-        ),
-        ("send", send_label, send_rect),
-    ] {
-        let mut caption = label(
-            &format!("compose/control-{id}"),
-            title,
-            area.x + 2,
-            area.y + 3,
-            35,
-        );
-        caption.bounds = Some(Rect {
-            x: area.x + 2,
-            y: area.y + 12,
-            w: area.w - 4,
-            h: 5,
-        });
-        caption.role = TextRole::ControlCaption;
-        caption.muted = (id == "send" && !send_enabled) || (id == "speak" && !microphone_available);
-        text.push(caption);
-    }
+    let mut feed_caption = label(
+        "compose/control-feed",
+        "Feed",
+        food_rect.x + 2,
+        food_rect.y + 3,
+        35,
+    );
+    feed_caption.bounds = Some(Rect {
+        x: food_rect.x + 2,
+        y: food_rect.y + 12,
+        w: food_rect.w - 4,
+        h: 5,
+    });
+    feed_caption.role = TextRole::ControlCaption;
+    text.push(feed_caption);
 }
 
 fn head_fit(value: &str, capacity: usize) -> String {
@@ -1903,7 +1891,7 @@ fn add_temporary_mode(
     match view.mode {
         UiMode::Title => add_title(view, rects, text, hits),
         UiMode::Compose => {}
-        UiMode::Context(UiTarget::Toy(toy)) => add_toy_context(state, toy, rects, text, hits),
+        UiMode::Context(UiTarget::Toy(toy)) => add_toy_context(state, view, toy, rects, text, hits),
         UiMode::Context(target) => {
             let actions = contextual_actions(target);
             let (_, head_y) = world_to_logical(state.creature.aquarium.position);
@@ -2044,43 +2032,108 @@ fn add_title(
     text.push(version);
 }
 
+/// Choose nearby clear water for a toy card. The shell stores this result when
+/// opening the context so later creature/object motion cannot displace controls.
+#[must_use]
+pub fn toy_context_anchor(state: &WorldState, toy: ToyId, text_scale: u8) -> (i32, i32) {
+    let width = if text_scale >= 2 { 69 } else { 59 };
+    let height = if text_scale >= 2 { 32 } else { 27 };
+    let objects = object_scenes(state, &ViewState::default());
+    let position = objects
+        .iter()
+        .find(|object| object.kind == ObjectKind::Toy(toy))
+        .map_or(NormalizedPosition::new(5000, 5000), |object| {
+            object.position
+        });
+    let (x, y) = world_to_logical(position);
+    let (head_x, head_y) = world_to_logical(state.creature.aquarium.position);
+    let mut occupied = vec![Rect {
+        x: head_x - 29,
+        y: head_y - 23,
+        w: 58,
+        h: 46,
+    }];
+    for object in &objects {
+        let ObjectKind::Toy(kind) = object.kind else {
+            continue;
+        };
+        let (x, y) = world_to_logical(object.position);
+        occupied.push(if kind == ToyId::Bell {
+            Rect {
+                x: x - 13,
+                y: y - 21,
+                w: 26,
+                h: 33,
+            }
+        } else {
+            Rect {
+                x: x - 14,
+                y: y - 14,
+                w: 28,
+                h: 28,
+            }
+        });
+    }
+    let candidates = [
+        (x + 17, y - 10),
+        (x + 36, y - height - 12),
+        (x - width - 20, y - height - 12),
+        (x + 20, y + 18),
+        (x - width - 20, y + 18),
+        (x - width - 20, y - 10),
+        (x - width / 2, y - height - 26),
+        (x - width / 2, y + 24),
+    ];
+    candidates
+        .into_iter()
+        .enumerate()
+        .map(|(index, (x, y))| {
+            let x = x.clamp(4, 316 - width);
+            let y = y.clamp(5, 132 - height);
+            let overlap: i32 = occupied
+                .iter()
+                .map(|other| {
+                    let w = ((x + width).min(other.x + other.w) - x.max(other.x)).max(0);
+                    let h = ((y + height).min(other.y + other.h) - y.max(other.y)).max(0);
+                    w * h
+                })
+                .sum();
+            ((overlap, index), (x, y))
+        })
+        .min_by_key(|(score, _)| *score)
+        .map(|(_, anchor)| anchor)
+        .unwrap_or((4, 5))
+}
+
 fn add_toy_context(
     state: &WorldState,
+    view: &ViewState,
     toy: ToyId,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    let position = state
-        .aquarium
-        .toy_states
-        .get(&toy)
-        .map(|item| item.position)
-        .or_else(|| {
-            state
-                .aquarium
-                .objects
-                .values()
-                .find_map(|object| match object {
-                    WorldObject::Toy {
-                        toy: found,
-                        position,
-                    } if *found == toy => Some(*position),
-                    _ => None,
-                })
-        })
-        .unwrap_or(NormalizedPosition::new(5000, 5000));
-    let (object_x, object_y) = world_to_logical(position);
-    let x = if object_x < 220 {
-        object_x + 17
-    } else {
-        object_x - 74
-    }
-    .clamp(4, 245);
-    let y = (object_y - 10).clamp(5, 114);
-    add_panel_chrome("mode/context-panel", Rect { x, y, w: 69, h: 29 }, 25, rects);
+    let large = view.text_scale >= 2;
+    let width = if large { 69 } else { 59 };
+    let height = if large { 32 } else { 27 };
+    let (x, y) = view
+        .context_card_anchor
+        .unwrap_or_else(|| toy_context_anchor(state, toy, view.text_scale));
+    let x = x.clamp(4, 316 - width);
+    let y = y.clamp(5, 132 - height);
+    add_panel_chrome(
+        "mode/context-panel",
+        Rect {
+            x,
+            y,
+            w: width,
+            h: height,
+        },
+        25,
+        rects,
+    );
     let (name, detail) = match toy {
-        ToyId::Ball => ("Beach ball", "A little nudge, a little play."),
+        ToyId::Ball => ("Beach ball", "For nudges and play."),
         ToyId::Bell => ("Bell", "A warm little ring."),
         ToyId::Sock => ("Sock", "Something soft to tug."),
     };
@@ -2088,7 +2141,7 @@ fn add_toy_context(
     title.bounds = Some(Rect {
         x: x + 4,
         y: y + 2,
-        w: 61,
+        w: width - 8,
         h: 7,
     });
     text.push(title);
@@ -2097,7 +2150,7 @@ fn add_toy_context(
     description.bounds = Some(Rect {
         x: x + 4,
         y: y + 9,
-        w: 61,
+        w: width - 8,
         h: 7,
     });
     text.push(description);
@@ -2106,9 +2159,9 @@ fn add_toy_context(
         .enumerate()
     {
         let area = Rect {
-            x: x + 4 + index as i32 * 31,
-            y: y + 19,
-            w: 29,
+            x: x + 4 + index as i32 * ((width - 7) / 2),
+            y: y + height - 10,
+            w: (width - 10) / 2,
             h: 8,
         };
         let id = format!("action/{}", action_id(action));
@@ -3681,6 +3734,17 @@ fn rect(id: &str, dimensions: Rect, color: [u8; 4], layer: i16) -> RectCommand {
 }
 
 fn add_panel_chrome(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<RectCommand>) {
+    if matches!(id, "settings/panel" | "mode/context-panel") {
+        rects.push(rect(id, dimensions, UI_PANEL, layer));
+        rects.push(RectCommand {
+            id: format!("{id}-edge"),
+            rect: dimensions,
+            color: UI_EDGE,
+            layer: layer + 1,
+            outline: true,
+        });
+        return;
+    }
     rects.push(rect(&format!("{id}-edge"), dimensions, UI_EDGE, layer - 1));
     rects.push(rect(
         id,
@@ -3696,6 +3760,22 @@ fn add_panel_chrome(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<Rect
 }
 
 fn add_inset(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<RectCommand>) {
+    if id.starts_with("settings/") {
+        rects.push(rect(
+            &format!("{id}-background"),
+            dimensions,
+            UI_PANEL_INSET,
+            layer + 2,
+        ));
+        rects.push(RectCommand {
+            id: format!("{id}-rim"),
+            rect: dimensions,
+            color: UI_EDGE,
+            layer: layer + 3,
+            outline: true,
+        });
+        return;
+    }
     rects.push(rect(
         &format!("{id}-background"),
         dimensions,
@@ -3900,6 +3980,74 @@ mod tests {
                 urgency_overrode_repetition: false,
             },
             payoff_reached: false,
+        }
+    }
+
+    #[test]
+    fn toy_card_avoids_nearby_toys_and_keeps_its_opening_anchor() {
+        let mut state = WorldState::new(7, "Mop");
+        for text_scale in [1, 2] {
+            let anchor = toy_context_anchor(&state, ToyId::Ball, text_scale);
+            let view = ViewState {
+                mode: UiMode::Context(UiTarget::Toy(ToyId::Ball)),
+                context_card_anchor: Some(anchor),
+                text_scale,
+                ..Default::default()
+            };
+            let scene = plan(&state, &view).0;
+            let card = scene
+                .rects
+                .iter()
+                .find(|r| r.id == "mode/context-panel")
+                .unwrap()
+                .rect;
+            let (hx, hy) = world_to_logical(state.creature.aquarium.position);
+            assert!(!rects_overlap(
+                card,
+                Rect {
+                    x: hx - 29,
+                    y: hy - 23,
+                    w: 58,
+                    h: 46
+                }
+            ));
+            for object in scene
+                .objects
+                .iter()
+                .filter(|o| matches!(o.kind, ObjectKind::Toy(_)))
+            {
+                let (x, y) = world_to_logical(object.position);
+                assert!(
+                    !rects_overlap(
+                        card,
+                        Rect {
+                            x: x - 12,
+                            y: y - 12,
+                            w: 24,
+                            h: 24
+                        }
+                    ),
+                    "card hides {:?}",
+                    object.kind
+                );
+            }
+            let before: Vec<_> = scene
+                .hit_regions
+                .iter()
+                .filter(|hit| hit.id.starts_with("action/"))
+                .map(|hit| hit.rect)
+                .collect();
+            let original = state.creature.aquarium.position;
+            state.creature.aquarium.position = NormalizedPosition::new(9000, 9000);
+            let after: Vec<_> = plan(&state, &view)
+                .0
+                .hit_regions
+                .iter()
+                .filter(|hit| hit.id.starts_with("action/"))
+                .map(|hit| hit.rect)
+                .collect();
+            assert_eq!(before, after);
+            state.creature.aquarium.position = original;
         }
     }
 
@@ -5066,16 +5214,17 @@ mod tests {
                     let caption = render
                         .text
                         .iter()
-                        .find(|t| t.id == format!("compose/control-{caption_id}"))
-                        .expect("action caption");
+                        .find(|t| t.id == format!("compose/control-{caption_id}"));
                     let background = render
                         .rects
                         .iter()
                         .find(|command| command.id == format!("compose/{action}-background"))
                         .expect("action background")
                         .rect;
-                    assert!(caption.bounds.unwrap().x >= background.x);
-                    assert!(text_right(caption) <= background.x + background.w);
+                    if let Some(caption) = caption {
+                        assert!(caption.bounds.unwrap().x >= background.x);
+                        assert!(text_right(caption) <= background.x + background.w);
+                    }
                     assert!(!rects_overlap(input_box, background));
                 }
             }
@@ -5736,12 +5885,31 @@ mod tests {
     fn modal_hides_world_picking_and_controls_have_explicit_labels() {
         let state = WorldState::new(7, "Mop");
         let scene = plan(&state, &ViewState::default()).0;
-        for action in ["send", "speak", "feed", "settings"] {
+        for id in [
+            "compose/send",
+            "compose/microphone",
+            "compose/food",
+            "compose/settings",
+        ] {
             assert!(
                 scene
+                    .hit_regions
+                    .iter()
+                    .any(|hit| hit.id == id && !hit.label.is_empty())
+            );
+        }
+        assert!(
+            scene
+                .text
+                .iter()
+                .any(|text| text.id == "compose/control-feed")
+        );
+        for utility in ["send", "speak", "settings"] {
+            assert!(
+                !scene
                     .text
                     .iter()
-                    .any(|text| text.id == format!("compose/control-{action}"))
+                    .any(|text| text.id == format!("compose/control-{utility}"))
             );
         }
         let modal = plan(

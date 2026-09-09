@@ -14,6 +14,8 @@ pub const LOGICAL_HEIGHT: f32 = 180.0;
 pub const PRESENTATION_WIDTH: f32 = 1280.0;
 pub const PRESENTATION_HEIGHT: f32 = 720.0;
 const UNITS: f32 = 20.0;
+const PLAY_HEIGHT: f32 = 8.7;
+const PLAY_LIFT: f32 = 0.15;
 const CAMERA_PITCH: f32 = -12.0 * std::f32::consts::PI / 180.0;
 
 #[derive(Resource)]
@@ -65,6 +67,116 @@ struct UiCache {
     panel_entity: Option<Entity>,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+struct MeshPose {
+    rotation: Quat,
+    scale: Vec3,
+}
+
+struct SelectionMeasurement {
+    pose: MeshPose,
+    bounds: Option<(Vec3, Vec2)>,
+}
+
+struct GroundMeasurement {
+    pose: MeshPose,
+    toy: ToyId,
+    position: Vec3,
+}
+
+/// Keep only the last exact pose per live world mesh, never animation history.
+#[derive(Resource, Default)]
+struct PoseMeasurements {
+    selection: HashMap<AssetId<Mesh>, SelectionMeasurement>,
+    grounding: HashMap<AssetId<Mesh>, GroundMeasurement>,
+}
+
+impl PoseMeasurements {
+    fn selection(
+        &mut self,
+        id: AssetId<Mesh>,
+        mesh: &Mesh,
+        transform: &Transform,
+    ) -> Option<(Vec3, Vec2)> {
+        let pose = MeshPose {
+            rotation: transform.rotation,
+            scale: transform.scale,
+        };
+        if self
+            .selection
+            .get(&id)
+            .is_none_or(|entry| entry.pose != pose)
+        {
+            let local = Transform {
+                translation: Vec3::ZERO,
+                ..*transform
+            };
+            self.selection.insert(
+                id,
+                SelectionMeasurement {
+                    pose,
+                    bounds: selection_bounds(mesh, &local),
+                },
+            );
+        }
+        self.selection[&id]
+            .bounds
+            .map(|(center, half)| (center + transform.translation, half))
+    }
+
+    fn grounding(
+        &mut self,
+        id: AssetId<Mesh>,
+        toy: ToyId,
+        mesh: &Mesh,
+        rotation: Quat,
+        scale: Vec3,
+    ) -> Vec3 {
+        let pose = MeshPose { rotation, scale };
+        if self
+            .grounding
+            .get(&id)
+            .is_none_or(|entry| entry.pose != pose || entry.toy != toy)
+        {
+            self.grounding.insert(
+                id,
+                GroundMeasurement {
+                    pose,
+                    toy,
+                    position: grounded_title_toy(toy, mesh, rotation, scale),
+                },
+            );
+        }
+        self.grounding[&id].position
+    }
+
+    fn asset_event(&mut self, event: &AssetEvent<Mesh>) {
+        if let AssetEvent::Added { id } | AssetEvent::Modified { id } | AssetEvent::Removed { id } =
+            event
+        {
+            self.selection.remove(id);
+            self.grounding.remove(id);
+        }
+    }
+
+    fn retain_live(&mut self, live: &HashSet<AssetId<Mesh>>) {
+        self.selection.retain(|id, _| live.contains(id));
+        self.grounding.retain(|id, _| live.contains(id));
+    }
+}
+
+fn invalidate_pose_measurements(
+    mut events: MessageReader<AssetEvent<Mesh>>,
+    objects: Query<&Mesh3d, With<WorldObject>>,
+    mut measurements: ResMut<PoseMeasurements>,
+) {
+    for event in events.read() {
+        measurements.asset_event(event);
+    }
+    let live = objects.iter().map(|mesh| mesh.id()).collect();
+    measurements.retain_live(&live);
+}
+
 pub struct RendererPlugin;
 impl Plugin for RendererPlugin {
     fn build(&self, app: &mut App) {
@@ -72,6 +184,7 @@ impl Plugin for RendererPlugin {
             .init_resource::<EffectMesh>()
             .init_resource::<SceneryPicking>()
             .init_resource::<UiCache>()
+            .init_resource::<PoseMeasurements>()
             .init_resource::<crate::glyphs::Lettering>()
             .add_systems(Startup, (setup, crate::creature::setup_creature))
             .add_systems(
@@ -86,6 +199,10 @@ impl Plugin for RendererPlugin {
                 )
                     .chain()
                     .after(HostSet::Publish),
+            )
+            .add_systems(
+                PostUpdate,
+                invalidate_pose_measurements.after(bevy::asset::AssetEventSystems),
             )
             .add_systems(
                 PostUpdate,
@@ -145,8 +262,11 @@ fn setup(
         ..default()
     });
     let bubble = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.30, 0.70, 0.72),
-        metallic: 0.3,
+        // Vertex colors carry the pale rim and dark underside. A neutral tint
+        // avoids multiplying those glints by a second dark cyan color.
+        base_color: Color::WHITE,
+        unlit: true,
+        metallic: 0.0,
         perceptual_roughness: 0.25,
         ..default()
     });
@@ -188,8 +308,8 @@ fn setup(
         TitleLogo,
         Mesh3d(meshes.add(title_logo_mesh())),
         MeshMaterial3d(materials.add(StandardMaterial {
-            perceptual_roughness: 0.45,
-            diffuse_transmission: 0.25,
+            perceptual_roughness: 0.36,
+            diffuse_transmission: 0.18,
             ..default()
         })),
         Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH))
@@ -202,7 +322,7 @@ fn setup(
         ui,
         panel: materials.add(StandardMaterial {
             unlit: true,
-            diffuse_transmission: 0.045,
+            diffuse_transmission: 0.004,
             ..default()
         }),
         plant: materials.add(appearance.surface(SurfaceMaterial::Plant)),
@@ -269,6 +389,7 @@ fn sync_objects(
             .saturating_add(frame.plan.simulation_remainder_ms) as f32
             / 1000.0;
         transform.rotation = Quat::IDENTITY;
+        transform.scale = Vec3::ONE;
         if matches!(plan.kind, ObjectKind::Plant) && !frame.plan.reduced_motion {
             transform.rotation = Quat::from_rotation_z((time / 1.9 + plan.id as f32).sin() * 0.055);
         }
@@ -325,9 +446,9 @@ fn sync_objects(
 fn bubble_mesh() -> Mesh {
     let mut shape = Geometry::default();
     for (x, y, w, h, color) in [
-        (-0.4, 0.0, 0.18, 0.55, [94, 160, 159]),
-        (0.4, 0.0, 0.18, 0.55, [108, 179, 173]),
-        (0.0, 0.4, 0.55, 0.18, [224, 227, 190]),
+        (-0.4, 0.0, 0.18, 0.55, [124, 180, 177]),
+        (0.4, 0.0, 0.18, 0.55, [182, 223, 211]),
+        (0.0, 0.4, 0.55, 0.18, [235, 242, 213]),
         (0.0, -0.4, 0.55, 0.18, [81, 142, 147]),
     ] {
         shape.cuboid(Vec3::new(x, y, 0.0), Vec3::new(w, h, 0.17), color);
@@ -401,13 +522,16 @@ fn title_logo_mesh() -> Mesh {
         for (row, line) in rows.iter().enumerate() {
             for (column, mark) in line.bytes().enumerate() {
                 if mark == b'x' {
-                    for z in 0..3 {
+                    for z in 0..4 {
                         model.set(
                             [start + column as i32 - 16, 7 - row as i32, z],
-                            if z == 2 {
-                                [244, 232, 184]
+                            if z == 3 {
+                                // A restrained top-to-bottom ivory shift reads as warm
+                                // illumination, while exposed side walls retain depth.
+                                let shade = row.min(14) as u8;
+                                [247 - shade / 2, 238 - shade, 201 - shade]
                             } else {
-                                [182, 163, 112]
+                                [172, 153, 105]
                             },
                         );
                     }
@@ -415,7 +539,34 @@ fn title_logo_mesh() -> Mesh {
             }
         }
     }
-    model.mesh_with_style(0.085, crate::voxel::SurfaceStyle::Beveled)
+    let mut mesh = model.mesh_with_style(0.085, crate::voxel::SurfaceStyle::Beveled);
+    let normals = mesh
+        .attribute(Mesh::ATTRIBUTE_NORMAL)
+        .unwrap()
+        .as_float3()
+        .unwrap();
+    let positions = mesh
+        .attribute(Mesh::ATTRIBUTE_POSITION)
+        .unwrap()
+        .as_float3()
+        .unwrap();
+    let colors: Vec<[f32; 4]> = normals
+        .iter()
+        .zip(positions)
+        .map(|(normal, position)| {
+            let front = normal[2].max(0.0);
+            let upper = normal[1].max(0.0);
+            let face = Vec3::new(0.94, 0.91, 0.78);
+            let wall = Vec3::new(0.49, 0.46, 0.34);
+            let base = wall.lerp(face, front) + Vec3::splat(upper * 0.10);
+            let gradient = 0.98 + position[1] * 0.025;
+            Color::srgb(base.x * gradient, base.y * gradient, base.z * gradient)
+                .to_linear()
+                .to_f32_array()
+        })
+        .collect();
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh
 }
 
 type TitlePresentation<'w, 's> = Query<
@@ -428,6 +579,7 @@ type TitlePresentation<'w, 's> = Query<
         Option<&'static TitleLogo>,
         Option<&'static crate::creature::CreaturePart>,
         Option<&'static WorldObject>,
+        Option<&'static Mesh3d>,
         &'static mut Transform,
         Option<&'static mut Projection>,
         Option<&'static mut Visibility>,
@@ -436,25 +588,29 @@ type TitlePresentation<'w, 's> = Query<
 
 fn presentation_extent(drawable: Vec2, title: bool) -> Vec2 {
     let viewport = Viewport::for_drawable(drawable.x, drawable.y);
-    drawable / (viewport.scale * UNITS) * Vec2::new(1.0, if title { 7.6 / 9.0 } else { 1.0 })
+    drawable / (viewport.scale * UNITS)
+        * Vec2::new(1.0, if title { 7.6 / 9.0 } else { PLAY_HEIGHT / 9.0 })
 }
 
 fn sync_title(
     frame: Res<SceneFrame>,
     motion: Res<crate::creature::CreatureMotion>,
+    meshes: Res<Assets<Mesh>>,
+    mut measurements: ResMut<PoseMeasurements>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut entities: TitlePresentation,
 ) {
     let title = frame.plan.title_screen;
     let rotation = Quat::from_rotation_x(CAMERA_PITCH);
-    let height = if title { 7.6 } else { 9.0 };
-    let lift = if title { 0.6 } else { 0.0 };
+    let height = if title { 7.6 } else { PLAY_HEIGHT };
+    let lift = if title { 0.6 } else { PLAY_LIFT };
     let drawable = windows
         .single()
         .map(|window| Vec2::new(window.width(), window.height()))
         .unwrap_or(Vec2::new(LOGICAL_WIDTH, LOGICAL_HEIGHT));
     let extent = presentation_extent(drawable.max(Vec2::ONE), title);
-    // The noninteractive title uses the same living scene with a taller framing.
+    // The slightly closer play framing retains the upper water edge while
+    // bringing the sand toward the interaction rail. Title keeps its own framing.
     // Overlay coordinates remain unchanged, so pointer and keyboard targets agree.
     let overlay = Transform::from_matrix(
         Mat4::from_quat(rotation)
@@ -464,8 +620,7 @@ fn sync_title(
                 Vec3::new(0.0, lift, 0.0),
             ),
     );
-    let portrait_offset = Vec3::new(-3.6, 1.3, motion.presented_head.z) - motion.presented_head;
-    for (camera, ui, text, logo, creature, object, mut transform, projection, visibility) in
+    for (camera, ui, text, logo, creature, object, mesh, mut transform, projection, visibility) in
         &mut entities
     {
         if camera.is_some() {
@@ -503,9 +658,55 @@ fn sync_title(
         {
             // Staging changes only rendered transforms after animation. Simulation,
             // motion history, object ownership and the resumed gameplay are untouched.
-            transform.translation += portrait_offset;
+            stage_title_creature(&mut transform, motion.presented_head);
+        } else if title
+            && let Some(object) = object
+            && let Some(plan) = frame.plan.objects.iter().find(|p| p.id == object.0)
+            && let ObjectKind::Toy(toy) = plan.kind
+        {
+            // Only the noninteractive title stages uncarried toys. sync_objects
+            // restores their actual positions before every subsequent play frame.
+            if let Some(handle) = mesh
+                && let Some(mesh) = meshes.get(&handle.0)
+            {
+                transform.translation = measurements.grounding(
+                    handle.id(),
+                    toy,
+                    mesh,
+                    transform.rotation,
+                    transform.scale,
+                );
+            }
         }
     }
+}
+
+fn stage_title_creature(transform: &mut Transform, head: Vec3) {
+    let anchor = Vec3::new(-3.35, 1.65, head.z);
+    transform.translation = anchor + (transform.translation - head) * 0.82;
+    transform.scale *= 0.82;
+}
+
+fn grounded_title_toy(toy: ToyId, mesh: &Mesh, rotation: Quat, scale: Vec3) -> Vec3 {
+    let anchor = match toy {
+        ToyId::Ball => Vec2::new(-3.15, 1.05),
+        ToyId::Bell => Vec2::new(3.5, 0.50),
+        ToyId::Sock => Vec2::new(5.6, 0.65),
+    };
+    let positions = mesh
+        .attribute(Mesh::ATTRIBUTE_POSITION)
+        .unwrap()
+        .as_float3()
+        .unwrap();
+    let y = positions
+        .iter()
+        .map(|p| {
+            let point = rotation * (Vec3::from_array(*p) * scale);
+            crate::environment::substrate_surface_height(anchor.x + point.x, anchor.y + point.z)
+                - point.y
+        })
+        .fold(f32::NEG_INFINITY, f32::max);
+    Vec3::new(anchor.x, y, anchor.y)
 }
 
 fn animate_bubbles(frame: Res<SceneFrame>, mut bubbles: Query<(&Bubble, &mut Transform)>) {
@@ -532,7 +733,7 @@ fn animate_bubbles(frame: Res<SceneFrame>, mut bubbles: Query<(&Bubble, &mut Tra
             y,
             -1.4,
         );
-        transform.scale = Vec3::splat(0.05 + (i % 4.0) * 0.018);
+        transform.scale = Vec3::splat(0.060 + (i % 4.0) * 0.024);
         transform.rotation = Quat::from_rotation_z((t * 0.2 + i).sin() * 0.12);
     }
 }
@@ -732,6 +933,61 @@ struct UiSystem<'w, 's> {
     meshes: ResMut<'w, Assets<Mesh>>,
 }
 
+/// Five joined voxel-width strips clip the corners without smooth vector geometry.
+/// Semantic hit rectangles stay generous, including the tiny omitted corners.
+fn stepped_plate(shape: &mut Geometry, center: Vec3, size: Vec3, color: [u8; 3], corner: f32) {
+    let c = corner.min(size.x * 0.2).min(size.y * 0.2);
+    shape.cuboid(center, Vec3::new(size.x - c * 4.0, size.y, size.z), color);
+    for side in [-1.0, 1.0] {
+        shape.cuboid(
+            center + Vec3::X * side * (size.x * 0.5 - c * 1.5),
+            Vec3::new(c, size.y - c * 2.0, size.z),
+            color,
+        );
+        shape.cuboid(
+            center + Vec3::X * side * (size.x * 0.5 - c * 0.5),
+            Vec3::new(c, size.y - c * 4.0, size.z),
+            color,
+        );
+    }
+}
+
+fn stepped_rim(shape: &mut Geometry, center: Vec3, size: Vec2, color: [u8; 3], corner: f32) {
+    let c = corner.min(size.x * 0.2).min(size.y * 0.2);
+    let stroke = 0.012;
+    let upper = color.map(|v| v.saturating_add(9));
+    for side in [-1.0, 1.0] {
+        let edge = if side > 0.0 { upper } else { color };
+        shape.cuboid(
+            center + Vec3::Y * side * size.y * 0.5,
+            Vec3::new(size.x - c * 4.0, stroke, 0.026),
+            edge,
+        );
+        shape.cuboid(
+            center + Vec3::X * side * size.x * 0.5,
+            Vec3::new(stroke, size.y - c * 4.0, 0.026),
+            color,
+        );
+        for vertical in [-1.0, 1.0] {
+            for step in 0..2 {
+                let k = step as f32;
+                let x = side * (size.x * 0.5 - c * (1.5 - k));
+                let y = vertical * (size.y * 0.5 - c * (1.0 + k));
+                shape.cuboid(
+                    center + Vec3::new(x, y, 0.0),
+                    Vec3::new(c + stroke, stroke, 0.026),
+                    color,
+                );
+                shape.cuboid(
+                    center + Vec3::new(x - side * c * 0.5, y + vertical * c * 0.5, 0.0),
+                    Vec3::new(stroke, c + stroke, 0.026),
+                    color,
+                );
+            }
+        }
+    }
+}
+
 fn sync_ui(mut ui: UiSystem) {
     let geometry_changed =
         ui.cache.rects != ui.frame.plan.rects || ui.cache.icons != ui.frame.plan.icons;
@@ -747,34 +1003,33 @@ fn sync_ui(mut ui: UiSystem) {
                 8.0 + rect.layer as f32 * 0.002,
             );
             let color = [rect.color[0], rect.color[1], rect.color[2]];
+            let size = Vec3::new(r.w as f32 / UNITS, r.h as f32 / UNITS, 0.02);
+            let crafted = rect.id.starts_with("title/")
+                || rect.id.starts_with("settings/")
+                || rect.id == "mode/context-panel"
+                || rect.id == "mode/context-panel-edge";
+            let corner = if r.h > 20 { 0.050 } else { 0.025 };
             if rect.id == "settings/panel" {
-                panel.cuboid(
-                    center,
-                    Vec3::new(r.w as f32 / UNITS, r.h as f32 / UNITS, 0.02),
-                    color,
-                );
+                stepped_plate(&mut panel, center, size, color, corner);
                 has_panel = true;
                 continue;
             }
-            if rect.outline {
-                let w = r.w as f32 / UNITS;
-                let h = r.h as f32 / UNITS;
-                for y in [-h * 0.5, h * 0.5] {
-                    shape.cuboid(center + Vec3::Y * y, Vec3::new(w, 0.014, 0.02), color);
+            if crafted && rect.outline {
+                stepped_rim(&mut shape, center, size.truncate(), color, corner);
+            } else if rect.outline {
+                for y in [-size.y * 0.5, size.y * 0.5] {
+                    shape.cuboid(center + Vec3::Y * y, Vec3::new(size.x, 0.014, 0.02), color);
                 }
-                for x in [-w * 0.5, w * 0.5] {
-                    shape.cuboid(center + Vec3::X * x, Vec3::new(0.014, h, 0.02), color);
+                for x in [-size.x * 0.5, size.x * 0.5] {
+                    shape.cuboid(center + Vec3::X * x, Vec3::new(0.014, size.y, 0.02), color);
                 }
+            } else if crafted && r.h >= 6 && r.w >= 6 {
+                stepped_plate(&mut shape, center, size, color, corner);
             } else {
-                // Calm continuous faces let spacing and typography establish hierarchy.
-                // Surface details are authored by the view, not added to every rectangle.
-                shape.cuboid(
-                    center,
-                    Vec3::new(r.w as f32 / UNITS, r.h as f32 / UNITS, 0.02),
-                    color,
-                );
+                shape.cuboid(center, size, color);
             }
         }
+
         if has_panel {
             if let Some(handle) = ui.cache.panel_geometry.clone() {
                 if let Some(mut mesh) = ui.meshes.get_mut(&handle) {
@@ -904,6 +1159,7 @@ fn sync_ui(mut ui: UiSystem) {
     ui.cache.icons = ui.frame.plan.icons.clone();
 }
 
+#[allow(clippy::too_many_arguments)] // Independent Bevy resources and read-only object poses.
 fn sync_effects(
     mut commands: Commands,
     frame: Res<SceneFrame>,
@@ -911,6 +1167,8 @@ fn sync_effects(
     motion: Res<crate::creature::CreatureMotion>,
     mut mesh: ResMut<EffectMesh>,
     mut meshes: ResMut<Assets<Mesh>>,
+    objects: Query<(&WorldObject, &Mesh3d, &Transform)>,
+    mut measurements: ResMut<PoseMeasurements>,
 ) {
     let mut shape = Geometry::default();
     for effect in &frame.plan.effects {
@@ -1038,25 +1296,38 @@ fn sync_effects(
             }
         }
     }
+    let camera_rotation = Quat::from_rotation_x(CAMERA_PITCH);
     let mut selected = Vec::new();
     if frame.plan.creature.highlight != beastie_view::Highlight::None {
-        selected.push((motion.position(&frame.plan), 0.78));
+        selected.push((
+            motion.position(&frame.plan) + camera_rotation * Vec3::Z,
+            Vec2::new(0.78, 0.56),
+        ));
     }
     for object in &frame.plan.objects {
-        if object.highlight != beastie_view::Highlight::None {
-            selected.push((
-                presented_object_position(object, &frame.plan, &motion),
-                0.56,
-            ));
+        if object.highlight == beastie_view::Highlight::None {
+            continue;
         }
+        let measured = objects
+            .iter()
+            .find(|(id, _, _)| id.0 == object.id)
+            .and_then(|(_, handle, transform)| {
+                meshes
+                    .get(&handle.0)
+                    .and_then(|mesh| measurements.selection(handle.id(), mesh, transform))
+            });
+        selected.push(measured.unwrap_or((
+            presented_object_position(object, &frame.plan, &motion) + camera_rotation * Vec3::Z,
+            Vec2::splat(0.56),
+        )));
     }
-    for (center, radius) in selected {
+    for (center, half) in selected {
         for side in [-1.0, 1.0] {
             for vertical in [-1.0, 1.0] {
-                let p = center + Vec3::new(side * radius, vertical * radius * 0.7, 1.0);
+                let p = center + camera_rotation * Vec3::new(side * half.x, vertical * half.y, 0.0);
                 shape.cuboid(p, Vec3::new(0.13, 0.025, 0.04), [233, 235, 197]);
                 shape.cuboid(
-                    p + Vec3::new(side * 0.05, -vertical * 0.05, 0.0),
+                    p + camera_rotation * Vec3::new(side * 0.05, -vertical * 0.05, 0.0),
                     Vec3::new(0.025, 0.13, 0.04),
                     [233, 235, 197],
                 );
@@ -1092,6 +1363,30 @@ fn sync_effects(
         mesh.handle = Some(handle);
         mesh.entity = Some(entity);
     }
+}
+
+/// Measure the rendered silhouette in camera-facing axes. Keeping depth separate
+/// avoids the old +world-Z offset shifting brackets downward under camera pitch.
+fn selection_bounds(mesh: &Mesh, transform: &Transform) -> Option<(Vec3, Vec2)> {
+    let camera_rotation = Quat::from_rotation_x(CAMERA_PITCH);
+    let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION)?.as_float3()?;
+    if positions.is_empty() {
+        return None;
+    }
+    let matrix = transform.to_matrix();
+    let mut low = Vec3::splat(f32::INFINITY);
+    let mut high = Vec3::splat(f32::NEG_INFINITY);
+    for point in positions {
+        let point = camera_rotation.inverse() * matrix.transform_point3(Vec3::from_array(*point));
+        low = low.min(point);
+        high = high.max(point);
+    }
+    let mut center = (low + high) * 0.5;
+    center.z = high.z + 0.12;
+    Some((
+        camera_rotation * center,
+        (high - low).truncate() * 0.5 + Vec2::splat(0.10),
+    ))
 }
 
 pub fn pointer_world(
@@ -1411,6 +1706,129 @@ fn ray_ellipsoid(origin: Vec3, direction: Vec3, center: Vec3, radius: Vec3) -> O
 mod tests {
     use super::*;
     #[test]
+    fn pose_measurements_preserve_translation_rotation_scale_and_asset_changes() {
+        let mut meshes = Assets::<Mesh>::default();
+        let handle = meshes.add(object_mesh(
+            ObjectKind::Toy(ToyId::Ball),
+            crate::appearance::RenderAppearance::default(),
+        ));
+        let mut cache = PoseMeasurements::default();
+        for transform in [
+            Transform::IDENTITY,
+            Transform::from_xyz(2.0, -0.3, 0.7),
+            Transform::from_rotation(Quat::from_rotation_z(0.43)),
+            Transform::from_scale(Vec3::new(0.7, 1.4, 0.9)),
+        ] {
+            let mesh = meshes.get(&handle).unwrap();
+            let measured = cache.selection(handle.id(), mesh, &transform).unwrap();
+            let direct = selection_bounds(mesh, &transform).unwrap();
+            assert!((measured.0 - direct.0).length() < 0.00001);
+            assert!((measured.1 - direct.1).length() < 0.00001);
+            let ground = cache.grounding(
+                handle.id(),
+                ToyId::Ball,
+                mesh,
+                transform.rotation,
+                transform.scale,
+            );
+            assert!(
+                (ground
+                    - grounded_title_toy(ToyId::Ball, mesh, transform.rotation, transform.scale))
+                .length()
+                    < 0.00001
+            );
+            assert_eq!(cache.selection.len(), 1);
+            assert_eq!(cache.grounding.len(), 1);
+        }
+        *meshes.get_mut(&handle).unwrap() = object_mesh(
+            ObjectKind::Toy(ToyId::Bell),
+            crate::appearance::RenderAppearance::default(),
+        );
+        cache.asset_event(&AssetEvent::Modified { id: handle.id() });
+        assert!(cache.selection.is_empty() && cache.grounding.is_empty());
+        let mesh = meshes.get(&handle).unwrap();
+        assert_eq!(
+            cache.selection(handle.id(), mesh, &Transform::IDENTITY),
+            selection_bounds(mesh, &Transform::IDENTITY)
+        );
+        assert_eq!(
+            cache.grounding(handle.id(), ToyId::Bell, mesh, Quat::IDENTITY, Vec3::ONE),
+            grounded_title_toy(ToyId::Bell, mesh, Quat::IDENTITY, Vec3::ONE)
+        );
+        cache.asset_event(&AssetEvent::Removed { id: handle.id() });
+        assert!(cache.selection.is_empty() && cache.grounding.is_empty());
+        cache.selection(handle.id(), mesh, &Transform::IDENTITY);
+        cache.grounding(handle.id(), ToyId::Bell, mesh, Quat::IDENTITY, Vec3::ONE);
+        cache.retain_live(&HashSet::new());
+        assert!(cache.selection.is_empty() && cache.grounding.is_empty());
+    }
+
+    #[test]
+    fn selection_brackets_enclose_the_projected_rotated_ball_without_depth_drift() {
+        let mesh = object_mesh(
+            ObjectKind::Toy(ToyId::Ball),
+            crate::appearance::RenderAppearance::default(),
+        );
+        let view = Quat::from_rotation_x(CAMERA_PITCH).inverse();
+        for angle in [-1.1, 0.0, 0.8] {
+            let transform =
+                Transform::from_xyz(-0.4, 0.3, 0.7).with_rotation(Quat::from_rotation_z(angle));
+            let (center, half) = selection_bounds(&mesh, &transform).unwrap();
+            let center = view * center;
+            for point in mesh
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+                .as_float3()
+                .unwrap()
+            {
+                let projected = view * transform.transform_point(Vec3::from_array(*point));
+                let delta = (projected - center).truncate().abs();
+                assert!(delta.x <= half.x - 0.099 && delta.y <= half.y - 0.099);
+                assert!(projected.z < center.z);
+            }
+        }
+    }
+
+    #[test]
+    fn title_toys_contact_the_substrate_in_their_rendered_pose() {
+        for toy in [ToyId::Ball, ToyId::Bell, ToyId::Sock] {
+            let mesh = object_mesh(
+                ObjectKind::Toy(toy),
+                crate::appearance::RenderAppearance::default(),
+            );
+            for angle in [-0.7, 0.0, 1.2] {
+                let rotation = Quat::from_rotation_z(angle);
+                let translation = grounded_title_toy(toy, &mesh, rotation, Vec3::ONE);
+                let clearance = mesh
+                    .attribute(Mesh::ATTRIBUTE_POSITION)
+                    .unwrap()
+                    .as_float3()
+                    .unwrap()
+                    .iter()
+                    .map(|p| {
+                        let p = translation + rotation * Vec3::from_array(*p);
+                        p.y - crate::environment::substrate_surface_height(p.x, p.z)
+                    })
+                    .fold(f32::INFINITY, f32::min);
+                assert!(clearance.abs() < 0.00001, "{toy:?}: {clearance}");
+                assert!(translation.x.abs() > 2.6, "toy overlaps title menu");
+            }
+        }
+    }
+
+    #[test]
+    fn title_portrait_scales_all_part_offsets_about_the_presented_head() {
+        let head = Vec3::new(2.0, 0.7, 0.1);
+        let original = Transform::from_translation(head + Vec3::new(-0.7, 0.3, 0.0))
+            .with_scale(Vec3::splat(1.2));
+        let mut staged = original;
+        stage_title_creature(&mut staged, head);
+        assert!((staged.translation - Vec3::new(-3.924, 1.896, 0.1)).length() < 0.0001);
+        assert!((staged.scale - Vec3::splat(0.984)).length() < 0.0001);
+        assert_eq!(staged.rotation, original.rotation);
+    }
+
+    #[test]
     fn scenery_picking_leaves_plant_gaps_and_cave_openings_empty() {
         let appearance = crate::appearance::RenderAppearance::default();
         let plant = PickMesh::from_mesh(&object_mesh(ObjectKind::Plant, appearance)).unwrap();
@@ -1633,15 +2051,39 @@ mod tests {
         ] {
             for title in [false, true] {
                 let extent = presentation_extent(drawable, title);
-                let logical = Vec2::new(148.0, 125.0);
-                let point = logical_position(logical.x, logical.y, 0.0).truncate()
-                    * Vec2::new(1.0, if title { 7.6 / 9.0 } else { 1.0 });
-                let pixel = (point / extent * Vec2::new(1.0, -1.0) + Vec2::splat(0.5)) * drawable;
-                let actual = Viewport::for_drawable(drawable.x, drawable.y)
-                    .logical_point(pixel.x, pixel.y)
-                    .unwrap();
-                assert!((actual.0 - logical.x).abs() < 0.001);
-                assert!((actual.1 - logical.y).abs() < 0.001);
+                let rotation = Quat::from_rotation_x(CAMERA_PITCH);
+                let (height, lift) = if title {
+                    (7.6, 0.6)
+                } else {
+                    (PLAY_HEIGHT, PLAY_LIFT)
+                };
+                let camera = Mat4::from_rotation_translation(
+                    rotation,
+                    rotation * Vec3::new(0.0, lift, 24.0),
+                );
+                let overlay = Mat4::from_quat(rotation)
+                    * Mat4::from_scale_rotation_translation(
+                        Vec3::new(1.0, height / 9.0, 1.0),
+                        Quat::IDENTITY,
+                        Vec3::new(0.0, lift, 0.0),
+                    );
+                for logical in [
+                    Vec2::new(148.0, 125.0),
+                    Vec2::new(8.0, 156.0),
+                    Vec2::new(280.0, 165.0),
+                    Vec2::new(168.0, 45.0),
+                ] {
+                    let point = (camera.inverse() * overlay)
+                        .transform_point3(logical_position(logical.x, logical.y, 8.0))
+                        .truncate();
+                    let pixel =
+                        (point / extent * Vec2::new(1.0, -1.0) + Vec2::splat(0.5)) * drawable;
+                    let actual = Viewport::for_drawable(drawable.x, drawable.y)
+                        .logical_point(pixel.x, pixel.y)
+                        .unwrap();
+                    assert!((actual.0 - logical.x).abs() < 0.001);
+                    assert!((actual.1 - logical.y).abs() < 0.001);
+                }
             }
         }
     }

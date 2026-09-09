@@ -36,6 +36,7 @@ pub enum FeelSuite {
     BadConditions,
     RelationshipOverTime,
     RelationshipBreadth,
+    GoldReference,
 }
 
 #[derive(Debug)]
@@ -85,6 +86,11 @@ const QUIET_OBSERVATION: Experience = Experience {
     fake_ai: true,
     tts_requested: false,
     fixture_dialogue_delay_ms: None,
+};
+const GOLD_REFERENCE: Experience = Experience {
+    id: "gold-reference",
+    scenario: "fixtures/scenarios/gold-reference-motion.jsonl",
+    ..QUIET_OBSERVATION
 };
 const QUIET_OBSERVATION_SEED_4201: Experience = Experience {
     id: "quiet-observation-seed-4201",
@@ -405,6 +411,7 @@ fn experiences(suite: FeelSuite) -> Vec<Experience> {
         ],
         FeelSuite::FirstFiveMinutes => vec![FIRST_FIVE_MINUTES],
         FeelSuite::QuietObservation => vec![QUIET_OBSERVATION],
+        FeelSuite::GoldReference => vec![GOLD_REFERENCE],
         FeelSuite::PrivateLife => vec![
             QUIET_OBSERVATION,
             QUIET_OBSERVATION_SEED_4201,

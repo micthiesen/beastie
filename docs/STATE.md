@@ -4,51 +4,53 @@ Last updated: **2026-09-09**.
 
 ## Now
 
-- The three user-supplied gold screenshots are permanent visual authority for future UI/art
-  work. Originals, baseline captures, final native comparisons and reproduction commands live
-  in [style references](style-reference/README.md) and the [implementation note](style-reference/implementation.md).
-- Gameplay has a compact identity/toy/chat rail, in-world selection brackets and nearby toy
-  cards. Settings uses a right-side translucent plate and vertical categories. A living title
-  screen adds a voxel logo and real Continue, Settings and Quit actions.
-- The existing compute renderer now shades animated water highlights, warped caustics, depth
-  tint, light shafts and fine sand grain. Warm lamps, metallic framing, taller plants and
-  clustered rocks establish the reference palette. See [art bible](art-bible.md) and
-  [renderer contract](raytraced-aquarium.md) for current ownership and deliberate approximations.
-- `cargo xtask verify` passed 542 tests, 27 dialogue fixtures, 11 STT fixtures and spoken
-  input replay. Native macOS input and repeated static/animated captures were reviewed; independent code
-  review found no outstanding defects. The final recorded debug run on M5 Max/Metal measured
-  16.62 ms median and 27.28 ms p95 wall frames including capture overhead. Other hosts remain
-  unmeasured; this is not an uncaptured performance claim.
-- Earlier movement/animation continuity and simulation authority remain intact. See
-  [motion review](feel-review-motion-20260909.md). No native release, installer or model bundle
-  was rebuilt for this visual iteration.
+- Gold-reference refinement is implemented and repeatedly reviewed. Permanent originals,
+  before/after screenshots and capture commands remain in [style references](style-reference/README.md).
+  The [refinement record](style-reference/refinement.md) explains accepted findings and limits.
+- Water now has smaller broken highlights, varied caustic coverage and stronger soft shafts.
+  Contact darkening, warm practical fill, curved fronds, eroded rock courses, a rounded cave
+  and restrained glass edges give the tank more depth.
+- Settings has thinner stepped rims and much less visible transmission. Selection brackets
+  follow actual transformed mesh bounds; toy cards choose clear space once and stay still.
+  The title has a smaller creature clear of the cave and toys grounded against actual sand.
+- `cargo xtask verify` passed 548 tests, 27 dialogue fixtures, 11 STT fixtures and spoken-input
+  replay. Two final native motion captures and independent visual/code reviews found no known
+  material reasonable correction remaining. Native macOS checks verified title/settings,
+  Large text, return to gameplay, direct toy picking and Play. All seven matched authoritative
+  checkpoints and the recorded event/audio semantics remain unchanged.
+- Final recorded median/p95 remains 16.74/33.58 ms versus 16.66/33.44 ms before;
+  geometry arenas are 29.2% smaller. An uncaptured 1080p debug comparison also remains
+  near the baseline. Exact pose caching avoids repeated selected-toy mesh scans.
+- Physical glass refraction and full volumetric transport remain approximations. No release
+  build, installer or model bundle was rebuilt. Windows/Linux and lower-end GPUs remain
+  unmeasured; timing evidence and caveats live in the refinement record.
 
 ## Next
 
 Measure the updated renderer and input path on Windows, Linux and an available lower-end GPU
-using ordinary debug builds. Use the gold-reference scenarios and record host specifications,
-uncaptured frame cadence and actual interactions. The new atmosphere is bounded, but current
-native evidence covers only M5 Max/Metal. This closes a concrete portability/performance gap
-before more lighting work. See [renderer contract](raytraced-aquarium.md) and
+using ordinary debug builds. Use `cargo xtask feel --suite gold-reference`, record host
+specifications, uncaptured frame cadence and actual interactions. Current native evidence
+covers M5 Max/Metal; broader measurements should precede a more expensive glass or lighting
+pipeline. See [renderer contract](raytraced-aquarium.md) and
 [MVP performance targets](mvp-spec.md#performance-budget).
 
 ## Candidates Not Chosen
 
-- **Further gold fidelity:** richer glass reflections, softer light transport and more detailed
-  plant/rock silhouettes remain visible differences. Hardware measurements should guide the
-  next rendering investment; physical volumetrics and general bloom are not defaults.
-- **Human full-speed and listening calibration:** remains useful for perceived motion and audio,
-  beyond sampled recordings and automated assertions.
-- **Full 3D navigation and collision:** changes gameplay without unblocking the current care
-  experience, so it remains deferred.
+- **Physical glass and richer light transport:** the main remaining gold differences require
+  broader rendering work; measure other hardware before increasing ray/denoising cost.
+- **Human full-speed and listening calibration:** remains useful for aesthetic and emotional
+  judgment beyond native playback, sampled recordings and recorded audio semantics.
+- **Full 3D navigation and collision:** changes gameplay without unblocking the care experience.
 
 ## Learned Recently
 
-- Gold art direction, comparisons, preserved semantics and capture commands:
-  [style implementation](style-reference/implementation.md).
-- Procedural effects and unified geometric UI: [renderer contract](raytraced-aquarium.md).
-- Motion continuity and saved-state invariance: [motion review](feel-review-motion-20260909.md).
-- Native recording and sound evidence: [feel-review-loop.md](feel-review-loop.md),
-  [audio-direction.md](audio-direction.md).
-- Product authority and relationship semantics: [game-design-philosophy.md](game-design-philosophy.md),
-  [relationship-causality-rework.md](relationship-causality-rework.md).
+- Visual decisions, comparisons, preserved semantics and native evidence:
+  [gold refinement](style-reference/refinement.md), [implementation](style-reference/implementation.md).
+- Geometry, procedural effects and unified UI: [art bible](art-bible.md),
+  [renderer contract](raytraced-aquarium.md).
+- A worker fixture must publish its complete PID marker atomically; creation alone is not
+  readiness. The cleanup-test fixture now writes then renames the marker.
+- Motion continuity: [motion review](feel-review-motion-20260909.md).
+- Native recording and sound: [feel-review-loop.md](feel-review-loop.md), [audio direction](audio-direction.md).
+- Product authority: [game-design philosophy](game-design-philosophy.md),
+  [relationship causality](relationship-causality-rework.md).

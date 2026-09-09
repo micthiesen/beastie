@@ -15,7 +15,7 @@ use beastie_session::{
 };
 use beastie_view::{
     AudioCommand, AudioCue, BindableAction, BindingLabels, MicrophoneState, PresentationChannel,
-    SPEECH_RELEASE_MS, ScenePlan, SemanticOwner, UiAction, UiMode, ViewState, plan,
+    SPEECH_RELEASE_MS, ScenePlan, SemanticOwner, UiAction, UiMode, UiTarget, ViewState, plan,
 };
 use bevy::input::keyboard::Key;
 
@@ -1045,6 +1045,14 @@ impl Game {
             }
             UiAction::OpenContext(target) => {
                 // Choose the clear region once. Swimming must not move controls under a pointer.
+                self.view.context_card_anchor = match target {
+                    UiTarget::Toy(toy) => Some(beastie_view::toy_context_anchor(
+                        self.session.world(),
+                        toy,
+                        self.view.text_scale,
+                    )),
+                    _ => None,
+                };
                 self.view.context_above = Some(
                     beastie_view::world_to_logical(self.session.world().creature.aquarium.position)
                         .1
@@ -1054,6 +1062,7 @@ impl Game {
                 self.reset_focus();
             }
             UiAction::CloseContext => {
+                self.view.context_card_anchor = None;
                 self.view.mode = UiMode::Compose;
                 self.reset_focus();
             }
@@ -1395,6 +1404,7 @@ impl Game {
     }
 
     fn close_menu(&mut self) {
+        self.view.context_card_anchor = None;
         self.renaming_with_osk = false;
         self.view.compose_engaged = false;
         self.view.hovered_region = None;

@@ -1115,7 +1115,10 @@ mod tests {
 	            .arg("grandchild")
 	            .spawn()
 	            .unwrap();
-	        std::fs::write(&args[2], descendant.id().to_string()).unwrap();
+	        // Publish the ready marker only after its PID contents are complete.
+	        let pending = format!("{}.pending", &args[2]);
+	        std::fs::write(&pending, descendant.id().to_string()).unwrap();
+	        std::fs::rename(&pending, &args[2]).unwrap();
 	    }
 	    let hang = tree
 	        || (args.get(1).is_some_and(|value| value == "hang-once")

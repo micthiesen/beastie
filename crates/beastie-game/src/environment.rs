@@ -17,7 +17,7 @@ struct TankArt {
 }
 const TANK: TankArt = TankArt {
     back_low: [8, 31, 39],
-    back_high: [15, 62, 69],
+    back_high: [13, 57, 68],
     frame: [27, 42, 39],
     brass: [174, 151, 97],
     sand: [185, 164, 116],
@@ -31,29 +31,29 @@ struct FrondArt {
     color: [u8; 3],
 }
 // A tall right group balances the low shelter on the left. The central water stays clear.
-const REAR_FRONDS: [FrondArt; 8] = [
+const REAR_FRONDS: [FrondArt; 11] = [
     FrondArt {
         root: Vec3::new(-6.88, -1.83, -1.45),
         height: 4.65,
-        bend: -0.30,
+        bend: 1.12,
         color: [63, 102, 54],
     },
     FrondArt {
         root: Vec3::new(-6.70, -1.83, -1.10),
         height: 3.25,
-        bend: 0.42,
+        bend: -0.43,
         color: [87, 119, 62],
     },
     FrondArt {
         root: Vec3::new(6.67, -1.83, -1.65),
         height: 4.15,
-        bend: -0.65,
+        bend: -1.12,
         color: [69, 111, 61],
     },
     FrondArt {
         root: Vec3::new(6.83, -1.83, -1.28),
         height: 3.55,
-        bend: 0.38,
+        bend: 0.78,
         color: [77, 113, 57],
     },
     FrondArt {
@@ -71,7 +71,7 @@ const REAR_FRONDS: [FrondArt; 8] = [
     FrondArt {
         root: Vec3::new(7.24, -1.83, -1.85),
         height: 4.85,
-        bend: -0.13,
+        bend: -0.40,
         color: [47, 86, 54],
     },
     FrondArt {
@@ -79,6 +79,24 @@ const REAR_FRONDS: [FrondArt; 8] = [
         height: 2.04,
         bend: -0.27,
         color: [83, 117, 64],
+    },
+    FrondArt {
+        root: Vec3::new(-7.10, -1.83, -1.15),
+        height: 2.90,
+        bend: 0.78,
+        color: [74, 112, 58],
+    },
+    FrondArt {
+        root: Vec3::new(-6.56, -1.83, -1.95),
+        height: 4.05,
+        bend: -0.35,
+        color: [45, 85, 56],
+    },
+    FrondArt {
+        root: Vec3::new(6.56, -1.83, -1.00),
+        height: 3.28,
+        bend: 0.68,
+        color: [78, 117, 56],
     },
 ];
 
@@ -104,7 +122,7 @@ pub(crate) fn setup(
     tank.cuboid(
         Vec3::new(0.0, -2.2, -0.3),
         Vec3::new(16.0, 0.32, 4.8),
-        [63, 73, 68],
+        [23, 37, 37],
     );
     for side in [-1.0, 1.0] {
         tank.cuboid(
@@ -116,6 +134,17 @@ pub(crate) fn setup(
             Vec3::new(side * 7.75, 1.30, 2.1),
             Vec3::new(0.027, 7.05, 0.08),
             TANK.brass,
+        );
+        // Thin inner edge glints suggest clear glass without an opaque front pane.
+        tank.cuboid(
+            Vec3::new(side * 7.69, 1.28, 2.20),
+            Vec3::new(0.018, 6.90, 0.025),
+            [89, 132, 124],
+        );
+        tank.cuboid(
+            Vec3::new(side * 7.67, 3.44, 2.22),
+            Vec3::new(0.014, 1.13, 0.022),
+            [164, 157, 110],
         );
     }
     tank.cuboid(
@@ -135,11 +164,6 @@ pub(crate) fn setup(
         Vec3::new(16.0, 1.35, 0.30),
         [23, 37, 37],
     );
-    tank.cuboid(
-        Vec3::new(0.0, -2.29, 2.20),
-        Vec3::new(16.0, 0.065, 0.34),
-        [103, 104, 78],
-    );
     // The substrate and rear ridge are one filled lattice. Shared faces disappear,
     // leaving terraces in the silhouette instead of dark channels around each grain.
     commands.spawn((
@@ -157,6 +181,45 @@ pub(crate) fn setup(
         MeshMaterial3d(solid.clone()),
         Transform::from_xyz(0.0, -2.0, 0.0),
     ));
+    let garden = garden_mesh(appearance);
+    commands.spawn((
+        Mesh3d(meshes.add(appearance.mesh(garden))),
+        MeshMaterial3d(solid.clone()),
+        Transform::default(),
+    ));
+    let mut lamps = Geometry::default();
+    for x in [-6.9, -4.2, 4.6, 7.0] {
+        tank.cuboid(
+            Vec3::new(x, 4.81, 2.17),
+            Vec3::new(0.56, 0.16, 0.35),
+            [92, 78, 49],
+        );
+        lamps.cuboid(
+            Vec3::new(x, 4.70, 2.33),
+            Vec3::new(0.37, 0.06, 0.12),
+            [255, 220, 146],
+        );
+    }
+    commands.spawn((
+        Mesh3d(meshes.add(lamps.mesh())),
+        MeshMaterial3d(background.clone()),
+        Transform::default(),
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(appearance.mesh(tank.mesh()))),
+        MeshMaterial3d(frame_material),
+        Transform::default(),
+    ));
+}
+
+/// Distant decor keeps exact voxel occupancy, folds and authored color edges.
+/// Its subpixel bevel bands otherwise split every face into nine quads, wasting
+/// most of the aquarium BLAS budget. Two close foreground rocks retain bevels.
+fn garden_mesh(appearance: crate::appearance::RenderAppearance) -> Mesh {
+    let scenery_style = match appearance.treatment {
+        crate::appearance::SurfaceTreatment::Separated => crate::voxel::SurfaceStyle::Separated,
+        _ => crate::voxel::SurfaceStyle::Sharp,
+    };
     // Sparse rear clusters frame the creature's open swimming space. These are scenery,
     // not extra simulation objects: the familiar cave and plant remain the only targets.
     let mut garden = Geometry::default().mesh();
@@ -187,7 +250,7 @@ pub(crate) fn setup(
             [117, 129, 109],
         ),
     ] {
-        garden_stone(&mut garden, center, radius, color, appearance.style());
+        garden_stone(&mut garden, center, radius, color, scenery_style);
     }
     // Layered corner outcrops are scenery, with clear water between their silhouettes.
     for (center, radius, color) in [
@@ -202,8 +265,8 @@ pub(crate) fn setup(
             [56, 80, 75],
         ),
         (
-            Vec3::new(-7.02, -1.33, 0.55),
-            Vec3::new(0.66, 0.60, 0.48),
+            Vec3::new(-7.02, -1.52, 0.55),
+            Vec3::new(0.76, 0.41, 0.48),
             [94, 110, 92],
         ),
         (
@@ -217,12 +280,17 @@ pub(crate) fn setup(
             [70, 96, 83],
         ),
         (
-            Vec3::new(7.20, -1.26, 0.76),
-            Vec3::new(0.55, 0.66, 0.43),
+            Vec3::new(7.15, -1.49, 0.76),
+            Vec3::new(0.67, 0.43, 0.43),
             [99, 110, 89],
         ),
     ] {
-        garden_stone(&mut garden, center, radius, color, appearance.style());
+        let style = if center.z > 0.4 {
+            appearance.style()
+        } else {
+            scenery_style
+        };
+        garden_stone(&mut garden, center, radius, color, style);
     }
     for frond in REAR_FRONDS {
         garden_frond(
@@ -231,37 +299,38 @@ pub(crate) fn setup(
             frond.height,
             frond.bend,
             frond.color,
-            appearance.style(),
+            scenery_style,
         );
     }
-    commands.spawn((
-        Mesh3d(meshes.add(appearance.mesh(garden))),
-        MeshMaterial3d(solid.clone()),
-        Transform::default(),
-    ));
-    let mut lamps = Geometry::default();
-    for x in [-6.9, -4.2, 4.6, 7.0] {
-        tank.cuboid(
-            Vec3::new(x, 4.81, 2.17),
-            Vec3::new(0.56, 0.16, 0.35),
-            [92, 78, 49],
-        );
-        lamps.cuboid(
-            Vec3::new(x, 4.70, 2.33),
-            Vec3::new(0.37, 0.06, 0.12),
-            [255, 220, 146],
-        );
+    // Short growth and a few low stones join the tall compositions to the sand.
+    // They stay on the outer banks, away from toy and creature swimming space.
+    for (x, z, height, bend) in [
+        (-7.35, 0.90, 0.36, 0.13),
+        (-6.42, 0.78, 0.27, -0.14),
+        (-5.90, -1.3, 0.49, 0.18),
+        (5.20, -1.25, 0.42, -0.14),
+        (6.72, 1.10, 0.28, 0.12),
+        (7.34, 0.45, 0.44, -0.20),
+    ] {
+        for stem in 0..3 {
+            garden_frond(
+                &mut garden,
+                Vec3::new(x + stem as f32 * 0.07, -1.80, z),
+                height * (0.65 + stem as f32 * 0.17),
+                bend * (stem as f32 - 0.6),
+                [71, 111, 62],
+                scenery_style,
+            );
+        }
     }
-    commands.spawn((
-        Mesh3d(meshes.add(lamps.mesh())),
-        MeshMaterial3d(background.clone()),
-        Transform::default(),
-    ));
-    commands.spawn((
-        Mesh3d(meshes.add(appearance.mesh(tank.mesh()))),
-        MeshMaterial3d(frame_material),
-        Transform::default(),
-    ));
+    for (center, radius) in [
+        (Vec3::new(-6.47, -1.59, 0.52), Vec3::new(0.32, 0.29, 0.30)),
+        (Vec3::new(5.57, -1.57, -0.65), Vec3::new(0.37, 0.35, 0.29)),
+        (Vec3::new(6.50, -1.72, 0.75), Vec3::new(0.24, 0.18, 0.23)),
+    ] {
+        garden_stone(&mut garden, center, radius, [103, 116, 91], scenery_style);
+    }
+    garden
 }
 
 /// One solid slab with interpolated vertex colors leaves the water continuous.
@@ -305,21 +374,31 @@ fn garden_stone(
     let cell = 0.10;
     let extent = (radius / cell).ceil().as_ivec3();
     let mut stone = VoxelModel::default();
-    for x in -extent.x..=extent.x {
-        for y in -extent.y..=extent.y {
+    let phase = center.x * 1.73 + center.z * 2.31;
+    let layer_rows = if radius.y > 0.8 { 3 } else { 2 };
+    for y in -extent.y..=extent.y {
+        let height = (y + extent.y) as f32 / (2 * extent.y).max(1) as f32;
+        let tier = (y + extent.y).div_euclid(layer_rows) as f32;
+        // Many shallow weathered courses, a domed cap and round broken corners
+        // avoid square columns. Every course remains filled against its neighbours.
+        let cap = 1.0 - ((height - 0.78).max(0.0) / 0.22).powi(2) * 0.48;
+        let shelf = (phase + tier * 1.63).sin() * 0.065;
+        let width = (1.0 - height * 0.27 + shelf) * cap;
+        let shift_x = (phase + tier * 0.7).sin() * height * 0.17;
+        let shift_z = (phase * 0.7 + tier * 0.9).cos() * height * 0.12;
+        for x in -extent.x..=extent.x {
             for z in -extent.z..=extent.z {
-                let offset = Vec3::new(x as f32, y as f32, z as f32) * cell;
-                if (offset / radius).length_squared() <= 1.0 {
-                    // Broad strata keep the form readable without a checkerboard of cells.
-                    stone.set(
-                        [x, y, z],
-                        shade(
-                            color,
-                            ((y.div_euclid(4).rem_euclid(3) - 1) * 5
-                                + if y.rem_euclid(4) == 3 { 4 } else { 0 })
-                                as i16,
-                        ),
-                    );
+                let nx = x as f32 * cell / radius.x - shift_x;
+                let nz = z as f32 * cell / radius.z - shift_z;
+                let radial = (nx * nx + nz * nz).sqrt();
+                let chipped = ((x.div_euclid(2) * 7 + z.div_euclid(2) * 3 + tier as i32)
+                    .rem_euclid(7) as f32
+                    - 3.0)
+                    * 0.022;
+                if radial <= width + chipped {
+                    let lip = (y + extent.y).rem_euclid(layer_rows) == layer_rows - 1;
+                    let tone = (tier as i16 % 3) * 2 - 3 + if lip { 7 } else { 0 };
+                    stone.set([x, y, z], shade(color, tone));
                 }
             }
         }
@@ -339,37 +418,59 @@ fn garden_frond(
     let cell = 0.045;
     let rows = (height / cell).ceil() as i32;
     let mut leaf = VoxelModel::default();
+    let phase = root.x * 2.7 + root.z * 4.1 + height;
     for y in 0..=rows {
         let t = y as f32 / rows as f32;
-        let center_x = (bend * t * t / cell).round() as i32;
-        let center_z = ((t * std::f32::consts::PI).sin() * 0.22 / cell).round() as i32;
-        let half_width = (1.0
-            + (t * std::f32::consts::PI).sin() * 3.0 * (height / 1.5).clamp(0.7, 1.3))
-        .round() as i32;
+        let envelope = (t * std::f32::consts::PI).sin().max(0.0);
+        let sway = (t * 4.2 + phase).sin() * envelope * height.min(3.0) * 0.085;
+        let center_x = ((bend * t.powf(1.8) + sway) / cell).round() as i32;
+        let center_z = ((t * 4.2 + phase).sin() * envelope * 0.18 / cell).round() as i32;
+        // Narrow tapered ribbons twist gradually through depth. Their folded faces
+        // receive different light without disconnected strips or a painted outline.
+        let half_width = (0.45 + envelope.powf(0.65) * 2.7).round() as i32;
+        let twist = (t * 4.5 + phase).sin() * 0.9;
         for x in -half_width..=half_width {
-            // A quiet midrib and folded edge communicate a leaf, not a painted stripe.
-            let fold = i32::from(x.abs() == half_width && half_width > 1);
+            let edge = x.abs() == half_width;
+            if edge && half_width > 1 && (y + (phase.abs() * 3.0) as i32).rem_euclid(11) == 0 {
+                continue;
+            }
+            let fold = (x as f32 * twist - x.abs() as f32 * 0.34).round() as i32;
+            let tone = if x == 0 {
+                11
+            } else if edge {
+                5
+            } else {
+                -2
+            };
             for depth in 0..=1 {
                 leaf.set(
-                    [center_x + x, y, center_z - fold - depth],
-                    shade(
-                        color,
-                        if x == 0 {
-                            16
-                        } else if x.abs() == half_width {
-                            8
-                        } else {
-                            0
-                        },
-                    ),
+                    [center_x + x, y, center_z + fold - depth],
+                    shade(color, tone),
                 );
-            }
-            if fold > 0 {
-                leaf.set([center_x + x, y, center_z], color);
             }
         }
     }
     append_voxels(mesh, &leaf, cell, root, style);
+}
+
+/// Filled column height and bank blend shared by meshing and contact placement.
+fn substrate_column(x: i32, z: i32) -> (i32, f32) {
+    let world_x = x as f32 * 0.10;
+    let rear = ((-z + 2) as f32 / 23.0).clamp(0.0, 1.0);
+    let side = ((world_x.abs() - 4.2) / 3.6).clamp(0.0, 1.0);
+    let side = side * side * (3.0 - 2.0 * side);
+    let bank = side * rear * rear;
+    let height = 2 + (bank * (3.6 + (world_x * 0.8).sin() * 0.4)).round() as i32;
+    (height, bank)
+}
+
+/// Top of the actual sand voxel beneath a presentation position, in world units.
+/// Out-of-bed positions clamp to the nearest bank; gameplay anchors remain unchanged.
+pub(crate) fn substrate_surface_height(x: f32, z: f32) -> f32 {
+    let x = (x / 0.10).round().clamp(-78.0, 78.0) as i32;
+    let z = (z / 0.10).round().clamp(-21.0, 20.0) as i32;
+    let (height, _) = substrate_column(x, z);
+    -2.0 + (height as f32 - 0.5) * 0.10
 }
 
 /// Integer occupancy makes the floor continuous even where terrace heights differ.
@@ -378,13 +479,7 @@ fn substrate_model() -> VoxelModel {
     for x in -78..=78 {
         for z in -21..=20 {
             let world_x = x as f32 * 0.10;
-            let rear = ((-z + 2) as f32 / 23.0).clamp(0.0, 1.0);
-            let side = ((world_x.abs() - 4.2) / 3.6).clamp(0.0, 1.0);
-            let side = side * side * (3.0 - 2.0 * side);
-            // Raised banks belong at the rear corners. Keep a broad, continuous
-            // central bed so terrace highlights cannot stripe the toys and face.
-            let bank = side * rear * rear;
-            let height = 2 + (bank * (3.6 + (world_x * 0.8).sin() * 0.4)).round() as i32;
+            let (height, bank) = substrate_column(x, z);
             let tone = ((world_x * 0.72 + z as f32 * 0.12).sin() * 1.5).round() as i16;
             let color = std::array::from_fn(|axis| {
                 let sand = TANK.sand[axis] as f32;
@@ -513,25 +608,47 @@ fn shelter_model() -> VoxelModel {
     let mut shape = VoxelModel::default();
     for x in -17_i32..=17 {
         for y in -19_i32..=17 {
-            for z in -18_i32..=-6 {
-                let roof_y = (y + 6).max(0) as f32;
-                let lip = z >= -7;
-                let outer_radius = if lip { 17.0 } else { 16.0 };
-                let outer = (x as f32 / outer_radius).powi(2) + (roof_y / 23.0).powi(2) <= 1.0;
-                let opening_y = (y + 7).max(0) as f32;
-                let inner_radius = if lip { 14.0 } else { 15.0 };
-                let doorway = (x as f32 / inner_radius).powi(2) + (opening_y / 21.0).powi(2) < 1.0;
+            for z in -18_i32..=-5 {
+                // A semicircular crown meets upright jambs at the spring line.
+                // The old tall ellipse made the shelter look like a pointed hutch.
+                let front = z >= -7;
+                let outer_radius: f32 = match z {
+                    -5 => 16.0,
+                    -7..=-6 => 17.0,
+                    -9..=-8 | -14..=-13 => 16.5,
+                    _ => 16.0,
+                };
+                let inner_radius: f32 = if z == -5 {
+                    14.5
+                } else if front {
+                    14.0
+                } else {
+                    15.0
+                };
+                let roof_y = y.max(0) as f32;
+                let outer =
+                    (x as f32 / outer_radius).powi(2) + (roof_y / outer_radius).powi(2) <= 1.0;
+                let doorway = (x as f32 / inner_radius).powi(2) + (roof_y / 14.0).powi(2) < 1.0;
                 if outer && (!doorway || z <= -17) {
-                    let color = if doorway {
-                        [51, 47, 39]
-                    } else if lip {
-                        [192, 117, 69]
-                    } else if y > 0 {
-                        [173, 98, 59]
+                    // Recessed depth courses and a narrow rolled front lip make
+                    // the terracotta read as a thick fired object, not a flat arch.
+                    let base = if doorway {
+                        [49, 43, 35]
+                    } else if z == -5 {
+                        [198, 126, 77]
+                    } else if front {
+                        [183, 106, 62]
+                    } else if y >= 0 {
+                        [174, 99, 60]
                     } else {
-                        [151, 84, 51]
+                        [147, 83, 51]
                     };
-                    shape.set([x, y, z], color);
+                    let tone = if doorway {
+                        0
+                    } else {
+                        (y.div_euclid(4).rem_euclid(3) - 1) as i16 * 2
+                    };
+                    shape.set([x, y, z], shade(base, tone));
                 }
             }
         }
@@ -635,6 +752,16 @@ fn food_mesh(food: FoodId, style: crate::voxel::SurfaceStyle) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finished_scenery_keeps_a_bounded_triangle_budget() {
+        let mesh = garden_mesh(crate::appearance::RenderAppearance::default());
+        let triangles = mesh.indices().expect("indexed scenery").len() / 3;
+        assert!(
+            triangles <= 180_000,
+            "scenery has {triangles} triangles; retain sharp subpixel decor surfaces"
+        );
+    }
 
     #[test]
     fn substrate_has_a_complete_top_and_no_internal_base_walls() {

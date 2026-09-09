@@ -119,7 +119,7 @@ fn water_noise(p:vec2<f32>) -> f32 {
 fn caustic(p:vec2<f32>, time:f32) -> f32 {
     let drift=vec2(time*0.035,-time*0.026);
     let warp=vec2(water_noise(p*2.3+drift),water_noise(p.yx*2.1-drift+vec2(5.2)))-0.5;
-    let warped=p*1.50+warp*1.1+vec2(sin(p.y*2.4+time*0.17),sin(p.x*1.8-time*0.13))*0.16;
+    let warped=p*1.16+warp*1.25+vec2(sin(p.y*2.4+time*0.17),sin(p.x*1.8-time*0.13))*0.16;
     let cell=floor(warped); let local=fract(warped);
     var first=8.0; var second=8.0;
     for(var y=-1;y<=1;y++) { for(var x=-1;x<=1;x++) {
@@ -131,8 +131,8 @@ fn caustic(p:vec2<f32>, time:f32) -> f32 {
         else { second=min(second,distance); }
     } }
     let variation=water_noise(p*3.1+drift);
-    let edge=1.0-smoothstep(0.012,0.11+variation*0.25,second-first);
-    let breakup=0.30+0.70*water_noise(p*1.1-drift+vec2(9.7));
+    let edge=1.0-smoothstep(0.012,0.10+variation*0.22,second-first);
+    let breakup=0.18+0.82*smoothstep(0.18,0.82,water_noise(p*0.62-drift+vec2(9.7)));
     return edge*edge*breakup;
 }
 fn water_optics(color:vec3<f32>, o:vec3<f32>, d:vec3<f32>, hit:Hit) -> vec3<f32> {
@@ -148,18 +148,19 @@ fn water_optics(color:vec3<f32>, o:vec3<f32>, d:vec3<f32>, hit:Hit) -> vec3<f32>
     // Broad slanted shafts are strongest behind objects and dissolve before the bed.
     let spread=4.6-p.y;
     var shafts=0.0;
+    let veil=0.83+0.17*sin(p.y*1.45+sin(p.x*0.7)+time*0.032);
     for(var i=0u;i<4u;i++) {
         let source=array<f32,4>(-5.9,-2.8,2.0,5.8)[i];
         let center=source+spread*(0.11+f32(i)*0.015);
-        let width=0.12+f32(i%2u)*0.09+spread*(0.07+f32(i)*0.014);
+        let width=0.11+f32(i%2u)*0.13+spread*(0.052+f32(i)*0.011);
         let dist=(p.x-center)/width;
-        shafts+=exp(-dist*dist)*exp(-spread*0.29)*(0.85+0.15*sin(time*0.18+f32(i)*2.1));
+        shafts+=exp(-dist*dist)*exp(-spread*0.23)*(0.85+0.15*sin(time*0.18+f32(i)*2.1))*veil;
     }
-    result+=vec3(0.11,0.21,0.19)*shafts*0.42*clamp(depth/3.0,0.0,1.0);
+    result+=vec3(0.12,0.30,0.29)*shafts*0.74*clamp(depth/3.0,0.0,1.0);
     if(instances[hit.instance].material.z>0.5 && p.z < -2.0) {
         let center=exp(-p.x*p.x*0.028);
         result*=1.0-(1.0-high)*center*0.32;
-        result+=vec3(0.005,0.045,0.049)*high*high*center;
+        result+=vec3(0.005,0.052,0.063)*high*high*center;
     }
     // Analytic thin surface: its distorted normals and broken Fresnel highlights
     // animate without rebuilding a mesh or adding a second traversal.
@@ -168,23 +169,28 @@ fn water_optics(color:vec3<f32>, o:vec3<f32>, d:vec3<f32>, hit:Hit) -> vec3<f32>
         let surface=o+d*surface_t;
         if(surface_t>0.0 && surface_t<hit.t && abs(surface.x)<7.74 && surface.z > -0.6 && surface.z<2.10) {
             let q=surface.xz;
-            let drift=vec2(time*0.05,-time*0.034);
-            let warp=q+vec2(water_noise(q*2.7+drift),water_noise(q.yx*2.3-drift))*0.75;
-            let broad=water_noise(warp*vec2(2.3,4.8)+drift);
-            let detail=water_noise(warp*vec2(6.1,9.4)-drift);
-            let pools=smoothstep(0.42,0.70,broad*0.72+detail*0.28);
-            let glint=pow(smoothstep(0.46,0.82,detail),2.0)*pools;
+            let drift=vec2(time*0.034,-time*0.024);
+            // Independent ripple scales break reflections into small patches. Avoid
+            // thresholding one broad warped field, which reads as marbled metal.
+            let warp=q+vec2(sin(q.y*6.0+q.x*0.7+time*0.22),
+                sin(q.x*3.7-q.y*1.8-time*0.19))*0.065;
+            let broad=water_noise(warp*vec2(3.6,6.2)+drift);
+            let fine=water_noise(warp*vec2(13.0,19.0)-drift*1.7);
+            let ripple=0.5+0.5*sin(q.x*12.4+q.y*26.0+sin(q.x*4.8-q.y*7.1)*1.8+time*0.38);
+            let patches=smoothstep(0.58,0.79,broad*0.54+fine*0.31+ripple*0.15);
+            let glint=pow(smoothstep(0.65,0.90,fine*0.72+ripple*0.28),2.0);
             var lamp=0.0;
             for(var i=0u;i<4u;i++) {
                 let x=array<f32,4>(-6.9,-4.2,4.6,7.0)[i];
-                lamp+=exp(-(q.x-x)*(q.x-x)*1.5);
+                lamp+=exp(-(q.x-x)*(q.x-x)*2.4);
             }
-            let warmth=clamp(lamp*0.85,0.0,1.0);
-            let sparkle=mix(vec3(0.22,0.67,0.64),vec3(1.0,0.84,0.48),warmth);
-            let surface_color=vec3(0.004,0.037,0.045)+sparkle*(pools*0.63+glint*0.85)*params.water.y;
+            let center=exp(-q.x*q.x*0.055);
+            let warmth=clamp(lamp*0.9,0.0,1.0);
+            let sparkle=mix(vec3(0.34,0.72,0.66),vec3(0.95,0.73,0.34),warmth);
+            let water=vec3(0.005,0.045,0.052)+vec3(0.008,0.034,0.033)*(broad+center*0.5);
+            let surface_color=water+sparkle*(patches*0.95+glint*0.30)*(0.55+lamp*0.40+center*0.28)*params.water.y;
             let edge=1.0-smoothstep(1.65,2.1,surface.z);
-            result=mix(result,surface_color,0.78+edge*0.13);
-            result+=vec3(0.15,0.095,0.030)*lamp*0.10;
+            result=mix(result,surface_color,0.80+edge*0.11);
 
         }
     }
@@ -232,7 +238,7 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
         if(s==6u && (!refine_shadow || visible==0u || visible==6u)) { break; }
         let disk_index=(s%6u)*2u+s/6u;
         let angle=f32(disk_index)*2.399963;
-        let radius=sqrt((f32(disk_index)+0.5)/12.0)*0.20;
+        let radius=sqrt((f32(disk_index)+0.5)/12.0)*0.25;
         let light=normalize(key+(light_u*cos(angle)+light_v*sin(angle))*radius);
         let shadow=trace(origin,light,35.0,true,true);
         visible+=select(0u,1u,shadow.instance==0xffffffffu);
@@ -243,7 +249,7 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
     let softness=instances[hit.instance].transmission;
     visibility=mix(visibility,1.0,softness);
     let diffuse=max(dot(n,key),0.0)*visibility;
-    var indirect=environment(n)*0.46;
+    var indirect=environment(n)*0.30;
     // One deterministic secondary ray captures nearby color bleeding without history ghosting.
     let tangent=normalize(cross(select(vec3(0.0,1.0,0.0),vec3(1.0,0.0,0.0),abs(n.y)>0.9),n));
     let bounce_dir=normalize(n+tangent*0.45);
@@ -253,6 +259,10 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
         let proximity=1.0-clamp(bounce.t/2.5,0.0,1.0);
         indirect=mix(indirect, bounce_base*(0.12+max(dot(bn,key),0.0)*0.25),proximity*0.6*(1.0-softness));
     }
+    // Reuse the existing short diffuse bounce for contact darkening. A second
+    // occlusion traversal adds too much cost on ordinary-compute ray tracing.
+    let contact=select(0.0,1.0-smoothstep(0.06,0.85,bounce.t),bounce.instance!=0xffffffffu);
+    indirect*=1.0-contact*0.48*(1.0-softness);
     let rough=clamp(material.x,0.1,1.0); let metal=material.y;
     let half_vector=normalize(key-d);
     let spec=pow(max(dot(n,half_vector),0.0),mix(120.0,4.0,rough*rough));
@@ -273,14 +283,22 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
     if(caustic_weight>0.025 && visibility>0.0) {
         caustic_light=caustic(p.xz,params.water.x)*caustic_weight*visibility;
     }
-    let warm_edge=pow(clamp(abs(p.x)/7.8,0.0,1.0),8.0)*0.10;
+    // Bounded practical fill beneath the four warm top lamps. Keep it softer and
+    // weaker than the shadowed aquarium key so the water remains cool.
+    var practical=0.0;
+    for(var i=0u;i<4u;i++) {
+        let x=array<f32,4>(-6.9,-4.2,4.6,7.0)[i];
+        let delta=vec3(x,4.45,1.3)-p;
+        practical+=max(dot(n,normalize(delta)),0.0)/(1.0+dot(delta,delta)*0.48);
+    }
+    let warm_edge=pow(clamp(abs(p.x)/7.8,0.0,1.0),8.0)*0.08+practical*0.24;
     var grain=1.0;
     if(p.y < -1.7 && n.y>0.9 && material.x>0.9) {
         grain=0.95+water_hash(floor(p.xz*65.0)).x*0.10;
     }
     // Broad quiet rim assistance catches the fold planes of green leaves.
     if(base.g>base.r*1.2 && base.g>base.b*1.15 && material.w<0.5) {
-        indirect+=vec3(0.21,0.27,0.15)*(0.14+0.27*abs(n.x));
+        indirect+=vec3(0.16,0.23,0.12)*(0.12+0.24*abs(n.x));
     }
     return Lighting((indirect+vec3(1.0,0.89,0.70)*diffuse*1.08
         +vec3(1.0,0.91,0.66)*caustic_light*1.15+vec3(0.8,0.48,0.18)*warm_edge)*(1.0-metal*0.65)*grain,

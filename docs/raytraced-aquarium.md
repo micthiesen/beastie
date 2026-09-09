@@ -48,9 +48,13 @@ history. Two world and four UI coverage samples preserve stable silhouettes and 
 Skin uses authored soft fill, and UI inlays use controlled studio illumination within the same ray
 shader. No physical glass/refraction or true subsurface transport is claimed. The gold-reference pass
 adds procedural surface reflection pools, warped caustics, wavelength-dependent depth tint,
-analytic shafts and sand grain without extra world shadow or bounce rays. A faint transmitting
-settings plate uses at most one cached world-only continuation per pixel, with inexpensive
+analytic shafts and sand grain without extra world shadow or bounce rays. Contact darkening
+reuses the existing diffuse bounce over a 0.85-unit neighborhood without an extra ray.
+A faint transmitting settings plate uses at most one cached world-only continuation per pixel, with inexpensive
 lighting; controls and glyphs remain opaque. The frame has a separate metallic material.
+Selection and title grounding cache exact mesh/rotation/scale measurements, apply
+translation separately, invalidate on mesh changes and retain only live world meshes.
+Distant garden surfaces omit subpixel bevel tessellation while close objects retain it.
 Bright-pass bloom was tried and removed because it echoed fine lettering. See the
 [gold comparison](style-reference/implementation.md).
 

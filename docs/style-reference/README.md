@@ -23,4 +23,5 @@ the world's visual language. Avoid debug panels, dense labels and bright RGB UI.
 Actual care, dialogue, accessibility, privacy and save semantics take precedence
 over mockup labels. No fictional controls or background creatures are implied.
 Implementation differences and final native comparisons are recorded in
-[implementation.md](implementation.md) alongside these permanent references.
+[implementation.md](implementation.md), with iterative findings and performance decisions
+in [refinement.md](refinement.md), alongside these permanent references.
