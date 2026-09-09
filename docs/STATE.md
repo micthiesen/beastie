@@ -4,6 +4,8 @@ Last updated: **2026-09-09**.
 
 ## Now
 
+- Beastie is the game and title brand; Mop is the default creature name. Original gold
+  images retain their supplied wording.
 - Gold-reference refinement is implemented and repeatedly reviewed. Permanent originals,
   before/after screenshots and capture commands remain in [style references](style-reference/README.md).
   The [refinement record](style-reference/refinement.md) explains accepted findings and limits.

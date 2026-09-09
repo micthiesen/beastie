@@ -457,74 +457,81 @@ fn bubble_mesh() -> Mesh {
 }
 
 fn title_logo_mesh() -> Mesh {
-    // Authored 5x7 lettering is a filled voxel solid, with actual side walls and
-    // stepped silhouettes. Body text continues to use shaped, accessible glyphs.
-    let letters: &[(i32, &[&str])] = &[
-        (
-            0,
-            &[
-                "xx       xx",
-                "xxx     xxx",
-                "xxxx   xxxx",
-                "xx xx xx xx",
-                "xx  xxx  xx",
-                "xx   x   xx",
-                "xx       xx",
-                "xx       xx",
-                "xx       xx",
-                "xx       xx",
-                "xx       xx",
-                "xx       xx",
-                "xx       xx",
-            ],
-        ),
-        (
-            13,
-            &[
-                "         ",
-                "         ",
-                "         ",
-                "         ",
-                "  xxxxx  ",
-                " xxxxxxx ",
-                "xxx   xxx",
-                "xx     xx",
-                "xx     xx",
-                "xx     xx",
-                "xxx   xxx",
-                " xxxxxxx ",
-                "  xxxxx  ",
-            ],
-        ),
-        (
-            24,
-            &[
-                "         ",
-                "         ",
-                "         ",
-                "         ",
-                "xxxxxxx  ",
-                "xxxxxxxx ",
-                "xx    xxx",
-                "xx     xx",
-                "xx    xxx",
-                "xxxxxxxx ",
-                "xxxxxxx  ",
-                "xx       ",
-                "xx       ",
-                "xx       ",
-                "xx       ",
-            ],
-        ),
+    // "Beastie" is the game brand; Mop is only the creature's default name.
+    // Authored thirteen-row lettering retains filled voxel solids and side walls.
+    // Body text continues to use shaped, accessible glyphs.
+    let capital_b: &[&str] = &[
+        "xxxxxxx  ",
+        "xxxxxxxx ",
+        "xx    xxx",
+        "xx    xxx",
+        "xx   xxx ",
+        "xxxxxxx  ",
+        "xxxxxxxx ",
+        "xx    xxx",
+        "xx     xx",
+        "xx     xx",
+        "xx    xxx",
+        "xxxxxxxx ",
+        "xxxxxxx  ",
     ];
+    let e: &[&str] = &[
+        "         ",
+        "         ",
+        "         ",
+        "         ",
+        "  xxxxx  ",
+        " xxxxxxx ",
+        "xxx   xxx",
+        "xx     xx",
+        "xxxxxxxxx",
+        "xxxxxxxx ",
+        "xx       ",
+        " xxxxxxx ",
+        "  xxxxxx ",
+    ];
+    let a: &[&str] = &[
+        "         ",
+        "         ",
+        "         ",
+        "         ",
+        " xxxxxx  ",
+        " xxxxxxx ",
+        "      xxx",
+        "  xxxxxxx",
+        " xxxxxxxx",
+        "xxx    xx",
+        "xx     xx",
+        "xxxxxxxxx",
+        " xxxxx xx",
+    ];
+    let s: &[&str] = &[
+        "        ", "        ", "        ", "        ", " xxxxxx ", "xxxxxxxx", "xx      ",
+        "xxxxxx  ", " xxxxxx ", "      xx", "      xx", "xxxxxxxx", " xxxxxx ",
+    ];
+    let t: &[&str] = &[
+        "       ", "  xx   ", "  xx   ", "  xx   ", "xxxxxx ", "xxxxxx ", "  xx   ", "  xx   ",
+        "  xx   ", "  xx   ", "  xx   ", "  xxxxx", "   xxxx",
+    ];
+    let i: &[&str] = &[
+        "    ", " xx ", " xx ", "    ", "xxx ", "xxx ", " xx ", " xx ", " xx ", " xx ", " xx ",
+        "xxxx", "xxxx",
+    ];
+    let letters = [capital_b, e, a, s, t, i, e];
+    let width = letters
+        .iter()
+        .map(|rows| rows[0].len() as i32 + 2)
+        .sum::<i32>()
+        - 2;
     let mut model = crate::voxel::VoxelModel::default();
-    for (start, rows) in letters {
+    let mut start = 0;
+    for rows in letters {
         for (row, line) in rows.iter().enumerate() {
             for (column, mark) in line.bytes().enumerate() {
                 if mark == b'x' {
                     for z in 0..4 {
                         model.set(
-                            [start + column as i32 - 16, 7 - row as i32, z],
+                            [start + column as i32 - (width - 1) / 2, 7 - row as i32, z],
                             if z == 3 {
                                 // A restrained top-to-bottom ivory shift reads as warm
                                 // illumination, while exposed side walls retain depth.
@@ -538,6 +545,7 @@ fn title_logo_mesh() -> Mesh {
                 }
             }
         }
+        start += rows[0].len() as i32 + 2;
     }
     let mut mesh = model.mesh_with_style(0.085, crate::voxel::SurfaceStyle::Beveled);
     let normals = mesh

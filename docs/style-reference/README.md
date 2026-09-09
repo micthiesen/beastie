@@ -8,6 +8,11 @@ the visual baseline, alongside the game's [product philosophy](../game-design-ph
 - [Settings overlay](settings.jpg): Photo 2.
 - [Title screen](title-screen.jpg): Photo 1, the primary title composition.
 
+The original title image reads “Mop”. The implemented game logo must read “Beastie”;
+Mop is the default creature name and belongs in creature labels and dialogue. This
+deliberate branding correction preserves the reference's lettering treatment and
+composition. The original images remain unchanged.
+
 The aquarium fills the screen: deep teal water, warm ivory highlights, golden
 sand, natural green plants, sparse bubbles and asymmetric voxel scenery around
 open swimming space. Warm frame lighting contrasts with cool water. Surface

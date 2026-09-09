@@ -5,6 +5,9 @@ while a tiny local language model gives the creature an unreliable voice. The cr
 notices food and the player, develops habits and grudges, and expresses authoritative state through
 movement, face, sound, and scarce dialogue.
 
+Beastie is the game's name. Mop is the default creature name; renaming the creature does not
+change the game title.
+
 The game uses a pure simulation core, a validated JSONL AI boundary, declarative 3D scene
 plans, and a Bevy shell rendering a fixed-camera voxel aquarium. macOS, Windows,
 and Linux are first-class release targets.

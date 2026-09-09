@@ -27,7 +27,7 @@ and a nearby card retaining Play and Inspect.
 
 Settings uses a right-side plate, vertical Display/Sound/Controls categories, block
 switches and compact inset values. All existing options remain available. Title adds
-an extruded voxel Mop logo and real Continue, Settings and Quit actions. Its taller
+an extruded voxel Beastie logo and real Continue, Settings and Quit actions. Its taller
 framing and portrait placement affect presentation only; Continue restores gameplay
 projection and object picking. Settings closes back to its originating title screen.
 The subtitle is centered beneath the logo using measured glyph advances at Normal
@@ -48,6 +48,8 @@ from overwhelming the dark panel. Ordinary text and controls remain opaque.
 
 ## Deliberate differences and remaining gaps
 
+- The original title reference reads “Mop”; the game logo reads “Beastie”. Mop remains
+  the default creature name. The original reference is preserved unchanged.
 - The existing articulated creature and authoritative toy/cave positions are preserved.
   There are no decorative fake fish, New Chat action, invented settings or empty slots.
 - Body text keeps the existing shaped, ray-traced Atkinson outlines for Unicode and

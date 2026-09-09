@@ -2,6 +2,10 @@
 
 ## Gold visual baseline
 
+Beastie is the game and title-logo name. Mop is the default creature name, used in creature
+labels and dialogue. The gold title image's Mop lettering guides the visual treatment,
+but the implemented logo must read Beastie.
+
 The three permanent [gold screenshots](style-reference/README.md) are the visual baseline for
 future UI and rendering work. Their composition, cool teal water, warm sand and ivory highlights,
 restrained controls and illuminated voxel forms supersede earlier visual-review screenshots.
@@ -90,7 +94,7 @@ switches use stepped blocks; cyclic values use inset plates. The main plate reve
 view of actual world geometry; letters and controls stay opaque. Secondary data, binding and
 confirmation panels retain their real navigation and recovery behavior. Reset defaults to Cancel.
 
-The title has an extruded voxel Mop logo and only Continue, Settings and Quit. Its taller camera
+The title has an extruded voxel Beastie logo and only Continue, Settings and Quit. Its taller camera
 framing and portrait placement are presentation-only; Continue restores normal world presentation
 and exact picking. UI positions compensate for title projection so visible targets remain accurate.
 The aquarium simulation continues in normal title operation. Scripted evidence starts in Compose
