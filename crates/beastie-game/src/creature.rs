@@ -41,6 +41,10 @@ struct Motion {
     last_ms: u64,
     yaw: f32,
     speed: f32,
+    swim_phase: f32,
+    idle_phase: f32,
+    gesture: Vec3,
+    face: Vec3,
     body_pick_volumes: Vec<(Transform, Vec3)>,
 }
 
@@ -96,16 +100,27 @@ impl CreatureMotion {
                 last_ms: now,
                 yaw: 0.0,
                 speed: 0.0,
+                swim_phase: 0.0,
+                idle_phase: 0.0,
+                gesture: Vec3::ZERO,
+                face: Vec3::ZERO,
                 body_pick_volumes: Vec::with_capacity(SEGMENTS),
             });
         }
         let state = self.state.as_mut().expect("motion initialized above");
-        let dt = now.saturating_sub(state.last_ms).min(100) as f32 / 1000.0;
+        let dt = now.saturating_sub(state.last_ms).min(250) as f32 / 1000.0;
         state.last_ms = now;
-        // Bound correction speed at tick-boundary velocity changes, with ~100ms catch-up.
-        let correction = (target - self.presented_head) * (1.0 - (-dt * 50.0).exp());
-        self.presented_head += correction.clamp_length_max(dt * 12.0);
-        state.trail.advance(self.presented_head);
+        // Correct tick-boundary prediction errors at creature speed, never a dash across
+        // the tank. The ceiling accommodates the fastest authoritative flee velocity.
+        let correction = (target - self.presented_head) * (1.0 - (-dt * 10.0).exp());
+        let previous_head = self.presented_head;
+        let swim_speed = Vec2::new(
+            plan.creature.velocity.x as f32 * 0.00132,
+            plan.creature.velocity.y as f32 * 0.000455,
+        )
+        .length();
+        let correction_limit = (swim_speed.max(0.9) + 0.15).min(1.9);
+        self.presented_head += correction.clamp_length_max(dt * correction_limit);
         // Hover drift can exceed the numerical movement threshold. Only authoritative
         // locomotion restarts body turns; buoyancy preserves the achieved resting pose.
         let forward = if matches!(
@@ -124,9 +139,16 @@ impl CreatureMotion {
         } else {
             Vec3::ZERO
         };
-        state
-            .chain
-            .advance(self.presented_head, forward, &state.trail, dt);
+        // Consume the complete host delta. Articulation has a bounded integration step,
+        // but discarding time made low-frame-rate travel lag until it hit the reset distance.
+        let steps = (dt / 0.025).ceil().max(1.0) as u32;
+        for step in 1..=steps {
+            let head = previous_head.lerp(self.presented_head, step as f32 / steps as f32);
+            state.trail.advance(head);
+            state
+                .chain
+                .advance(head, forward, &state.trail, dt / steps as f32);
+        }
         (self.presented_head, dt)
     }
 }
@@ -304,15 +326,29 @@ pub(crate) fn setup_creature(
 /// Continuous projection used by rendering and head picking. It never changes simulation state.
 pub(crate) fn head_position(plan: &ScenePlan) -> Vec3 {
     let c = &plan.creature;
-    let fraction = plan.simulation_remainder_ms.min(999) as f32 / 1_000.0;
+    // A saved action can still contain the velocity of its preceding approach.
+    // Stationary phases and sleep never predict another second of that travel.
+    let stationary = c.pose == CreaturePose::Sleep
+        || c.action_phase
+            .is_some_and(|phase| phase != ActionPhase::Approach);
+    let fraction = if stationary {
+        0.0
+    } else {
+        plan.simulation_remainder_ms.min(999) as f32 / 1_000.0
+    };
+    let project = |position: i32, velocity: i32, target: Option<i32>| {
+        let step = (velocity as f32 * fraction).round() as i32;
+        let step = target.map_or(step, |target| {
+            let remaining = target.saturating_sub(position);
+            step.clamp(remaining.min(0), remaining.max(0))
+        });
+        position.saturating_add(step)
+    };
     let future = beastie_core::NormalizedPosition::new(
-        c.position
-            .x
-            .saturating_add((c.velocity.x as f32 * fraction).round() as i32),
-        c.position
-            .y
-            .saturating_add((c.velocity.y as f32 * fraction).round() as i32),
-    );
+        project(c.position.x, c.velocity.x, c.movement_target.map(|p| p.x)),
+        project(c.position.y, c.velocity.y, c.movement_target.map(|p| p.y)),
+    )
+    .clamped();
     crate::renderer::world_position(future)
 }
 
@@ -422,12 +458,20 @@ pub(crate) fn animate_creature(
     let plan = &frame.plan;
     let c = &plan.creature;
     let now = plan.elapsed_ms.saturating_add(plan.simulation_remainder_ms);
-    let time = (now % 3_600_000) as f32 / 1_000.0;
+    let blink_time = ((now as f64 / 1_000.0).rem_euclid(f64::from(MOTION.blink_period))) as f32;
     let (head, dt) = motion.advance(plan);
     let facing = if c.facing == Facing::Left { -1.0 } else { 1.0 };
     let motion = motion.state.as_mut().expect("motion initialized above");
+    // Integer-frequency fin and tail cycles share a bounded phase, without the old
+    // one-hour session-clock reset or large floating-point arguments.
+    motion.idle_phase = (motion.idle_phase + dt).rem_euclid(std::f32::consts::TAU);
+    let time = motion.idle_phase;
     let target_speed = Vec2::new(c.velocity.x as f32, c.velocity.y as f32).length() / 750.0;
     motion.speed += (target_speed.min(1.0) - motion.speed) * (1.0 - (-dt * 6.0).exp());
+    // Integrate frequency. Multiplying the session clock by changing speed shifts
+    // the entire wave on every acceleration, increasingly violently as the save ages.
+    motion.swim_phase =
+        (motion.swim_phase + dt * (3.0 + motion.speed * 3.0)).rem_euclid(std::f32::consts::TAU);
     let to_player = matches!(c.gaze, GazeTarget::Player | GazeTarget::Cursor) || c.speaking;
     let gaze_delta = c
         .gaze_position
@@ -438,12 +482,25 @@ pub(crate) fn animate_creature(
     motion.yaw += (target_yaw - motion.yaw) * (1.0 - (-dt * 7.0).exp());
     let a = acting(
         c,
-        time,
+        blink_time,
         plan.simulation_remainder_ms,
         plan.reduced_motion,
         plan.reduced_shake,
     );
-    let rotation = Quat::from_euler(EulerRot::YXZ, motion.yaw, -a.nod, a.tilt);
+    // Blend supporting body gestures across ownership changes. Facial meaning and
+    // speech cancellation still use the current recipe immediately.
+    let gesture_target = Vec3::new(a.nod, a.tilt, a.fin);
+    motion.gesture += (gesture_target - motion.gesture) * (1.0 - (-dt * 12.0).exp());
+    let rotation = Quat::from_euler(
+        EulerRot::YXZ,
+        motion.yaw,
+        -motion.gesture.x,
+        motion.gesture.y,
+    );
+    // Tiny face features need a shorter settle than body acting. Preserve authored
+    // blinks and current speech aperture while removing one-frame brow/smile flips.
+    motion.face +=
+        (Vec3::new(a.brow, a.smile, a.asymmetry) - motion.face) * (1.0 - (-dt * 18.0).exp());
     let gait = if plan.reduced_motion || c.pose == CreaturePose::Sleep {
         0.0
     } else {
@@ -488,10 +545,10 @@ pub(crate) fn animate_creature(
             CreaturePart::Brow(side) => {
                 local = Vec3::new(
                     side * CREATURE.eye_spacing,
-                    0.36 + side * a.asymmetry * 0.12,
+                    0.36 + side * motion.face.z * 0.12,
                     0.46,
                 );
-                turn = Quat::from_rotation_z(side * a.brow + a.asymmetry * 0.8);
+                turn = Quat::from_rotation_z(side * motion.face.x + motion.face.z * 0.8);
             }
             CreaturePart::Mouth => {
                 local = Vec3::new(0.0, -0.24, 0.49);
@@ -509,8 +566,8 @@ pub(crate) fn animate_creature(
                 scale = Vec3::new(a.mouth_width, a.mouth.clamp(0.0, 0.8), 1.0);
             }
             CreaturePart::MouthCorner(side) => {
-                local = Vec3::new(side * 0.12 * a.mouth_width, -0.24 + a.smile, 0.493);
-                turn = Quat::from_rotation_z(-side * a.smile * 5.0);
+                local = Vec3::new(side * 0.12 * a.mouth_width, -0.24 + motion.face.y, 0.493);
+                turn = Quat::from_rotation_z(-side * motion.face.y * 5.0);
             }
             CreaturePart::Cheek(side) => {
                 local = Vec3::new(side * 0.43, -0.12, 0.40);
@@ -526,19 +583,19 @@ pub(crate) fn animate_creature(
                     } else {
                         0.0
                     } + side
-                        * (a.fin
-                            + side * a.asymmetry * 0.7
+                        * (motion.gesture.z
+                            + side * motion.face.z * 0.7
                             + (time * 5.0 - side * 0.4).sin() * gait * 2.5),
                 );
             }
             CreaturePart::Crest => {
                 local = Vec3::new(-0.12, 0.50, -0.10);
                 turn = Quat::from_rotation_z(1.3);
-                scale = Vec3::new(0.8, 0.65 + a.fin * 0.5, 1.0);
+                scale = Vec3::new(0.8, 0.65 + motion.gesture.z * 0.5, 1.0);
             }
             CreaturePart::Body(index) => {
                 let mut center = motion.chain.joint(index);
-                let phase = time * (3.0 + motion.speed * 3.0) - index as f32 * 0.5;
+                let phase = motion.swim_phase - index as f32 * 0.5;
                 center.y += phase.sin() * gait * index as f32 / SEGMENTS as f32;
                 center.z -= 0.12;
                 let taper = 1.0 - index as f32 / SEGMENTS as f32 * 0.78;
@@ -710,18 +767,193 @@ mod tests {
         plan.creature.position.x += 750;
         plan.simulation_remainder_ms = 16;
         let (first, _) = motion.advance(&plan);
-        assert!(first.distance(start) <= 12.0 * 0.016 + 0.0001);
+        assert!(first.distance(start) <= 1.9 * 0.016 + 0.0001);
         assert!(first.distance(head_position(&plan)) > 0.5);
-        for ms in (32..=128).step_by(16) {
-            plan.simulation_remainder_ms = ms;
+        for ms in (32..=1280).step_by(16) {
+            plan.elapsed_ms = ms;
+            plan.simulation_remainder_ms = 0;
             motion.advance(&plan);
         }
         assert!(motion.position(&plan).distance(head_position(&plan)) < 0.02);
         // A backwards save clock is an explicit discontinuity, never a long swim across the tank.
+        plan.elapsed_ms = 0;
         plan.simulation_remainder_ms = 0;
         plan.creature.position.x = 2000;
         motion.advance(&plan);
         assert_eq!(motion.position(&plan), head_position(&plan));
+    }
+
+    #[test]
+    fn fins_do_not_jump_when_the_session_clock_crosses_an_hour() {
+        let mut plan = beastie_view::plan(
+            &beastie_core::WorldState::new(7, "Test"),
+            &beastie_view::ViewState::default(),
+        )
+        .0;
+        plan.elapsed_ms = 3_599_000;
+        plan.creature.velocity.x = 650;
+        let mut app = App::new();
+        app.insert_resource(SceneFrame { plan })
+            .init_resource::<CreatureMotion>()
+            .add_systems(Update, animate_creature);
+        let fin = app
+            .world_mut()
+            .spawn((CreaturePart::Fin(1.0), Transform::default()))
+            .id();
+        app.update();
+        for frame in 1..=90 {
+            let previous = *app.world().get::<Transform>(fin).unwrap();
+            app.world_mut().resource_mut::<SceneFrame>().plan.elapsed_ms = 3_599_000 + frame * 16;
+            app.update();
+            let rotation = app.world().get::<Transform>(fin).unwrap().rotation;
+            if frame > 30 {
+                assert!(rotation.angle_between(previous.rotation) < 0.035);
+            }
+        }
+    }
+
+    #[test]
+    fn slow_frames_consume_the_full_motion_delta_without_resetting() {
+        let mut plan = beastie_view::plan(
+            &beastie_core::WorldState::new(7, "Test"),
+            &beastie_view::ViewState::default(),
+        )
+        .0;
+        plan.creature.position.x = 1000;
+        plan.creature.velocity.x = 1300;
+        plan.creature.steering = SteeringMode::Flee;
+        let mut motion = CreatureMotion::default();
+        let (mut previous, _) = motion.advance(&plan);
+        for frame in 1..=24 {
+            let now = frame * 250;
+            plan.elapsed_ms = now / 1000 * 1000;
+            plan.simulation_remainder_ms = now % 1000;
+            plan.creature.position.x = 1000 + (now / 1000) as i32 * 1300;
+            let (head, dt) = motion.advance(&plan);
+            assert_eq!(dt, 0.25);
+            assert!(head.distance(previous) <= 1.9 * dt + 0.0001);
+            assert!(head.distance(head_position(&plan)) < 0.05);
+            previous = head;
+        }
+    }
+
+    #[test]
+    fn saved_stationary_velocity_and_arrival_never_predict_past_the_target() {
+        let mut plan = beastie_view::plan(
+            &beastie_core::WorldState::new(7, "Test"),
+            &beastie_view::ViewState::default(),
+        )
+        .0;
+        plan.creature.velocity.x = 650;
+        plan.simulation_remainder_ms = 900;
+        let position = crate::renderer::world_position(plan.creature.position);
+        for phase in [
+            ActionPhase::Notice,
+            ActionPhase::Inspect,
+            ActionPhase::Act,
+            ActionPhase::Recover,
+        ] {
+            plan.creature.action_phase = Some(phase);
+            assert_eq!(head_position(&plan), position);
+        }
+        plan.creature.action_phase = None;
+        plan.creature.pose = CreaturePose::Sleep;
+        assert_eq!(head_position(&plan), position);
+        plan.creature.pose = CreaturePose::Swim;
+        let mut target = plan.creature.position;
+        target.x += 50;
+        plan.creature.movement_target = Some(target);
+        assert_eq!(
+            head_position(&plan),
+            crate::renderer::world_position(target)
+        );
+        target.x -= 100;
+        plan.creature.movement_target = Some(target);
+        assert_eq!(
+            head_position(&plan),
+            position,
+            "old velocity must not move away from new target"
+        );
+    }
+
+    #[test]
+    fn swim_phase_and_body_gestures_are_continuous_on_old_saves() {
+        let mut plan = beastie_view::plan(
+            &beastie_core::WorldState::new(7, "Test"),
+            &beastie_view::ViewState::default(),
+        )
+        .0;
+        plan.elapsed_ms = 600_000;
+        let mut app = App::new();
+        app.insert_resource(SceneFrame { plan })
+            .init_resource::<CreatureMotion>()
+            .add_systems(Update, animate_creature);
+        let body = app
+            .world_mut()
+            .spawn((CreaturePart::Body(11), Transform::default()))
+            .id();
+        let head = app
+            .world_mut()
+            .spawn((CreaturePart::Head, Transform::default()))
+            .id();
+        let brow = app
+            .world_mut()
+            .spawn((CreaturePart::Brow(1.0), Transform::default()))
+            .id();
+        app.update();
+        for frame in 1..=180 {
+            let previous_body = *app.world().get::<Transform>(body).unwrap();
+            let previous_head = *app.world().get::<Transform>(head).unwrap();
+            let previous_brow = *app.world().get::<Transform>(brow).unwrap();
+            let previous_phase = app
+                .world()
+                .resource::<CreatureMotion>()
+                .state
+                .as_ref()
+                .unwrap()
+                .swim_phase;
+            let mut scene = app.world_mut().resource_mut::<SceneFrame>();
+            scene.plan.elapsed_ms = 600_000 + frame * 16;
+            scene.plan.creature.velocity.x = if (frame / 30) % 2 == 0 { 650 } else { 0 };
+            scene.plan.creature.mood = if (frame / 30) % 2 == 0 {
+                Mood::Curious
+            } else {
+                Mood::Resentful
+            };
+            app.update();
+            assert!(
+                app.world()
+                    .get::<Transform>(brow)
+                    .unwrap()
+                    .rotation
+                    .angle_between(previous_brow.rotation)
+                    < 0.19
+            );
+            let state = app
+                .world()
+                .resource::<CreatureMotion>()
+                .state
+                .as_ref()
+                .unwrap();
+            let step = (state.swim_phase - previous_phase).rem_euclid(std::f32::consts::TAU);
+            assert!((0.047..=0.097).contains(&step), "phase step: {step}");
+            assert!(
+                app.world()
+                    .get::<Transform>(body)
+                    .unwrap()
+                    .translation
+                    .distance(previous_body.translation)
+                    < 0.015
+            );
+            assert!(
+                app.world()
+                    .get::<Transform>(head)
+                    .unwrap()
+                    .rotation
+                    .angle_between(previous_head.rotation)
+                    < 0.06
+            );
+        }
     }
 
     #[test]

@@ -41,8 +41,8 @@ pub use save::{SaveError, SaveGame, migrate_world};
 pub use simulation::{
     DialogueActionOwner, DialogueHandoff, DialogueHandoffState, GameEvent, MAX_OFFLINE_MS,
     OfflineProgress, PlayerEvent, SIMULATION_TICK_MS, SpeechAttention, TALK_COOLDOWN_MS,
-    advance_offline, apply_grounded_utterance, dialogue_handoff, speech_attention, step,
-    trigger_relationship_beat,
+    advance_offline, apply_grounded_utterance, destination_position, dialogue_handoff,
+    speech_attention, step, trigger_relationship_beat,
 };
 
 pub const SAVE_VERSION: u32 = 7;
@@ -54,6 +54,150 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
+
+    #[test]
+    fn stationary_food_phases_clear_old_swim_velocity_without_moving() {
+        let mut world = WorldState::new(7, "Stopped");
+        let mut rng = SeededRandom::new(7);
+        let position = world.creature.aquarium.position;
+        world.creature.aquarium.velocity = NormalizedVelocity { x: 650, y: -400 };
+        step(
+            &mut world,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Pellet,
+                position: NormalizedPosition::new(8_000, 3_000),
+            }],
+            0,
+            &mut rng,
+        );
+        assert_eq!(world.creature.aquarium.position, position);
+        assert_eq!(
+            world.creature.aquarium.velocity,
+            NormalizedVelocity::default()
+        );
+        for phase in [
+            ActionPhase::Notice,
+            ActionPhase::Brake,
+            ActionPhase::Gaze,
+            ActionPhase::Turn,
+            ActionPhase::Inspect,
+            ActionPhase::Act,
+            ActionPhase::Recover,
+        ] {
+            world.creature.aquarium.action.as_mut().unwrap().phase = phase;
+            world.creature.aquarium.velocity = NormalizedVelocity { x: 650, y: -400 };
+            assert!(step(&mut world, &[], 0, &mut rng).is_empty());
+            assert_eq!(world.creature.aquarium.position, position);
+            assert_eq!(
+                world.creature.aquarium.velocity,
+                NormalizedVelocity::default()
+            );
+        }
+        world.creature.aquarium.action.as_mut().unwrap().phase = ActionPhase::Approach;
+        step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        assert_ne!(world.creature.aquarium.position, position);
+        assert_ne!(
+            world.creature.aquarium.velocity,
+            NormalizedVelocity::default()
+        );
+    }
+
+    #[test]
+    fn sleeping_creature_clears_old_swim_velocity_and_keeps_its_position() {
+        let mut world = WorldState::new(7, "Sleeping");
+        let mut rng = SeededRandom::new(7);
+        world.creature.current_intention = Intention::Sleep;
+        world.creature.needs.energy = 0.2;
+        world.creature.interaction_state.sleep_started_at_ms = Some(0);
+        let position = world.creature.aquarium.position;
+        for dt in [0, SIMULATION_TICK_MS, 5 * SIMULATION_TICK_MS] {
+            world.creature.aquarium.velocity = NormalizedVelocity { x: 650, y: -400 };
+            step(&mut world, &[], dt, &mut rng);
+            assert_eq!(world.creature.current_intention, Intention::Sleep);
+            assert_eq!(world.creature.aquarium.position, position);
+            assert_eq!(
+                world.creature.aquarium.velocity,
+                NormalizedVelocity::default()
+            );
+        }
+    }
+
+    #[test]
+    fn food_phase_velocity_is_identical_for_batched_and_split_ticks() {
+        let mut world = WorldState::new(7, "Tick chunks");
+        let mut rng = SeededRandom::new(7);
+        step(
+            &mut world,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Pellet,
+                position: NormalizedPosition::new(8_000, 3_000),
+            }],
+            0,
+            &mut rng,
+        );
+        for ticks in 1..=20 {
+            let mut bulk = world.clone();
+            let mut split = world.clone();
+            let mut bulk_rng = rng;
+            let mut split_rng = rng;
+            let bulk_events = step(&mut bulk, &[], ticks * SIMULATION_TICK_MS, &mut bulk_rng);
+            let mut split_events = Vec::new();
+            for _ in 0..ticks {
+                split_events.extend(step(&mut split, &[], SIMULATION_TICK_MS, &mut split_rng));
+            }
+            assert_eq!(bulk, split, "after {ticks} ticks");
+            assert_eq!(bulk_events, split_events, "after {ticks} ticks");
+        }
+    }
+
+    #[test]
+    fn saved_recovery_with_stale_velocity_is_independent_of_partial_tick_steps() {
+        let mut world = WorldState::new(7, "Recovered save");
+        let mut rng = SeededRandom::new(7);
+        step(
+            &mut world,
+            &[PlayerEvent::DropFood {
+                food: FoodId::Pellet,
+                position: NormalizedPosition::new(8_000, 3_000),
+            }],
+            0,
+            &mut rng,
+        );
+        for _ in 0..30 {
+            if world
+                .creature
+                .aquarium
+                .action
+                .as_ref()
+                .is_some_and(|action| action.phase == ActionPhase::Recover)
+            {
+                break;
+            }
+            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        }
+        let action = world.creature.aquarium.action.as_mut().unwrap();
+        assert_eq!(action.phase, ActionPhase::Recover);
+        action.elapsed_ms = action.phase_duration_ms.saturating_sub(SIMULATION_TICK_MS);
+        world.creature.aquarium.velocity = NormalizedVelocity { x: 650, y: 400 };
+        let json = SaveGame::capture(&world, &rng).to_json().unwrap();
+        let (mut bulk, mut bulk_rng) = SaveGame::from_json(&json).unwrap().resume();
+        let (mut split, mut split_rng) = SaveGame::from_json(&json).unwrap().resume();
+        let bulk_events = step(&mut bulk, &[], SIMULATION_TICK_MS, &mut bulk_rng);
+        let mut split_events = step(&mut split, &[], SIMULATION_TICK_MS / 2, &mut split_rng);
+        split_events.extend(step(
+            &mut split,
+            &[],
+            SIMULATION_TICK_MS / 2,
+            &mut split_rng,
+        ));
+        assert!(bulk.creature.aquarium.action.is_none());
+        assert_eq!(bulk, split);
+        assert_eq!(bulk_events, split_events);
+        assert_eq!(
+            bulk.creature.aquarium.velocity,
+            NormalizedVelocity::default()
+        );
+    }
 
     #[test]
     fn aquarium_feeding_has_fixed_phases_and_bounded_position() {

@@ -78,8 +78,9 @@ target/feel/<run>/
 
 The evidence has five synchronized parts:
 
-1. `session.mp4` records the complete native Bevy framebuffer at 60 frames per second with real frame
-   timing. It preserves every transition rather than only selected checkpoints.
+1. `session.mp4` records the native Bevy framebuffer on the scenario's 60 fps playback timeline.
+   It preserves submitted transitions rather than only selected checkpoints. Its fixed recording
+   rate does not measure host frame cadence or prove that ordinary play sustains 60 fps.
 2. `inputs.jsonl` records timestamped semantic and native inputs, including pointer motion, clicks,
    keys, controller actions, and speech lifecycle events.
 3. `events.jsonl` and `state.jsonl` align authoritative simulation events and selected presentation
@@ -94,6 +95,15 @@ The evidence has five synchronized parts:
    it is never a claim of captured host sound, and no-output runs remain silent.
 5. `filmstrips/` contains uniformly sampled session overviews plus dense, event-aligned frame
    sequences around every interaction. `review.md` links findings to these artifacts.
+
+`state.jsonl` also includes `presentation_motion`, sampled from actual rendered creature parts
+at submission. It records the head position and speed, maximum part displacement and rotation,
+part names, presentation-clock delta and discontinuities. Alerts flag head speed over 2 world
+units/s, articulated translation over 8 units/s, rotation over 12 radians/s, nonfinite transforms,
+or movement without advancing time. These are review candidates, not gameplay assertions.
+Startup and clock gaps over 250 ms omit speed estimates. Quaternion deltas use relative rotation
+to avoid false movement from floating-point normalization error. No player text is recorded and
+ordinary play does not emit motion logs.
 
 The manifest records the commit and dirty state, exact game-binary and scenario hashes, platform,
 build profile, seed, suite, viewport, presentation scale, enabled fake backend, audio-capture mode,

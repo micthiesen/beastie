@@ -14,6 +14,7 @@ mod glyphs;
 mod host;
 mod input;
 mod microphone;
+mod motion_trace;
 mod process;
 mod ray_scene;
 mod ray_stats;

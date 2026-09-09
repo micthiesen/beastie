@@ -442,6 +442,7 @@ impl Game {
             world: self.session.world().clone(),
             view: self.view.clone(),
             presentation: self.presentation_trace(),
+            motion: None,
             path: self.capture_path(),
             feel_frame: self.feel.as_mut().map(FeelRecorder::schedule_frame),
         };
@@ -467,6 +468,7 @@ impl Game {
                     &snapshot.world,
                     &snapshot.view,
                     snapshot.presentation,
+                    snapshot.motion.as_ref(),
                 )
                 .map_err(feel_error)?;
         }

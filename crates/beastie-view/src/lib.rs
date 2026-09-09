@@ -679,6 +679,9 @@ pub struct CreatureScene {
     pub facing: beastie_core::Facing,
     pub gaze: GazeTarget,
     pub gaze_position: Option<NormalizedPosition>,
+    /// Actual travel endpoint, independent of what the creature is looking at.
+    #[serde(default)]
+    pub movement_target: Option<NormalizedPosition>,
     pub mood: Mood,
     pub action: Option<beastie_core::ActionTimeline>,
     pub pose: CreaturePose,
@@ -1254,6 +1257,12 @@ fn creature_scene(state: &WorldState, view: &ViewState) -> CreatureScene {
         facing: aquarium.facing,
         gaze: aquarium.gaze,
         gaze_position: gaze_position(state),
+        movement_target: aquarium
+            .action
+            .as_ref()
+            .map(|action| action.destination)
+            .or(aquarium.destination)
+            .and_then(|destination| beastie_core::destination_position(state, destination)),
         mood: state.mood(),
         pose,
         action: aquarium.action.clone(),

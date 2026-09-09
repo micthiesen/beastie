@@ -310,6 +310,7 @@ impl FeelRecorder {
         world: &beastie_core::WorldState,
         view: &ViewState,
         presentation: PresentationTraceState,
+        presentation_motion: Option<&crate::motion_trace::MotionTrace>,
     ) -> Result<(), FeelError> {
         let expected = PRESENTATION_WIDTH as usize * PRESENTATION_HEIGHT as usize * 4;
         if rgba.len() != expected {
@@ -334,6 +335,7 @@ impl FeelRecorder {
             frame_index,
             playback_ms,
             simulation_ms: world.elapsed_ms,
+            presentation_motion,
             creature: CreatureFrame {
                 position: world.creature.aquarium.position,
                 velocity: world.creature.aquarium.velocity,
@@ -472,6 +474,7 @@ struct StateRecord<'a> {
     frame_index: u64,
     playback_ms: u64,
     simulation_ms: u64,
+    presentation_motion: Option<&'a crate::motion_trace::MotionTrace>,
     creature: CreatureFrame<'a>,
     view: ViewFrame<'a>,
 }

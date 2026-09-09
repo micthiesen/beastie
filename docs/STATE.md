@@ -1,24 +1,25 @@
 # State
 
-Last updated: **2026-09-08**.
+Last updated: **2026-09-09**.
 
 ## Now
 
-- Detail polish is implemented: separated binding rows, focus restored after rebinding, continuous
-  water color and calmer toy shadows. The existing creature, care loop and composition remain.
-  See [detail review](feel-review-details-20260908.md) and [contract](detail-polish.md).
-- More expensive coverage experiments were rejected after native measurement. The selected local
-  shadow refinement preserves the original world/UI coverage counts; benchmark evidence and
-  sampling limits are recorded in the review.
-- Controlled feel recordings now isolate scripted input and reject black video frames. Rejected
-  attempts and the repaired evidence procedure are documented in [feel-review-loop.md](feel-review-loop.md).
-- The prior creature-presence and care work remains complete. Its broader relationship, sound,
-  microphone and saved-history evidence lives in the
-  [presence review](feel-review-creature-presence-20260908.md).
-- The gate passes 524 tests, 27 dialogue fixtures, 11 STT fixtures and spoken-input replay. Native
-  comparisons use macOS Metal debug rendering. Human full-speed perception, physical listening,
-  controller comfort and Windows/Linux/lower-end GPU behavior remain unclaimed. No release
-  binary, installer or model bundle was rebuilt.
+- Mop's movement and animation continuity pass is implemented: destination-bounded prediction,
+  creature-paced correction, stationary velocity normalization, continuous swim/fin phases and
+  brief pose/face settling. See [motion review](feel-review-motion-20260909.md) and
+  [contract](motion-continuity.md).
+- Feel recordings now include actual rendered head/part motion measurements and diagnostic alerts.
+  Reviewed tail sweeps and immediate eye responses remain intentional; thresholds do not replace
+  frame review. See [feel-review-loop.md](feel-review-loop.md).
+- Same-seed native comparisons preserve authoritative outcomes and sound cues. The final quiet
+  recording peaks at 1.058 world units/s head speed and shows no head-speed or rotation alerts.
+  Human full-speed perception, physical listening and other-host behavior remain unclaimed.
+- The gate passes 538 tests, 27 dialogue fixtures, 11 STT fixtures and spoken-input replay.
+  Saved stationary recovery, bulk/split ticks, slow frames and late-session animation have focused
+  regressions. Ordinary native debug validation is recorded in the motion review.
+- Earlier creature-presence, care, UI and renderer detail work remains complete. No release binary,
+  installer or model bundle was rebuilt. Prior rendering measurements remain in the
+  [detail review](feel-review-details-20260908.md).
 
 ## Next
 
@@ -32,9 +33,9 @@ cost as the largest unknowns. It does not require release packaging.
 
 ## Candidates Not Chosen
 
-- **Human full-speed and listening calibration:** a short observation session can assess attachment,
-  unaided discovery and mix taste beyond sampled evidence. It needs human perception; no remaining
-  concrete defect from this review justifies another speculative implementation pass.
+- **Human full-speed and listening calibration:** a short observation session can assess animation
+  taste, attachment, unaided discovery and mix quality beyond sampled evidence. It needs human
+  perception; reviewed diagnostic alerts alone do not justify slowing expressive tail turns or eyes.
 - **Further lighting or reconstruction features:** several days plus native comparisons. Their
   value depends on hardware measurements and a demonstrated visual need, so they wait.
 - **Full 3D navigation and collision:** several days or more, with headless geometry tests and native
@@ -42,12 +43,12 @@ cost as the largest unknowns. It does not require release packaging.
 
 ## Learned Recently
 
-- Detail findings, measured rendering tradeoffs and capture integrity: [detail review](feel-review-details-20260908.md).
-- Broader native comparisons and audio limits: [presence review](feel-review-creature-presence-20260908.md).
-- Original observations and implemented design: [holistic review](feel-review-holistic-20260908.md),
-  [creature presence and care](creature-presence-and-care.md).
+- Motion continuity, measurements and saved-state invariance: [motion review](feel-review-motion-20260909.md).
+- Detail findings, rendering tradeoffs and capture integrity: [detail review](feel-review-details-20260908.md).
 - Native capture and role-aware sound evidence: [feel-review-loop.md](feel-review-loop.md),
   [audio-direction.md](audio-direction.md).
+- Broader creature/care evidence: [presence review](feel-review-creature-presence-20260908.md),
+  [creature presence and care](creature-presence-and-care.md).
 - Renderer, mesh and art ownership: [architecture.md](architecture.md), [art-bible.md](art-bible.md),
   [raytraced-aquarium.md](raytraced-aquarium.md).
 - Product authority and relationship semantics: [game-design-philosophy.md](game-design-philosophy.md),

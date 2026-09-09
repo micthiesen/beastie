@@ -309,6 +309,8 @@ pub fn step(
     dt_ms: u64,
     rng: &mut impl RandomSource,
 ) -> Vec<GameEvent> {
+    // Normalize loaded stationary phases before input can replace their owner.
+    clear_stationary_velocity(state);
     let mut events = Vec::new();
     for event in input {
         let before = state.creature.memories.len();
@@ -326,6 +328,8 @@ pub fn step(
                 .map(|memory| GameEvent::MemoryCreated(memory.id)),
         );
     }
+    // Input may have started a stationary phase without advancing a tick.
+    clear_stationary_velocity(state);
     let accumulated = state.simulation_remainder_ms.saturating_add(dt_ms);
     let ticks = accumulated / SIMULATION_TICK_MS;
     state.simulation_remainder_ms = accumulated % SIMULATION_TICK_MS;
@@ -339,6 +343,22 @@ pub fn step(
         );
     }
     events
+}
+
+fn clear_stationary_velocity(state: &mut WorldState) {
+    // Velocity describes current locomotion, not the last displacement before a stop.
+    // Clear it even on input-only frames so entering a stationary action cannot leave
+    // presentation extrapolating an old swim during every simulation interval.
+    if state.creature.current_intention == Intention::Sleep
+        || state
+            .creature
+            .aquarium
+            .action
+            .as_ref()
+            .is_some_and(|action| action.phase != ActionPhase::Approach)
+    {
+        state.creature.aquarium.velocity = NormalizedVelocity::default();
+    }
 }
 
 /// Apply a grounded semantic trigger without accepting arbitrary model-authored facts.
@@ -456,6 +476,9 @@ fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut
     }
     events.push(GameEvent::NeedChanged);
     update_development(state, events);
+    // Keep batched ticks identical to individual steps, including the first tick
+    // after a stationary phase has ended.
+    clear_stationary_velocity(state);
 }
 
 fn advance_embodied_state(state: &mut WorldState, events: &mut Vec<GameEvent>) {
@@ -1983,7 +2006,9 @@ fn steering_target(
     Some(target)
 }
 
-fn destination_position(
+/// Resolve a semantic destination against current authoritative objects and cursor state.
+/// Presentation can use this same target to bound motion without predicting simulation events.
+pub fn destination_position(
     state: &WorldState,
     destination: SemanticDestination,
 ) -> Option<NormalizedPosition> {

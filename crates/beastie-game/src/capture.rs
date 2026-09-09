@@ -18,6 +18,7 @@ pub(crate) struct FrameSnapshot {
     pub world: beastie_core::WorldState,
     pub view: beastie_view::ViewState,
     pub presentation: PresentationTraceState,
+    pub motion: Option<crate::motion_trace::MotionTrace>,
     pub path: Option<PathBuf>,
     pub feel_frame: Option<u64>,
 }
@@ -126,6 +127,7 @@ fn fail(game: &mut Game, queue: &mut CaptureQueue, error: impl std::fmt::Display
     game.fail_captures();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn submit_frame(
     mut commands: Commands,
     mut queue: ResMut<CaptureQueue>,
@@ -133,6 +135,9 @@ fn submit_frame(
     mut warmup: ResMut<CaptureWarmup>,
     pacing: Res<crate::host::FramePacing>,
     ray_ready: Res<crate::raytrace::RayReady>,
+    scene: Res<crate::renderer::SceneFrame>,
+    parts: Query<(&crate::creature::CreaturePart, &Transform)>,
+    mut motion: Local<crate::motion_trace::MotionTracker>,
 ) {
     match warmup.renderer_ready(ray_ready.get(), Instant::now()) {
         Ok(true) => {}
@@ -178,7 +183,17 @@ fn submit_frame(
         return;
     }
     if game.needs_capture() {
-        let sequence = queue.0.submit(game.begin_capture());
+        let mut snapshot = game.begin_capture();
+        snapshot.motion = Some(
+            motion.sample(
+                scene
+                    .plan
+                    .elapsed_ms
+                    .saturating_add(scene.plan.simulation_remainder_ms),
+                parts.iter(),
+            ),
+        );
+        let sequence = queue.0.submit(snapshot);
         commands
             .spawn((Screenshot::primary_window(), CaptureSequence(sequence)))
             .observe(capture_ready);
