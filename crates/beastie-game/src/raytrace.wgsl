@@ -181,7 +181,7 @@ fn water_optics(color:vec3<f32>, o:vec3<f32>, d:vec3<f32>, hit:Hit) -> vec3<f32>
             let glint=pow(smoothstep(0.65,0.90,fine*0.72+ripple*0.28),2.0);
             var lamp=0.0;
             for(var i=0u;i<4u;i++) {
-                let x=array<f32,4>(-6.9,-4.2,4.6,7.0)[i];
+                let x=array<f32,4>(-6.9,-4.2,4.2,6.9)[i];
                 lamp+=exp(-(q.x-x)*(q.x-x)*2.4);
             }
             let center=exp(-q.x*q.x*0.055);
@@ -279,7 +279,9 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
         }
     }
     // Caustics mostly belong on the bed and lower upward-facing scenery.
-    let caustic_weight=max(n.y,0.0)*exp(-max(p.y+1.75,0.0)*0.85)*params.water.y;
+    // The dry front sill must not inherit the water's moving highlight pattern.
+    let submerged=p.z<2.15 && abs(p.x)<7.75 && p.y>=-2.13;
+    let caustic_weight=select(0.0,max(n.y,0.0)*exp(-max(p.y+1.75,0.0)*0.85)*params.water.y,submerged);
     var caustic_light=0.0;
     if(caustic_weight>0.025 && visibility>0.0) {
         caustic_light=caustic(p.xz,params.water.x)*caustic_weight*visibility;
@@ -288,7 +290,7 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
     // weaker than the shadowed aquarium key so the water remains cool.
     var practical=0.0;
     for(var i=0u;i<4u;i++) {
-        let x=array<f32,4>(-6.9,-4.2,4.6,7.0)[i];
+        let x=array<f32,4>(-6.9,-4.2,4.2,6.9)[i];
         let delta=vec3(x,4.45,1.3)-p;
         practical+=max(dot(n,normalize(delta)),0.0)/(1.0+dot(delta,delta)*0.48);
     }

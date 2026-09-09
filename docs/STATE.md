@@ -9,20 +9,21 @@ Last updated: **2026-09-09**.
 - Gold-reference refinement is implemented and repeatedly reviewed. Permanent originals,
   before/after screenshots and capture commands remain in [style references](style-reference/README.md).
   The [refinement record](style-reference/refinement.md) explains accepted findings and limits.
-- Tank-edge follow-up joins the disconnected trim strips into one rim and centers the
-  overhead key, removing the heavy left-wall shadow. The frame uses a quieter brushed finish.
+- [Detail review](style-reference/detail-review.md) corrects measured HUD/settings/dialog
+  alignment and padding, name-field focus, tank-edge seams and protruding lights.
+  The tank now has a flush coated frame and recessed fixtures; the centered overhead
+  key remains. A 28-state Normal/Large capture scenario covers the less-visible dialogs.
 - Water now has smaller broken highlights, varied caustic coverage and stronger soft shafts.
   Contact darkening, warm practical fill, curved fronds, eroded rock courses, a rounded cave
   and restrained glass edges give the tank more depth.
 - Settings has thinner stepped rims and much less visible transmission. Selection brackets
   follow actual transformed mesh bounds; toy cards choose clear space once and stay still.
   The title has a smaller creature clear of the cave and toys grounded against actual sand.
-- `cargo xtask verify` passed 548 tests, 27 dialogue fixtures, 11 STT fixtures and spoken-input
-  replay. Two final native motion captures and independent visual/code reviews found no known
-  material reasonable correction remaining. Native macOS checks verified title/settings,
-  Large text, return to gameplay, direct toy picking and Play. All seven matched authoritative
-  checkpoints and the recorded event/audio semantics remain unchanged.
-- Final recorded median/p95 remains 16.74/33.58 ms versus 16.66/33.44 ms before;
+- `cargo xtask verify` passed 555 tests, 27 dialogue fixtures, 11 STT fixtures and spoken-input
+  replay. Detail validation uses 28 Normal/Large states, enlarged crops, measured icon/text
+  placement, independent review and native typing, Feed and Rename checks. Earlier motion,
+  selection and authoritative trace comparisons remain in the refinement record.
+- The last recorded median/p95 before the detail sweep was 16.74/33.58 ms versus 16.66/33.44 ms before;
   geometry arenas are 29.2% smaller. An uncaptured 1080p debug comparison also remains
   near the baseline. Exact pose caching avoids repeated selected-toy mesh scans.
 - Physical glass refraction and full volumetric transport remain approximations. No release

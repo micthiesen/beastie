@@ -12,14 +12,12 @@ struct TankArt {
     back_low: [u8; 3],
     back_high: [u8; 3],
     frame: [u8; 3],
-    brass: [u8; 3],
     sand: [u8; 3],
 }
 const TANK: TankArt = TankArt {
     back_low: [8, 31, 39],
     back_high: [13, 57, 68],
     frame: [27, 42, 39],
-    brass: [174, 151, 97],
     sand: [185, 164, 116],
 };
 
@@ -121,43 +119,41 @@ pub(crate) fn setup(
     let mut tank = Geometry::default();
     tank.cuboid(
         Vec3::new(0.0, -2.2, -0.3),
-        Vec3::new(16.0, 0.32, 4.8),
+        Vec3::new(15.94, 0.32, 4.8),
         [23, 37, 37],
     );
+    // The rear wall structure ends behind one continuous front perimeter. The
+    // four front members meet at their ends, without overlapping trim faces or
+    // staggered front planes that read as stray lines at the bottom corners.
     for side in [-1.0, 1.0] {
         tank.cuboid(
             Vec3::new(side * 7.88, 1.30, -0.2),
             Vec3::new(0.18, 7.05, 4.7),
             TANK.frame,
         );
-        // One inset trim joins both rails, rather than floating parallel glint wires.
         tank.cuboid(
-            Vec3::new(side * 7.79, 1.24, 2.20),
-            Vec3::new(0.04, 6.88, 0.08),
-            TANK.brass,
+            Vec3::new(side * 7.87, 1.47, 2.225),
+            Vec3::new(0.20, 7.66, 0.15),
+            TANK.frame,
         );
     }
+    // An opaque hood reaches above both camera crops. No water or clipped rear
+    // posts should peek over the front crossbar.
     tank.cuboid(
-        Vec3::new(0.0, 4.75, 2.1),
-        Vec3::new(16.0, 0.2, 0.22),
+        Vec3::new(0.0, 4.97, 2.225),
+        Vec3::new(15.54, 0.66, 0.15),
         TANK.frame,
     );
     tank.cuboid(
-        Vec3::new(0.0, 4.66, 2.20),
-        Vec3::new(15.62, 0.04, 0.08),
-        shade(TANK.brass, 15),
+        Vec3::new(0.0, -2.20, 2.225),
+        Vec3::new(15.54, 0.32, 0.15),
+        TANK.frame,
     );
+    // The cabinet continues the sill's front plane without a projecting lip.
     tank.cuboid(
-        Vec3::new(0.0, -2.18, 2.20),
-        Vec3::new(15.62, 0.04, 0.08),
-        TANK.brass,
-    );
-    // A solid cabinet apron remains visible beneath the bed as the compact care
-    // controls recede. It is part of the tank, so no empty background gap is exposed.
-    tank.cuboid(
-        Vec3::new(0.0, -2.95, 2.15),
-        Vec3::new(16.0, 1.35, 0.30),
-        [23, 37, 37],
+        Vec3::new(0.0, -3.035, 2.225),
+        Vec3::new(15.94, 1.35, 0.15),
+        TANK.frame,
     );
     // The substrate and rear ridge are one filled lattice. Shared faces disappear,
     // leaving terraces in the silhouette instead of dark channels around each grain.
@@ -183,15 +179,29 @@ pub(crate) fn setup(
         Transform::default(),
     ));
     let mut lamps = Geometry::default();
-    for x in [-6.9, -4.2, 4.6, 7.0] {
+    for x in [-6.9, -4.2, 4.2, 6.9] {
+        // A dark socket surrounds each warm diffuser. The lens sits behind its
+        // front lip instead of hanging below a flat brown block.
         tank.cuboid(
-            Vec3::new(x, 4.81, 2.17),
-            Vec3::new(0.56, 0.16, 0.35),
-            [92, 78, 49],
+            Vec3::new(x, 4.82, 2.32),
+            Vec3::new(0.58, 0.22, 0.04),
+            [35, 43, 37],
         );
+        for side in [-1.0, 1.0] {
+            tank.cuboid(
+                Vec3::new(x + side * 0.255, 4.82, 2.365),
+                Vec3::new(0.07, 0.22, 0.05),
+                [49, 51, 39],
+            );
+            tank.cuboid(
+                Vec3::new(x, 4.82 + side * 0.085, 2.365),
+                Vec3::new(0.44, 0.05, 0.05),
+                [49, 51, 39],
+            );
+        }
         lamps.cuboid(
-            Vec3::new(x, 4.70, 2.33),
-            Vec3::new(0.37, 0.06, 0.12),
+            Vec3::new(x, 4.82, 2.345),
+            Vec3::new(0.44, 0.12, 0.01),
             [255, 220, 146],
         );
     }

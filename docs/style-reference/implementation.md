@@ -2,6 +2,8 @@
 
 Implemented 2026-09-09, then refined through repeated native comparison. The
 [refinement contract and review](refinement.md) records subsequent findings and decisions.
+The later [detail review](detail-review.md) supersedes the narrow frame/glint treatment
+and adds measured UI alignment, consistent dialog padding and recessed fixtures.
 The original JPGs remain unchanged. The PNGs below are actual compute-rendered game
 frames, not mockups or image-generated replacements.
 

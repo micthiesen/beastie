@@ -156,6 +156,228 @@ pub(super) fn layout_text(text: &mut [TextCommand], rects: &[RectCommand], hits:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn controller_name_entry_has_name_labels_and_submission() {
+        let world = beastie_core::WorldState::new(42, "Mop");
+        let scene = crate::plan(
+            &world,
+            &crate::ViewState {
+                mode: crate::UiMode::OnScreenKeyboard,
+                renaming_with_osk: true,
+                ..Default::default()
+            },
+        )
+        .0;
+        assert_eq!(
+            scene
+                .text
+                .iter()
+                .find(|t| t.id == "compose/input-text")
+                .unwrap()
+                .text,
+            "New name…"
+        );
+        for id in ["compose/send", "keyboard/send"] {
+            let hit = scene.hit_regions.iter().find(|h| h.id == id).unwrap();
+            assert_eq!(hit.action, crate::UiAction::SubmitName);
+            assert_eq!(hit.label, "Name");
+        }
+    }
+
+    #[test]
+    fn secondary_dialog_headers_and_binding_rows_align_with_their_controls() {
+        let state = beastie_core::WorldState::new(42, "Mop");
+        for mode in [crate::UiMode::Bindings, crate::UiMode::DataManagement] {
+            for text_scale in [1, 2] {
+                let scene = crate::plan(
+                    &state,
+                    &crate::ViewState {
+                        mode,
+                        text_scale,
+                        ..Default::default()
+                    },
+                )
+                .0;
+                let header = scene
+                    .text
+                    .iter()
+                    .find(|t| t.id.ends_with("/title"))
+                    .unwrap();
+                let close = scene
+                    .hit_regions
+                    .iter()
+                    .find(|h| h.id == "modal/close")
+                    .unwrap()
+                    .rect;
+                let bounds = header.bounds.unwrap();
+                assert!(header.vertical_centered);
+                assert_eq!(2 * bounds.y + bounds.h, 2 * close.y + close.h);
+                assert!(bounds.x + bounds.w < close.x);
+                for name in scene
+                    .text
+                    .iter()
+                    .filter(|t| t.id.starts_with("bindings/") && t.id.ends_with("-name"))
+                {
+                    let id = name.id.strip_suffix("-name").unwrap();
+                    let control = scene.hit_regions.iter().find(|h| h.id == id).unwrap().rect;
+                    let bounds = name.bounds.unwrap();
+                    assert!(name.vertical_centered);
+                    assert!(!name.role.centered());
+                    assert_eq!(2 * bounds.y + bounds.h, 2 * control.y + control.h);
+                    assert!(bounds.x + bounds.w < control.x);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn action_sheets_have_equal_outer_gutters_and_clear_focus_rims() {
+        let state = beastie_core::WorldState::new(42, "Mop");
+        for mode in [
+            crate::UiMode::FoodChoice,
+            crate::UiMode::ToyChoice,
+            crate::UiMode::Context(crate::UiTarget::Creature),
+        ] {
+            let scene = crate::plan(
+                &state,
+                &crate::ViewState {
+                    mode,
+                    ..Default::default()
+                },
+            )
+            .0;
+            let panel = scene
+                .rects
+                .iter()
+                .find(|r| r.id.starts_with("mode/") && r.id.ends_with("-panel"))
+                .unwrap()
+                .rect;
+            let controls: Vec<_> = scene
+                .hit_regions
+                .iter()
+                .filter(|h| h.id.starts_with("action/"))
+                .collect();
+            let first = controls.first().unwrap().rect;
+            let last = controls.last().unwrap().rect;
+            let gutter = first.x - panel.x;
+            assert_eq!(gutter, panel.x + panel.w - last.x - last.w);
+            assert_eq!(gutter, panel.y + panel.h - last.y - last.h);
+            // Focus expands by one unit; keep it clear of the frame and neighboring rims.
+            assert!(gutter > 2);
+            for pair in controls.windows(2) {
+                assert!(pair[0].rect.x + pair[0].rect.w + 2 < pair[1].rect.x);
+            }
+            assert!(panel.x >= 0 && panel.x + panel.w <= crate::LOGICAL_WIDTH);
+        }
+    }
+
+    #[test]
+    fn settings_rows_share_a_vertical_center_without_centering_names_horizontally() {
+        let state = beastie_core::WorldState::new(42, "Mop");
+        for text_scale in [1, 2] {
+            for settings_page in 0..3 {
+                let scene = crate::plan(
+                    &state,
+                    &crate::ViewState {
+                        mode: crate::UiMode::Settings,
+                        settings_page,
+                        text_scale,
+                        ..Default::default()
+                    },
+                )
+                .0;
+                for name in scene
+                    .text
+                    .iter()
+                    .filter(|t| t.id.starts_with("settings/") && t.id.ends_with("-name"))
+                {
+                    let id = name.id.strip_suffix("-name").unwrap();
+                    let value = scene
+                        .text
+                        .iter()
+                        .find(|t| t.id == format!("{id}-value"))
+                        .unwrap();
+                    let area = scene.hit_regions.iter().find(|h| h.id == id).unwrap().rect;
+                    let center = 2 * area.y + area.h;
+                    assert!(name.vertical_centered);
+                    assert!(!name.role.centered());
+                    for bounds in [name.bounds.unwrap(), value.bounds.unwrap()] {
+                        assert_eq!(2 * bounds.y + bounds.h, center);
+                    }
+                    for part in scene
+                        .rects
+                        .iter()
+                        .filter(|r| r.id == format!("{id}-track") || r.id == format!("{id}-thumb"))
+                    {
+                        assert_eq!(2 * part.rect.y + part.rect.h, center);
+                    }
+                }
+                for category in scene
+                    .text
+                    .iter()
+                    .filter(|t| t.id.starts_with("settings/page-") && t.id.ends_with("-label"))
+                {
+                    let id = category.id.strip_suffix("-label").unwrap();
+                    let area = scene.hit_regions.iter().find(|h| h.id == id).unwrap().rect;
+                    let bounds = category.bounds.unwrap();
+                    assert!(category.vertical_centered);
+                    assert_eq!(2 * bounds.y + bounds.h, 2 * area.y + area.h);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compose_input_and_header_keep_their_control_centers() {
+        let state = beastie_core::WorldState::new(42, "Mop");
+        let scene = crate::plan(
+            &state,
+            &crate::ViewState {
+                mode: crate::UiMode::Settings,
+                ..Default::default()
+            },
+        )
+        .0;
+        let input = scene
+            .text
+            .iter()
+            .find(|t| t.id == "compose/input-text")
+            .unwrap();
+        let field = scene
+            .hit_regions
+            .iter()
+            .find(|h| h.id == "compose/input")
+            .unwrap()
+            .rect;
+        let bounds = input.bounds.unwrap();
+        assert!(input.vertical_centered);
+        assert!(!input.role.centered());
+        assert_eq!(2 * bounds.y + bounds.h, 2 * field.y + field.h);
+        assert_eq!(bounds.x - field.x, field.x + field.w - bounds.x - bounds.w);
+        let header = scene
+            .text
+            .iter()
+            .find(|t| t.id == "settings/title")
+            .unwrap()
+            .bounds
+            .unwrap();
+        let gear = scene
+            .icons
+            .iter()
+            .find(|i| i.id == "settings/gear")
+            .unwrap()
+            .bounds;
+        let close = scene
+            .hit_regions
+            .iter()
+            .find(|h| h.id == "modal/close")
+            .unwrap()
+            .rect;
+        assert_eq!(2 * header.y + header.h, 2 * close.y + close.h);
+        assert_eq!(2 * gear.y + gear.h, 2 * close.y + close.h);
+    }
+
     #[test]
     fn drop_food_target_does_not_own_instruction_typography() {
         let state = beastie_core::WorldState::new(42, "Mop");

@@ -30,3 +30,5 @@ over mockup labels. No fictional controls or background creatures are implied.
 Implementation differences and final native comparisons are recorded in
 [implementation.md](implementation.md), with iterative findings and performance decisions
 in [refinement.md](refinement.md), alongside these permanent references.
+The [detail review](detail-review.md) records subsequent alignment, padding, frame
+and light-fixture corrections, with a repeatable 28-state UI capture scenario.

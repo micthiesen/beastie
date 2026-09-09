@@ -166,6 +166,7 @@ impl Lettering {
             clips,
             size,
             centered,
+            vertical_centered,
             color,
             z,
         } = label;
@@ -186,7 +187,7 @@ impl Lettering {
         let line_height = size * 1.2;
         let block_height = lines.len() as f32 * line_height;
         let top = bounds.y
-            + if centered {
+            + if centered || vertical_centered {
                 ((bounds.h - block_height) * 0.5).max(0.0)
             } else {
                 0.0
@@ -229,6 +230,8 @@ pub struct Label<'a> {
     pub clips: &'a [Bounds],
     pub size: f32,
     pub centered: bool,
+    /// Center within the line block while retaining left alignment for input and row labels.
+    pub vertical_centered: bool,
     pub color: [u8; 3],
     pub z: f32,
 }
@@ -302,6 +305,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn input_text_centers_vertically_without_changing_left_padding_or_glyphs() {
+        let bounds = Bounds {
+            x: 166.0,
+            y: 157.0,
+            w: 98.0,
+            h: 16.0,
+        };
+        for size in [4.8, 6.0, 7.8] {
+            let mut lettering = Lettering::default();
+            let render = |lettering: &mut Lettering, vertical_centered| {
+                let mut mesh = LetterMesh::default();
+                lettering.append(
+                    &mut mesh,
+                    Label {
+                        text: "Talk to Mop...",
+                        bounds,
+                        clips: &[bounds],
+                        size,
+                        centered: false,
+                        vertical_centered,
+                        color: [255; 3],
+                        z: 8.1,
+                    },
+                );
+                mesh.positions
+            };
+            let top = render(&mut lettering, false);
+            let centered = render(&mut lettering, true);
+            assert_eq!(top.len(), centered.len());
+            let shift = (bounds.h - size * 1.2) * 0.5 / 20.0;
+            for (before, after) in top.iter().zip(&centered) {
+                assert!((before[0] - after[0]).abs() < 1e-5);
+                assert!((before[1] - after[1] - shift).abs() < 1e-5);
+            }
+            let ys: Vec<_> = centered.iter().map(|p| 90.0 - p[1] * 20.0).collect();
+            let min = ys.iter().copied().reduce(f32::min).unwrap();
+            let max = ys.iter().copied().reduce(f32::max).unwrap();
+            assert!(((min + max) * 0.5 - (bounds.y + bounds.h * 0.5)).abs() < 0.5);
+        }
+    }
+
+    #[test]
     fn outline_counters_remain_open_and_accents_are_real_geometry() {
         let mut lettering = Lettering::default();
         for character in ['O', 'B', 'é', '…', '\u{fffd}'] {
@@ -355,6 +400,7 @@ mod tests {
                     clips: &[bounds],
                     size: 6.0,
                     centered: false,
+                    vertical_centered: false,
                     color: [255; 3],
                     z: 8.1,
                 },

@@ -161,7 +161,6 @@ pub struct Game {
     turn_status_owner: Option<DialogueOwner>,
     speech_animation: Option<SpeechAnimation>,
     transcript_export_path: PathBuf,
-    renaming_with_osk: bool,
     settings_from_title: bool,
     pub(crate) quit_requested: bool,
     pub(crate) failed: bool,
@@ -398,7 +397,6 @@ impl Game {
             turn_status_owner: None,
             speech_animation: None,
             transcript_export_path,
-            renaming_with_osk: false,
             settings_from_title: false,
             quit_requested: false,
             failed: false,
@@ -1122,7 +1120,7 @@ impl Game {
                 self.view.text_buffer.pop();
             }
             UiAction::SubmitText => {
-                if self.renaming_with_osk {
+                if self.view.renaming_with_osk {
                     self.submit_name()?;
                 } else {
                     self.submit_text()?;
@@ -1259,13 +1257,19 @@ impl Game {
             }
             UiAction::Rename => {
                 self.view.text_buffer.clear();
-                self.renaming_with_osk = controller;
+                self.view.renaming_with_osk = controller;
                 self.view.mode = if controller {
                     UiMode::OnScreenKeyboard
                 } else {
                     UiMode::Rename
                 };
-                self.reset_focus();
+                if controller {
+                    self.reset_focus();
+                } else {
+                    self.view.hovered_region = None;
+                    self.view.focused_region = Some("compose/input".to_owned());
+                    self.view.compose_engaged = true;
+                }
             }
             UiAction::SubmitName => self.submit_name()?,
             UiAction::OpenDataManagement => {
@@ -1405,7 +1409,7 @@ impl Game {
 
     fn close_menu(&mut self) {
         self.view.context_card_anchor = None;
-        self.renaming_with_osk = false;
+        self.view.renaming_with_osk = false;
         self.view.compose_engaged = false;
         self.view.hovered_region = None;
         if self.settings_from_title || matches!(self.view.mode, UiMode::Title) {

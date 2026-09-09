@@ -250,6 +250,9 @@ pub struct ViewState {
     /// Explicit editing engagement, separate from the default keyboard input destination.
     #[serde(default)]
     pub compose_engaged: bool,
+    /// The controller keyboard is editing a creature name rather than a message.
+    #[serde(default)]
+    pub renaming_with_osk: bool,
     /// Session-only guidance, dismissed by an observed care interaction.
     #[serde(default)]
     pub care_guidance_dismissed: bool,
@@ -342,6 +345,7 @@ impl Default for ViewState {
             hovered_region: None,
             text_buffer: String::new(),
             compose_engaged: false,
+            renaming_with_osk: false,
             care_guidance_dismissed: false,
             pending: false,
             speech: None,
@@ -571,6 +575,9 @@ pub struct RectCommand {
 #[serde(deny_unknown_fields)]
 pub struct TextCommand {
     pub bounds: Option<Rect>,
+    /// Vertically center a left-aligned label within its bounds.
+    #[serde(default)]
+    pub vertical_centered: bool,
     pub muted: bool,
     pub role: TextRole,
     pub id: String,
@@ -636,8 +643,7 @@ pub enum IconKind {
 pub struct IconCommand {
     pub id: String,
     pub kind: IconKind,
-    pub x: i32,
-    pub y: i32,
+    pub bounds: Rect,
     pub layer: i16,
 }
 
@@ -1110,8 +1116,12 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (ScenePlan, AudioPlan) {
         icons.push(IconCommand {
             id: "settings/gear".to_owned(),
             kind: IconKind::Settings,
-            x: 172,
-            y: 29,
+            bounds: Rect {
+                x: 167,
+                y: 26,
+                w: 10,
+                h: 10,
+            },
             layer: 29,
         });
     }
@@ -1669,8 +1679,7 @@ fn add_persistent_bar(
         icons.push(IconCommand {
             id,
             kind: IconKind::Toy(toy),
-            x: area.x + area.w / 2,
-            y: area.y + area.h / 2,
+            bounds: area,
             layer: 35,
         });
     }
@@ -1713,8 +1722,10 @@ fn add_persistent_bar(
     let input_capacity = ((input_rect.w - 17) as f32
         / (TextRole::Body.size(text_scale >= 2) * 0.56))
         .floor() as usize;
+    let naming = matches!(view.mode, UiMode::Rename)
+        || (matches!(view.mode, UiMode::OnScreenKeyboard) && view.renaming_with_osk);
     let input_value = if view.text_buffer.is_empty() {
-        if matches!(view.mode, UiMode::Rename) {
+        if naming {
             "New name…".to_owned()
         } else {
             head_fit(&format!("Talk to {}...", summary.name), input_capacity)
@@ -1723,6 +1734,7 @@ fn add_persistent_bar(
         tail_fit(&view.text_buffer, input_capacity)
     };
     let mut input_text = label("compose/input-text", &input_value, 166, 161, 34);
+    input_text.vertical_centered = true;
     input_text.role = if editing {
         TextRole::Body
     } else {
@@ -1797,16 +1809,12 @@ fn add_persistent_bar(
         ));
         add_button_chrome("compose/close", settings_rect, true, false, 31, rects);
     }
-    let send_action = if matches!(view.mode, UiMode::Rename) {
+    let send_action = if naming {
         UiAction::SubmitName
     } else {
         UiAction::SubmitText
     };
-    let send_label = if matches!(view.mode, UiMode::Rename) {
-        "Name"
-    } else {
-        "Send"
-    };
+    let send_label = if naming { "Name" } else { "Send" };
     let send_enabled = !view.pending && !view.text_buffer.trim().is_empty();
     hits.push(hit(
         "compose/send",
@@ -1833,8 +1841,10 @@ fn add_persistent_bar(
         icons.push(IconCommand {
             id: format!("ui/button-{id}"),
             kind,
-            x: area.x + area.w / 2,
-            y: area.y + if id == "food" { 6 } else { area.h / 2 },
+            bounds: Rect {
+                h: if id == "food" { 12 } else { area.h },
+                ..area
+            },
             layer: 35,
         });
     }
@@ -1913,7 +1923,7 @@ fn add_temporary_mode(
             hits,
         ),
         UiMode::FoodDrop(food) => {
-            rects.push(rect(
+            add_panel_chrome(
                 "mode/drop-food-background",
                 Rect {
                     x: 79,
@@ -1921,9 +1931,9 @@ fn add_temporary_mode(
                     w: 162,
                     h: 18,
                 },
-                [22, 31, 43, 232],
                 28,
-            ));
+                rects,
+            );
             text.push(label(
                 "mode/drop-food-label",
                 &format!("Drop {} into open water  [Esc]", food_name(food)),
@@ -2199,11 +2209,12 @@ fn add_settings(
     );
     let mut header = label("settings/title", "Settings", 181, 26, 29);
     header.role = TextRole::Body;
+    header.vertical_centered = true;
     header.bounds = Some(Rect {
         x: 181,
-        y: 25,
+        y: 26,
         w: 66,
-        h: 11,
+        h: 10,
     });
     text.push(header);
     for (index, title) in ["Display", "Sound", "Controls"].into_iter().enumerate() {
@@ -2240,6 +2251,7 @@ fn add_settings(
         }
         let mut category = label(&format!("{id}-label"), title, area.x + 4, area.y + 4, 29);
         category.role = TextRole::Secondary;
+        category.vertical_centered = true;
         category.bounds = Some(Rect {
             x: area.x + 4,
             y: area.y + 3,
@@ -2343,9 +2355,10 @@ fn add_settings(
         let y = 43 + index as i32 * 15;
         let mut name = label(&format!("settings/{id}-name"), setting, 211, y + 3, 29);
         name.role = TextRole::Secondary;
+        name.vertical_centered = true;
         name.bounds = Some(Rect {
             x: 211,
-            y: y + 1,
+            y,
             w: 59,
             h: 13,
         });
@@ -2397,9 +2410,9 @@ fn add_settings(
             value_text.role = TextRole::ControlCaption;
             value_text.bounds = Some(Rect {
                 x: button.x,
-                y: y + 3,
+                y: y + 2,
                 w: 10,
-                h: 8,
+                h: 9,
             });
             text.push(value_text);
         } else {
@@ -2407,7 +2420,7 @@ fn add_settings(
                 &format!("settings/{id}"),
                 Rect {
                     y: y + 2,
-                    h: 10,
+                    h: 9,
                     ..button
                 },
                 25,
@@ -2423,9 +2436,9 @@ fn add_settings(
             value_text.role = TextRole::ControlCaption;
             value_text.bounds = Some(Rect {
                 x: button.x + 2,
-                y: y + 3,
+                y: y + 2,
                 w: button.w - 4,
-                h: 8,
+                h: 9,
             });
             text.push(value_text);
         }
@@ -2474,7 +2487,16 @@ fn add_data_management(
         25,
         rects,
     );
-    text.push(label("data/title", "Save & local data", 51, 23, 29));
+    let mut header = label("data/title", "Save & local data", 51, 23, 29);
+    header.role = TextRole::Title;
+    header.vertical_centered = true;
+    header.bounds = Some(Rect {
+        x: 51,
+        y: 20,
+        w: 180,
+        h: 14,
+    });
+    text.push(header);
     let actions = [
         ("recover", "Recover backup", UiAction::RecoverBackup, true),
         ("reset", "Reset creature", UiAction::RequestReset, true),
@@ -2598,7 +2620,16 @@ fn add_bindings(
         25,
         rects,
     );
-    text.push(label("bindings/title", "Input bindings", 46, 14, 29));
+    let mut header = label("bindings/title", "Input bindings", 46, 14, 29);
+    header.role = TextRole::Title;
+    header.vertical_centered = true;
+    header.bounds = Some(Rect {
+        x: 46,
+        y: 11,
+        w: 190,
+        h: 14,
+    });
+    text.push(header);
     let rows = [
         (
             BindableAction::PushToTalk,
@@ -2634,13 +2665,21 @@ fn add_bindings(
     for (index, (action, name, binding)) in rows.into_iter().enumerate() {
         // Three units between faces leave one clear unit between their focus outlines.
         let y = 29 + i32::try_from(index).unwrap_or_default() * 17;
-        text.push(label(
+        let mut row_label = label(
             &format!("bindings/{}-name", bindable_id(action)),
             name,
             48,
             y + 4,
             29,
-        ));
+        );
+        row_label.vertical_centered = true;
+        row_label.bounds = Some(Rect {
+            x: 48,
+            y,
+            w: 127,
+            h: 14,
+        });
+        text.push(row_label);
         let button = Rect {
             x: 181,
             y,
@@ -2784,7 +2823,8 @@ fn add_action_strip(
     hits: &mut Vec<HitRegion>,
 ) {
     let item_width = 72;
-    let width = item_width * i32::try_from(actions.len()).unwrap_or_default() + 4;
+    // Equal seven-unit outer padding and four-unit gutters leave focus rims clear.
+    let width = item_width * i32::try_from(actions.len()).unwrap_or_default() + 10;
     let start = (LOGICAL_WIDTH - width) / 2;
     add_panel_chrome(
         &format!("mode/{id}-panel"),
@@ -2810,10 +2850,10 @@ fn add_action_strip(
     ));
     for (index, action) in actions.iter().copied().enumerate() {
         let button_rect = Rect {
-            x: start + 2 + i32::try_from(index).unwrap_or_default() * item_width,
+            x: start + 7 + i32::try_from(index).unwrap_or_default() * item_width,
             y: y + 3,
-            w: item_width - 2,
-            h: 21,
+            w: item_width - 4,
+            h: 17,
         };
         let label_text = action_label(action);
         let region_id = format!("action/{}", action_id(action));
@@ -2890,8 +2930,16 @@ fn add_keyboard(
         ("keyboard/cancel", "Close", UiAction::CancelMode, 112, true),
         (
             "keyboard/send",
-            "Send",
-            UiAction::SubmitText,
+            if view.renaming_with_osk {
+                "Name"
+            } else {
+                "Send"
+            },
+            if view.renaming_with_osk {
+                UiAction::SubmitName
+            } else {
+                UiAction::SubmitText
+            },
             212,
             !view.text_buffer.trim().is_empty(),
         ),
@@ -3734,7 +3782,18 @@ fn rect(id: &str, dimensions: Rect, color: [u8; 4], layer: i16) -> RectCommand {
 }
 
 fn add_panel_chrome(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<RectCommand>) {
-    if matches!(id, "settings/panel" | "mode/context-panel") {
+    if matches!(
+        id,
+        "settings/panel"
+            | "mode/drop-food-background"
+            | "rename/prompt-background"
+            | "data/panel"
+            | "reset/panel"
+            | "bindings/panel"
+            | "bindings/capture/panel"
+            | "keyboard/panel"
+    ) || (id.starts_with("mode/") && id.ends_with("-panel"))
+    {
         rects.push(rect(id, dimensions, UI_PANEL, layer));
         rects.push(RectCommand {
             id: format!("{id}-edge"),
@@ -3834,6 +3893,7 @@ fn add_button_chrome(
 fn label(id: &str, value: &str, x: i32, y: i32, layer: i16) -> TextCommand {
     TextCommand {
         bounds: None,
+        vertical_centered: false,
         muted: false,
         role: TextRole::Body,
         id: id.to_owned(),

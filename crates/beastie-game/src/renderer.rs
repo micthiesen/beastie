@@ -286,8 +286,8 @@ fn setup(
         Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH))
             .with_translation(Quat::from_rotation_x(CAMERA_PITCH) * Vec3::new(0.0, 0.0, 24.0)),
     ));
-    // Brushed framing keeps reflected scenery from drawing sharp stray lines on the rails.
-    let frame_material = materials.add(appearance.material(0.72, 0.40));
+    // Coated metal retains a broad highlight without tracing sharp scenery reflections.
+    let frame_material = materials.add(appearance.material(0.82, 0.25));
     crate::environment::setup(
         &mut commands,
         &mut meshes,
@@ -793,18 +793,23 @@ fn icon_mesh(kind: IconKind, center: Vec3, color: [u8; 3]) -> Mesh {
         IconKind::Toy(_) => unreachable!("toy miniatures return above"),
     };
     let mut model = crate::voxel::VoxelModel::default();
+    let mut lower = IVec2::splat(i32::MAX);
+    let mut upper = IVec2::splat(i32::MIN);
     for (row, line) in pattern.iter().enumerate() {
         for (column, byte) in line.bytes().enumerate() {
             if byte == b'x' {
-                model.set([column as i32, -(row as i32), 0], color);
+                let point = IVec2::new(column as i32, -(row as i32));
+                lower = lower.min(point);
+                upper = upper.max(point);
+                model.set([point.x, point.y, 0], color);
             }
         }
     }
+    // Center occupied cells, not the padded stencil: Food has an empty last column.
+    let offset = (lower + upper).as_vec2() * (cell * 0.5);
     model
         .mesh_with_style(cell, crate::voxel::SurfaceStyle::Sharp)
-        .translated_by(
-            center + Vec3::new(-2.5 * cell, (pattern.len() as f32 * 0.5 - 0.5) * cell, 0.0),
-        )
+        .translated_by(center - offset.extend(0.0))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1013,10 +1018,20 @@ fn sync_ui(mut ui: UiSystem) {
             );
             let color = [rect.color[0], rect.color[1], rect.color[2]];
             let size = Vec3::new(r.w as f32 / UNITS, r.h as f32 / UNITS, 0.02);
+            let panel_id = rect.id.strip_suffix("-edge").unwrap_or(&rect.id);
             let crafted = rect.id.starts_with("title/")
                 || rect.id.starts_with("settings/")
-                || rect.id == "mode/context-panel"
-                || rect.id == "mode/context-panel-edge";
+                || panel_id.ends_with("-panel")
+                || matches!(
+                    panel_id,
+                    "rename/prompt-background"
+                        | "mode/drop-food-background"
+                        | "data/panel"
+                        | "reset/panel"
+                        | "bindings/panel"
+                        | "bindings/capture/panel"
+                        | "keyboard/panel"
+                );
             let corner = if r.h > 20 { 0.050 } else { 0.025 };
             if rect.id == "settings/panel" {
                 stepped_plate(&mut panel, center, size, color, corner);
@@ -1072,8 +1087,8 @@ fn sync_ui(mut ui: UiSystem) {
                 .merge(&icon_mesh(
                     icon.kind,
                     logical_position(
-                        icon.x as f32,
-                        icon.y as f32,
+                        icon.bounds.x as f32 + icon.bounds.w as f32 * 0.5,
+                        icon.bounds.y as f32 + icon.bounds.h as f32 * 0.5,
                         8.05 + icon.layer as f32 * 0.002,
                     ),
                     if ui
@@ -1135,6 +1150,7 @@ fn sync_ui(mut ui: UiSystem) {
                     clips: &clips,
                     size: fitting_font_size(&text, bounds),
                     centered: text.role.centered(),
+                    vertical_centered: text.vertical_centered,
                     color: if text.muted {
                         [101, 128, 130]
                     } else {
@@ -2139,6 +2155,40 @@ mod ui_layout_tests {
     use super::*;
 
     #[test]
+    fn icon_geometry_is_centered_on_its_authored_target() {
+        let center = logical_position(148.5, 162.0, 8.12);
+        for kind in [
+            IconKind::Food,
+            IconKind::Microphone,
+            IconKind::Send,
+            IconKind::Settings,
+            IconKind::Toy(beastie_core::ToyId::Ball),
+            IconKind::Toy(beastie_core::ToyId::Bell),
+            IconKind::Toy(beastie_core::ToyId::Sock),
+        ] {
+            let mesh = icon_mesh(kind, center, [255; 3]);
+            let positions = mesh
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+                .as_float3()
+                .unwrap();
+            let lower = positions
+                .iter()
+                .copied()
+                .map(Vec3::from)
+                .reduce(Vec3::min)
+                .unwrap();
+            let upper = positions
+                .iter()
+                .copied()
+                .map(Vec3::from)
+                .reduce(Vec3::max)
+                .unwrap();
+            assert!(((lower + upper) * 0.5 - center).length() < 1e-5, "{kind:?}");
+        }
+    }
+
+    #[test]
     fn caption_wraps_inside_its_panel_on_both_sides() {
         for x in [1500, 8500] {
             let mut world = beastie_core::WorldState::new(3, "Mop");
@@ -2176,6 +2226,7 @@ mod ui_layout_tests {
         let mut scene = beastie_view::plan(&world, &beastie_view::ViewState::default()).0;
         scene.rects.clear();
         let text = beastie_view::TextCommand {
+            vertical_centered: false,
             id: "lower".into(),
             text: "Underlapping text".into(),
             x: 10,
