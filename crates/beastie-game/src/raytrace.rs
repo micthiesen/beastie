@@ -30,10 +30,72 @@ impl RayReady {
         self.0.load(Ordering::Acquire)
     }
 }
+/// Deterministic presentation clock and accessibility controls for water optics.
+#[derive(Resource, Clone, Copy, Default, bevy::render::extract_resource::ExtractResource)]
+struct WaterAppearance(Vec4);
+fn update_water(frame: Res<crate::renderer::SceneFrame>, mut water: ResMut<WaterAppearance>) {
+    let plan = &frame.plan;
+    let seconds = if plan.reduced_motion {
+        0.0
+    } else {
+        (plan.elapsed_ms.saturating_add(plan.simulation_remainder_ms) as f64 / 1000.0) as f32
+    };
+    water.0 = Vec4::new(
+        seconds,
+        if plan.reduced_flashes { 0.45 } else { 1.0 },
+        0.0,
+        0.0,
+    );
+}
+
+#[cfg(test)]
+mod water_tests {
+    use super::*;
+
+    #[test]
+    fn water_does_not_jump_back_at_one_hour_and_honors_accessibility() {
+        let world = beastie_core::WorldState::new(42, "Mop");
+        let mut plan = beastie_view::plan(&world, &Default::default()).0;
+        plan.elapsed_ms = 3_599_900;
+        let mut app = App::new();
+        app.insert_resource(crate::renderer::SceneFrame { plan })
+            .init_resource::<WaterAppearance>()
+            .add_systems(Update, update_water);
+        app.update();
+        let before = app.world().resource::<WaterAppearance>().0.x;
+        app.world_mut()
+            .resource_mut::<crate::renderer::SceneFrame>()
+            .plan
+            .elapsed_ms += 200;
+        app.update();
+        let after = app.world().resource::<WaterAppearance>().0.x;
+        assert!((after - before - 0.2).abs() < 0.001);
+        {
+            let mut frame = app
+                .world_mut()
+                .resource_mut::<crate::renderer::SceneFrame>();
+            frame.plan.reduced_motion = true;
+            frame.plan.reduced_flashes = true;
+        }
+        app.update();
+        let reduced = app.world().resource::<WaterAppearance>().0;
+        assert_eq!(reduced.x, 0.0);
+        assert!(reduced.y > 0.0 && reduced.y < 1.0);
+        app.world_mut()
+            .resource_mut::<crate::renderer::SceneFrame>()
+            .plan
+            .elapsed_ms += 10_000;
+        app.update();
+        assert_eq!(app.world().resource::<WaterAppearance>().0, reduced);
+    }
+}
 pub struct RayTracePlugin;
 impl Plugin for RayTracePlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<WaterAppearance>()
+            .add_systems(Update, update_water.after(crate::host::HostSet::Publish));
         app.add_plugins((
+            ExtractResourcePlugin::<WaterAppearance>::default(),
             ExtractResourcePlugin::<RayScene>::default(),
             ExtractResourcePlugin::<crate::appearance::RenderAppearance>::default(),
         ));
@@ -77,6 +139,7 @@ struct RayPipeline {
 struct Params {
     world_from_clip: Mat4,
     size: UVec4,
+    water: Vec4,
 }
 #[derive(Default)]
 struct FrameBuffers {
@@ -129,6 +192,7 @@ fn render(
     view: ViewQuery<(&ViewTarget, &ExtractedView)>,
     ready: Res<RayReady>,
     appearance: Res<crate::appearance::RenderAppearance>,
+    water: Res<WaterAppearance>,
     scene: Res<RayScene>,
     pipeline: Option<Res<RayPipeline>>,
     cache: Res<PipelineCache>,
@@ -249,6 +313,7 @@ fn render(
     frame.tlas.write_buffer(&device, &queue);
     frame.params.set(Params {
         world_from_clip: view.world_from_view.to_matrix() * view.clip_from_view.inverse(),
+        water: water.0,
         size: UVec4::new(
             size.x,
             size.y,

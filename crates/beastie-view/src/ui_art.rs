@@ -2,12 +2,12 @@
 use crate::{HitRegion, Rect, RectCommand, TextCommand};
 use serde::{Deserialize, Serialize};
 
-pub(super) const UI_EDGE: [u8; 4] = [67, 83, 81, 255];
-pub(super) const UI_PANEL: [u8; 4] = [24, 37, 39, 255];
+pub(super) const UI_EDGE: [u8; 4] = [71, 96, 94, 255];
+pub(super) const UI_PANEL: [u8; 4] = [19, 38, 42, 255];
 pub(super) const UI_PANEL_INSET: [u8; 4] = [18, 29, 31, 255];
 pub(super) const UI_BUTTON: [u8; 4] = [33, 48, 48, 255];
-pub(super) const UI_BUTTON_DISABLED: [u8; 4] = [24, 37, 39, 255];
-pub(super) const UI_CORAL: [u8; 4] = [202, 127, 99, 255];
+pub(super) const UI_BUTTON_DISABLED: [u8; 4] = [19, 38, 42, 255];
+pub(super) const UI_CORAL: [u8; 4] = [226, 223, 179, 255];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -196,7 +196,10 @@ mod tests {
             {
                 let bounds = text.bounds.unwrap();
                 assert!(bounds.h >= text.role.size(true).ceil() as i32 + 2);
-                assert!(bounds.w >= 40);
+                assert!(
+                    bounds.w as f32
+                        >= text.text.chars().count() as f32 * text.role.size(true) * 0.5
+                );
             }
         }
     }

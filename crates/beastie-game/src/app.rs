@@ -162,6 +162,7 @@ pub struct Game {
     speech_animation: Option<SpeechAnimation>,
     transcript_export_path: PathBuf,
     renaming_with_osk: bool,
+    settings_from_title: bool,
     pub(crate) quit_requested: bool,
     pub(crate) failed: bool,
     /// Backpressure only: ordinary asynchronous screenshots never pause gameplay.
@@ -303,6 +304,19 @@ impl Game {
             .transpose()
             .map_err(feel_error)?;
         let mut view = ViewState {
+            mode: if args.script.is_some() {
+                UiMode::Compose
+            } else {
+                UiMode::Title
+            },
+            focused_region: Some(
+                if args.script.is_some() {
+                    "compose/input"
+                } else {
+                    "title/continue"
+                }
+                .to_owned(),
+            ),
             text_scale: u8::from(matches!(settings.text_scale, TextScale::Large)) + 1,
             reduced_motion: settings.reduced_motion,
             reduced_flashes: settings.reduced_flashes,
@@ -385,6 +399,7 @@ impl Game {
             speech_animation: None,
             transcript_export_path,
             renaming_with_osk: false,
+            settings_from_title: false,
             quit_requested: false,
             failed: false,
             frame_pending: true,
@@ -1013,6 +1028,21 @@ impl Game {
             self.supersede_dialogue_turn()?;
         }
         match action {
+            UiAction::OpenTitle => {
+                self.end_push_to_talk()?;
+                self.settings_from_title = false;
+                self.view.mode = UiMode::Title;
+                self.view.focused_region = Some("title/continue".to_owned());
+            }
+            UiAction::Continue => {
+                self.settings_from_title = false;
+                self.view.mode = UiMode::Compose;
+                self.view.focused_region = Some("compose/input".to_owned());
+            }
+            UiAction::Quit => {
+                self.persist()?;
+                self.quit_requested = true;
+            }
             UiAction::OpenContext(target) => {
                 // Choose the clear region once. Swimming must not move controls under a pointer.
                 self.view.context_above = Some(
@@ -1096,11 +1126,13 @@ impl Game {
                 self.close_menu();
             }
             UiAction::OpenSettings => {
+                self.settings_from_title |= matches!(self.view.mode, UiMode::Title);
                 self.view.mode = UiMode::Settings;
                 self.view.focused_region =
                     Some(format!("settings/page-{}", self.view.settings_page.min(2)));
             }
             UiAction::SelectSettingsPage(page) => {
+                self.settings_from_title |= matches!(self.view.mode, UiMode::Title);
                 self.view.settings_page = page.min(2);
                 self.view.mode = UiMode::Settings;
                 self.view.focused_region =
@@ -1365,6 +1397,13 @@ impl Game {
     fn close_menu(&mut self) {
         self.renaming_with_osk = false;
         self.view.compose_engaged = false;
+        self.view.hovered_region = None;
+        if self.settings_from_title || matches!(self.view.mode, UiMode::Title) {
+            self.settings_from_title = false;
+            self.view.mode = UiMode::Title;
+            self.view.focused_region = Some("title/continue".to_owned());
+            return;
+        }
         self.view.mode = UiMode::Compose;
         self.view.focused_region = Some("compose/input".to_owned());
     }
@@ -1442,6 +1481,11 @@ impl Game {
     }
 
     fn activate_binding(&mut self, action: BindableAction) -> GameResult {
+        if matches!(self.view.mode, UiMode::Title)
+            && !matches!(action, BindableAction::Settings | BindableAction::Cancel)
+        {
+            return Ok(());
+        }
         match action {
             BindableAction::PushToTalk => self.begin_push_to_talk(),
             BindableAction::Food => self.apply_confirmed_ui_action(UiAction::OpenFoodChoice, false),
@@ -1475,6 +1519,7 @@ impl Game {
     }
 
     fn navigate(&mut self, delta: i32) {
+        self.view.hovered_region = None;
         let plan = self.render_plan();
         let previous = self.view.focused_region.clone();
         self.view.focused_region = move_focus(&plan, self.view.focused_region.as_deref(), delta);
@@ -1728,6 +1773,11 @@ impl Game {
         }
         self.pointer_logical = logical;
         self.view.hovered_region = hit.map(|hit| hit.id.clone());
+        if matches!(self.view.mode, UiMode::Title)
+            && let Some(hit) = hit.filter(|hit| hit.id.starts_with("title/"))
+        {
+            self.view.focused_region = Some(hit.id.clone());
+        }
         if world != self.cursor_world {
             self.cursor_world = world;
             self.apply_command(SessionCommand::Cursor { position: world }, false)?;

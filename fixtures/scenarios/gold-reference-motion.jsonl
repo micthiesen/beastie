@@ -1,0 +1,16 @@
+{"version":1,"command":"capture","name":"water-start"}
+{"version":1,"command":"wait","milliseconds":2000}
+{"version":1,"command":"capture","name":"water-moving"}
+{"version":1,"command":"ui","action":"select_ball"}
+{"version":1,"command":"wait","milliseconds":1000}
+{"version":1,"command":"capture","name":"selection-moving"}
+{"version":1,"command":"ui","action":"open_settings"}
+{"version":1,"command":"wait","milliseconds":1000}
+{"version":1,"command":"capture","name":"settings-moving"}
+{"version":1,"command":"ui","action":"reduced_motion"}
+{"version":1,"command":"wait","milliseconds":1000}
+{"version":1,"command":"capture","name":"reduced-motion"}
+{"version":1,"command":"ui","action":"close"}
+{"version":1,"command":"ui","action":"title"}
+{"version":1,"command":"wait","milliseconds":2000}
+{"version":1,"command":"capture","name":"title-alive"}

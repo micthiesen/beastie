@@ -4,54 +4,51 @@ Last updated: **2026-09-09**.
 
 ## Now
 
-- Mop's movement and animation continuity pass is implemented: destination-bounded prediction,
-  creature-paced correction, stationary velocity normalization, continuous swim/fin phases and
-  brief pose/face settling. See [motion review](feel-review-motion-20260909.md) and
-  [contract](motion-continuity.md).
-- Feel recordings now include actual rendered head/part motion measurements and diagnostic alerts.
-  Reviewed tail sweeps and immediate eye responses remain intentional; thresholds do not replace
-  frame review. See [feel-review-loop.md](feel-review-loop.md).
-- Same-seed native comparisons preserve authoritative outcomes and sound cues. The final quiet
-  recording peaks at 1.058 world units/s head speed and shows no head-speed or rotation alerts.
-  Human full-speed perception, physical listening and other-host behavior remain unclaimed.
-- The gate passes 538 tests, 27 dialogue fixtures, 11 STT fixtures and spoken-input replay.
-  Saved stationary recovery, bulk/split ticks, slow frames and late-session animation have focused
-  regressions. Ordinary native debug validation is recorded in the motion review.
-- Earlier creature-presence, care, UI and renderer detail work remains complete. No release binary,
-  installer or model bundle was rebuilt. Prior rendering measurements remain in the
-  [detail review](feel-review-details-20260908.md).
+- The three user-supplied gold screenshots are permanent visual authority for future UI/art
+  work. Originals, baseline captures, final native comparisons and reproduction commands live
+  in [style references](style-reference/README.md) and the [implementation note](style-reference/implementation.md).
+- Gameplay has a compact identity/toy/chat rail, in-world selection brackets and nearby toy
+  cards. Settings uses a right-side translucent plate and vertical categories. A living title
+  screen adds a voxel logo and real Continue, Settings and Quit actions.
+- The existing compute renderer now shades animated water highlights, warped caustics, depth
+  tint, light shafts and fine sand grain. Warm lamps, metallic framing, taller plants and
+  clustered rocks establish the reference palette. See [art bible](art-bible.md) and
+  [renderer contract](raytraced-aquarium.md) for current ownership and deliberate approximations.
+- `cargo xtask verify` passed 542 tests, 27 dialogue fixtures, 11 STT fixtures and spoken
+  input replay. Native macOS input and repeated static/animated captures were reviewed; independent code
+  review found no outstanding defects. The final recorded debug run on M5 Max/Metal measured
+  16.62 ms median and 27.28 ms p95 wall frames including capture overhead. Other hosts remain
+  unmeasured; this is not an uncaptured performance claim.
+- Earlier movement/animation continuity and simulation authority remain intact. See
+  [motion review](feel-review-motion-20260909.md). No native release, installer or model bundle
+  was rebuilt for this visual iteration.
 
 ## Next
 
-Measure the current renderer and input path on Windows, Linux and an available lower-end GPU using
-ordinary debug builds. This closes a concrete driver/performance uncertainty before adding more
-rendering work; record host specifications, frame cadence and interaction results, without treating
-video's fixed recording rate as measured runtime performance. See
-[renderer contract](raytraced-aquarium.md) and [MVP performance targets](mvp-spec.md#performance-budget).
-This needs the actual hosts/devices; allow a few hours per platform, with driver behavior and GPU
-cost as the largest unknowns. It does not require release packaging.
+Measure the updated renderer and input path on Windows, Linux and an available lower-end GPU
+using ordinary debug builds. Use the gold-reference scenarios and record host specifications,
+uncaptured frame cadence and actual interactions. The new atmosphere is bounded, but current
+native evidence covers only M5 Max/Metal. This closes a concrete portability/performance gap
+before more lighting work. See [renderer contract](raytraced-aquarium.md) and
+[MVP performance targets](mvp-spec.md#performance-budget).
 
 ## Candidates Not Chosen
 
-- **Human full-speed and listening calibration:** a short observation session can assess animation
-  taste, attachment, unaided discovery and mix quality beyond sampled evidence. It needs human
-  perception; reviewed diagnostic alerts alone do not justify slowing expressive tail turns or eyes.
-- **Further lighting or reconstruction features:** several days plus native comparisons. Their
-  value depends on hardware measurements and a demonstrated visual need, so they wait.
-- **Full 3D navigation and collision:** several days or more, with headless geometry tests and native
-  readability review. It changes gameplay without unblocking the current care experience.
+- **Further gold fidelity:** richer glass reflections, softer light transport and more detailed
+  plant/rock silhouettes remain visible differences. Hardware measurements should guide the
+  next rendering investment; physical volumetrics and general bloom are not defaults.
+- **Human full-speed and listening calibration:** remains useful for perceived motion and audio,
+  beyond sampled recordings and automated assertions.
+- **Full 3D navigation and collision:** changes gameplay without unblocking the current care
+  experience, so it remains deferred.
 
 ## Learned Recently
 
-- Motion continuity, measurements and saved-state invariance: [motion review](feel-review-motion-20260909.md).
-- Detail findings, rendering tradeoffs and capture integrity: [detail review](feel-review-details-20260908.md).
-- Native capture and role-aware sound evidence: [feel-review-loop.md](feel-review-loop.md),
+- Gold art direction, comparisons, preserved semantics and capture commands:
+  [style implementation](style-reference/implementation.md).
+- Procedural effects and unified geometric UI: [renderer contract](raytraced-aquarium.md).
+- Motion continuity and saved-state invariance: [motion review](feel-review-motion-20260909.md).
+- Native recording and sound evidence: [feel-review-loop.md](feel-review-loop.md),
   [audio-direction.md](audio-direction.md).
-- Broader creature/care evidence: [presence review](feel-review-creature-presence-20260908.md),
-  [creature presence and care](creature-presence-and-care.md).
-- Renderer, mesh and art ownership: [architecture.md](architecture.md), [art-bible.md](art-bible.md),
-  [raytraced-aquarium.md](raytraced-aquarium.md).
 - Product authority and relationship semantics: [game-design-philosophy.md](game-design-philosophy.md),
   [relationship-causality-rework.md](relationship-causality-rework.md).
-- Local inference and recognition choices: [local-mouth.md](local-mouth.md),
-  [stt-runtime.md](stt-runtime.md).

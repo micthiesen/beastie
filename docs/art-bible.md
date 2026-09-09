@@ -1,15 +1,26 @@
 # Beastie art bible
 
+## Gold visual baseline
+
+The three permanent [gold screenshots](style-reference/README.md) are the visual baseline for
+future UI and rendering work. Their composition, cool teal water, warm sand and ivory highlights,
+restrained controls and illuminated voxel forms supersede earlier visual-review screenshots.
+The [implementation comparison](style-reference/implementation.md) records current native captures
+and deliberate differences. Product semantics still come from the game-design philosophy.
+
 ## Voxel aquarium
 
 Beastie is a small three-dimensional aquarium viewed through a fixed orthographic camera. The
-composition leaves open swimming water around one recognizable creature. Dirty teal water, worn
+composition leaves open swimming water around one recognizable creature. Deep teal water, warm
 sand, broad plant leaves, a terracotta shelter and restrained warm accents make the tank feel
 inhabited and slightly strange. A low left bank and taller right planting create an asymmetric
 composition. The lower boundary gives the eye somewhere to rest; the creature remains the visual
 center.
 
-The water backdrop uses a continuous vertex-color gradient rather than horizontal color slabs.
+The water backdrop combines a continuous vertex-color gradient with depth attenuation, sparse
+analytic shafts and upper teal fill. A procedural surface produces slowly moving cool and ivory
+reflection pools; warped caustics and fine grain illuminate the sand. These are bounded shading
+approximations, not physical participating media or refraction.
 Ground penumbrae receive extra deterministic visibility samples only where the broad rough bed
 reveals shadow bands; creature detail retains the ordinary sampling budget.
 
@@ -66,17 +77,25 @@ Dialogue must remain readable without covering the face. Settings, food and toy 
 bindings, data management, and confirmation surfaces share the same material and spacing rules.
 Readability takes priority over making letters look like voxel blocks.
 
-The permanent care rail occupies only the bottom 33 of 180 layout units. A small adaptive nameplate
-sits on the tank frame and yields to speech or temporary panels. Idle behavior stays embodied;
-there is no unexplained status dot or behavior label. A quiet input field uses an underline for
-focus, with text-only Send, Speak, Feed and Settings controls. Feed has a muted olive enamel face;
-Settings and Close sit quietly on the rail. Flat enamel faces and sparse edge
-accents leave hierarchy to space, type and explicit meaning rather than repetitive stepped frames.
-Speech names its speaker and offers labeled Laugh, Disapprove and Comfort reactions. Renaming
-has its own field prompt; technical notices remain separate from creature language.
-Settings retains Comfort & display, Sound & speech and Controls & data pages; secondary panels
-provide local navigation. The visible global rail remains available across shallow panels. Reset
-defaults to Cancel. See [tabletop-aquarium.md](tabletop-aquarium.md).
+The permanent care rail occupies the bottom 31 of 180 layout units. Identity and a short
+simulation-derived mood/behavior summary sit left; actual toy miniatures and Feed sit beside a
+large text field; Send, Speak and Settings sit right. Quiet cream edges mark interaction.
+Selected toys retain their real Play/Inspect actions in a nearby card with pale world-space
+corner brackets. Speech names its speaker and offers Laugh, Disapprove and Comfort reactions.
+Technical notices remain separate from creature language.
+
+Settings floats on the right over the living tank with Display, Sound and Controls categories.
+These preserve the existing comfort/display, sound/speech and controls/data options. Boolean
+switches use stepped blocks; cyclic values use inset plates. The main plate reveals a very faint
+view of actual world geometry; letters and controls stay opaque. Secondary data, binding and
+confirmation panels retain their real navigation and recovery behavior. Reset defaults to Cancel.
+
+The title has an extruded voxel Mop logo and only Continue, Settings and Quit. Its taller camera
+framing and portrait placement are presentation-only; Continue restores normal world presentation
+and exact picking. UI positions compensate for title projection so visible targets remain accurate.
+The aquarium simulation continues in normal title operation. Scripted evidence starts in Compose
+unless it explicitly selects Title, preserving existing scenarios.
+
 Text has authored title, identity, body, secondary, control, caption and dialogue roles. Large mode
 increases those sizes by 30 percent; panels make room for it. Every emitted text command has a
 resolved content box. Font outlines are shaped, tessellated and clipped geometrically within that box. Disabled controls

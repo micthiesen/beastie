@@ -2,7 +2,7 @@
 struct Triangle { a:vec4<f32>, b:vec4<f32>, c:vec4<f32>, n0:vec4<f32>, n1:vec4<f32>, n2:vec4<f32>, c0:vec4<f32>, c1:vec4<f32>, c2:vec4<f32> }
 struct Node { lo:vec3<f32>, first:u32, hi:vec3<f32>, count:u32 }
 struct Instance { world:mat4x4<f32>, inverse:mat4x4<f32>, material:vec4<f32>, tint:vec4<f32>, root:u32, transmission:f32, pad1:u32, pad2:u32 }
-struct Params { world_from_clip:mat4x4<f32>, size:vec4<u32> }
+struct Params { world_from_clip:mat4x4<f32>, size:vec4<u32>, water:vec4<f32> }
 @group(0) @binding(0) var<storage,read> triangles:array<Triangle>;
 @group(0) @binding(1) var<storage,read> nodes:array<Node>;
 @group(0) @binding(2) var<storage,read> instances:array<Instance>;
@@ -106,8 +106,92 @@ fn trace(o:vec3<f32>, d:vec3<f32>, limit:f32, secondary:bool, any_hit:bool) -> H
     }
     return closest;
 }
+// Moving irregular cell boundaries approximate focused surface light without a
+// repeated sinusoidal lattice. Stable hash positions keep this deterministic.
+fn water_hash(p:vec2<f32>) -> vec2<f32> {
+    return fract(sin(vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3))))*43758.5453);
+}
+fn water_noise(p:vec2<f32>) -> f32 {
+    let cell=floor(p); let f=fract(p); let u=f*f*(3.0-2.0*f);
+    return mix(mix(water_hash(cell).x,water_hash(cell+vec2(1.0,0.0)).x,u.x),
+        mix(water_hash(cell+vec2(0.0,1.0)).x,water_hash(cell+vec2(1.0,1.0)).x,u.x),u.y);
+}
+fn caustic(p:vec2<f32>, time:f32) -> f32 {
+    let drift=vec2(time*0.035,-time*0.026);
+    let warp=vec2(water_noise(p*2.3+drift),water_noise(p.yx*2.1-drift+vec2(5.2)))-0.5;
+    let warped=p*1.50+warp*1.1+vec2(sin(p.y*2.4+time*0.17),sin(p.x*1.8-time*0.13))*0.16;
+    let cell=floor(warped); let local=fract(warped);
+    var first=8.0; var second=8.0;
+    for(var y=-1;y<=1;y++) { for(var x=-1;x<=1;x++) {
+        let neighbor=vec2<f32>(f32(x),f32(y));
+        let random=water_hash(cell+neighbor);
+        let site=neighbor+0.5+sin(random*6.283185+time*0.20)*0.34;
+        let delta=site-local; let distance=dot(delta,delta);
+        if(distance<first) { second=first; first=distance; }
+        else { second=min(second,distance); }
+    } }
+    let variation=water_noise(p*3.1+drift);
+    let edge=1.0-smoothstep(0.012,0.11+variation*0.25,second-first);
+    let breakup=0.30+0.70*water_noise(p*1.1-drift+vec2(9.7));
+    return edge*edge*breakup;
+}
+fn water_optics(color:vec3<f32>, o:vec3<f32>, d:vec3<f32>, hit:Hit) -> vec3<f32> {
+    if(hit.instance==0xffffffffu || instances[hit.instance].material.w>0.5) { return color; }
+    let p=o+d*hit.t;
+    if(abs(p.x)>7.75 || p.y < -2.13 || p.y>4.60 || p.z>2.15) { return color; }
+    let time=params.water.x;
+    let depth=clamp(2.1-p.z,0.0,4.8);
+    let transmission=exp(-vec3(0.075,0.033,0.018)*depth);
+    let high=clamp((p.y+2.0)/6.6,0.0,1.0);
+    let ambient=mix(vec3(0.009,0.040,0.047),vec3(0.018,0.105,0.111),high);
+    var result=color*transmission+ambient*(vec3(1.0)-transmission)*0.65;
+    // Broad slanted shafts are strongest behind objects and dissolve before the bed.
+    let spread=4.6-p.y;
+    var shafts=0.0;
+    for(var i=0u;i<4u;i++) {
+        let source=array<f32,4>(-5.9,-2.8,2.0,5.8)[i];
+        let center=source+spread*(0.11+f32(i)*0.015);
+        let width=0.12+f32(i%2u)*0.09+spread*(0.07+f32(i)*0.014);
+        let dist=(p.x-center)/width;
+        shafts+=exp(-dist*dist)*exp(-spread*0.29)*(0.85+0.15*sin(time*0.18+f32(i)*2.1));
+    }
+    result+=vec3(0.11,0.21,0.19)*shafts*0.42*clamp(depth/3.0,0.0,1.0);
+    if(instances[hit.instance].material.z>0.5 && p.z < -2.0) {
+        let center=exp(-p.x*p.x*0.028);
+        result*=1.0-(1.0-high)*center*0.32;
+        result+=vec3(0.005,0.045,0.049)*high*high*center;
+    }
+    // Analytic thin surface: its distorted normals and broken Fresnel highlights
+    // animate without rebuilding a mesh or adding a second traversal.
+    if(abs(d.y)>0.0001) {
+        let surface_t=(4.02-o.y)/d.y;
+        let surface=o+d*surface_t;
+        if(surface_t>0.0 && surface_t<hit.t && abs(surface.x)<7.74 && surface.z > -0.6 && surface.z<2.10) {
+            let q=surface.xz;
+            let drift=vec2(time*0.05,-time*0.034);
+            let warp=q+vec2(water_noise(q*2.7+drift),water_noise(q.yx*2.3-drift))*0.75;
+            let broad=water_noise(warp*vec2(2.3,4.8)+drift);
+            let detail=water_noise(warp*vec2(6.1,9.4)-drift);
+            let pools=smoothstep(0.42,0.70,broad*0.72+detail*0.28);
+            let glint=pow(smoothstep(0.46,0.82,detail),2.0)*pools;
+            var lamp=0.0;
+            for(var i=0u;i<4u;i++) {
+                let x=array<f32,4>(-6.9,-4.2,4.6,7.0)[i];
+                lamp+=exp(-(q.x-x)*(q.x-x)*1.5);
+            }
+            let warmth=clamp(lamp*0.85,0.0,1.0);
+            let sparkle=mix(vec3(0.22,0.67,0.64),vec3(1.0,0.84,0.48),warmth);
+            let surface_color=vec3(0.004,0.037,0.045)+sparkle*(pools*0.63+glint*0.85)*params.water.y;
+            let edge=1.0-smoothstep(1.65,2.1,surface.z);
+            result=mix(result,surface_color,0.78+edge*0.13);
+            result+=vec3(0.15,0.095,0.030)*lamp*0.10;
+
+        }
+    }
+    return result;
+}
 fn environment(d:vec3<f32>) -> vec3<f32> {
-    return mix(vec3(0.13,0.18,0.18),vec3(0.66,0.76,0.79),clamp(d.y*0.5+0.5,0.0,1.0));
+    return mix(vec3(0.10,0.17,0.16),vec3(0.60,0.77,0.78),clamp(d.y*0.5+0.5,0.0,1.0));
 }
 fn normal_at(hit:Hit, d:vec3<f32>) -> vec3<f32> {
     let tri=triangles[hit.triangle];
@@ -183,7 +267,23 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
             reflected=mix(nearby,reflected,rough*rough);
         }
     }
-    return Lighting((indirect+vec3(0.95,0.82,0.65)*diffuse*0.85)*(1.0-metal*0.65),
+    // Caustics mostly belong on the bed and lower upward-facing scenery.
+    let caustic_weight=max(n.y,0.0)*exp(-max(p.y+1.75,0.0)*0.85)*params.water.y;
+    var caustic_light=0.0;
+    if(caustic_weight>0.025 && visibility>0.0) {
+        caustic_light=caustic(p.xz,params.water.x)*caustic_weight*visibility;
+    }
+    let warm_edge=pow(clamp(abs(p.x)/7.8,0.0,1.0),8.0)*0.10;
+    var grain=1.0;
+    if(p.y < -1.7 && n.y>0.9 && material.x>0.9) {
+        grain=0.95+water_hash(floor(p.xz*65.0)).x*0.10;
+    }
+    // Broad quiet rim assistance catches the fold planes of green leaves.
+    if(base.g>base.r*1.2 && base.g>base.b*1.15 && material.w<0.5) {
+        indirect+=vec3(0.21,0.27,0.15)*(0.14+0.27*abs(n.x));
+    }
+    return Lighting((indirect+vec3(1.0,0.89,0.70)*diffuse*1.08
+        +vec3(1.0,0.91,0.66)*caustic_light*1.15+vec3(0.8,0.48,0.18)*warm_edge)*(1.0-metal*0.65)*grain,
         fresnel*(spec*visibility*(1.8-rough)+reflected*(0.2+0.5*metal)));
 }
 @compute @workgroup_size(8,8)
@@ -193,6 +293,7 @@ fn trace_frame(@builtin(global_invocation_id) gid:vec3<u32>) {
     var first=Hit(0.0,0.0,0.0,0u,0xffffffffu);
     var first_normal=vec3(0.0);
     var first_light=Lighting(vec3(0.0),vec3(0.0));
+    var behind=vec3(0.0); var behind_ready=false;
     var samples=4u;
     for(var sample=0u;sample<samples;sample++) {
         let offsets=array<vec2<f32>,4>(vec2(0.25,0.25),vec2(0.75,0.75),vec2(0.75,0.25),vec2(0.25,0.75));
@@ -217,7 +318,27 @@ fn trace_frame(@builtin(global_invocation_id) gid:vec3<u32>) {
             if(hit.instance==0xffffffffu) { samples=2u; }
             else if(instances[hit.instance].material.w<0.5) { samples=2u; }
         }
-        color+=(base*light.diffuse+light.reflection)/f32(samples);
+        var sample_color=water_optics(base*light.diffuse+light.reflection,origin,direction,hit);
+        if(hit.instance!=0xffffffffu && instances[hit.instance].material.w>0.5
+            && instances[hit.instance].transmission>0.0) {
+            // Only the large settings plate opts in. One world-only continuation
+            // per pixel retains aquarium context; inlaid text remains opaque.
+            if(!behind_ready) {
+                let world_hit=trace(origin,direction,1500.0,true,false);
+                if(world_hit.instance!=0xffffffffu) {
+                    let world_base=albedo_at(world_hit);
+                    let world_normal=normal_at(world_hit,direction);
+                    let key=normalize(vec3(-0.45,0.85,0.65));
+                    var illumination=environment(world_normal)*0.46
+                        +vec3(1.0,0.89,0.70)*max(dot(world_normal,key),0.0)*1.08;
+                    if(instances[world_hit.instance].material.z>0.5) { illumination=vec3(1.0); }
+                    behind=water_optics(world_base*illumination,origin,direction,world_hit);
+                }
+                behind_ready=true;
+            }
+            sample_color=mix(sample_color,behind,clamp(instances[hit.instance].transmission,0.0,0.25));
+        }
+        color+=sample_color/f32(samples);
     }
     textureStore(output,vec2<i32>(gid.xy),vec4(clamp(color,vec3(0.0),vec3(1.0)),1.0));
 }

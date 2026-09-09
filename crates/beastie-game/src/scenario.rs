@@ -177,6 +177,9 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
     #[derive(Deserialize)]
     #[serde(rename_all = "snake_case")]
     enum ScenarioUiAction {
+        Title,
+        Continue,
+        SelectBall,
         OpenFood,
         OpenToys,
         OpenSettings,
@@ -214,6 +217,11 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
             ));
         }
         let action = match control.action {
+            ScenarioUiAction::Title => UiAction::OpenTitle,
+            ScenarioUiAction::Continue => UiAction::Continue,
+            ScenarioUiAction::SelectBall => {
+                UiAction::OpenContext(beastie_view::UiTarget::Toy(beastie_core::ToyId::Ball))
+            }
             ScenarioUiAction::OpenFood => UiAction::OpenFoodChoice,
             ScenarioUiAction::OpenToys => UiAction::OpenToyChoice,
             ScenarioUiAction::OpenSettings => UiAction::SelectSettingsPage(0),

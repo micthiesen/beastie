@@ -16,11 +16,11 @@ struct TankArt {
     sand: [u8; 3],
 }
 const TANK: TankArt = TankArt {
-    back_low: [13, 37, 47],
-    back_high: [26, 66, 76],
-    frame: [38, 64, 67],
-    brass: [164, 156, 113],
-    sand: [112, 119, 93],
+    back_low: [8, 31, 39],
+    back_high: [15, 62, 69],
+    frame: [27, 42, 39],
+    brass: [174, 151, 97],
+    sand: [185, 164, 116],
 };
 
 #[derive(Clone, Copy)]
@@ -31,36 +31,54 @@ struct FrondArt {
     color: [u8; 3],
 }
 // A tall right group balances the low shelter on the left. The central water stays clear.
-const REAR_FRONDS: [FrondArt; 5] = [
+const REAR_FRONDS: [FrondArt; 8] = [
     FrondArt {
         root: Vec3::new(-6.88, -1.83, -1.45),
-        height: 1.30,
+        height: 4.65,
         bend: -0.30,
-        color: [49, 93, 77],
+        color: [63, 102, 54],
     },
     FrondArt {
         root: Vec3::new(-6.70, -1.83, -1.10),
-        height: 0.85,
+        height: 3.25,
         bend: 0.42,
-        color: [68, 112, 86],
+        color: [87, 119, 62],
     },
     FrondArt {
         root: Vec3::new(6.67, -1.83, -1.65),
-        height: 2.65,
+        height: 4.15,
         bend: -0.65,
-        color: [56, 105, 89],
+        color: [69, 111, 61],
     },
     FrondArt {
         root: Vec3::new(6.83, -1.83, -1.28),
-        height: 2.08,
+        height: 3.55,
         bend: 0.38,
-        color: [54, 105, 85],
+        color: [77, 113, 57],
     },
     FrondArt {
         root: Vec3::new(6.48, -1.83, -0.90),
-        height: 1.32,
+        height: 2.65,
         bend: -0.61,
-        color: [79, 126, 92],
+        color: [94, 130, 67],
+    },
+    FrondArt {
+        root: Vec3::new(-7.35, -1.83, -1.7),
+        height: 3.60,
+        bend: -0.14,
+        color: [44, 84, 57],
+    },
+    FrondArt {
+        root: Vec3::new(7.24, -1.83, -1.85),
+        height: 4.85,
+        bend: -0.13,
+        color: [47, 86, 54],
+    },
+    FrondArt {
+        root: Vec3::new(5.94, -1.83, -1.30),
+        height: 2.04,
+        bend: -0.27,
+        color: [83, 117, 64],
     },
 ];
 
@@ -74,11 +92,12 @@ pub(crate) fn setup(
     solid: Handle<StandardMaterial>,
     appearance: crate::appearance::RenderAppearance,
     background: Handle<StandardMaterial>,
+    frame_material: Handle<StandardMaterial>,
 ) {
     commands.insert_resource(ClearColor(Color::srgb_u8(7, 18, 25)));
     commands.spawn((
         Mesh3d(meshes.add(appearance.mesh(backdrop_mesh()))),
-        MeshMaterial3d(background),
+        MeshMaterial3d(background.clone()),
         Transform::default(),
     ));
     let mut tank = Geometry::default();
@@ -89,24 +108,24 @@ pub(crate) fn setup(
     );
     for side in [-1.0, 1.0] {
         tank.cuboid(
-            Vec3::new(side * 7.88, 1.1, -0.2),
-            Vec3::new(0.18, 6.65, 4.7),
+            Vec3::new(side * 7.88, 1.30, -0.2),
+            Vec3::new(0.18, 7.05, 4.7),
             TANK.frame,
         );
         tank.cuboid(
-            Vec3::new(side * 7.75, 1.1, 2.1),
-            Vec3::new(0.045, 6.65, 0.08),
+            Vec3::new(side * 7.75, 1.30, 2.1),
+            Vec3::new(0.027, 7.05, 0.08),
             TANK.brass,
         );
     }
     tank.cuboid(
-        Vec3::new(0.0, 4.35, -0.2),
-        Vec3::new(16.0, 0.2, 4.7),
+        Vec3::new(0.0, 4.75, 2.1),
+        Vec3::new(16.0, 0.2, 0.22),
         TANK.frame,
     );
     tank.cuboid(
-        Vec3::new(0.0, 4.21, 2.1),
-        Vec3::new(15.65, 0.055, 0.07),
+        Vec3::new(0.0, 4.61, 2.1),
+        Vec3::new(15.65, 0.035, 0.07),
         shade(TANK.brass, 15),
     );
     // A solid cabinet apron remains visible beneath the bed as the compact care
@@ -114,12 +133,12 @@ pub(crate) fn setup(
     tank.cuboid(
         Vec3::new(0.0, -2.95, 2.15),
         Vec3::new(16.0, 1.35, 0.30),
-        [61, 65, 58],
+        [23, 37, 37],
     );
     tank.cuboid(
         Vec3::new(0.0, -2.29, 2.20),
         Vec3::new(16.0, 0.065, 0.34),
-        [129, 125, 99],
+        [103, 104, 78],
     );
     // The substrate and rear ridge are one filled lattice. Shared faces disappear,
     // leaving terraces in the silhouette instead of dark channels around each grain.
@@ -170,6 +189,41 @@ pub(crate) fn setup(
     ] {
         garden_stone(&mut garden, center, radius, color, appearance.style());
     }
+    // Layered corner outcrops are scenery, with clear water between their silhouettes.
+    for (center, radius, color) in [
+        (
+            Vec3::new(-7.28, -0.65, -1.85),
+            Vec3::new(0.64, 1.30, 0.44),
+            [66, 88, 79],
+        ),
+        (
+            Vec3::new(-6.18, -0.35, -1.94),
+            Vec3::new(0.58, 1.62, 0.35),
+            [56, 80, 75],
+        ),
+        (
+            Vec3::new(-7.02, -1.33, 0.55),
+            Vec3::new(0.66, 0.60, 0.48),
+            [94, 110, 92],
+        ),
+        (
+            Vec3::new(7.12, -0.36, -1.50),
+            Vec3::new(0.71, 1.72, 0.55),
+            [67, 89, 76],
+        ),
+        (
+            Vec3::new(6.13, -0.90, -1.65),
+            Vec3::new(0.69, 1.15, 0.49),
+            [70, 96, 83],
+        ),
+        (
+            Vec3::new(7.20, -1.26, 0.76),
+            Vec3::new(0.55, 0.66, 0.43),
+            [99, 110, 89],
+        ),
+    ] {
+        garden_stone(&mut garden, center, radius, color, appearance.style());
+    }
     for frond in REAR_FRONDS {
         garden_frond(
             &mut garden,
@@ -185,9 +239,27 @@ pub(crate) fn setup(
         MeshMaterial3d(solid.clone()),
         Transform::default(),
     ));
+    let mut lamps = Geometry::default();
+    for x in [-6.9, -4.2, 4.6, 7.0] {
+        tank.cuboid(
+            Vec3::new(x, 4.81, 2.17),
+            Vec3::new(0.56, 0.16, 0.35),
+            [92, 78, 49],
+        );
+        lamps.cuboid(
+            Vec3::new(x, 4.70, 2.33),
+            Vec3::new(0.37, 0.06, 0.12),
+            [255, 220, 146],
+        );
+    }
+    commands.spawn((
+        Mesh3d(meshes.add(lamps.mesh())),
+        MeshMaterial3d(background.clone()),
+        Transform::default(),
+    ));
     commands.spawn((
         Mesh3d(meshes.add(appearance.mesh(tank.mesh()))),
-        MeshMaterial3d(solid.clone()),
+        MeshMaterial3d(frame_material),
         Transform::default(),
     ));
 }
@@ -197,8 +269,8 @@ pub(crate) fn setup(
 fn backdrop_mesh() -> Mesh {
     let mut back = Geometry::default();
     back.cuboid(
-        Vec3::new(0.0, 1.125, -2.6),
-        Vec3::new(15.95, 6.505, 0.3),
+        Vec3::new(0.0, 1.325, -2.6),
+        Vec3::new(15.95, 6.905, 0.3),
         TANK.back_low,
     );
     let mut mesh = back.mesh();
@@ -215,7 +287,7 @@ fn backdrop_mesh() -> Mesh {
         .expect("three-dimensional backdrop")
         .iter()
         .map(|position| {
-            let t = ((position[1] + 2.1275) / 6.505).clamp(0.0, 1.0);
+            let t = ((position[1] + 2.1275) / 6.905).clamp(0.0, 1.0);
             std::array::from_fn(|axis| low[axis] + (high[axis] - low[axis]) * t)
         })
         .collect();
@@ -239,7 +311,15 @@ fn garden_stone(
                 let offset = Vec3::new(x as f32, y as f32, z as f32) * cell;
                 if (offset / radius).length_squared() <= 1.0 {
                     // Broad strata keep the form readable without a checkerboard of cells.
-                    stone.set([x, y, z], shade(color, (y / 2).clamp(-2, 2) as i16));
+                    stone.set(
+                        [x, y, z],
+                        shade(
+                            color,
+                            ((y.div_euclid(4).rem_euclid(3) - 1) * 5
+                                + if y.rem_euclid(4) == 3 { 4 } else { 0 })
+                                as i16,
+                        ),
+                    );
                 }
             }
         }
@@ -262,7 +342,7 @@ fn garden_frond(
     for y in 0..=rows {
         let t = y as f32 / rows as f32;
         let center_x = (bend * t * t / cell).round() as i32;
-        let center_z = ((t * std::f32::consts::PI).sin() * 0.12 / cell).round() as i32;
+        let center_z = ((t * std::f32::consts::PI).sin() * 0.22 / cell).round() as i32;
         let half_width = (1.0
             + (t * std::f32::consts::PI).sin() * 3.0 * (height / 1.5).clamp(0.7, 1.3))
         .round() as i32;
@@ -272,7 +352,16 @@ fn garden_frond(
             for depth in 0..=1 {
                 leaf.set(
                     [center_x + x, y, center_z - fold - depth],
-                    shade(color, if x == 0 { 7 } else { 0 }),
+                    shade(
+                        color,
+                        if x == 0 {
+                            16
+                        } else if x.abs() == half_width {
+                            8
+                        } else {
+                            0
+                        },
+                    ),
                 );
             }
             if fold > 0 {
@@ -299,7 +388,7 @@ fn substrate_model() -> VoxelModel {
             let tone = ((world_x * 0.72 + z as f32 * 0.12).sin() * 1.5).round() as i16;
             let color = std::array::from_fn(|axis| {
                 let sand = TANK.sand[axis] as f32;
-                let bank_color = [96.0, 111.0, 95.0][axis];
+                let bank_color = [137.0, 143.0, 105.0][axis];
                 (sand + (bank_color - sand) * bank * 0.7).round() as u8
             });
             for y in 0..height {
@@ -436,11 +525,11 @@ fn shelter_model() -> VoxelModel {
                     let color = if doorway {
                         [51, 47, 39]
                     } else if lip {
-                        [167, 116, 83]
+                        [192, 117, 69]
                     } else if y > 0 {
-                        [143, 98, 72]
+                        [173, 98, 59]
                     } else {
-                        [129, 89, 67]
+                        [151, 84, 51]
                     };
                     shape.set([x, y, z], color);
                 }

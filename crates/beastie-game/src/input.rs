@@ -34,6 +34,7 @@ pub fn move_focus(plan: &ScenePlan, current: Option<&str>, delta: i32) -> Option
     if current.is_none()
         && let Some(preferred) = enabled.iter().find(|hit| {
             hit.id.starts_with("action/")
+                || hit.id.starts_with("title/")
                 || hit.id.starts_with("keyboard/")
                 || hit.id.starts_with("settings/")
                 || hit.id.starts_with("bindings/")

@@ -32,10 +32,13 @@ struct UiText;
 struct EffectGeometry;
 #[derive(Component)]
 struct Bubble(usize);
+#[derive(Component)]
+struct TitleLogo;
 #[derive(Resource)]
 struct Palette {
     solid: Handle<StandardMaterial>,
     ui: Handle<StandardMaterial>,
+    panel: Handle<StandardMaterial>,
     plant: Handle<StandardMaterial>,
     rubber: Handle<StandardMaterial>,
     cloth: Handle<StandardMaterial>,
@@ -58,6 +61,8 @@ struct UiCache {
     height: f32,
     geometry: Option<Handle<Mesh>>,
     text_geometry: Option<Handle<Mesh>>,
+    panel_geometry: Option<Handle<Mesh>>,
+    panel_entity: Option<Entity>,
 }
 
 pub struct RendererPlugin;
@@ -77,6 +82,7 @@ impl Plugin for RendererPlugin {
                     sync_ui,
                     sync_effects,
                     animate_bubbles,
+                    sync_title,
                 )
                     .chain()
                     .after(HostSet::Publish),
@@ -160,15 +166,17 @@ fn setup(
         Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH))
             .with_translation(Quat::from_rotation_x(CAMERA_PITCH) * Vec3::new(0.0, 0.0, 24.0)),
     ));
+    let frame_material = materials.add(appearance.material(0.38, 0.55));
     crate::environment::setup(
         &mut commands,
         &mut meshes,
         solid.clone(),
         *appearance,
         ui.clone(),
+        frame_material,
     );
-    let cube = meshes.add(Cuboid::default());
-    for index in 0..14 {
+    let cube = meshes.add(bubble_mesh());
+    for index in 0..24 {
         commands.spawn((
             Bubble(index),
             Mesh3d(cube.clone()),
@@ -176,10 +184,27 @@ fn setup(
             Transform::default(),
         ));
     }
+    commands.spawn((
+        TitleLogo,
+        Mesh3d(meshes.add(title_logo_mesh())),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            perceptual_roughness: 0.45,
+            diffuse_transmission: 0.25,
+            ..default()
+        })),
+        Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH))
+            .with_translation(Quat::from_rotation_x(CAMERA_PITCH) * Vec3::new(0.0, 2.25, 2.7)),
+        Visibility::Hidden,
+    ));
     use crate::appearance::SurfaceMaterial;
     commands.insert_resource(Palette {
         solid,
         ui,
+        panel: materials.add(StandardMaterial {
+            unlit: true,
+            diffuse_transmission: 0.045,
+            ..default()
+        }),
         plant: materials.add(appearance.surface(SurfaceMaterial::Plant)),
         rubber: materials.add(appearance.surface(SurfaceMaterial::Rubber)),
         cloth: materials.add(appearance.surface(SurfaceMaterial::Cloth)),
@@ -297,6 +322,192 @@ fn sync_objects(
     }
 }
 
+fn bubble_mesh() -> Mesh {
+    let mut shape = Geometry::default();
+    for (x, y, w, h, color) in [
+        (-0.4, 0.0, 0.18, 0.55, [94, 160, 159]),
+        (0.4, 0.0, 0.18, 0.55, [108, 179, 173]),
+        (0.0, 0.4, 0.55, 0.18, [224, 227, 190]),
+        (0.0, -0.4, 0.55, 0.18, [81, 142, 147]),
+    ] {
+        shape.cuboid(Vec3::new(x, y, 0.0), Vec3::new(w, h, 0.17), color);
+    }
+    shape.mesh()
+}
+
+fn title_logo_mesh() -> Mesh {
+    // Authored 5x7 lettering is a filled voxel solid, with actual side walls and
+    // stepped silhouettes. Body text continues to use shaped, accessible glyphs.
+    let letters: &[(i32, &[&str])] = &[
+        (
+            0,
+            &[
+                "xx       xx",
+                "xxx     xxx",
+                "xxxx   xxxx",
+                "xx xx xx xx",
+                "xx  xxx  xx",
+                "xx   x   xx",
+                "xx       xx",
+                "xx       xx",
+                "xx       xx",
+                "xx       xx",
+                "xx       xx",
+                "xx       xx",
+                "xx       xx",
+            ],
+        ),
+        (
+            13,
+            &[
+                "         ",
+                "         ",
+                "         ",
+                "         ",
+                "  xxxxx  ",
+                " xxxxxxx ",
+                "xxx   xxx",
+                "xx     xx",
+                "xx     xx",
+                "xx     xx",
+                "xxx   xxx",
+                " xxxxxxx ",
+                "  xxxxx  ",
+            ],
+        ),
+        (
+            24,
+            &[
+                "         ",
+                "         ",
+                "         ",
+                "         ",
+                "xxxxxxx  ",
+                "xxxxxxxx ",
+                "xx    xxx",
+                "xx     xx",
+                "xx    xxx",
+                "xxxxxxxx ",
+                "xxxxxxx  ",
+                "xx       ",
+                "xx       ",
+                "xx       ",
+                "xx       ",
+            ],
+        ),
+    ];
+    let mut model = crate::voxel::VoxelModel::default();
+    for (start, rows) in letters {
+        for (row, line) in rows.iter().enumerate() {
+            for (column, mark) in line.bytes().enumerate() {
+                if mark == b'x' {
+                    for z in 0..3 {
+                        model.set(
+                            [start + column as i32 - 16, 7 - row as i32, z],
+                            if z == 2 {
+                                [244, 232, 184]
+                            } else {
+                                [182, 163, 112]
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+    model.mesh_with_style(0.085, crate::voxel::SurfaceStyle::Beveled)
+}
+
+type TitlePresentation<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Option<&'static TankCamera>,
+        Option<&'static UiGeometry>,
+        Option<&'static UiText>,
+        Option<&'static TitleLogo>,
+        Option<&'static crate::creature::CreaturePart>,
+        Option<&'static WorldObject>,
+        &'static mut Transform,
+        Option<&'static mut Projection>,
+        Option<&'static mut Visibility>,
+    ),
+>;
+
+fn presentation_extent(drawable: Vec2, title: bool) -> Vec2 {
+    let viewport = Viewport::for_drawable(drawable.x, drawable.y);
+    drawable / (viewport.scale * UNITS) * Vec2::new(1.0, if title { 7.6 / 9.0 } else { 1.0 })
+}
+
+fn sync_title(
+    frame: Res<SceneFrame>,
+    motion: Res<crate::creature::CreatureMotion>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut entities: TitlePresentation,
+) {
+    let title = frame.plan.title_screen;
+    let rotation = Quat::from_rotation_x(CAMERA_PITCH);
+    let height = if title { 7.6 } else { 9.0 };
+    let lift = if title { 0.6 } else { 0.0 };
+    let drawable = windows
+        .single()
+        .map(|window| Vec2::new(window.width(), window.height()))
+        .unwrap_or(Vec2::new(LOGICAL_WIDTH, LOGICAL_HEIGHT));
+    let extent = presentation_extent(drawable.max(Vec2::ONE), title);
+    // The noninteractive title uses the same living scene with a taller framing.
+    // Overlay coordinates remain unchanged, so pointer and keyboard targets agree.
+    let overlay = Transform::from_matrix(
+        Mat4::from_quat(rotation)
+            * Mat4::from_scale_rotation_translation(
+                Vec3::new(1.0, height / 9.0, 1.0),
+                Quat::IDENTITY,
+                Vec3::new(0.0, lift, 0.0),
+            ),
+    );
+    let portrait_offset = Vec3::new(-3.6, 1.3, motion.presented_head.z) - motion.presented_head;
+    for (camera, ui, text, logo, creature, object, mut transform, projection, visibility) in
+        &mut entities
+    {
+        if camera.is_some() {
+            *transform = Transform::from_rotation(rotation)
+                .with_translation(rotation * Vec3::new(0.0, lift, 24.0));
+            if let Some(mut projection) = projection
+                && let Projection::Orthographic(ref mut orthographic) = *projection
+            {
+                orthographic.scaling_mode = ScalingMode::Fixed {
+                    width: extent.x,
+                    height: extent.y,
+                };
+            }
+        } else if ui.is_some() || text.is_some() {
+            *transform = overlay;
+        } else if logo.is_some() {
+            *transform = Transform::from_rotation(rotation * Quat::from_rotation_y(-0.16))
+                .with_translation(rotation * Vec3::new(0.0, 2.6, 2.7));
+            if let Some(mut visibility) = visibility {
+                *visibility = if title {
+                    Visibility::Visible
+                } else {
+                    Visibility::Hidden
+                };
+            }
+        } else if title
+            && (creature.is_some()
+                || object.is_some_and(|object| {
+                    frame
+                        .plan
+                        .objects
+                        .iter()
+                        .any(|p| p.id == object.0 && p.carried)
+                }))
+        {
+            // Staging changes only rendered transforms after animation. Simulation,
+            // motion history, object ownership and the resumed gameplay are untouched.
+            transform.translation += portrait_offset;
+        }
+    }
+}
+
 fn animate_bubbles(frame: Res<SceneFrame>, mut bubbles: Query<(&Bubble, &mut Transform)>) {
     for (bubble, mut transform) in &mut bubbles {
         let t = if frame.plan.reduced_motion {
@@ -311,17 +522,55 @@ fn animate_bubbles(frame: Res<SceneFrame>, mut bubbles: Query<(&Bubble, &mut Tra
         let i = bubble.0 as f32;
         let y = (t * 0.13 + i * 0.73).rem_euclid(6.0) - 1.7;
         transform.translation = Vec3::new(
-            -7.1 + (i * 2.73).rem_euclid(14.1) + (t * 0.3 + i).sin() * 0.12,
+            if bubble.0 % 3 == 0 {
+                -4.8
+            } else if bubble.0 % 3 == 1 {
+                4.7
+            } else {
+                -6.6 + (i * 2.73).rem_euclid(13.2)
+            } + (t * 0.3 + i).sin() * 0.18,
             y,
             -1.4,
         );
-        transform.scale = Vec3::splat(0.025 + (i % 4.0) * 0.007);
-        transform.rotation = Quat::from_rotation_z(t * 0.2 + i);
+        transform.scale = Vec3::splat(0.05 + (i % 4.0) * 0.018);
+        transform.rotation = Quat::from_rotation_z((t * 0.2 + i).sin() * 0.12);
     }
 }
 
 fn icon_mesh(kind: IconKind, center: Vec3, color: [u8; 3]) -> Mesh {
-    let cell = 0.074;
+    if let IconKind::Toy(toy) = kind {
+        let mesh = object_mesh(ObjectKind::Toy(toy), default());
+        let positions = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+        for point in positions {
+            min = min.min(Vec3::from(*point));
+            max = max.max(Vec3::from(*point));
+        }
+        let scale = 0.54 / (max - min).max_element();
+        return mesh
+            .translated_by(-(min + max) * 0.5)
+            .scaled_by(Vec3::splat(scale))
+            .translated_by(center);
+    }
+    if kind == IconKind::Settings {
+        let mut gear = crate::voxel::VoxelModel::default();
+        for x in -4_i32..=4 {
+            for y in -4_i32..=4 {
+                let radius = x * x + y * y;
+                if radius >= 5 && (radius <= 13 || x.abs() <= 1 || y.abs() <= 1) {
+                    gear.set([x, y, 0], color);
+                }
+            }
+        }
+        return gear
+            .mesh_with_style(0.047, crate::voxel::SurfaceStyle::Sharp)
+            .translated_by(center);
+    }
+    let cell = 0.062;
     let pattern: &[&str] = match kind {
         IconKind::Microphone => &[
             "  xx  ", "  xx  ", "x xx x", "x xx x", " xxxx ", "  xx  ", " xxxx ",
@@ -331,6 +580,7 @@ fn icon_mesh(kind: IconKind, center: Vec3, color: [u8; 3]) -> Mesh {
         IconKind::Send => &[
             "x     ", "xxx   ", "xxxxx ", "xxxxxx", "xxxxx ", "xxx   ", "x     ",
         ],
+        IconKind::Toy(_) => unreachable!("toy miniatures return above"),
     };
     let mut model = crate::voxel::VoxelModel::default();
     for (row, line) in pattern.iter().enumerate() {
@@ -487,6 +737,8 @@ fn sync_ui(mut ui: UiSystem) {
         ui.cache.rects != ui.frame.plan.rects || ui.cache.icons != ui.frame.plan.icons;
     if geometry_changed {
         let mut shape = Geometry::default();
+        let mut panel = Geometry::default();
+        let mut has_panel = false;
         for rect in &ui.frame.plan.rects {
             let r = rect.rect;
             let center = logical_position(
@@ -495,6 +747,15 @@ fn sync_ui(mut ui: UiSystem) {
                 8.0 + rect.layer as f32 * 0.002,
             );
             let color = [rect.color[0], rect.color[1], rect.color[2]];
+            if rect.id == "settings/panel" {
+                panel.cuboid(
+                    center,
+                    Vec3::new(r.w as f32 / UNITS, r.h as f32 / UNITS, 0.02),
+                    color,
+                );
+                has_panel = true;
+                continue;
+            }
             if rect.outline {
                 let w = r.w as f32 / UNITS;
                 let h = r.h as f32 / UNITS;
@@ -513,6 +774,33 @@ fn sync_ui(mut ui: UiSystem) {
                     color,
                 );
             }
+        }
+        if has_panel {
+            if let Some(handle) = ui.cache.panel_geometry.clone() {
+                if let Some(mut mesh) = ui.meshes.get_mut(&handle) {
+                    *mesh = panel.mesh();
+                }
+                if let Some(entity) = ui.cache.panel_entity {
+                    ui.commands.entity(entity).insert(Visibility::Visible);
+                }
+            } else {
+                let mesh = ui.meshes.add(panel.mesh());
+                let material = ui.palette.panel.clone();
+                let entity = ui
+                    .commands
+                    .spawn((
+                        UiGeometry,
+                        crate::ray_scene::RayOverlay,
+                        Mesh3d(mesh.clone()),
+                        MeshMaterial3d(material),
+                        Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH)),
+                    ))
+                    .id();
+                ui.cache.panel_geometry = Some(mesh);
+                ui.cache.panel_entity = Some(entity);
+            }
+        } else if let Some(entity) = ui.cache.panel_entity {
+            ui.commands.entity(entity).insert(Visibility::Hidden);
         }
         let mut replacement = shape.mesh();
         for icon in &ui.frame.plan.icons {
@@ -750,50 +1038,27 @@ fn sync_effects(
             }
         }
     }
-    for hit in &frame.plan.hit_regions {
-        let highlighted = match hit.target {
-            Some(UiTarget::Creature) => {
-                frame.plan.creature.highlight != beastie_view::Highlight::None
-            }
-            Some(target) => frame.plan.objects.iter().any(|object| {
-                object.highlight != beastie_view::Highlight::None
-                    && match object.kind {
-                        ObjectKind::Toy(toy) => target == UiTarget::Toy(toy),
-                        ObjectKind::Cave => target == UiTarget::Cave,
-                        ObjectKind::Plant => target == UiTarget::Plant(object.id),
-                        ObjectKind::Food(_) => target == UiTarget::FoodObject(object.id),
-                    }
-            }),
-            None => false,
-        };
-        if !highlighted {
-            continue;
+    let mut selected = Vec::new();
+    if frame.plan.creature.highlight != beastie_view::Highlight::None {
+        selected.push((motion.position(&frame.plan), 0.78));
+    }
+    for object in &frame.plan.objects {
+        if object.highlight != beastie_view::Highlight::None {
+            selected.push((
+                presented_object_position(object, &frame.plan, &motion),
+                0.56,
+            ));
         }
-        let center = if hit.target == Some(UiTarget::Creature) {
-            motion.position(&frame.plan)
-        } else if let Some(object) = frame.plan.objects.iter().find(|object| match object.kind {
-            ObjectKind::Toy(toy) => hit.target == Some(UiTarget::Toy(toy)),
-            ObjectKind::Cave => hit.target == Some(UiTarget::Cave),
-            ObjectKind::Plant => hit.target == Some(UiTarget::Plant(object.id)),
-            ObjectKind::Food(_) => hit.target == Some(UiTarget::FoodObject(object.id)),
-        }) {
-            presented_object_position(object, &frame.plan, &motion)
-        } else {
-            continue;
-        };
-        let radius = if hit.target == Some(UiTarget::Creature) {
-            0.78
-        } else {
-            0.56
-        };
+    }
+    for (center, radius) in selected {
         for side in [-1.0, 1.0] {
             for vertical in [-1.0, 1.0] {
                 let p = center + Vec3::new(side * radius, vertical * radius * 0.7, 1.0);
-                shape.cuboid(p, Vec3::new(0.13, 0.03, 0.04), [165, 210, 185]);
+                shape.cuboid(p, Vec3::new(0.13, 0.025, 0.04), [233, 235, 197]);
                 shape.cuboid(
                     p + Vec3::new(side * 0.05, -vertical * 0.05, 0.0),
-                    Vec3::new(0.03, 0.13, 0.04),
-                    [165, 210, 185],
+                    Vec3::new(0.025, 0.13, 0.04),
+                    [233, 235, 197],
                 );
             }
         }
@@ -1358,6 +1623,28 @@ mod tests {
         assert!(viewport.logical_point(0.0, 360.0).is_none());
         assert_eq!(viewport.logical_point(800.0, 360.0), Some((160.0, 90.0)));
     }
+
+    #[test]
+    fn presentation_and_pointer_coordinates_agree_across_aspect_ratios() {
+        for drawable in [
+            Vec2::new(1920.0, 1080.0),
+            Vec2::new(1600.0, 720.0),
+            Vec2::new(900.0, 1200.0),
+        ] {
+            for title in [false, true] {
+                let extent = presentation_extent(drawable, title);
+                let logical = Vec2::new(148.0, 125.0);
+                let point = logical_position(logical.x, logical.y, 0.0).truncate()
+                    * Vec2::new(1.0, if title { 7.6 / 9.0 } else { 1.0 });
+                let pixel = (point / extent * Vec2::new(1.0, -1.0) + Vec2::splat(0.5)) * drawable;
+                let actual = Viewport::for_drawable(drawable.x, drawable.y)
+                    .logical_point(pixel.x, pixel.y)
+                    .unwrap();
+                assert!((actual.0 - logical.x).abs() < 0.001);
+                assert!((actual.1 - logical.y).abs() < 0.001);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1549,7 +1836,7 @@ mod ui_layout_tests {
         assert!(bounds.w < 100.0);
         assert!((label_size - other_size).abs() < 0.01);
         assert!(
-            value_size >= beastie_view::TextRole::Control.size(true) - 0.01,
+            value_size >= value.role.size(true) - 0.01,
             "value size {value_size}, bounds {value_bounds:?}"
         );
     }
@@ -1573,21 +1860,12 @@ mod ui_layout_tests {
         {
             let bounds = text_content_bounds(value, &scene);
             let button = scene
-                .rects
+                .hit_regions
                 .iter()
-                .find(|rect| {
-                    rect.id
-                        == format!(
-                            "settings/{}-background",
-                            value
-                                .id
-                                .strip_prefix("settings/")
-                                .unwrap()
-                                .strip_suffix("-value")
-                                .unwrap()
-                        )
-                })
-                .expect("value button background");
+                .find(|hit| hit.id == value.id.strip_suffix("-value").unwrap())
+                .expect("value's interactive control");
+            assert!(bounds.x >= button.rect.x as f32);
+            assert!(bounds.x + bounds.w <= (button.rect.x + button.rect.w) as f32);
             assert!(bounds.y >= button.rect.y as f32);
             assert!(bounds.y + bounds.h <= (button.rect.y + button.rect.h) as f32);
         }

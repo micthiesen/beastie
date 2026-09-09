@@ -46,7 +46,13 @@ TLAS, with near-first traversal on ordinary compute. Six fixed area-light visibi
 a bounded diffuse bounce and selected glossy reflections create dimensional light without temporal
 history. Two world and four UI coverage samples preserve stable silhouettes and geometric text.
 Skin uses authored soft fill, and UI inlays use controlled studio illumination within the same ray
-shader. No physical glass/refraction or true subsurface transport is claimed.
+shader. No physical glass/refraction or true subsurface transport is claimed. The gold-reference pass
+adds procedural surface reflection pools, warped caustics, wavelength-dependent depth tint,
+analytic shafts and sand grain without extra world shadow or bounce rays. A faint transmitting
+settings plate uses at most one cached world-only continuation per pixel, with inexpensive
+lighting; controls and glyphs remain opaque. The frame has a separate metallic material.
+Bright-pass bloom was tried and removed because it echoed fine lettering. See the
+[gold comparison](style-reference/implementation.md).
 
 The bundled Atkinson font is shaped with rustybuzz and its outlines tessellated with lyon, including
 holes, kerning, ligatures, wrapping and clipping. Glyphs are planar inlaid geometry. Text and panels

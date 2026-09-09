@@ -15,8 +15,8 @@ use std::num::NonZeroU64;
 
 pub const LOGICAL_WIDTH: i32 = 320;
 pub const LOGICAL_HEIGHT: i32 = 180;
-pub const AQUARIUM_BOTTOM: i32 = 146;
-pub const COMPOSE_BAR_TOP: i32 = 147;
+pub const AQUARIUM_BOTTOM: i32 = 149;
+pub const COMPOSE_BAR_TOP: i32 = 149;
 pub const CREATURE_HIT_WIDTH: i32 = 52;
 pub const CREATURE_HIT_HEIGHT: i32 = 40;
 pub const SPEECH_LIFETIME_MS: u64 = 8_000;
@@ -60,6 +60,9 @@ pub enum UiTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UiAction {
+    OpenTitle,
+    Continue,
+    Quit,
     OpenContext(UiTarget),
     CloseContext,
     OpenFoodChoice,
@@ -133,6 +136,7 @@ pub enum MicrophoneState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum UiMode {
+    Title,
     /// Normal play. The compose field remains focused and accepts printable text.
     #[default]
     Compose,
@@ -617,6 +621,7 @@ pub enum Highlight {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IconKind {
+    Toy(ToyId),
     Microphone,
     Food,
     Settings,
@@ -727,6 +732,7 @@ pub struct EffectScene {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScenePlan {
+    pub title_screen: bool,
     pub creature: CreatureScene,
     pub objects: Vec<ObjectScene>,
     pub effects: Vec<EffectScene>,
@@ -1084,22 +1090,33 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (ScenePlan, AudioPlan) {
     let objects = object_scenes(state, view);
     let effects = effect_scenes(state, &creature);
     let mut hit_regions = world_hit_regions(state, view);
-    add_speech(state, view, &mut rects, &mut text, &mut hit_regions);
-    add_persistent_bar(
-        state,
-        view,
-        &mut icons,
-        &mut rects,
-        &mut text,
-        &mut hit_regions,
-    );
+    if !matches!(view.mode, UiMode::Title) {
+        add_speech(state, view, &mut rects, &mut text, &mut hit_regions);
+        add_persistent_bar(
+            state,
+            view,
+            &mut icons,
+            &mut rects,
+            &mut text,
+            &mut hit_regions,
+        );
+    }
     add_temporary_mode(state, view, &mut rects, &mut text, &mut hit_regions);
+    if matches!(view.mode, UiMode::Settings) {
+        icons.push(IconCommand {
+            id: "settings/gear".to_owned(),
+            kind: IconKind::Settings,
+            x: 172,
+            y: 29,
+            layer: 29,
+        });
+    }
     let close = match view.mode {
         UiMode::Settings => Some((
             Rect {
-                x: 281,
-                y: 7,
-                w: 26,
+                x: 288,
+                y: 24,
+                w: 17,
                 h: 14,
             },
             UiAction::CancelMode,
@@ -1149,6 +1166,7 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (ScenePlan, AudioPlan) {
     text.sort_by_key(|command| command.layer);
     (
         ScenePlan {
+            title_screen: matches!(view.mode, UiMode::Title),
             creature,
             objects,
             effects,
@@ -1364,7 +1382,7 @@ fn object_scenes(state: &WorldState, view: &ViewState) -> Vec<ObjectScene> {
                 velocity,
                 carried,
                 response,
-                highlight: highlight_for(view, &format!("target/object-{id}")),
+                highlight: if matches!((view.mode, kind), (UiMode::Context(UiTarget::Toy(selected)), ObjectKind::Toy(toy)) if selected == toy) { Highlight::Focus } else { highlight_for(view, &format!("target/object-{id}")) },
             })
         })
         .collect()
@@ -1559,21 +1577,20 @@ fn world_hit_regions(state: &WorldState, view: &ViewState) -> Vec<HitRegion> {
 fn add_persistent_bar(
     state: &WorldState,
     view: &ViewState,
-    _icons: &mut Vec<IconCommand>,
+    icons: &mut Vec<IconCommand>,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
     let summary = creature_summary(state);
     let text_scale = view.text_scale.clamp(1, 2);
-    // A shallow instrument rail leaves the habitat in charge of the composition.
     rects.push(rect(
         "compose/bar-edge",
         Rect {
             x: 0,
-            y: 147,
+            y: 149,
             w: 320,
-            h: 33,
+            h: 31,
         },
         UI_EDGE,
         30,
@@ -1582,97 +1599,113 @@ fn add_persistent_bar(
         "compose/bar",
         Rect {
             x: 0,
-            y: 148,
+            y: 150,
             w: 320,
-            h: 32,
+            h: 30,
         },
         UI_PANEL,
         31,
     ));
-    if matches!(view.mode, UiMode::Compose)
-        && view
-            .speech
-            .as_deref()
-            .is_none_or(|line| line.trim().is_empty())
+    let mut identity = label(
+        "compose/summary-name",
+        &head_fit(&summary.name, 18),
+        8,
+        156,
+        34,
+    );
+    identity.role = TextRole::Identity;
+    identity.bounds = Some(Rect {
+        x: 8,
+        y: 154,
+        w: 66,
+        h: 11,
+    });
+    text.push(identity);
+    let mut status = label(
+        "compose/summary-behavior",
+        &format!("{} · {}", summary.mood_label, summary.behavior),
+        8,
+        168,
+        34,
+    );
+    status.role = TextRole::Secondary;
+    status.bounds = Some(Rect {
+        x: 8,
+        y: 167,
+        w: 67,
+        h: 10,
+    });
+    text.push(status);
+    for (index, (toy, name)) in [
+        (ToyId::Ball, "Ball"),
+        (ToyId::Bell, "Bell"),
+        (ToyId::Sock, "Sock"),
+    ]
+    .into_iter()
+    .enumerate()
     {
-        let plate_width = (summary.name.chars().count().min(13) as i32 * 5 + 12).clamp(27, 70);
-        rects.push(rect(
-            "compose/identity-plate",
-            Rect {
-                x: 12,
-                y: 7,
-                w: plate_width,
-                h: 14,
-            },
-            UI_PANEL,
-            31,
+        let area = Rect {
+            x: 80 + index as i32 * 20,
+            y: 156,
+            w: 17,
+            h: 18,
+        };
+        let id = format!("compose/toy-{index}");
+        let active =
+            matches!(view.mode, UiMode::Context(UiTarget::Toy(selected)) if selected == toy);
+        add_button_chrome(&id, area, true, active, 31, rects);
+        hits.push(hit(
+            &id,
+            Some(UiTarget::Toy(toy)),
+            UiAction::OpenContext(UiTarget::Toy(toy)),
+            area,
+            true,
+            name,
         ));
-        rects.push(rect(
-            "compose/identity-rule",
-            Rect {
-                x: 12,
-                y: 11,
-                w: 1,
-                h: 6,
-            },
-            UI_CORAL,
-            32,
-        ));
-        let mut identity = label(
-            "compose/summary-name",
-            &head_fit(&summary.name, if text_scale >= 2 { 10 } else { 13 }),
-            18,
-            8,
-            34,
-        );
-        identity.role = TextRole::Identity;
-        identity.bounds = Some(Rect {
-            x: 18,
-            y: 8,
-            w: plate_width - 10,
-            h: 12,
+        icons.push(IconCommand {
+            id,
+            kind: IconKind::Toy(toy),
+            x: area.x + area.w / 2,
+            y: area.y + area.h / 2,
+            layer: 35,
         });
-        text.push(identity);
     }
     let input_rect = Rect {
-        x: 12,
-        y: 154,
-        w: 170,
-        h: 19,
+        x: 162,
+        y: 157,
+        w: 106,
+        h: 16,
     };
     let microphone_rect = Rect {
-        x: 214,
-        y: 154,
-        w: 28,
-        h: 19,
+        x: 286,
+        y: 156,
+        w: 13,
+        h: 18,
     };
     let food_rect = Rect {
-        x: 246,
-        y: 154,
-        w: 26,
-        h: 19,
+        x: 140,
+        y: 156,
+        w: 17,
+        h: 18,
     };
     let settings_rect = Rect {
-        x: 276,
-        y: 154,
-        w: 32,
-        h: 19,
+        x: 302,
+        y: 156,
+        w: 13,
+        h: 18,
     };
     let send_rect = Rect {
-        x: 186,
-        y: 154,
-        w: 24,
-        h: 19,
+        x: 270,
+        y: 157,
+        w: 13,
+        h: 16,
     };
-
     let editing = view.compose_engaged
         || !view.text_buffer.is_empty()
         || view.pending
         || matches!(view.mode, UiMode::Rename | UiMode::OnScreenKeyboard)
         || (view.controller_active && view.focused_region.as_deref() == Some("compose/input"));
-    if editing {
-        add_inset("compose/input", input_rect, 31, rects);
-    }
+    add_inset("compose/input", input_rect, 31, rects);
     let input_capacity = ((input_rect.w - 17) as f32
         / (TextRole::Body.size(text_scale >= 2) * 0.56))
         .floor() as usize;
@@ -1685,43 +1718,19 @@ fn add_persistent_bar(
     } else {
         tail_fit(&view.text_buffer, input_capacity)
     };
-    let mut input_text = label("compose/input-text", &input_value, 18, 159, 34);
+    let mut input_text = label("compose/input-text", &input_value, 166, 161, 34);
     input_text.role = if editing {
         TextRole::Body
     } else {
         TextRole::Secondary
     };
     input_text.bounds = Some(Rect {
-        x: 18,
-        y: 155,
-        w: 157,
-        h: 17,
+        x: 166,
+        y: 157,
+        w: 98,
+        h: 16,
     });
     text.push(input_text);
-    if !view.care_guidance_dismissed
-        && matches!(view.mode, UiMode::Compose)
-        && view.speech.is_none()
-        && visible_status(view, state.elapsed_ms).is_none()
-        && view.hovered_region.is_none()
-        && matches!(view.focused_region.as_deref(), None | Some("compose/input"))
-        && !editing
-    {
-        let mut invitation = label(
-            "compose/care-invitation",
-            &format!("Select {} or a toy", head_fit(&summary.name, 18)),
-            18,
-            138,
-            34,
-        );
-        invitation.role = TextRole::Secondary;
-        invitation.bounds = Some(Rect {
-            x: 18,
-            y: 136,
-            w: 210,
-            h: 10,
-        });
-        text.push(invitation);
-    }
     hits.push(hit(
         "compose/input",
         Some(UiTarget::ComposeField),
@@ -1811,6 +1820,20 @@ fn add_persistent_bar(
         31,
         rects,
     );
+    for (kind, area, id) in [
+        (IconKind::Food, food_rect, "food"),
+        (IconKind::Microphone, microphone_rect, "microphone"),
+        (IconKind::Settings, settings_rect, "settings"),
+        (IconKind::Send, send_rect, "send"),
+    ] {
+        icons.push(IconCommand {
+            id: format!("ui/button-{id}"),
+            kind,
+            x: area.x + area.w / 2,
+            y: area.y + 6,
+            layer: 35,
+        });
+    }
     for (id, title, area) in [
         ("speak", "Speak", microphone_rect),
         ("feed", "Feed", food_rect),
@@ -1834,11 +1857,11 @@ fn add_persistent_bar(
         );
         caption.bounds = Some(Rect {
             x: area.x + 2,
-            y: area.y + 2,
+            y: area.y + 12,
             w: area.w - 4,
-            h: area.h - 4,
+            h: 5,
         });
-        caption.role = TextRole::Control;
+        caption.role = TextRole::ControlCaption;
         caption.muted = (id == "send" && !send_enabled) || (id == "speak" && !microphone_available);
         text.push(caption);
     }
@@ -1878,7 +1901,9 @@ fn add_temporary_mode(
     hits: &mut Vec<HitRegion>,
 ) {
     match view.mode {
+        UiMode::Title => add_title(view, rects, text, hits),
         UiMode::Compose => {}
+        UiMode::Context(UiTarget::Toy(toy)) => add_toy_context(state, toy, rects, text, hits),
         UiMode::Context(target) => {
             let actions = contextual_actions(target);
             let (_, head_y) = world_to_logical(state.creature.aquarium.position);
@@ -1941,6 +1966,167 @@ fn add_temporary_mode(
     }
 }
 
+fn add_title(
+    view: &ViewState,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    let mut subtitle = label(
+        "title/subtitle",
+        "A little friend, a big world.",
+        123,
+        64,
+        29,
+    );
+    subtitle.role = TextRole::Secondary;
+    subtitle.bounds = Some(Rect {
+        x: 123,
+        y: 63,
+        w: 82,
+        h: 10,
+    });
+    text.push(subtitle);
+    for (index, (id, name, action)) in [
+        ("continue", "Continue", UiAction::Continue),
+        ("settings", "Settings", UiAction::OpenSettings),
+        ("quit", "Quit", UiAction::Quit),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let area = Rect {
+            x: 132,
+            y: 80 + index as i32 * 19,
+            w: 56,
+            h: 14,
+        };
+        let id = format!("title/{id}");
+        rects.push(rect(&id, area, UI_PANEL, 25));
+        let selected = view
+            .hovered_region
+            .as_deref()
+            .filter(|id| id.starts_with("title/"))
+            .or(view
+                .focused_region
+                .as_deref()
+                .filter(|id| id.starts_with("title/")))
+            .unwrap_or("title/continue")
+            == id;
+        rects.push(RectCommand {
+            id: format!("{id}-rim"),
+            rect: area,
+            color: if selected {
+                [228, 230, 192, 255]
+            } else {
+                UI_EDGE
+            },
+            layer: 27,
+            outline: true,
+        });
+        hits.push(hit(&id, None, action, area, true, name));
+        text.push(label(
+            &format!("{id}-label"),
+            name,
+            area.x + 6,
+            area.y + 3,
+            29,
+        ));
+    }
+    let mut version = label("title/version", env!("CARGO_PKG_VERSION"), 6, 173, 29);
+    version.role = TextRole::Secondary;
+    version.bounds = Some(Rect {
+        x: 6,
+        y: 173,
+        w: 35,
+        h: 6,
+    });
+    text.push(version);
+}
+
+fn add_toy_context(
+    state: &WorldState,
+    toy: ToyId,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    let position = state
+        .aquarium
+        .toy_states
+        .get(&toy)
+        .map(|item| item.position)
+        .or_else(|| {
+            state
+                .aquarium
+                .objects
+                .values()
+                .find_map(|object| match object {
+                    WorldObject::Toy {
+                        toy: found,
+                        position,
+                    } if *found == toy => Some(*position),
+                    _ => None,
+                })
+        })
+        .unwrap_or(NormalizedPosition::new(5000, 5000));
+    let (object_x, object_y) = world_to_logical(position);
+    let x = if object_x < 220 {
+        object_x + 17
+    } else {
+        object_x - 74
+    }
+    .clamp(4, 245);
+    let y = (object_y - 10).clamp(5, 114);
+    add_panel_chrome("mode/context-panel", Rect { x, y, w: 69, h: 29 }, 25, rects);
+    let (name, detail) = match toy {
+        ToyId::Ball => ("Beach ball", "A little nudge, a little play."),
+        ToyId::Bell => ("Bell", "A warm little ring."),
+        ToyId::Sock => ("Sock", "Something soft to tug."),
+    };
+    let mut title = label("mode/context/title", name, x + 4, y + 4, 29);
+    title.bounds = Some(Rect {
+        x: x + 4,
+        y: y + 2,
+        w: 61,
+        h: 7,
+    });
+    text.push(title);
+    let mut description = label("mode/context/detail", detail, x + 4, y + 10, 29);
+    description.role = TextRole::Secondary;
+    description.bounds = Some(Rect {
+        x: x + 4,
+        y: y + 9,
+        w: 61,
+        h: 7,
+    });
+    text.push(description);
+    for (index, action) in [UiAction::Play(toy), UiAction::Inspect]
+        .into_iter()
+        .enumerate()
+    {
+        let area = Rect {
+            x: x + 4 + index as i32 * 31,
+            y: y + 19,
+            w: 29,
+            h: 8,
+        };
+        let id = format!("action/{}", action_id(action));
+        let name = action_label(action);
+        hits.push(hit(&id, None, action, area, true, &name));
+        add_button_chrome(&id, area, true, false, 25, rects);
+        let mut caption = label(&format!("{id}-label"), &name, area.x + 2, area.y + 1, 29);
+        caption.role = TextRole::ControlCaption;
+        caption.bounds = Some(Rect {
+            x: area.x + 2,
+            y: area.y + 1,
+            w: area.w - 4,
+            h: area.h - 2,
+        });
+        text.push(caption);
+    }
+}
+
 fn add_settings(
     view: &ViewState,
     rects: &mut Vec<RectCommand>,
@@ -1950,23 +2136,28 @@ fn add_settings(
     add_panel_chrome(
         "settings/panel",
         Rect {
-            x: 5,
-            y: 3,
-            w: 310,
-            h: 124,
+            x: 163,
+            y: 20,
+            w: 146,
+            h: 118,
         },
         25,
         rects,
     );
-    text.push(label("settings/title", "Settings", 15, 10, 29));
-    for (index, title) in ["Comfort & display", "Sound & speech", "Controls & data"]
-        .into_iter()
-        .enumerate()
-    {
+    let mut header = label("settings/title", "Settings", 181, 26, 29);
+    header.role = TextRole::Body;
+    header.bounds = Some(Rect {
+        x: 181,
+        y: 25,
+        w: 66,
+        h: 11,
+    });
+    text.push(header);
+    for (index, title) in ["Display", "Sound", "Controls"].into_iter().enumerate() {
         let area = Rect {
-            x: 15 + index as i32 * 97,
-            y: 25,
-            w: 94,
+            x: 168,
+            y: 45 + index as i32 * 21,
+            w: 36,
             h: 17,
         };
         let id = format!("settings/page-{index}");
@@ -1978,21 +2169,31 @@ fn add_settings(
             true,
             title,
         ));
-        add_button_chrome(
-            &id,
-            area,
-            true,
-            usize::from(view.settings_page.min(2)) == index,
-            25,
-            rects,
-        );
-        text.push(label(
-            &format!("{id}-label"),
-            title,
-            area.x + 5,
-            area.y + 5,
-            29,
-        ));
+        if usize::from(view.settings_page.min(2)) == index {
+            rects.push(rect(&format!("{id}-background"), area, UI_BUTTON, 27));
+        }
+        if usize::from(view.settings_page.min(2)) == index {
+            rects.push(rect(
+                &format!("{id}-selected"),
+                Rect {
+                    x: area.x,
+                    y: area.y + 1,
+                    w: 1,
+                    h: area.h - 2,
+                },
+                UI_CORAL,
+                28,
+            ));
+        }
+        let mut category = label(&format!("{id}-label"), title, area.x + 4, area.y + 4, 29);
+        category.role = TextRole::Secondary;
+        category.bounds = Some(Rect {
+            x: area.x + 4,
+            y: area.y + 3,
+            w: area.w - 6,
+            h: 11,
+        });
+        text.push(category);
     }
     let settings = [
         (
@@ -2086,22 +2287,21 @@ fn add_settings(
         _ => 12..15,
     };
     for (index, (id, setting, value, action)) in settings[range].iter().copied().enumerate() {
-        let column = index / 3;
-        let row = index % 3;
-        let column_x = 15 + column as i32 * 148;
-        let y = 49 + row as i32 * 24;
-        text.push(label(
-            &format!("settings/{id}-name"),
-            setting,
-            column_x,
-            y + 6,
-            29,
-        ));
+        let y = 43 + index as i32 * 15;
+        let mut name = label(&format!("settings/{id}-name"), setting, 211, y + 3, 29);
+        name.role = TextRole::Secondary;
+        name.bounds = Some(Rect {
+            x: 211,
+            y: y + 1,
+            w: 59,
+            h: 13,
+        });
+        text.push(name);
         let button = Rect {
-            x: column_x + 89,
+            x: 274,
             y,
-            w: 49,
-            h: 20,
+            w: 29,
+            h: 13,
         };
         hits.push(hit(
             &format!("settings/{id}"),
@@ -2111,14 +2311,71 @@ fn add_settings(
             true,
             setting,
         ));
-        add_button_chrome(&format!("settings/{id}"), button, true, false, 25, rects);
-        text.push(label(
-            &format!("settings/{id}-value"),
-            value,
-            button.x + 6,
-            button.y + 6,
-            29,
-        ));
+        if matches!(value, "On" | "Off") {
+            let on = value == "On";
+            let track = Rect {
+                x: button.x + 10,
+                y: y + 3,
+                w: 18,
+                h: 7,
+            };
+            rects.push(rect(
+                &format!("settings/{id}-track"),
+                track,
+                if on {
+                    [104, 135, 115, 255]
+                } else {
+                    [49, 74, 75, 255]
+                },
+                27,
+            ));
+            rects.push(rect(
+                &format!("settings/{id}-thumb"),
+                Rect {
+                    x: track.x + if on { 12 } else { 1 },
+                    y: y + 4,
+                    w: 5,
+                    h: 5,
+                },
+                [224, 229, 201, 255],
+                28,
+            ));
+            let mut value_text = label(&format!("settings/{id}-value"), value, button.x, y + 3, 29);
+            value_text.role = TextRole::ControlCaption;
+            value_text.bounds = Some(Rect {
+                x: button.x,
+                y: y + 3,
+                w: 10,
+                h: 8,
+            });
+            text.push(value_text);
+        } else {
+            add_inset(
+                &format!("settings/{id}"),
+                Rect {
+                    y: y + 2,
+                    h: 10,
+                    ..button
+                },
+                25,
+                rects,
+            );
+            let mut value_text = label(
+                &format!("settings/{id}-value"),
+                value,
+                button.x + 2,
+                y + 3,
+                29,
+            );
+            value_text.role = TextRole::ControlCaption;
+            value_text.bounds = Some(Rect {
+                x: button.x + 2,
+                y: y + 3,
+                w: button.w - 4,
+                h: 8,
+            });
+            text.push(value_text);
+        }
     }
 }
 
@@ -2776,20 +3033,20 @@ fn add_status(
         "status/background",
         Rect {
             x: 12,
-            y: 132,
+            y: 139,
             w: 296,
-            h: 14,
+            h: 10,
         },
         35,
         rects,
     );
-    let mut message = label("status/message", &fitted, 17, 135, 39);
+    let mut message = label("status/message", &fitted, 17, 140, 39);
     message.role = TextRole::Secondary;
     message.bounds = Some(Rect {
         x: 17,
-        y: 134,
+        y: 140,
         w: 286,
-        h: 10,
+        h: 8,
     });
     text.push(message);
 }
@@ -2846,6 +3103,11 @@ fn add_hover_and_focus(
         else {
             continue;
         };
+        if hit_region.id.starts_with("title/")
+            || (hit_region.id.starts_with("settings/page-") && !view.controller_active)
+        {
+            continue;
+        }
         if matches!(hit_region.shape, HitShape::World(_)) {
             continue;
         }
@@ -2900,9 +3162,9 @@ fn add_hover_and_focus(
             "ui/microphone-help-background",
             Rect {
                 x: 12,
-                y: 132,
+                y: 139,
                 w: 296,
-                h: 14,
+                h: 10,
             },
             36,
             rects,
@@ -2911,15 +3173,15 @@ fn add_hover_and_focus(
             "ui/microphone-help",
             microphone_label(view.microphone_state),
             17,
-            135,
+            140,
             38,
         );
         help.role = TextRole::Secondary;
         help.bounds = Some(Rect {
             x: 17,
-            y: 134,
+            y: 140,
             w: 286,
-            h: 10,
+            h: 8,
         });
         text.push(help);
         return;
@@ -3639,6 +3901,57 @@ mod tests {
             },
             payoff_reached: false,
         }
+    }
+
+    #[test]
+    fn title_has_only_real_navigation_and_no_care_targets() {
+        let scene = plan(
+            &WorldState::new(7, "Mop"),
+            &ViewState {
+                mode: UiMode::Title,
+                ..Default::default()
+            },
+        )
+        .0;
+        assert!(scene.title_screen);
+        assert_eq!(
+            scene
+                .hit_regions
+                .iter()
+                .map(|hit| hit.action)
+                .collect::<Vec<_>>(),
+            vec![UiAction::Continue, UiAction::OpenSettings, UiAction::Quit]
+        );
+        assert!(!scene.rects.iter().any(|r| r.id == "compose/bar"));
+    }
+
+    #[test]
+    fn toy_context_keeps_real_actions_in_a_small_nearby_card() {
+        let state = WorldState::new(7, "Mop");
+        let scene = plan(
+            &state,
+            &ViewState {
+                mode: UiMode::Context(UiTarget::Toy(ToyId::Ball)),
+                ..Default::default()
+            },
+        )
+        .0;
+        assert!(
+            scene
+                .objects
+                .iter()
+                .any(|object| object.kind == ObjectKind::Toy(ToyId::Ball)
+                    && object.highlight == Highlight::Focus)
+        );
+        for action in [UiAction::Play(ToyId::Ball), UiAction::Inspect] {
+            assert!(scene.hit_regions.iter().any(|hit| hit.action == action));
+        }
+        assert!(
+            scene
+                .rects
+                .iter()
+                .any(|r| r.id == "mode/context-panel" && r.rect.w < 90)
+        );
     }
 
     #[test]
@@ -4730,7 +5043,7 @@ mod tests {
                     .find(|command| command.id == "compose/summary-name")
                     .expect("summary name");
                 assert!(
-                    !render
+                    render
                         .text
                         .iter()
                         .any(|t| t.id == "compose/summary-behavior")
@@ -5161,13 +5474,15 @@ mod tests {
         assert!(!focus.outline);
         assert_eq!(focus.rect.h, 1);
         assert_eq!(focus.rect.y, field.rect.y + field.rect.h - 1);
-        let plate = scene
-            .rects
+        let identity = scene
+            .text
             .iter()
-            .find(|r| r.id == "compose/identity-plate")
+            .find(|t| t.id == "compose/summary-name")
+            .unwrap()
+            .bounds
             .unwrap();
-        assert_eq!(plate.rect.w, 27);
-        assert_eq!(plate.rect.h, 14);
+        assert!(identity.y >= 150);
+        assert!(!rects_overlap(identity, field.rect));
     }
 
     #[test]
@@ -5175,9 +5490,9 @@ mod tests {
         let state = WorldState::new(7, "Mop");
         let mut view = ViewState::default();
         let quiet = plan(&state, &view).0;
-        assert!(quiet.text.iter().any(|t| t.id == "compose/care-invitation"));
+        assert!(!quiet.text.iter().any(|t| t.id == "compose/care-invitation"));
         assert!(
-            !quiet
+            quiet
                 .rects
                 .iter()
                 .any(|r| r.id == "compose/input-background")
@@ -5244,13 +5559,7 @@ mod tests {
             }],
             0,
         );
-        assert!(
-            plan(&world, &view)
-                .0
-                .text
-                .iter()
-                .any(|t| t.id == "compose/care-invitation")
-        );
+        assert!(!view.care_guidance_dismissed);
         view.observe_events(
             &[GameEvent::ToyPlayAccepted {
                 toy: ToyId::Ball,
@@ -5304,9 +5613,9 @@ mod tests {
                     help.bounds.unwrap(),
                     Rect {
                         x: 17,
-                        y: 134,
+                        y: 140,
                         w: 286,
-                        h: 10
+                        h: 8
                     }
                 );
                 assert_eq!(
@@ -5392,7 +5701,7 @@ mod tests {
     }
 
     #[test]
-    fn quiet_identity_gives_way_to_speech_and_modal_content() {
+    fn rail_identity_stays_below_speech_and_modal_content() {
         let state = WorldState::new(7, "Mop");
         let quiet = plan(&state, &ViewState::default()).0;
         assert!(
@@ -5401,12 +5710,7 @@ mod tests {
                 .iter()
                 .any(|t| t.id == "compose/summary-name" && t.text == "Mop")
         );
-        assert!(
-            !quiet
-                .text
-                .iter()
-                .any(|t| t.id == "compose/summary-behavior" || t.id == "status/message")
-        );
+        assert!(!quiet.text.iter().any(|t| t.id == "status/message"));
         for view in [
             ViewState {
                 speech: Some("Hello".to_owned()),
@@ -5418,7 +5722,12 @@ mod tests {
             },
         ] {
             let scene = plan(&state, &view).0;
-            assert!(!scene.text.iter().any(|t| t.id == "compose/summary-name"));
+            assert!(
+                scene
+                    .text
+                    .iter()
+                    .any(|t| t.id == "compose/summary-name" && t.bounds.unwrap().y >= 150)
+            );
             assert!(!scene.rects.iter().any(|r| r.id == "compose/identity-plate"));
         }
     }
