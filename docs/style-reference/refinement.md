@@ -201,3 +201,25 @@ all seven markers, all 480 event records, all 504 audio records and authoritativ
 creature state at each marker match. Stills and filmstrips retain accepted composition,
 lighting, silhouettes and readable overlays. The final cache/code review found no
 outstanding correctness issue; the performance correction is accepted.
+
+## Tank-edge follow-up
+
+The user identified stray-looking border lines and an uneven left-edge shadow after
+the general fidelity review. Fresh 1920×1080 captures confirmed multiple parallel
+glint strips with disconnected endpoints. One joined brass rim now meets the top
+and bottom rails. A rougher, less metallic frame quiets the reflected scenery.
+The key light's horizontal component is now zero: the former leftward direction
+cast a broad shadow from the left tank wall across the plants and rocks. Water
+shafts retain their existing variation rather than becoming mechanically symmetric.
+
+Same-seed still comparisons are retained in `/tmp/beastie-edge-polish-before/captures`
+and `/tmp/beastie-edge-polish-pass2/captures`; `implemented/` contains refreshed
+gameplay, selection, settings Normal/Large and title images. The localized changes
+add no rays or gameplay behavior. Earlier timing reports describe the preceding
+refinement, not a new performance measurement of this follow-up.
+
+`cargo xtask verify` and the native fake-AI still scenario passed. A second,
+validated 1280×720 animated capture at `/tmp/beastie-edge-polish-final` retains
+clean edges across the sampled water, selection, settings and title states.
+Independent visual/code review found no regression in this bounded change.
+No new performance or cross-platform claim is made from these captures.

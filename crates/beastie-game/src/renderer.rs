@@ -286,7 +286,8 @@ fn setup(
         Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH))
             .with_translation(Quat::from_rotation_x(CAMERA_PITCH) * Vec3::new(0.0, 0.0, 24.0)),
     ));
-    let frame_material = materials.add(appearance.material(0.38, 0.55));
+    // Brushed framing keeps reflected scenery from drawing sharp stray lines on the rails.
+    let frame_material = materials.add(appearance.material(0.72, 0.40));
     crate::environment::setup(
         &mut commands,
         &mut meshes,

@@ -9,6 +9,8 @@ Last updated: **2026-09-09**.
 - Gold-reference refinement is implemented and repeatedly reviewed. Permanent originals,
   before/after screenshots and capture commands remain in [style references](style-reference/README.md).
   The [refinement record](style-reference/refinement.md) explains accepted findings and limits.
+- Tank-edge follow-up joins the disconnected trim strips into one rim and centers the
+  overhead key, removing the heavy left-wall shadow. The frame uses a quieter brushed finish.
 - Water now has smaller broken highlights, varied caustic coverage and stronger soft shafts.
   Contact darkening, warm practical fill, curved fronds, eroded rock courses, a rounded cave
   and restrained glass edges give the tank more depth.

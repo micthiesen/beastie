@@ -130,21 +130,11 @@ pub(crate) fn setup(
             Vec3::new(0.18, 7.05, 4.7),
             TANK.frame,
         );
+        // One inset trim joins both rails, rather than floating parallel glint wires.
         tank.cuboid(
-            Vec3::new(side * 7.75, 1.30, 2.1),
-            Vec3::new(0.027, 7.05, 0.08),
+            Vec3::new(side * 7.79, 1.24, 2.20),
+            Vec3::new(0.04, 6.88, 0.08),
             TANK.brass,
-        );
-        // Thin inner edge glints suggest clear glass without an opaque front pane.
-        tank.cuboid(
-            Vec3::new(side * 7.69, 1.28, 2.20),
-            Vec3::new(0.018, 6.90, 0.025),
-            [89, 132, 124],
-        );
-        tank.cuboid(
-            Vec3::new(side * 7.67, 3.44, 2.22),
-            Vec3::new(0.014, 1.13, 0.022),
-            [164, 157, 110],
         );
     }
     tank.cuboid(
@@ -153,9 +143,14 @@ pub(crate) fn setup(
         TANK.frame,
     );
     tank.cuboid(
-        Vec3::new(0.0, 4.61, 2.1),
-        Vec3::new(15.65, 0.035, 0.07),
+        Vec3::new(0.0, 4.66, 2.20),
+        Vec3::new(15.62, 0.04, 0.08),
         shade(TANK.brass, 15),
+    );
+    tank.cuboid(
+        Vec3::new(0.0, -2.18, 2.20),
+        Vec3::new(15.62, 0.04, 0.08),
+        TANK.brass,
     );
     // A solid cabinet apron remains visible beneath the bed as the compact care
     // controls recede. It is part of the tank, so no empty background gap is exposed.

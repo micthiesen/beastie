@@ -221,7 +221,8 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
         return Lighting(vec3(0.85+0.2*max(dot(n,light),0.0)),vec3(0.0));
     }
     if(material.z>0.5) { return Lighting(vec3(1.0),vec3(0.0)); }
-    let key=normalize(vec3(-0.45,0.85,0.65));
+    // A centered overhead key avoids a broad one-sided shadow from the tank wall.
+    let key=normalize(vec3(0.0,0.85,0.65));
     let triangle=triangles[hit.triangle];
     var geometric=normalize((transpose(instances[hit.instance].inverse)*vec4(cross(triangle.b.xyz-triangle.a.xyz,triangle.c.xyz-triangle.a.xyz),0.0)).xyz);
     if(dot(geometric,d)>0.0) { geometric=-geometric; }
