@@ -76,21 +76,8 @@ pub(crate) fn setup(
     background: Handle<StandardMaterial>,
 ) {
     commands.insert_resource(ClearColor(Color::srgb_u8(7, 18, 25)));
-    let mut back = Geometry::default();
-    // Layered teal back wall, brass-dark structural frame, and a stepped stone bed.
-    for row in 0..26 {
-        let t = row as f32 / 25.0;
-        let color = std::array::from_fn(|axis| {
-            (TANK.back_low[axis] as f32 * (1.0 - t) + TANK.back_high[axis] as f32 * t) as u8
-        });
-        back.cuboid(
-            Vec3::new(0.0, -2.0 + row as f32 * 0.25, -2.6),
-            Vec3::new(15.95, 0.255, 0.3),
-            color,
-        );
-    }
     commands.spawn((
-        Mesh3d(meshes.add(appearance.mesh(back.mesh()))),
+        Mesh3d(meshes.add(appearance.mesh(backdrop_mesh()))),
         MeshMaterial3d(background),
         Transform::default(),
     ));
@@ -203,6 +190,37 @@ pub(crate) fn setup(
         MeshMaterial3d(solid.clone()),
         Transform::default(),
     ));
+}
+
+/// One solid slab with interpolated vertex colors leaves the water continuous.
+/// Its bounds match the former overlapping strips; only their color steps disappear.
+fn backdrop_mesh() -> Mesh {
+    let mut back = Geometry::default();
+    back.cuboid(
+        Vec3::new(0.0, 1.125, -2.6),
+        Vec3::new(15.95, 6.505, 0.3),
+        TANK.back_low,
+    );
+    let mut mesh = back.mesh();
+    let low = Color::srgb_u8(TANK.back_low[0], TANK.back_low[1], TANK.back_low[2])
+        .to_linear()
+        .to_f32_array();
+    let high = Color::srgb_u8(TANK.back_high[0], TANK.back_high[1], TANK.back_high[2])
+        .to_linear()
+        .to_f32_array();
+    let colors: Vec<[f32; 4]> = mesh
+        .attribute(Mesh::ATTRIBUTE_POSITION)
+        .expect("backdrop positions")
+        .as_float3()
+        .expect("three-dimensional backdrop")
+        .iter()
+        .map(|position| {
+            let t = ((position[1] + 2.1275) / 6.505).clamp(0.0, 1.0);
+            std::array::from_fn(|axis| low[axis] + (high[axis] - low[axis]) * t)
+        })
+        .collect();
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh
 }
 
 fn garden_stone(

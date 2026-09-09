@@ -1105,7 +1105,7 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (ScenePlan, AudioPlan) {
         UiMode::Bindings => Some((
             Rect {
                 x: 243,
-                y: 17,
+                y: 11,
                 w: 30,
                 h: 14,
             },
@@ -2272,14 +2272,14 @@ fn add_bindings(
         "bindings/panel",
         Rect {
             x: 38,
-            y: 14,
+            y: 8,
             w: 244,
-            h: 110,
+            h: 123,
         },
         25,
         rects,
     );
-    text.push(label("bindings/title", "Input bindings", 46, 20, 29));
+    text.push(label("bindings/title", "Input bindings", 46, 14, 29));
     let rows = [
         (
             BindableAction::PushToTalk,
@@ -2313,7 +2313,8 @@ fn add_bindings(
         ),
     ];
     for (index, (action, name, binding)) in rows.into_iter().enumerate() {
-        let y = 32 + i32::try_from(index).unwrap_or_default() * 14;
+        // Three units between faces leave one clear unit between their focus outlines.
+        let y = 29 + i32::try_from(index).unwrap_or_default() * 17;
         text.push(label(
             &format!("bindings/{}-name", bindable_id(action)),
             name,
@@ -4756,6 +4757,66 @@ mod tests {
                     assert!(!rects_overlap(input_box, background));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn binding_rows_keep_focus_gutters_and_large_text_clear_of_navigation() {
+        let state = WorldState::new(7, "Mop");
+        for text_scale in [1, 2] {
+            let render = plan(
+                &state,
+                &ViewState {
+                    mode: UiMode::Bindings,
+                    text_scale,
+                    status_message: Some("Settings saved".to_owned()),
+                    ..ViewState::default()
+                },
+            )
+            .0;
+            let panel = render
+                .rects
+                .iter()
+                .find(|command| command.id == "bindings/panel")
+                .unwrap()
+                .rect;
+            let back = render
+                .hit_regions
+                .iter()
+                .find(|hit| hit.id == "modal/close")
+                .unwrap();
+            let rows: Vec<_> = render
+                .hit_regions
+                .iter()
+                .filter(|hit| matches!(hit.action, UiAction::BeginRebind(_)))
+                .collect();
+            assert_eq!(rows.len(), 6);
+            let mut previous_outline = grow(back.rect, 1);
+            for row in rows {
+                let outline = grow(row.rect, 1);
+                assert!(previous_outline.y + previous_outline.h < outline.y);
+                assert!(row.rect.w >= 91 && row.rect.h >= 14);
+                assert!(outline.x > panel.x && outline.y > panel.y);
+                assert!(outline.x + outline.w < panel.x + panel.w);
+                assert!(outline.y + outline.h < panel.y + panel.h);
+                let value = render
+                    .text
+                    .iter()
+                    .find(|text| text.id == format!("{}-value", row.id))
+                    .unwrap();
+                let bounds = value.bounds.unwrap();
+                assert!(bounds.h >= value.role.size(text_scale == 2).ceil() as i32 + 2);
+                assert!(bounds.x >= row.rect.x && bounds.y >= row.rect.y);
+                assert!(bounds.x + bounds.w <= row.rect.x + row.rect.w);
+                assert!(bounds.y + bounds.h <= row.rect.y + row.rect.h);
+                previous_outline = outline;
+            }
+            let status = render
+                .rects
+                .iter()
+                .find(|command| command.id == "status/background")
+                .unwrap();
+            assert!(!rects_overlap(panel, status.rect));
         }
     }
 

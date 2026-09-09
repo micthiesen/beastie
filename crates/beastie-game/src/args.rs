@@ -62,6 +62,9 @@ pub struct Args {
     /// Directory for a 60 fps feel-review evidence bundle.
     #[arg(long, requires = "script")]
     pub feel_dir: Option<PathBuf>,
+    /// Isolate scripted evidence from unrelated native input on the host desktop.
+    #[arg(long, hide = true, requires = "feel_dir")]
+    pub feel_script_only: bool,
     /// Validated deterministic starting state used only by scripted feel evidence.
     #[arg(
         long,
@@ -107,6 +110,43 @@ mod tests {
     use clap::Parser;
 
     use super::Args;
+
+    #[test]
+    fn script_only_input_requires_evidence_and_is_opt_in() {
+        assert!(!Args::try_parse_from(["game"]).unwrap().feel_script_only);
+        assert!(Args::try_parse_from(["game", "--feel-script-only"]).is_err());
+        assert!(
+            Args::try_parse_from(["game", "--script", "run.jsonl", "--feel-script-only",]).is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "game",
+                "--feel-dir",
+                "target/feel/run",
+                "--feel-script-only",
+            ])
+            .is_err()
+        );
+        let direct = Args::try_parse_from([
+            "game",
+            "--script",
+            "run.jsonl",
+            "--feel-dir",
+            "target/feel/run",
+        ])
+        .unwrap();
+        assert!(!direct.feel_script_only);
+        let isolated = Args::try_parse_from([
+            "game",
+            "--script",
+            "run.jsonl",
+            "--feel-dir",
+            "target/feel/run",
+            "--feel-script-only",
+        ])
+        .unwrap();
+        assert!(isolated.feel_script_only);
+    }
 
     #[test]
     fn surface_studies_are_script_only_and_default_to_production() {

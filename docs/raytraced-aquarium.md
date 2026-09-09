@@ -41,7 +41,8 @@ Windows/Linux native execution. Every accepted material finding must be fixed be
 ## Delivered implementation
 
 The production path uses cached, incrementally uploaded mesh BLAS arenas and a per-frame instance
-TLAS, with near-first traversal on ordinary compute. Six fixed area-light visibility samples,
+TLAS, with near-first traversal on ordinary compute. Six fixed area-light visibility samples
+(refined to twelve for mixed visibility on upward rough surfaces),
 a bounded diffuse bounce and selected glossy reflections create dimensional light without temporal
 history. Two world and four UI coverage samples preserve stable silhouettes and geometric text.
 Skin uses authored soft fill, and UI inlays use controlled studio illumination within the same ray

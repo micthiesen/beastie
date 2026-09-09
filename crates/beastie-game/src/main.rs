@@ -49,6 +49,9 @@ fn main() -> bevy::app::AppExit {
         plan: game.render_plan(),
     };
     App::new()
+        .insert_resource(host::HostInputPolicy::from_script_only(
+            args.feel_script_only,
+        ))
         .insert_resource(appearance::RenderAppearance {
             treatment: args.surface_treatment.unwrap_or_default(),
             study: args.lighting_study.unwrap_or_default(),

@@ -29,6 +29,35 @@ pub(crate) enum HostSet {
     Publish,
 }
 
+#[derive(Resource, Default, Clone, Copy)]
+pub(crate) enum HostInputPolicy {
+    #[default]
+    Native,
+    ScriptOnly,
+}
+
+impl HostInputPolicy {
+    pub(crate) const fn from_script_only(script_only: bool) -> Self {
+        if script_only {
+            Self::ScriptOnly
+        } else {
+            Self::Native
+        }
+    }
+
+    const fn allows_native(self) -> bool {
+        matches!(self, Self::Native)
+    }
+
+    fn suppress_messages<M: Message>(self, messages: &mut MessageReader<M>) -> bool {
+        if self.allows_native() {
+            return false;
+        }
+        messages.clear();
+        true
+    }
+}
+
 /// One gate drives both scripted semantic frames and their corresponding video frames.
 #[derive(Resource)]
 pub(crate) struct FramePacing {
@@ -79,6 +108,7 @@ pub(crate) struct HostPlugin;
 impl Plugin for HostPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FramePacing>()
+            .init_resource::<HostInputPolicy>()
             .configure_sets(
                 Update,
                 (HostSet::Input, HostSet::Update, HostSet::Publish).chain(),
@@ -105,8 +135,12 @@ fn handle(result: GameResult, game: &mut Game) {
 fn keyboard(
     mut events: MessageReader<KeyboardInput>,
     keys: Res<ButtonInput<KeyCode>>,
+    policy: Res<HostInputPolicy>,
     mut game: NonSendMut<Game>,
 ) {
+    if policy.suppress_messages(&mut events) {
+        return;
+    }
     for event in events.read() {
         let input = KeyStroke {
             key: event.logical_key.clone(),
@@ -133,8 +167,12 @@ fn pointer(
     frame: Res<SceneFrame>,
     motion: Res<crate::creature::CreatureMotion>,
     scenery: Res<crate::renderer::SceneryPicking>,
+    policy: Res<HostInputPolicy>,
     mut game: NonSendMut<Game>,
 ) {
+    if !policy.allows_native() {
+        return;
+    }
     let Ok((window_entity, window)) = window.single() else {
         return;
     };
@@ -177,8 +215,12 @@ fn pointer(
 
 fn controller(
     mut events: MessageReader<GamepadButtonStateChangedEvent>,
+    policy: Res<HostInputPolicy>,
     mut game: NonSendMut<Game>,
 ) {
+    if policy.suppress_messages(&mut events) {
+        return;
+    }
     for event in events.read() {
         let result = if event.state == ButtonState::Pressed {
             game.gamepad_button_down_event(event.button)
@@ -192,11 +234,14 @@ fn controller(
 fn window_events(
     mut focus: MessageReader<WindowFocused>,
     mut close: MessageReader<WindowCloseRequested>,
+    policy: Res<HostInputPolicy>,
     mut game: NonSendMut<Game>,
 ) {
-    for event in focus.read() {
-        let result = game.focus_event(event.focused);
-        handle(result, &mut game);
+    if !policy.suppress_messages(&mut focus) {
+        for event in focus.read() {
+            let result = game.focus_event(event.focused);
+            handle(result, &mut game);
+        }
     }
     if close.read().next().is_some() {
         game.quit_requested = true;
@@ -256,6 +301,45 @@ fn update(
 
 fn publish(mut frame: ResMut<SceneFrame>, game: NonSend<Game>) {
     frame.plan = game.render_plan();
+}
+
+#[cfg(test)]
+mod input_policy_tests {
+    use super::HostInputPolicy;
+    use bevy::ecs::system::SystemState;
+    use bevy::prelude::*;
+
+    #[derive(Message)]
+    struct NativeInput;
+
+    #[test]
+    fn script_only_drains_native_messages_without_replaying_them_later() {
+        let mut world = World::new();
+        world.init_resource::<Messages<NativeInput>>();
+        let mut reader = SystemState::<MessageReader<NativeInput>>::new(&mut world);
+        world
+            .resource_mut::<Messages<NativeInput>>()
+            .write(NativeInput);
+        let mut events = reader.get_mut(&mut world).unwrap();
+        assert!(HostInputPolicy::ScriptOnly.suppress_messages(&mut events));
+        assert_eq!(events.read().count(), 0);
+        assert!(!HostInputPolicy::Native.suppress_messages(&mut events));
+        assert_eq!(events.read().count(), 0);
+
+        world
+            .resource_mut::<Messages<NativeInput>>()
+            .write(NativeInput);
+        let mut events = reader.get_mut(&mut world).unwrap();
+        assert!(!HostInputPolicy::default().suppress_messages(&mut events));
+        assert_eq!(events.read().count(), 1);
+    }
+
+    #[test]
+    fn native_input_is_available_unless_script_isolation_is_explicit() {
+        assert!(HostInputPolicy::default().allows_native());
+        assert!(HostInputPolicy::from_script_only(false).allows_native());
+        assert!(!HostInputPolicy::from_script_only(true).allows_native());
+    }
 }
 
 #[cfg(test)]

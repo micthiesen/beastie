@@ -1456,10 +1456,13 @@ impl Game {
     }
 
     fn rebind(&mut self, action: BindableAction, key: BindingKey) -> GameResult {
-        self.settings.bindings.rebind_swapping(action, key);
-        self.view.binding_labels = binding_labels(&self.settings.bindings);
-        self.view.mode = UiMode::Bindings;
-        self.reset_focus();
+        finish_rebinding(
+            self.session.world(),
+            &mut self.view,
+            &mut self.settings.bindings,
+            action,
+            Some(key),
+        );
         self.persist_settings()
     }
 
@@ -1796,8 +1799,13 @@ impl Game {
         let key = &input.key;
         if let UiMode::Rebinding(action) = self.view.mode {
             if matches!(key, Key::Escape) {
-                self.view.mode = UiMode::Bindings;
-                self.reset_focus();
+                finish_rebinding(
+                    self.session.world(),
+                    &mut self.view,
+                    &mut self.settings.bindings,
+                    action,
+                    None,
+                );
                 return Ok(());
             }
             if !repeated && let Some(binding) = binding_key(key) {
@@ -2183,6 +2191,27 @@ const fn text_speed_value(speed: TextSpeed) -> u8 {
     }
 }
 
+fn finish_rebinding(
+    world: &beastie_core::WorldState,
+    view: &mut ViewState,
+    bindings: &mut KeyBindings,
+    action: BindableAction,
+    key: Option<BindingKey>,
+) {
+    if let Some(key) = key {
+        bindings.rebind_swapping(action, key);
+    }
+    view.binding_labels = binding_labels(bindings);
+    view.mode = UiMode::Bindings;
+    // Recover the row from its semantic action, including after pointer-opened capture.
+    view.focused_region = plan(world, view)
+        .0
+        .hit_regions
+        .into_iter()
+        .find(|hit| hit.enabled && hit.action == UiAction::BeginRebind(action))
+        .map(|hit| hit.id);
+}
+
 fn binding_labels(bindings: &KeyBindings) -> BindingLabels {
     BindingLabels {
         push_to_talk: bindings.push_to_talk.label().to_owned(),
@@ -2392,6 +2421,92 @@ mod tests {
     use crate::dialogue::DialogueOwner;
     use crate::save_store::SaveStore;
     use crate::settings::TextSpeed;
+
+    #[test]
+    fn completed_and_canceled_rebinding_restore_the_originating_row() {
+        use crate::settings::{BindingKey, KeyBindings};
+        use beastie_view::{BindableAction, UiMode};
+
+        let world = beastie_core::WorldState::new(7, "Mop");
+        for action in [
+            BindableAction::PushToTalk,
+            BindableAction::Food,
+            BindableAction::Play,
+            BindableAction::Comfort,
+            BindableAction::Settings,
+            BindableAction::Cancel,
+        ] {
+            for accepted in [false, true] {
+                let mut bindings = KeyBindings::default();
+                let original = bindings.clone();
+                let mut view = ViewState {
+                    mode: UiMode::Rebinding(action),
+                    focused_region: None,
+                    ..ViewState::default()
+                };
+                super::finish_rebinding(
+                    &world,
+                    &mut view,
+                    &mut bindings,
+                    action,
+                    accepted.then_some(BindingKey::F6),
+                );
+                assert_eq!(view.mode, UiMode::Bindings);
+                assert_eq!(
+                    crate::input::focused_action(
+                        &beastie_view::plan(&world, &view).0,
+                        view.focused_region.as_deref(),
+                    ),
+                    Some(UiAction::BeginRebind(action)),
+                );
+                assert_eq!(
+                    bindings.key_for(action),
+                    if accepted {
+                        BindingKey::F6
+                    } else {
+                        original.key_for(action)
+                    },
+                );
+                if !accepted {
+                    assert_eq!(bindings, original);
+                }
+                assert!(!bindings.has_conflict());
+                assert_eq!(view.binding_labels, super::binding_labels(&bindings));
+            }
+        }
+    }
+
+    #[test]
+    fn occupied_rebinding_keeps_the_swap_and_focuses_the_edited_action() {
+        use crate::settings::{BindingKey, KeyBindings};
+        use beastie_view::{BindableAction, UiMode};
+
+        let world = beastie_core::WorldState::new(7, "Mop");
+        let mut bindings = KeyBindings::default();
+        let mut view = ViewState {
+            mode: UiMode::Rebinding(BindableAction::Food),
+            ..ViewState::default()
+        };
+        super::finish_rebinding(
+            &world,
+            &mut view,
+            &mut bindings,
+            BindableAction::Food,
+            Some(BindingKey::F3),
+        );
+        assert_eq!(bindings.food, BindingKey::F3);
+        assert_eq!(bindings.play, BindingKey::F2);
+        assert!(!bindings.has_conflict());
+        assert_eq!(view.binding_labels.food, "F3");
+        assert_eq!(view.binding_labels.play, "F2");
+        assert_eq!(
+            crate::input::focused_action(
+                &beastie_view::plan(&world, &view).0,
+                view.focused_region.as_deref(),
+            ),
+            Some(UiAction::BeginRebind(BindableAction::Food)),
+        );
+    }
 
     #[test]
     fn startup_recovery_is_technical_feedback_without_creature_speech() {

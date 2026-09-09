@@ -85,6 +85,8 @@ Lighting uses deterministic area-light visibility, environmental fill, bounded d
 rough reflected scene/environment light. Authored skin fill softens local occlusion. Two world
 coverage samples and four UI samples share locally coherent illumination without sharing coverage
 or albedo. No temporal history, denoiser, ray-query extension or dedicated RT hardware is required.
+Six visibility directions refine mixed shadows to twelve on upward rough receivers, concentrating
+soft-shadow detail on the bed. The subdued backdrop uses one continuous vertex-color gradient.
 UI geometry is camera-aligned with controlled studio light and is excluded from world secondary
 rays. See [raytraced-aquarium.md](raytraced-aquarium.md) for the production contract.
 

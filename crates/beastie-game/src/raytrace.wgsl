@@ -136,14 +136,25 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
     var geometric=normalize((transpose(instances[hit.instance].inverse)*vec4(cross(triangle.b.xyz-triangle.a.xyz,triangle.c.xyz-triangle.a.xyz),0.0)).xyz);
     if(dot(geometric,d)>0.0) { geometric=-geometric; }
     let origin=p+geometric*0.008+n*0.06;
-    var visibility=0.0;
-    for(var s=0u;s<6u;s++) {
-        let angle=f32(s)*2.399963;
-        let radius=sqrt((f32(s)+0.5)/6.0)*0.24;
-        let light=normalize(key+vec3(cos(angle)*radius,0.0,sin(angle)*radius));
+    var visible=0u; var shadow_samples=0u;
+    // Broad rough ground reveals penumbra bands. Keep articulated/glossy surfaces
+    // on six rays, and spend extra visibility samples on that quiet receiving bed.
+    let refine_shadow=material.x>0.9 && n.y>0.95;
+    let light_u=normalize(cross(vec3(0.0,1.0,0.0),key));
+    let light_v=cross(key,light_u);
+    for(var s=0u;s<12u;s++) {
+        // Interleave the disk: six directions first, then refine its penumbra.
+        // Uniformly lit/occluded surfaces retain the original six-ray budget.
+        if(s==6u && (!refine_shadow || visible==0u || visible==6u)) { break; }
+        let disk_index=(s%6u)*2u+s/6u;
+        let angle=f32(disk_index)*2.399963;
+        let radius=sqrt((f32(disk_index)+0.5)/12.0)*0.20;
+        let light=normalize(key+(light_u*cos(angle)+light_v*sin(angle))*radius);
         let shadow=trace(origin,light,35.0,true,true);
-        visibility+=select(0.0,1.0/6.0,shadow.instance==0xffffffffu);
+        visible+=select(0u,1u,shadow.instance==0xffffffffu);
+        shadow_samples++;
     }
+    var visibility=f32(visible)/f32(shadow_samples);
     if(params.size.w==1u) { visibility=1.0; }
     let softness=instances[hit.instance].transmission;
     visibility=mix(visibility,1.0,softness);

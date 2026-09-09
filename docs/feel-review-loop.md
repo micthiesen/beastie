@@ -40,6 +40,11 @@ diagnostic overrides. Early exit, scenario errors, recorder errors, and validati
 retried. Only the promoted successful attempt is validated and hashed.
 The command builds the game and fake workers, verifies FFmpeg and FFprobe, launches each visible
 experience, validates its video, generates filmstrips, and hashes the evidence.
+Controlled runs pass `--feel-script-only`, which suppresses live device input and focus changes
+while preserving window close. Manifest version 8 records this input mode. Validation rejects
+unexpected native inputs and any detected black video frames, retaining `video-visibility.log`.
+Codec, duration and hashes alone do not prove a usable visual recording. For manual native-input
+review, launch the game directly with a script and `--feel-dir`, omitting `--feel-script-only`.
 Pass `--game <executable>` to record an exact copied, packaged, or release executable while still
 using the normal evidence pipeline. This is also the reliable macOS fallback when Metal renders a
 copied executable but stalls for the identical build under `target/debug`.
@@ -55,6 +60,7 @@ target/feel/<run>/
     attempts.json
     attempts/
     manifest.json
+    video-visibility.log
     session.mp4
     session-audio-reference.mp4
     reference-mix.wav

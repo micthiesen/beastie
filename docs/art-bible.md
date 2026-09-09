@@ -9,6 +9,10 @@ inhabited and slightly strange. A low left bank and taller right planting create
 composition. The lower boundary gives the eye somewhere to rest; the creature remains the visual
 center.
 
+The water backdrop uses a continuous vertex-color gradient rather than horizontal color slabs.
+Ground penumbrae receive extra deterministic visibility samples only where the broad rough bed
+reveals shadow bands; creature detail retains the ordinary sampling budget.
+
 Belongings have different physical readings: a buoyant ball, a brass bell suspended from its own
 cork float, and bent soft cloth close to the substrate. New aquariums stagger their canonical
 positions instead of using a horizontal display row. Saved positions remain untouched. The

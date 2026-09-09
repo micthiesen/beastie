@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const FEEL_SCHEMA_VERSION: u32 = 1;
-const MANIFEST_VERSION: u32 = 7;
+const MANIFEST_VERSION: u32 = 8;
 const RUN_TIMEOUT_GRACE: Duration = Duration::from_secs(60);
 const FIRST_FRAME_HEARTBEAT: &str = "first-frame.json";
 const MIN_STARTUP_TIMEOUT: Duration = Duration::from_millis(250);
@@ -278,6 +278,7 @@ struct Manifest<'a> {
     seed: u64,
     video_fps: u32,
     presentation: &'static str,
+    input_mode: &'static str,
     audible_mix_captured: bool,
     reference_mix_generated: bool,
     artifacts: Vec<Artifact>,
@@ -602,6 +603,7 @@ fn capture_attempt(
         .arg(directory.join("captures"))
         .arg("--feel-dir")
         .arg(directory)
+        .arg("--feel-script-only")
         .stderr(Stdio::from(runtime_stderr));
     if let Some(path) = initial_save {
         command.arg("--feel-initial-save").arg(path);
@@ -1004,6 +1006,8 @@ fn finalize_attempt(
         runtime_stderr_path.display()
     );
     verify_video(&directory.join("session.mp4"))?;
+    verify_video_has_picture(&directory.join("session.mp4"))?;
+    validate_script_inputs(&read_jsonl(&directory.join("inputs.jsonl"))?)?;
     verify_scenario_duration(scenario, &directory.join("session.mp4"))?;
     generate_reference_mix(directory)?;
     let markers = read_markers(&directory.join("markers.jsonl"))?;
@@ -1494,6 +1498,60 @@ fn verify_video(path: &Path) -> Result<()> {
         description.contains("avg_frame_rate=60/1"),
         "feel video is not 60fps: {description}"
     );
+    Ok(())
+}
+
+/// Codec/size checks cannot detect a minimized or otherwise blank native framebuffer.
+/// Examine every decoded frame; a nearly black full image is never authored by this suite.
+fn verify_video_has_picture(path: &Path) -> Result<()> {
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-nostats", "-v", "info", "-i"])
+        .arg(path)
+        .args([
+            "-vf",
+            "blackdetect=d=0:pix_th=0.02:pic_th=0.999",
+            "-an",
+            "-f",
+            "null",
+            "-",
+        ])
+        .output()
+        .context("failed to inspect native frame visibility")?;
+    let report = String::from_utf8_lossy(&output.stderr);
+    fs::write(
+        path.with_file_name("video-visibility.log"),
+        report.as_bytes(),
+    )?;
+    require_success("ffmpeg native visibility scan", output.status)?;
+    validate_visible_video_report(&report)
+}
+
+fn validate_visible_video_report(report: &str) -> Result<()> {
+    if let Some(blank) = report.lines().find(|line| line.contains("black_start:")) {
+        bail!("feel video contains blank native frames: {blank}");
+    }
+    Ok(())
+}
+
+fn validate_script_inputs(records: &[serde_json::Value]) -> Result<()> {
+    for record in records {
+        ensure!(
+            matches!(
+                record["kind"].as_str(),
+                Some(
+                    "marker"
+                        | "session_command"
+                        | "ui_action"
+                        | "scenario_setting"
+                        | "microphone_acquisition"
+                        | "window_focus"
+                )
+            ),
+            "canonical feel capture contains non-script input at {} ms: {}",
+            record["playback_ms"],
+            record["kind"]
+        );
+    }
     Ok(())
 }
 
@@ -2214,6 +2272,7 @@ fn write_manifest(
     let mut names = vec![
         FIRST_FRAME_HEARTBEAT.to_owned(),
         "session.mp4".to_owned(),
+        "video-visibility.log".to_owned(),
         "session-audio-reference.mp4".to_owned(),
         "reference-mix.wav".to_owned(),
         "inputs.jsonl".to_owned(),
@@ -2286,6 +2345,7 @@ fn write_manifest(
             .map_or_else(|| experience_seed(experience), |(_, save)| save.world.seed),
         video_fps: 60,
         presentation: "1280x720 native Bevy voxel framebuffer",
+        input_mode: "script-only; live device input disabled",
         audible_mix_captured: false,
         reference_mix_generated: true,
         artifacts,
@@ -2365,6 +2425,50 @@ mod tests {
     use beastie_session::{CommandEnvelope, SESSION_PROTOCOL_VERSION, SessionCommand};
 
     use super::*;
+
+    #[test]
+    fn canonical_capture_rejects_live_input_and_unknown_records() {
+        for kind in [
+            "mouse_motion",
+            "mouse_button_down",
+            "mouse_button_up",
+            "key_down",
+            "key_up",
+            "gamepad_button_down",
+            "gamepad_button_up",
+            "unknown",
+        ] {
+            assert!(
+                validate_script_inputs(&[serde_json::json!({
+                    "kind": kind, "playback_ms": 29_350
+                })])
+                .is_err()
+            );
+        }
+        assert!(validate_script_inputs(&[serde_json::json!({})]).is_err());
+        for kind in [
+            "marker",
+            "session_command",
+            "ui_action",
+            "scenario_setting",
+            "microphone_acquisition",
+            "window_focus",
+        ] {
+            validate_script_inputs(&[serde_json::json!({"kind": kind})]).unwrap();
+        }
+    }
+
+    #[test]
+    fn native_visibility_rejects_even_a_single_blank_frame() {
+        validate_visible_video_report("frame=18022 time=00:05:00.36").unwrap();
+        for report in [
+            "[blackdetect @ 0x1] black_start:144.1 black_end:300.3 black_duration:156.2",
+            "[blackdetect @ 0x1] black_start:0 black_end:0.016667 black_duration:0.016667",
+            "[blackdetect @ 0x1] black_start:300.3",
+        ] {
+            assert!(validate_visible_video_report(report).is_err());
+        }
+    }
 
     #[test]
     fn baseline_outcome_validation_rejects_the_old_deferred_refusal_race() {

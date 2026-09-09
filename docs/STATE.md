@@ -4,26 +4,21 @@ Last updated: **2026-09-08**.
 
 ## Now
 
-- All seven holistic feel findings are implemented: quieter composition and care discovery,
-  microphone guidance, staggered recognizable toys, shelter clearance, semantic sound priority,
-  faithful audio evidence and deferred words that respect current care. See
-  [implementation review](feel-review-creature-presence-20260908.md) and
-  [final contract](creature-presence-and-care.md).
-- Iteration also corrected exact toy picking, autonomous dismissal of the care invitation, a
-  permanent microphone notice and incomplete sub-frame audio evidence. Regression tests cover
-  current ownership, moving/carried save continuity, geometry and audio cancellation.
-- Native validation covers the seven baseline experiences, six saved-history cases, a second
-  quiet seed, a subtitles-off relationship sequence and real Normal/Large pointer, keyboard and
-  microphone acquisition/release. Independent visual, causal, audio and code findings are resolved.
-  Exact outcomes, evidence provenance and rejected attempts live in the implementation review.
-- The aquarium retains its tabletop interface and ordinary-GPU geometric renderer, including
-  lettering. Simulation truth, direct care, old save coordinates, offline play and optional
-  inference/TTS remain intact. See [architecture.md](architecture.md).
-- The final gate passes 516 tests, 27 dialogue fixtures, 11 STT fixtures and spoken-input replay.
-  Visible changes also passed native debug validation with fake AI.
-- Validation uses macOS Metal debug rendering. Human full-speed perception, physical listening,
-  spoken recognition quality, controller comfort and Windows/Linux/lower-end GPU behavior remain
-  unclaimed. No release binary, installer or model bundle was rebuilt.
+- Detail polish is implemented: separated binding rows, focus restored after rebinding, continuous
+  water color and calmer toy shadows. The existing creature, care loop and composition remain.
+  See [detail review](feel-review-details-20260908.md) and [contract](detail-polish.md).
+- More expensive coverage experiments were rejected after native measurement. The selected local
+  shadow refinement preserves the original world/UI coverage counts; benchmark evidence and
+  sampling limits are recorded in the review.
+- Controlled feel recordings now isolate scripted input and reject black video frames. Rejected
+  attempts and the repaired evidence procedure are documented in [feel-review-loop.md](feel-review-loop.md).
+- The prior creature-presence and care work remains complete. Its broader relationship, sound,
+  microphone and saved-history evidence lives in the
+  [presence review](feel-review-creature-presence-20260908.md).
+- The gate passes 524 tests, 27 dialogue fixtures, 11 STT fixtures and spoken-input replay. Native
+  comparisons use macOS Metal debug rendering. Human full-speed perception, physical listening,
+  controller comfort and Windows/Linux/lower-end GPU behavior remain unclaimed. No release
+  binary, installer or model bundle was rebuilt.
 
 ## Next
 
@@ -47,8 +42,8 @@ cost as the largest unknowns. It does not require release packaging.
 
 ## Learned Recently
 
-- Final findings, repeated native comparisons, audio reconstruction limits and rejected input
-  diagnostics: [implementation review](feel-review-creature-presence-20260908.md).
+- Detail findings, measured rendering tradeoffs and capture integrity: [detail review](feel-review-details-20260908.md).
+- Broader native comparisons and audio limits: [presence review](feel-review-creature-presence-20260908.md).
 - Original observations and implemented design: [holistic review](feel-review-holistic-20260908.md),
   [creature presence and care](creature-presence-and-care.md).
 - Native capture and role-aware sound evidence: [feel-review-loop.md](feel-review-loop.md),
