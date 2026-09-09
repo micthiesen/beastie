@@ -30,6 +30,8 @@ switches and compact inset values. All existing options remain available. Title 
 an extruded voxel Mop logo and real Continue, Settings and Quit actions. Its taller
 framing and portrait placement affect presentation only; Continue restores gameplay
 projection and object picking. Settings closes back to its originating title screen.
+The subtitle is centered beneath the logo using measured glyph advances at Normal
+and Large text sizes, retaining its existing color and vertical placement.
 
 Refinement adds curved narrow fronds, eroded rock courses, a rounded terracotta
 arch, brighter bubble glints and thinner plate rims. Title toys meet the sand using

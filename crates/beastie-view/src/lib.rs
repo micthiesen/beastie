@@ -1963,14 +1963,14 @@ fn add_title(
     let mut subtitle = label(
         "title/subtitle",
         "A little friend, a big world.",
-        123,
+        119,
         64,
         29,
     );
-    subtitle.role = TextRole::Secondary;
+    subtitle.role = TextRole::Subtitle;
     subtitle.bounds = Some(Rect {
-        x: 123,
-        y: 63,
+        x: 119,
+        y: 61,
         w: 82,
         h: 10,
     });

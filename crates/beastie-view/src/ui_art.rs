@@ -16,6 +16,7 @@ pub enum TextRole {
     Identity,
     Body,
     Secondary,
+    Subtitle,
     Control,
     ControlCaption,
     Dialogue,
@@ -27,7 +28,7 @@ impl TextRole {
             Self::Title => 8.0,
             Self::Identity => 6.5,
             Self::Body | Self::Dialogue => 6.0,
-            Self::Secondary => 4.8,
+            Self::Secondary | Self::Subtitle => 4.8,
             Self::Control => 5.2,
             Self::ControlCaption => 4.5,
         };
@@ -35,12 +36,12 @@ impl TextRole {
     }
     pub fn color(self) -> [u8; 3] {
         match self {
-            Self::Secondary | Self::ControlCaption => [168, 191, 188],
+            Self::Secondary | Self::Subtitle | Self::ControlCaption => [168, 191, 188],
             _ => [236, 233, 211],
         }
     }
     pub fn centered(self) -> bool {
-        matches!(self, Self::Control | Self::ControlCaption)
+        matches!(self, Self::Subtitle | Self::Control | Self::ControlCaption)
     }
 }
 
