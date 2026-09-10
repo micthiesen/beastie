@@ -16,7 +16,10 @@ mod input;
 mod microphone;
 mod motion_trace;
 mod process;
+#[cfg(test)]
+mod ray_benchmark;
 mod ray_scene;
+mod ray_shadow_maps;
 mod ray_stats;
 #[cfg(test)]
 mod ray_validation;
@@ -57,6 +60,7 @@ fn main() -> bevy::app::AppExit {
             treatment: args.surface_treatment.unwrap_or_default(),
             study: args.lighting_study.unwrap_or_default(),
         })
+        .insert_resource(args.render_probe.unwrap_or_default())
         .insert_resource(frame)
         .insert_non_send(game)
         .add_plugins(

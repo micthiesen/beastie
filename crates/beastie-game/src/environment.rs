@@ -112,6 +112,7 @@ pub(crate) fn setup(
 ) {
     commands.insert_resource(ClearColor(Color::srgb_u8(7, 18, 25)));
     commands.spawn((
+        crate::ray_scene::RayStatic,
         Mesh3d(meshes.add(appearance.mesh(backdrop_mesh()))),
         MeshMaterial3d(background.clone()),
         Transform::default(),
@@ -158,6 +159,7 @@ pub(crate) fn setup(
     // The substrate and rear ridge are one filled lattice. Shared faces disappear,
     // leaving terraces in the silhouette instead of dark channels around each grain.
     commands.spawn((
+        crate::ray_scene::RayStatic,
         Mesh3d(
             meshes.add(appearance.mesh(substrate_model().mesh_with_flat_normals(
                 0.10,
@@ -174,6 +176,7 @@ pub(crate) fn setup(
     ));
     let garden = garden_mesh(appearance);
     commands.spawn((
+        crate::ray_scene::RayStatic,
         Mesh3d(meshes.add(appearance.mesh(garden))),
         MeshMaterial3d(solid.clone()),
         Transform::default(),
@@ -206,11 +209,13 @@ pub(crate) fn setup(
         );
     }
     commands.spawn((
+        crate::ray_scene::RayStatic,
         Mesh3d(meshes.add(lamps.mesh())),
         MeshMaterial3d(background.clone()),
         Transform::default(),
     ));
     commands.spawn((
+        crate::ray_scene::RayStatic,
         Mesh3d(meshes.add(appearance.mesh(tank.mesh()))),
         MeshMaterial3d(frame_material),
         Transform::default(),

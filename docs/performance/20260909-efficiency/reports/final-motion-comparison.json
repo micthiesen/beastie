@@ -1,0 +1,85 @@
+{
+  "state.jsonl": {
+    "before_rows": 504,
+    "after_rows": 504,
+    "equal": true
+  },
+  "audio.jsonl": {
+    "before_rows": 504,
+    "after_rows": 504,
+    "equal": true
+  },
+  "events.jsonl": {
+    "before_rows": 480,
+    "after_rows": 480,
+    "equal": true
+  },
+  "inputs.jsonl": {
+    "before_rows": 14,
+    "after_rows": 14,
+    "equal": true
+  },
+  "markers.jsonl": {
+    "before_rows": 7,
+    "after_rows": 7,
+    "equal": true
+  },
+  "captures": [
+    {
+      "name": "gameplay-return.png",
+      "identical_pixels": 920712,
+      "pixels": 921600,
+      "mae_255": 0.00701244212962963,
+      "max_255": 97
+    },
+    {
+      "name": "reduced-motion.png",
+      "identical_pixels": 920951,
+      "pixels": 921600,
+      "mae_255": 0.005944010416666666,
+      "max_255": 99
+    },
+    {
+      "name": "selection-moving.png",
+      "identical_pixels": 920697,
+      "pixels": 921600,
+      "mae_255": 0.00747974537037037,
+      "max_255": 137
+    },
+    {
+      "name": "settings-moving.png",
+      "identical_pixels": 920983,
+      "pixels": 921600,
+      "mae_255": 0.005838396990740741,
+      "max_255": 76
+    },
+    {
+      "name": "title-alive.png",
+      "identical_pixels": 919646,
+      "pixels": 921600,
+      "mae_255": 0.015628255208333334,
+      "max_255": 110
+    },
+    {
+      "name": "water-moving.png",
+      "identical_pixels": 920674,
+      "pixels": 921600,
+      "mae_255": 0.009527271412037039,
+      "max_255": 121
+    },
+    {
+      "name": "water-start.png",
+      "identical_pixels": 920638,
+      "pixels": 921600,
+      "mae_255": 0.00938404224537037,
+      "max_255": 78
+    }
+  ],
+  "decoded_video_ssim": {
+    "frames": 504,
+    "mean": 0.9949940734126984,
+    "minimum": 0.987099,
+    "worst_frame_index": 503,
+    "note": "Independent H.264 compression contributes to differences."
+  }
+}

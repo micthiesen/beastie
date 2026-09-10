@@ -1,0 +1,6 @@
+{
+  "maximum_resident_set_bytes": 496664576,
+  "source": "macOS time -l; process resident set, not total GPU driver allocation",
+  "peak_process_memory_footprint_bytes": 956777792,
+  "footprint_note": "macOS time -l process footprint; not a portable total GPU driver allocation counter"
+}

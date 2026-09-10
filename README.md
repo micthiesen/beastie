@@ -31,6 +31,10 @@ cargo xtask dev --fake-ai \
 
 `cargo xtask verify` needs no model, display, GPU, audio device, network connection, or asset
 generation credential. The visible command uses fixture AI and exercises the real game shell.
+`cargo xtask dev` defaults to the optimized `dev-perf` profile, retaining debug assertions and
+overflow checks. Use `--profile dev` for unoptimized debugging. Renderer measurements, visual
+comparisons and ordinary-GPU fallback behavior are documented in the
+[renderer efficiency review](docs/renderer-efficiency.md).
 
 V1 includes continuous deterministic aquarium movement, physical food, expressive animation and
 gaze, a persistent compose interface, controller-equivalent semantic navigation, versioned save

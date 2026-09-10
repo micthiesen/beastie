@@ -1,0 +1,101 @@
+{
+  "decision": "reject_no_repeatable_material_gain",
+  "runs": [
+    {
+      "water_seconds": 0,
+      "changed_pixels": 292676,
+      "exact_fraction": 0.8588560956790123,
+      "mae255": 2.445787680041152,
+      "max_channel_difference": 234,
+      "bed_mae255": 5.963462489185514,
+      "different_pixels_over8": 122232,
+      "original": {
+        "envelope_per_frame_ms": 2.610581747619048,
+        "completion_cadence": {
+          "p50_ms": 2.4275,
+          "p95_ms": 2.992625,
+          "p99_ms": 3.500166,
+          "samples": 179
+        }
+      },
+      "avalanche": {
+        "envelope_per_frame_ms": 2.618670238095238,
+        "completion_cadence": {
+          "p50_ms": 2.424542,
+          "p95_ms": 3.014417,
+          "p99_ms": 3.278375,
+          "samples": 179
+        }
+      }
+    },
+    {
+      "water_seconds": 12,
+      "changed_pixels": 290798,
+      "exact_fraction": 0.8597617669753086,
+      "mae255": 2.463598090277778,
+      "max_channel_difference": 234,
+      "bed_mae255": 6.1679350512915585,
+      "different_pixels_over8": 123420,
+      "original": {
+        "envelope_per_frame_ms": 2.562802780952381,
+        "completion_cadence": {
+          "p50_ms": 2.416583,
+          "p95_ms": 3.076,
+          "p99_ms": 3.247209,
+          "samples": 179
+        }
+      },
+      "avalanche": {
+        "envelope_per_frame_ms": 2.535558728571429,
+        "completion_cadence": {
+          "p50_ms": 2.403834,
+          "p95_ms": 2.980333,
+          "p99_ms": 3.222042,
+          "samples": 179
+        }
+      }
+    },
+    {
+      "water_seconds": 47,
+      "changed_pixels": 292742,
+      "exact_fraction": 0.8588242669753087,
+      "mae255": 2.5214384002057613,
+      "max_channel_difference": 235,
+      "bed_mae255": 6.743980966505994,
+      "different_pixels_over8": 124278,
+      "original": {
+        "envelope_per_frame_ms": 2.564335319047619,
+        "completion_cadence": {
+          "p50_ms": 2.413542,
+          "p95_ms": 3.000834,
+          "p99_ms": 3.1715,
+          "samples": 179
+        }
+      },
+      "avalanche": {
+        "envelope_per_frame_ms": 2.609328571428571,
+        "completion_cadence": {
+          "p50_ms": 2.41625,
+          "p95_ms": 3.145459,
+          "p99_ms": 3.307916,
+          "samples": 179
+        }
+      }
+    }
+  ],
+  "shader_validation": {
+    "passed": 7,
+    "ignored_native_traversal": 1
+  },
+  "control_after_envelope_ms": 2.540446623809524,
+  "visual_adjudication": "Three frozen times (0,12,47s) retain irregular caustic loops, broken highlights, broad shafts and original colors; random placements visibly change. Still inspection does not establish absence of motion shimmer. Rejected because no repeatable material throughput gain, so native/motion acceptance was not pursued.",
+  "cache_comparison_different_pixels": {
+    "noise-original-t47": 0,
+    "noise-avalanche-t12": 0,
+    "noise-avalanche": 0,
+    "noise-control-after": 0,
+    "noise-original-t12": 0,
+    "noise-avalanche-t47": 0,
+    "noise-control-before": 0
+  }
+}

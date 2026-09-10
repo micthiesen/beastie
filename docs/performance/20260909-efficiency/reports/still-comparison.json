@@ -1,0 +1,874 @@
+{
+  "frames": [
+    {
+      "group": "gold",
+      "name": "continued.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.999660976080247,
+      "mae_255": 0.014539126800411523,
+      "max_channel_difference": 147,
+      "changed_pixels": 703,
+      "pixels_over_8": 487,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "gold",
+      "name": "gameplay.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.999660976080247,
+      "mae_255": 0.014539126800411523,
+      "max_channel_difference": 147,
+      "changed_pixels": 703,
+      "pixels_over_8": 487,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "gold",
+      "name": "selected-toy.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9996310763888889,
+      "mae_255": 0.016941872427983538,
+      "max_channel_difference": 153,
+      "changed_pixels": 765,
+      "pixels_over_8": 548,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "gold",
+      "name": "settings-large.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997159529320988,
+      "mae_255": 0.01384371784979424,
+      "max_channel_difference": 147,
+      "changed_pixels": 589,
+      "pixels_over_8": 405,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "gold",
+      "name": "settings-sound.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997178819444444,
+      "mae_255": 0.013605645576131685,
+      "max_channel_difference": 147,
+      "changed_pixels": 585,
+      "pixels_over_8": 401,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "gold",
+      "name": "settings.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997164351851852,
+      "mae_255": 0.013754983281893002,
+      "max_channel_difference": 147,
+      "changed_pixels": 588,
+      "pixels_over_8": 403,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "gold",
+      "name": "title-return.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9995867091049383,
+      "mae_255": 0.00850806970164609,
+      "max_channel_difference": 122,
+      "changed_pixels": 857,
+      "pixels_over_8": 633,
+      "difference_bbox_rgb": [
+        50,
+        213,
+        1893,
+        1065
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.999994212962963,
+        "mae_255": 0.0001263503086419753,
+        "pixels_over_8": 2
+      }
+    },
+    {
+      "group": "gold",
+      "name": "title-screen.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9995867091049383,
+      "mae_255": 0.00850806970164609,
+      "max_channel_difference": 122,
+      "changed_pixels": 857,
+      "pixels_over_8": 633,
+      "difference_bbox_rgb": [
+        50,
+        213,
+        1893,
+        1065
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.999994212962963,
+        "mae_255": 0.0001263503086419753,
+        "pixels_over_8": 2
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-bindings.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997545331790123,
+      "mae_255": 0.01390625,
+      "max_channel_difference": 147,
+      "changed_pixels": 509,
+      "pixels_over_8": 405,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-comfort.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997019675925926,
+      "mae_255": 0.014443158436213991,
+      "max_channel_difference": 147,
+      "changed_pixels": 618,
+      "pixels_over_8": 433,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-context.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997868441358024,
+      "mae_255": 0.013237525720164608,
+      "max_channel_difference": 147,
+      "changed_pixels": 442,
+      "pixels_over_8": 363,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-controls.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997159529320988,
+      "mae_255": 0.013820248199588478,
+      "max_channel_difference": 147,
+      "changed_pixels": 589,
+      "pixels_over_8": 403,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-data.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997164351851852,
+      "mae_255": 0.014310217335390946,
+      "max_channel_difference": 147,
+      "changed_pixels": 588,
+      "pixels_over_8": 450,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-drop.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.999660011574074,
+      "mae_255": 0.014141589506172841,
+      "max_channel_difference": 147,
+      "changed_pixels": 705,
+      "pixels_over_8": 488,
+      "difference_bbox_rgb": [
+        47,
+        24,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-food.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9996821952160494,
+      "mae_255": 0.017566068672839507,
+      "max_channel_difference": 157,
+      "changed_pixels": 659,
+      "pixels_over_8": 516,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-keyboard.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9998485725308642,
+      "mae_255": 0.0023358731995884773,
+      "max_channel_difference": 111,
+      "changed_pixels": 314,
+      "pixels_over_8": 222,
+      "difference_bbox_rgb": [
+        74,
+        111,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998755787037037,
+        "mae_255": 0.0009944058641975309,
+        "pixels_over_8": 8
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-quiet.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.999660011574074,
+      "mae_255": 0.014562596450617284,
+      "max_channel_difference": 147,
+      "changed_pixels": 705,
+      "pixels_over_8": 489,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-rename.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9996566358024691,
+      "mae_255": 0.014791184413580247,
+      "max_channel_difference": 147,
+      "changed_pixels": 712,
+      "pixels_over_8": 496,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998813657407407,
+        "mae_255": 0.0007706404320987655,
+        "pixels_over_8": 6
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-reset.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9996759259259259,
+      "mae_255": 0.014411329732510289,
+      "max_channel_difference": 147,
+      "changed_pixels": 672,
+      "pixels_over_8": 477,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-sound.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997159529320988,
+      "mae_255": 0.01384371784979424,
+      "max_channel_difference": 147,
+      "changed_pixels": 589,
+      "pixels_over_8": 405,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-speech.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9996556712962963,
+      "mae_255": 0.015388535236625514,
+      "max_channel_difference": 147,
+      "changed_pixels": 714,
+      "pixels_over_8": 531,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "ui",
+      "name": "large-toys.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997067901234568,
+      "mae_255": 0.014348797582304527,
+      "max_channel_difference": 147,
+      "changed_pixels": 608,
+      "pixels_over_8": 465,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1037
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998842592592593,
+        "mae_255": 0.0004851466049382716,
+        "pixels_over_8": 5
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-bindings.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.999756462191358,
+      "mae_255": 0.013666409465020577,
+      "max_channel_difference": 147,
+      "changed_pixels": 505,
+      "pixels_over_8": 401,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-comfort.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997164351851852,
+      "mae_255": 0.013754983281893002,
+      "max_channel_difference": 147,
+      "changed_pixels": 588,
+      "pixels_over_8": 403,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-context.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997878086419754,
+      "mae_255": 0.01326983667695473,
+      "max_channel_difference": 147,
+      "changed_pixels": 440,
+      "pixels_over_8": 361,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-controls.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.999720775462963,
+      "mae_255": 0.013548900462962962,
+      "max_channel_difference": 147,
+      "changed_pixels": 579,
+      "pixels_over_8": 393,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-data.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997154706790123,
+      "mae_255": 0.014216017232510288,
+      "max_channel_difference": 147,
+      "changed_pixels": 590,
+      "pixels_over_8": 452,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-drop.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9996653163580247,
+      "mae_255": 0.01388503086419753,
+      "max_channel_difference": 147,
+      "changed_pixels": 694,
+      "pixels_over_8": 477,
+      "difference_bbox_rgb": [
+        47,
+        24,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-food.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997111304012346,
+      "mae_255": 0.0141772762345679,
+      "max_channel_difference": 147,
+      "changed_pixels": 599,
+      "pixels_over_8": 456,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-keyboard.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9998505015432099,
+      "mae_255": 0.0022368505658436214,
+      "max_channel_difference": 97,
+      "changed_pixels": 310,
+      "pixels_over_8": 218,
+      "difference_bbox_rgb": [
+        76,
+        133,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-quiet.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.999660976080247,
+      "mae_255": 0.014539126800411523,
+      "max_channel_difference": 147,
+      "changed_pixels": 703,
+      "pixels_over_8": 487,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-rename.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9996604938271605,
+      "mae_255": 0.014551986882716049,
+      "max_channel_difference": 147,
+      "changed_pixels": 704,
+      "pixels_over_8": 488,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-reset.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9996778549382717,
+      "mae_255": 0.014383359053497942,
+      "max_channel_difference": 147,
+      "changed_pixels": 668,
+      "pixels_over_8": 473,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-sound.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997178819444444,
+      "mae_255": 0.013605645576131685,
+      "max_channel_difference": 147,
+      "changed_pixels": 585,
+      "pixels_over_8": 401,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-speech.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9996720679012345,
+      "mae_255": 0.014578189300411522,
+      "max_channel_difference": 147,
+      "changed_pixels": 680,
+      "pixels_over_8": 497,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    },
+    {
+      "group": "ui",
+      "name": "normal-toys.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "exact_fraction": 0.9997101658950617,
+      "mae_255": 0.014257973251028807,
+      "max_channel_difference": 147,
+      "changed_pixels": 601,
+      "pixels_over_8": 458,
+      "difference_bbox_rgb": [
+        47,
+        27,
+        1893,
+        1031
+      ],
+      "bottom_rail": {
+        "exact_fraction": 0.9998900462962963,
+        "mae_255": 0.0003443287037037037,
+        "pixels_over_8": 3
+      }
+    }
+  ],
+  "aggregate": {
+    "frames": 36,
+    "exact_fraction": 0.999701043274177,
+    "mae_255": 0.013333869170096022,
+    "pixels_over_8": 16105
+  }
+}

@@ -1,0 +1,219 @@
+[
+  {
+    "variant": "control-world",
+    "wall_p50_ms": 8.326208,
+    "wall_p95_ms": 8.662875,
+    "wall_p99_ms": 8.830667,
+    "framebuffer_bytes": 151372800,
+    "geometry_bytes": 75882496,
+    "gpu_passes": {
+      "compute": {
+        "available": true,
+        "samples_seen": 2015,
+        "warmup_samples": 30,
+        "measured_samples": 1985,
+        "p50_ms": 2.507958,
+        "p95_ms": 4.877083,
+        "p99_ms": 5.381416,
+        "max_ms": 6.13575
+      },
+      "raster_visibility": {
+        "available": true,
+        "samples_seen": 2015,
+        "warmup_samples": 30,
+        "measured_samples": 1985,
+        "p50_ms": 0.225958,
+        "p95_ms": 0.940292,
+        "p99_ms": 1.155125,
+        "max_ms": 1.774208
+      }
+    },
+    "projection_cpu": null,
+    "renderer_ready_ms": 510.488917
+  },
+  {
+    "variant": "1024-world",
+    "wall_p50_ms": 8.331292000000001,
+    "wall_p95_ms": 8.573875,
+    "wall_p99_ms": 8.687875,
+    "framebuffer_bytes": 201706192,
+    "geometry_bytes": 75882496,
+    "gpu_passes": {
+      "compute": {
+        "available": true,
+        "samples_seen": 1647,
+        "warmup_samples": 30,
+        "measured_samples": 1617,
+        "p50_ms": 1.629292,
+        "p95_ms": 1.993417,
+        "p99_ms": 2.174708,
+        "max_ms": 3.644458
+      },
+      "dynamic_shadow_maps": {
+        "available": true,
+        "samples_seen": 1098,
+        "warmup_samples": 30,
+        "measured_samples": 1068,
+        "p50_ms": 0.804166,
+        "p95_ms": 1.661208,
+        "p99_ms": 3.266666,
+        "max_ms": 3.892209
+      },
+      "raster_visibility": {
+        "available": true,
+        "samples_seen": 1647,
+        "warmup_samples": 30,
+        "measured_samples": 1617,
+        "p50_ms": 0.19575,
+        "p95_ms": 0.234125,
+        "p99_ms": 0.538042,
+        "max_ms": 1.191458
+      }
+    },
+    "projection_cpu": {
+      "available": true,
+      "samples_seen": 2201,
+      "warmup_samples": 30,
+      "measured_samples": 2171,
+      "p50_ms": 0.044583000000000005,
+      "p95_ms": 0.05425,
+      "p99_ms": 0.058415999999999996,
+      "max_ms": 0.06224999999999999
+    },
+    "renderer_ready_ms": 1110.404292
+  },
+  {
+    "variant": "2048-world",
+    "wall_p50_ms": 8.322125,
+    "wall_p95_ms": 8.573708,
+    "wall_p99_ms": 8.664125,
+    "framebuffer_bytes": 352701136,
+    "geometry_bytes": 75882496,
+    "gpu_passes": {
+      "compute": {
+        "available": true,
+        "samples_seen": 1664,
+        "warmup_samples": 30,
+        "measured_samples": 1634,
+        "p50_ms": 1.661292,
+        "p95_ms": 2.062625,
+        "p99_ms": 2.415959,
+        "max_ms": 3.292125
+      },
+      "dynamic_shadow_maps": {
+        "available": true,
+        "samples_seen": 1113,
+        "warmup_samples": 30,
+        "measured_samples": 1083,
+        "p50_ms": 0.919625,
+        "p95_ms": 1.797375,
+        "p99_ms": 3.634,
+        "max_ms": 4.017792
+      },
+      "raster_visibility": {
+        "available": true,
+        "samples_seen": 1664,
+        "warmup_samples": 30,
+        "measured_samples": 1634,
+        "p50_ms": 0.201375,
+        "p95_ms": 0.271709,
+        "p99_ms": 0.558083,
+        "max_ms": 1.152583
+      }
+    },
+    "projection_cpu": {
+      "available": true,
+      "samples_seen": 2231,
+      "warmup_samples": 30,
+      "measured_samples": 2201,
+      "p50_ms": 0.044792,
+      "p95_ms": 0.054333000000000006,
+      "p99_ms": 0.059917000000000005,
+      "max_ms": 0.105333
+    },
+    "renderer_ready_ms": 1309.129959
+  },
+  {
+    "variant": "control-ui",
+    "wall_p50_ms": 8.330084,
+    "wall_p95_ms": 8.630749999999999,
+    "wall_p99_ms": 8.770958,
+    "framebuffer_bytes": 151372800,
+    "geometry_bytes": 75882496,
+    "gpu_passes": {
+      "compute": {
+        "available": true,
+        "samples_seen": 2533,
+        "warmup_samples": 30,
+        "measured_samples": 2503,
+        "p50_ms": 2.307416,
+        "p95_ms": 4.941125,
+        "p99_ms": 5.39775,
+        "max_ms": 6.204
+      },
+      "raster_visibility": {
+        "available": true,
+        "samples_seen": 2533,
+        "warmup_samples": 30,
+        "measured_samples": 2503,
+        "p50_ms": 0.22,
+        "p95_ms": 1.080167,
+        "p99_ms": 1.382709,
+        "max_ms": 2.290875
+      }
+    },
+    "projection_cpu": null,
+    "renderer_ready_ms": 496.381375
+  },
+  {
+    "variant": "1024-ui-repeat",
+    "wall_p50_ms": 8.325249999999999,
+    "wall_p95_ms": 8.586292,
+    "wall_p99_ms": 8.696459,
+    "framebuffer_bytes": 201706192,
+    "geometry_bytes": 75882496,
+    "gpu_passes": {
+      "compute": {
+        "available": true,
+        "samples_seen": 2001,
+        "warmup_samples": 30,
+        "measured_samples": 1971,
+        "p50_ms": 1.534709,
+        "p95_ms": 2.378125,
+        "p99_ms": 2.53725,
+        "max_ms": 3.534834
+      },
+      "dynamic_shadow_maps": {
+        "available": true,
+        "samples_seen": 1334,
+        "warmup_samples": 30,
+        "measured_samples": 1304,
+        "p50_ms": 0.795208,
+        "p95_ms": 1.699709,
+        "p99_ms": 3.78725,
+        "max_ms": 3.895291
+      },
+      "raster_visibility": {
+        "available": true,
+        "samples_seen": 2001,
+        "warmup_samples": 30,
+        "measured_samples": 1971,
+        "p50_ms": 0.197375,
+        "p95_ms": 0.292666,
+        "p99_ms": 0.57825,
+        "max_ms": 1.355334
+      }
+    },
+    "projection_cpu": {
+      "available": true,
+      "samples_seen": 2673,
+      "warmup_samples": 30,
+      "measured_samples": 2643,
+      "p50_ms": 0.047125,
+      "p95_ms": 0.055125,
+      "p99_ms": 0.059209000000000005,
+      "max_ms": 0.06916699999999999
+    },
+    "renderer_ready_ms": 507.75516700000003
+  }
+]

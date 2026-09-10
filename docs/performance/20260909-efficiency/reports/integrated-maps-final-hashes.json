@@ -1,0 +1,21 @@
+{
+  "source_directory": "/Users/michael/Code/beastie",
+  "source_manifest_sha256": "5617f1d23d2c735567308080eb316420ef6c4b89898e2fb23d31856fa57e73fa",
+  "sources": {
+    "Cargo.toml": "9ce5751c5cad2b87a13cc0c08d59f5043a566445ec5cbec837123604379a41f6",
+    "Cargo.lock": "9478b472a724de29e943148070c4f35e38c44ea5019946da9541e9748f64bcfa",
+    "crates/beastie-game/src/main.rs": "22617a55a4b99110ffa058458a7f1ff6eafe19906f2c156d05c485545613c971",
+    "crates/beastie-game/src/raytrace.rs": "d5fd09ebb2513ae9b973ccabbbb073641c835859e386416483e9d4fb882ce8c7",
+    "crates/beastie-game/src/raytrace.wgsl": "d0ead4547c89507291383550144631e62d9a8185e8667b7fdee16d5edac086be",
+    "crates/beastie-game/src/ray_visibility.wgsl": "ef7bc913640b926753fef511843e8cb957dbdf32673d2db9654007f59292a63c",
+    "crates/beastie-game/src/ray_shadow_maps.rs": "33d158fd82a93dd0e74c9ca4545fdf518479106631d48b029a446b5f35a0d513",
+    "crates/beastie-game/src/ray_benchmark.rs": "1a9d2d65b032c6d9086e7d3219fe0642112f3b3ce22d23ddd23e18b0f4b4a480",
+    "crates/beastie-game/src/ray_shadow_oracle.rs": "4b4449496274a8aa2ff768f77c78119e56fc3c223861e9aa938e43ff136c3363",
+    "crates/beastie-game/src/ray_validation.rs": "57fb02f8082821409bb9bb2651fddc5354ee7a78318517807ec3b9446e171418",
+    "crates/beastie-game/src/ray_stats.rs": "a0f550b20f7c73dd2dc929502b161e21c1e359cb3231b43af04e4c0eb10c2cea"
+  },
+  "binaries": {
+    "beastie-final-perf": "fdefbb2e606ffb24ec0f04c10eead02c06e794ddec7a04a6ed15b3d0ee21ec79",
+    "beastie-final-tests": "ca60dfb71d5391815be1d6708611aba40ab01baef4fa8534cb5a64d7705cc780"
+  }
+}

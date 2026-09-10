@@ -1,0 +1,19 @@
+# Native still comparison, 2026-09-09
+
+Compared all 36 matched 1920x1080 RGB image pairs: 8 gold states and 28 UI states. summary.json retains per-image exact pixel fraction, MAE on 0..255 channels, maximum channel delta, changed pixels, pixels with any channel delta >8, RGB difference bounding box and bottom rail metrics. All statistics use RGB, not RGBA. Before/current/differencex16 composites exist for every pair; clusters.json/crops inspect connected >8delta regions.
+
+Inspected full current settings and Large keyboard, full-scale creature/ball/bell/contact-shadow crops, title lettering and right-rock clusters, Normal/Large settings, food, rename and speech comparison regions. Layout, clipping, glyph legibility, major silhouettes, creature expression, soft ground shadows, water appearance and settings translucency show no broad material regression in these stills.
+
+Localized coverage changes require explicit acceptance: gameplay and many UI states fill baseline sand-colored slits at far-right rock x1880..1892,y726..738 (118connected changed pixels >8). Title rock changes include 222 pixels x1669..1721,y862..873 and 141 pixels x1880..1892,y817..831. The current rock occludes more bright substrate than baseline there. Four 53 px top lamp-edge rows differ by one pixel; title letter horizontal edges also have one pixel coverage differences. These are high-contrast localized changes, not merely 1 LSB noise. Full-resolution crops are clusters-gold-gameplay.png and clusters-gold-title-screen.png.
+
+Settings panel, keyboard, food and speech crops show isolated glyph-boundary pixels/columns rather than shifted text or lost letters. Normal speech selected region is exact. Normal/Large keyboard selected region differs at 18/17 pixels. Normal/Large settings selected region differs at 20/48 pixels; its broad faint aquarium transmission remains visually consistent. Large food differs at 68 selected region pixels, including a narrow vertical glyph boundary.
+
+No motion evidence was reviewed here. Still comparisons cannot establish absence of shimmer, temporal popping or stale lighting. Root owns motion/capture runs. No live source changes, native game launches or builds made for this analysis.
+
+## Root adjudication
+
+Root inspected full native gameplay, the worst motion comparison pair, enlarged gameplay/title clusters and a motion overview. The localized primary coverage differences are accepted: rasterization fills thin bright gaps at rock boundaries and changes lamp/title edges by one coverage row. Authored voxel positions and UI layout remain unchanged, with no broad degradation observed at native size. These gaps are not a blocker.
+
+The motion comparison matched all 504 state/audio records, 480 events, 14 inputs and 7 markers. Seven raw checkpoints had MAE 0.0021–0.0053/255. Encoded H.264 comparison had mean SSIM 0.995025 and minimum 0.987164 on the last frame. These are root-reported measurements. Compression affects video differences; raw checkpoints are the cleaner pixel evidence. Inspection sampled frames, including the worst pair, rather than establishing human full-speed interaction latency.
+
+Root subsequently inspected all seven marker filmstrips: water-start, water-moving, selection-moving, settings-moving, reduced-motion, title-alive and gameplay-return. The strips show continuing creature/toy motion, stable settings text and silhouettes, immediate authored panel/title transitions, and no broad stale-shadow trails or lighting discontinuity in the sampled frames. The final gameplay-return strip has empty trailing tiles because the recording ends. Each strip samples at 10 Hz into 320×180 thumbnails; this review supplements full-resolution checkpoints and exact semantic traces and is not a claim to have perceived every 60 Hz frame or measured human input latency.

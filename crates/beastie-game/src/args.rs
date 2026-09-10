@@ -2,6 +2,40 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+/// Startup-only diagnostic shader ablations. Timings are non-additive because
+/// each variant changes compiler optimization and GPU occupancy as well as work.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    clap::ValueEnum,
+    bevy::prelude::Resource,
+    serde::Serialize,
+)]
+#[serde(rename_all = "kebab-case")]
+#[repr(u32)]
+pub(crate) enum RenderProbe {
+    /// Original production rendering.
+    #[default]
+    #[value(alias = "original")]
+    Full = 0,
+    /// Primary intersections and albedo, retaining ordinary two/four coverage samples.
+    PrimaryOnly = 1,
+    /// Skip all shadow rays and use full visibility.
+    NoShadows = 2,
+    /// Skip diffuse bounce rays, color bleeding and their shared contact darkening.
+    NoBounce = 3,
+    /// Skip reflection rays; retain analytic specular and environment reflection.
+    NoReflections = 4,
+    /// Skip water transport, caustics and transparent settings continuation.
+    NoOptics = 5,
+    /// Use only the first ordinary coverage sample, retaining its lighting.
+    SinglePrimarySample = 6,
+}
+
 #[derive(Debug, Parser)]
 #[command(about = "Beastie native game shell")]
 pub struct Args {
@@ -62,6 +96,9 @@ pub struct Args {
     /// Request unpaced presentation for a scripted renderer benchmark.
     #[arg(long, requires = "render_report")]
     pub render_uncapped: bool,
+    /// Diagnostic shader ablation; changes pictures, with non-additive timings.
+    #[arg(long, value_enum, requires_all = ["script", "render_report"])]
+    pub render_probe: Option<RenderProbe>,
     /// Directory for a 60 fps feel-review evidence bundle.
     #[arg(long, requires = "script")]
     pub feel_dir: Option<PathBuf>,
@@ -113,6 +150,58 @@ mod tests {
     use clap::Parser;
 
     use super::Args;
+
+    #[test]
+    fn probes_require_script_and_report_and_default_to_full() {
+        use clap::ValueEnum;
+        assert_eq!(Args::try_parse_from(["game"]).unwrap().render_probe, None);
+        for &probe in super::RenderProbe::value_variants() {
+            let value = probe.to_possible_value().unwrap();
+            let name = value.get_name();
+            assert!(Args::try_parse_from(["game", "--render-probe", name]).is_err());
+            assert!(
+                Args::try_parse_from(["game", "--render-probe", name, "--script", "script.json"])
+                    .is_err()
+            );
+            let args = Args::try_parse_from([
+                "game",
+                "--render-probe",
+                name,
+                "--script",
+                "script.json",
+                "--render-report",
+                "report.json",
+            ])
+            .unwrap();
+            assert_eq!(args.render_probe, Some(probe));
+        }
+        assert!(
+            Args::try_parse_from([
+                "game",
+                "--render-probe",
+                "invalid",
+                "--script",
+                "script.json",
+                "--render-report",
+                "report.json"
+            ])
+            .is_err()
+        );
+        assert_eq!(
+            Args::try_parse_from([
+                "game",
+                "--render-probe",
+                "original",
+                "--script",
+                "script.json",
+                "--render-report",
+                "report.json"
+            ])
+            .unwrap()
+            .render_probe,
+            Some(super::RenderProbe::Full)
+        );
+    }
 
     #[test]
     fn script_only_input_requires_evidence_and_is_opt_in() {

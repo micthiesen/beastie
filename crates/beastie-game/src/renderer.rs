@@ -88,9 +88,25 @@ struct UiCache {
     icon_entity: Option<Entity>,
     icons_visible: bool,
     geometry: Option<Handle<Mesh>>,
-    text_geometry: Option<Handle<Mesh>>,
+    text_parent: Option<Entity>,
+    text_slots: Vec<TextSlot>,
+    text_epoch: u64,
+    text_initialized: bool,
     panel_geometry: Option<Handle<Mesh>>,
     panel_entity: Option<Entity>,
+}
+
+/// Retain recent inactive labels across dialogs, without keeping unbounded
+/// user text history. Each semantic slot stores only its latest built geometry.
+const MAX_IDLE_TEXT_SLOTS: usize = 128;
+
+struct TextSlot {
+    id: String,
+    entity: Entity,
+    mesh: Option<Handle<Mesh>>,
+    key: Option<(beastie_view::TextCommand, Vec<TextBox>)>,
+    active: bool,
+    last_used: u64,
 }
 
 impl UiCache {
@@ -477,7 +493,7 @@ fn sync_objects(
             .entry(object_key(object.kind))
             .or_insert_with(|| meshes.add(appearance.mesh(object_mesh(object.kind, *appearance))))
             .clone();
-        commands.spawn((
+        let mut entity = commands.spawn((
             WorldObject(object.id),
             Mesh3d(mesh),
             MeshMaterial3d(match object.kind {
@@ -490,6 +506,11 @@ fn sync_objects(
             }),
             Transform::from_translation(presented_object_position(object, &frame.plan, &motion)),
         ));
+        // Caves have no sway, carry or title staging animation. Any future actual
+        // transform/mesh/visibility change is still covered by static invalidation.
+        if object.kind == ObjectKind::Cave {
+            entity.insert(crate::ray_scene::RayStatic);
+        }
     }
 }
 
@@ -1256,7 +1277,7 @@ fn sync_ui(mut ui: UiSystem) {
     // Text uses logical coordinates. Only label inputs and their actual clipped
     // regions affect tessellation, not rectangle colors, icons or window pixels.
     let labels_changed = ui.cache.text != ui.frame.plan.text;
-    let clips = (labels_changed || rects_changed || ui.cache.text_geometry.is_none()).then(|| {
+    let clips = (labels_changed || rects_changed || !ui.cache.text_initialized).then(|| {
         ui.frame
             .plan
             .text
@@ -1271,62 +1292,156 @@ fn sync_ui(mut ui: UiSystem) {
             .collect::<Vec<_>>()
     });
     let text_changed = labels_changed
-        || ui.cache.text_geometry.is_none()
+        || !ui.cache.text_initialized
         || clips
             .as_ref()
             .is_some_and(|clips| *clips != ui.cache.text_clips);
     if text_changed {
         let clips = clips.unwrap_or_else(|| ui.cache.text_clips.clone());
-        let mut lettering_mesh = crate::glyphs::LetterMesh::default();
-        let labels = ui.frame.plan.text.clone();
-        for (text, visible) in labels.into_iter().zip(&clips) {
-            let bounds = text_content_bounds(&text, &ui.frame.plan);
-            let to_glyph_bounds = |b: TextBox| crate::glyphs::Bounds {
-                x: b.x,
-                y: b.y,
-                w: b.w,
-                h: b.h,
-            };
-            let clips: Vec<_> = visible.iter().copied().map(to_glyph_bounds).collect();
-            ui.lettering.append(
-                &mut lettering_mesh,
-                crate::glyphs::Label {
-                    text: &text.text,
-                    bounds: to_glyph_bounds(bounds),
-                    clips: &clips,
-                    size: fitting_font_size(&text, bounds),
-                    centered: text.role.centered(),
-                    vertical_centered: text.vertical_centered,
-                    color: if text.muted {
-                        [101, 128, 130]
-                    } else {
-                        text.role.color()
-                    },
-                    z: 8.08 + text.layer as f32 * 0.002,
-                },
-            );
-        }
-        let replacement = lettering_mesh.mesh();
-        if let Some(handle) = ui.cache.text_geometry.clone() {
-            if let Some(mut mesh) = ui.meshes.get_mut(&handle) {
-                *mesh = replacement;
-            }
-        } else {
-            let mesh = ui.meshes.add(replacement);
-            ui.commands.spawn((
-                UiText,
-                crate::ray_scene::RayOverlay,
-                Mesh3d(mesh.clone()),
-                MeshMaterial3d(ui.palette.ui.clone()),
-                Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH)),
-            ));
-            ui.cache.text_geometry = Some(mesh);
-        }
+        sync_label_meshes(&mut ui, &clips);
         ui.cache.text = ui.frame.plan.text.clone();
         ui.cache.text_clips = clips;
+        ui.cache.text_initialized = true;
     }
     if rects_changed {
         ui.cache.rects = ui.frame.plan.rects.clone();
+    }
+}
+
+fn label_mesh(
+    lettering: &mut crate::glyphs::Lettering,
+    text: &beastie_view::TextCommand,
+    visible: &[TextBox],
+    plan: &ScenePlan,
+) -> Mesh {
+    let bounds = text_content_bounds(text, plan);
+    let to_glyph_bounds = |b: TextBox| crate::glyphs::Bounds {
+        x: b.x,
+        y: b.y,
+        w: b.w,
+        h: b.h,
+    };
+    let clips: Vec<_> = visible.iter().copied().map(to_glyph_bounds).collect();
+    let mut mesh = crate::glyphs::LetterMesh::default();
+    lettering.append(
+        &mut mesh,
+        crate::glyphs::Label {
+            text: &text.text,
+            bounds: to_glyph_bounds(bounds),
+            clips: &clips,
+            size: fitting_font_size(text, bounds),
+            centered: text.role.centered(),
+            vertical_centered: text.vertical_centered,
+            color: if text.muted {
+                [101, 128, 130]
+            } else {
+                text.role.color()
+            },
+            z: 8.08 + text.layer as f32 * 0.002,
+        },
+    );
+    mesh.mesh()
+}
+
+fn sync_label_meshes(ui: &mut UiSystem<'_, '_>, clips: &[Vec<TextBox>]) {
+    ui.cache.text_epoch = ui.cache.text_epoch.wrapping_add(1);
+    let epoch = ui.cache.text_epoch;
+    for slot in &mut ui.cache.text_slots {
+        slot.active = false;
+    }
+    let labels = ui.frame.plan.text.clone();
+    if !labels.is_empty() && ui.cache.text_parent.is_none() {
+        let entity = ui
+            .commands
+            .spawn((
+                UiText,
+                Transform::from_rotation(Quat::from_rotation_x(CAMERA_PITCH)),
+                Visibility::Visible,
+            ))
+            .id();
+        ui.cache.text_parent = Some(entity);
+    }
+    for (text, visible) in labels.iter().zip(clips) {
+        // Consume each matching slot once, including repeated semantic IDs.
+        let index = ui
+            .cache
+            .text_slots
+            .iter()
+            .position(|slot| !slot.active && slot.id == text.id)
+            .unwrap_or_else(|| {
+                let entity = ui
+                    .commands
+                    .spawn((
+                        crate::ray_scene::RayOverlay,
+                        Transform::default(),
+                        Visibility::Hidden,
+                    ))
+                    .id();
+                ui.commands
+                    .entity(ui.cache.text_parent.unwrap())
+                    .add_child(entity);
+                ui.cache.text_slots.push(TextSlot {
+                    id: text.id.clone(),
+                    entity,
+                    mesh: None,
+                    key: None,
+                    active: false,
+                    last_used: epoch,
+                });
+                ui.cache.text_slots.len() - 1
+            });
+        let slot = &mut ui.cache.text_slots[index];
+        slot.active = true;
+        slot.last_used = epoch;
+        if visible.is_empty() {
+            ui.commands.entity(slot.entity).insert(Visibility::Hidden);
+            continue;
+        }
+        let unchanged = slot.key.as_ref().is_some_and(|(previous, previous_clips)| {
+            previous == text && previous_clips == visible
+        });
+        if !unchanged {
+            let replacement = label_mesh(&mut ui.lettering, text, visible, &ui.frame.plan);
+            if let Some(handle) = &slot.mesh {
+                if let Some(mut mesh) = ui.meshes.get_mut(handle) {
+                    *mesh = replacement;
+                }
+            } else {
+                let mesh = ui.meshes.add(replacement);
+                ui.commands
+                    .entity(slot.entity)
+                    .insert((Mesh3d(mesh.clone()), MeshMaterial3d(ui.palette.ui.clone())));
+                slot.mesh = Some(mesh);
+            }
+            slot.key = Some((text.clone(), visible.clone()));
+        }
+        ui.commands
+            .entity(slot.entity)
+            .insert(Visibility::Inherited);
+    }
+    for slot in ui.cache.text_slots.iter().filter(|slot| !slot.active) {
+        ui.commands.entity(slot.entity).insert(Visibility::Hidden);
+    }
+    // Evict only inactive slots, oldest first. Active labels are never dropped.
+    while ui
+        .cache
+        .text_slots
+        .iter()
+        .filter(|slot| !slot.active)
+        .count()
+        > MAX_IDLE_TEXT_SLOTS
+    {
+        let oldest = ui
+            .cache
+            .text_slots
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| !slot.active)
+            .min_by_key(|(_, slot)| slot.last_used)
+            .map(|(index, _)| index)
+            .unwrap();
+        let removed = ui.cache.text_slots.swap_remove(oldest);
+        ui.commands.entity(removed.entity).despawn();
     }
 }
 
@@ -2223,6 +2338,243 @@ mod tests {
         assert_eq!(cache.icon_templates.len(), 7);
     }
 
+    fn label_test_app() -> App {
+        let mut app = cache_test_app();
+        app.add_plugins((TransformPlugin, bevy::camera::visibility::VisibilityPlugin))
+            .init_resource::<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>()
+            .add_systems(Update, (sync_ui, sync_title).chain());
+        {
+            let mut frame = app.world_mut().resource_mut::<SceneFrame>();
+            frame.plan.rects.clear();
+            frame.plan.icons.clear();
+            frame.plan.hit_regions.clear();
+            frame.plan.text.truncate(1);
+            frame.plan.text[0].id = "label/a".into();
+            frame.plan.text[0].text = "Alpha".into();
+            frame.plan.text[0].bounds = Some(beastie_view::Rect {
+                x: 10,
+                y: 10,
+                w: 60,
+                h: 20,
+            });
+            frame.plan.text[0].layer = 10;
+        }
+        app
+    }
+
+    #[test]
+    fn retained_labels_change_independently_and_reuse_covered_or_absent_geometry() {
+        let mut app = label_test_app();
+        let mut second = app.world().resource::<SceneFrame>().plan.text[0].clone();
+        second.id = "label/b".into();
+        second.text = "Beta".into();
+        second.bounds = Some(beastie_view::Rect {
+            x: 160,
+            y: 10,
+            w: 60,
+            h: 20,
+        });
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .text
+            .push(second.clone());
+        app.update();
+        let handles: Vec<_> = app
+            .world()
+            .resource::<UiCache>()
+            .text_slots
+            .iter()
+            .map(|slot| slot.mesh.clone().unwrap())
+            .collect();
+        let second_entity = app.world().resource::<UiCache>().text_slots[1].entity;
+        changed_meshes(&mut app);
+        app.world_mut().resource_mut::<SceneFrame>().plan.text[0]
+            .text
+            .push('!');
+        app.update();
+        assert_eq!(
+            changed_meshes(&mut app),
+            vec![handles[0].id()],
+            "only the edited label invalidates its BLAS"
+        );
+        app.world_mut().resource_mut::<SceneFrame>().plan.text.pop();
+        app.update();
+        assert!(changed_meshes(&mut app).is_empty());
+        assert!(
+            !app.world()
+                .get::<InheritedVisibility>(second_entity)
+                .unwrap()
+                .get()
+        );
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .text
+            .push(second.clone());
+        app.update();
+        assert!(
+            changed_meshes(&mut app).is_empty(),
+            "returning labels retain their original mesh"
+        );
+        assert!(
+            app.world()
+                .get::<InheritedVisibility>(second_entity)
+                .unwrap()
+                .get()
+        );
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .rects
+            .push(beastie_view::RectCommand {
+                id: "cover".into(),
+                rect: second.bounds.unwrap(),
+                color: [1, 2, 3, 255],
+                layer: 11,
+                outline: false,
+            });
+        app.update();
+        assert!(
+            !changed_meshes(&mut app).contains(&handles[1].id()),
+            "fully covered text is hidden without rebuilding"
+        );
+        assert!(
+            !app.world()
+                .get::<InheritedVisibility>(second_entity)
+                .unwrap()
+                .get()
+        );
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .rects
+            .clear();
+        app.update();
+        let modified = changed_meshes(&mut app);
+        assert!(!modified.contains(&handles[0].id()) && !modified.contains(&handles[1].id()));
+        assert!(
+            app.world()
+                .get::<InheritedVisibility>(second_entity)
+                .unwrap()
+                .get()
+        );
+        assert_eq!(
+            app.world().get::<Mesh3d>(second_entity).unwrap().id(),
+            handles[1].id()
+        );
+    }
+
+    #[test]
+    fn retained_labels_support_duplicate_ids_and_title_parent_transforms() {
+        let mut app = label_test_app();
+        let mut second = app.world().resource::<SceneFrame>().plan.text[0].clone();
+        second.text = "Beta".into();
+        second.bounds = Some(beastie_view::Rect {
+            x: 160,
+            y: 10,
+            w: 60,
+            h: 20,
+        });
+        app.world_mut()
+            .resource_mut::<SceneFrame>()
+            .plan
+            .text
+            .push(second);
+        app.update();
+        assert_eq!(app.world().resource::<UiCache>().text_slots.len(), 2);
+        let slots: Vec<_> = app
+            .world()
+            .resource::<UiCache>()
+            .text_slots
+            .iter()
+            .map(|slot| (slot.entity, slot.mesh.clone().unwrap()))
+            .collect();
+        assert_ne!(slots[0].0, slots[1].0);
+        assert_ne!(slots[0].1, slots[1].1);
+        let parent = app.world().resource::<UiCache>().text_parent.unwrap();
+        changed_meshes(&mut app);
+        for title in [false, true] {
+            app.world_mut()
+                .resource_mut::<SceneFrame>()
+                .plan
+                .title_screen = title;
+            app.update();
+            assert!(changed_meshes(&mut app).is_empty());
+            let parent_matrix = app
+                .world()
+                .get::<GlobalTransform>(parent)
+                .unwrap()
+                .to_matrix();
+            let frame = app.world().resource::<SceneFrame>();
+            let mut lettering = crate::glyphs::Lettering::default();
+            for ((entity, handle), text) in slots.iter().zip(&frame.plan.text) {
+                let clips =
+                    visible_text_boxes(text, text_content_bounds(text, &frame.plan), &frame.plan);
+                let reference = label_mesh(&mut lettering, text, &clips, &frame.plan);
+                let actual = app.world().resource::<Assets<Mesh>>().get(handle).unwrap();
+                let world = app
+                    .world()
+                    .get::<GlobalTransform>(*entity)
+                    .unwrap()
+                    .to_matrix();
+                let positions = |mesh: &Mesh| {
+                    mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                        .unwrap()
+                        .as_float3()
+                        .unwrap()
+                        .to_vec()
+                };
+                assert_eq!(positions(actual), positions(&reference));
+                for point in positions(actual) {
+                    assert!(
+                        world
+                            .transform_point3(Vec3::from(point))
+                            .distance(parent_matrix.transform_point3(Vec3::from(point)))
+                            < 0.000001
+                    );
+                }
+                assert!(
+                    app.world()
+                        .get::<InheritedVisibility>(*entity)
+                        .unwrap()
+                        .get()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn retained_label_cache_evicts_old_inactive_ids_without_losing_current_text() {
+        let mut app = label_test_app();
+        app.update();
+        let first = app.world().resource::<UiCache>().text_slots[0].entity;
+        for index in 0..MAX_IDLE_TEXT_SLOTS + 4 {
+            app.world_mut().resource_mut::<SceneFrame>().plan.text[0].id = format!("label/{index}");
+            app.update();
+            let cache = app.world().resource::<UiCache>();
+            assert!(cache.text_slots.len() <= MAX_IDLE_TEXT_SLOTS + 1);
+            assert_eq!(
+                cache.text_slots.iter().filter(|slot| slot.active).count(),
+                1
+            );
+        }
+        assert!(app.world().get::<Visibility>(first).is_none());
+        let active = app
+            .world()
+            .resource::<UiCache>()
+            .text_slots
+            .iter()
+            .find(|slot| slot.active)
+            .unwrap();
+        assert!(
+            app.world()
+                .get::<InheritedVisibility>(active.entity)
+                .unwrap()
+                .get()
+        );
+    }
+
     #[test]
     fn exact_effect_cache_skips_mesh_mutations_but_preserves_motion_and_visibility() {
         let mut app = cache_test_app();
@@ -2368,10 +2720,8 @@ mod tests {
             frame.plan.hit_regions[0].enabled = true;
         }
         app.update();
-        let text = app
-            .world()
-            .resource::<UiCache>()
-            .text_geometry
+        let text = app.world().resource::<UiCache>().text_slots[0]
+            .mesh
             .clone()
             .unwrap();
         let geometry = app.world().resource::<UiCache>().geometry.clone().unwrap();

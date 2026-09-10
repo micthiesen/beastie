@@ -11,6 +11,32 @@ fn compute_tracer_translates_without_optional_gpu_capabilities() {
 }
 
 #[test]
+fn every_probe_translates_without_optional_gpu_capabilities() {
+    use clap::ValueEnum;
+    let original = include_str!("raytrace.wgsl");
+    assert_eq!(original.matches("const RENDER_PROBE:u32=0u;").count(), 1);
+    for &probe in crate::args::RenderProbe::value_variants() {
+        let source = crate::raytrace::probe_shader_source(probe);
+        assert!(source.contains(&format!("const RENDER_PROBE:u32={}u;", probe as u32)));
+        if probe == crate::args::RenderProbe::Full {
+            assert_eq!(source, original);
+        }
+        validate_and_translate(&source);
+    }
+}
+
+#[test]
+fn primary_visibility_and_fallback_translate_on_all_backends() {
+    validate_and_translate(include_str!("ray_visibility.wgsl"));
+    let source = include_str!("raytrace.wgsl");
+    assert_eq!(source.matches("const RASTER_PRIMARY:bool=true;").count(), 1);
+    validate_and_translate(&source.replace(
+        "const RASTER_PRIMARY:bool=true;",
+        "const RASTER_PRIMARY:bool=false;",
+    ));
+}
+
+#[test]
 fn presentation_shader_translates_without_optional_gpu_capabilities() {
     validate_and_translate(include_str!("ray_blit.wgsl"));
 }
@@ -139,6 +165,9 @@ mod gpu_traversal {
         size: UVec4,
         water: Vec4,
         roots: UVec4,
+        shadow_roots: UVec4,
+        cache_roots: UVec4,
+        static_instances: [UVec4; 4],
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -158,8 +187,8 @@ mod gpu_traversal {
     const ENTRY: &str = r#"
 struct TestRay { origin:vec4<f32>, direction:vec4<f32>, flags:vec4<u32> }
 struct TestResult { hit:vec4<f32>, ids:vec4<u32>, normal:vec4<f32>, albedo:vec4<f32> }
-@group(0) @binding(7) var<storage,read> test_rays:array<TestRay>;
-@group(0) @binding(8) var<storage,read_write> test_results:array<TestResult>;
+@group(0) @binding(12) var<storage,read> test_rays:array<TestRay>;
+@group(0) @binding(13) var<storage,read_write> test_results:array<TestResult>;
 @compute @workgroup_size(64)
 fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
     if(id.x>=arrayLength(&test_rays)) { return; }
@@ -177,7 +206,11 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
     #[test]
     #[ignore = "requires a native GPU; run explicitly with --ignored --nocapture"]
     fn production_gpu_traversal_matches_brute_force() {
-        bevy::tasks::block_on(run());
+        bevy::tasks::block_on(async {
+            run(false, false).await;
+            run(true, false).await;
+            run(false, true).await;
+        });
     }
 
     fn validation_source() -> String {
@@ -191,6 +224,12 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
         let (surface, _) = surface
             .split_once("struct Lighting")
             .expect("production surface function boundary");
+        let traversal =
+            traversal.replace("@group(0) @binding(7) var visibility:texture_2d<u32>;", "");
+        let traversal = traversal.replace(
+            "@group(0) @binding(8) var<storage,read_write> shadow_masks:array<u32>;",
+            "",
+        );
         // Execute the actual production attribute functions and binding layout,
         // while leaving unrelated water/lighting/output texture resources unused.
         format!("{traversal}fn normal_at{surface}{ENTRY}")
@@ -201,8 +240,11 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
         super::validate_and_translate(&validation_source());
     }
 
-    async fn run() {
-        let (triangles, nodes) = geometry();
+    async fn run(deep: bool, empty_shadow: bool) {
+        let (triangles, mut nodes) = geometry();
+        if deep {
+            deepen_tree(&mut nodes, 0, 0, 23);
+        }
         let instances = instances();
         let mut tlas = Vec::new();
         let all: Vec<_> = instances
@@ -235,13 +277,24 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
             .filter(|(i, _, _)| instances[*i as usize].material.z < 0.5)
             .collect();
         let world_root = append_tree(&mut tlas, &world);
-        let shadow_root = append_tree(&mut tlas, &shadow);
+        let mut shadow_root = append_tree(&mut tlas, &shadow);
+        if deep {
+            deepen_tree(&mut tlas, 0, all[0].0, 15);
+            deepen_tree(&mut tlas, world_root, world[0].0, 15);
+            deepen_tree(&mut tlas, shadow_root, shadow[0].0, 15);
+        }
+        if empty_shadow {
+            shadow_root = u32::MAX;
+        }
         let rays = rays();
         let params = TestParams {
             world_from_clip: Mat4::IDENTITY,
             size: UVec4::new(rays.len() as u32, 1, instances.len() as u32, 0),
             water: Vec4::ZERO,
             roots: UVec4::new(0, world_root, shadow_root, 0),
+            shadow_roots: UVec4::splat(u32::MAX),
+            cache_roots: UVec4::splat(u32::MAX),
+            static_instances: [UVec4::splat(u32::MAX); 4],
         };
         let instance = wgpu::Instance::default();
         let adapter = instance
@@ -273,7 +326,11 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
                 })
             }};
         }
-        let geometry: Vec<_> = triangles.iter().map(Triangle::geometry).collect();
+        let geometry: Vec<_> = triangles
+            .iter()
+            .enumerate()
+            .map(|(index, triangle)| triangle.geometry(index as u32))
+            .collect();
         let surfaces: Vec<_> = triangles.iter().map(Triangle::surface).collect();
         let storage_usage = wgpu::BufferUsages::STORAGE;
         let buffers = [
@@ -298,7 +355,7 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        let bindings = [0, 1, 2, 3, 4, 6, 7, 8];
+        let bindings = [0, 1, 2, 3, 4, 6, 12, 13];
         let entries: Vec<_> = bindings
             .iter()
             .map(|&binding| wgpu::BindGroupLayoutEntry {
@@ -309,7 +366,7 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
                         wgpu::BufferBindingType::Uniform
                     } else {
                         wgpu::BufferBindingType::Storage {
-                            read_only: binding != 8,
+                            read_only: binding != 13,
                         }
                     },
                     has_dynamic_offset: false,
@@ -344,7 +401,7 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
             })
             .collect();
         entries.push(wgpu::BindGroupEntry {
-            binding: 8,
+            binding: 13,
             resource: output.as_entire_binding(),
         });
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -389,7 +446,11 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
             let gpu_v = f64::from(read_f32(8));
             let gpu_triangle = u32::from_le_bytes(result[16..20].try_into().unwrap()) as usize;
             let gpu_instance = u32::from_le_bytes(result[20..24].try_into().unwrap());
-            let expected = brute_force(ray, &triangles, &instances);
+            let expected = if empty_shadow && ray.flags.x != 0 && ray.flags.y != 0 {
+                None
+            } else {
+                brute_force(ray, &triangles, &instances)
+            };
             assert_eq!(
                 gpu_instance != u32::MAX,
                 expected.is_some(),
@@ -705,6 +766,37 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
         nodes.push(BvhNode::default());
         fill(nodes, root, members);
         root as u32
+    }
+
+    // Overlapping deferred siblings fill the supported stack budget. Duplicating
+    // an eligible primitive changes neither closest visibility nor occlusion.
+    fn deepen_tree(nodes: &mut Vec<BvhNode>, root: u32, primitive: u32, target_depth: usize) {
+        fn depth(nodes: &[BvhNode], root: usize) -> usize {
+            let node = nodes[root];
+            if node.count > 0 {
+                0
+            } else {
+                1 + depth(nodes, node.first as usize).max(depth(nodes, node.first as usize + 1))
+            }
+        }
+        let existing = depth(nodes, root as usize);
+        assert!(existing <= target_depth);
+        for _ in existing..target_depth {
+            let previous = nodes[root as usize];
+            let first = nodes.len() as u32;
+            nodes.push(previous);
+            nodes.push(BvhNode {
+                first: primitive,
+                count: 1,
+                ..previous
+            });
+            nodes[root as usize] = BvhNode {
+                first,
+                count: 0,
+                ..previous
+            };
+        }
+        assert_eq!(depth(nodes, root as usize), target_depth);
     }
 
     fn rays() -> Vec<TestRay> {

@@ -1,0 +1,140 @@
+{
+  "measurement": "Paired same-binary batched throughput,210frames including30warmups. Pass p50 is NOT frame cost because stage intervals overlap. Warm completion intervals use end[i]-end[i-1],i30..209. Frozen production scene; no CPU updates/uploads/presentation in measured submission.",
+  "runs": [
+    {
+      "variant": "grid-bvh-before",
+      "gpu_envelope_div_210_ms": 2.5965503952380953,
+      "warm_completion_interval_p50_ms": 2.4152915,
+      "warm_completion_interval_p95_ms": 3.0284579999999997,
+      "warm_completion_interval_mean_ms": 2.531458794444444,
+      "submission_wall_div_210_ms": 3.2752134904761907,
+      "overlapping_passes": 209,
+      "grid": {
+        "bytes": 6594956,
+        "cells": 252458,
+        "coarsened_grids": 2,
+        "empty_cells": 194247,
+        "grids": 36,
+        "maximum_cell_references": 637,
+        "ratio": 0.5,
+        "references": 1143247,
+        "triangles": 500904
+      },
+      "image_difference": {
+        "different_rgb_pixels": 0,
+        "maximum_linear_channel_difference": 0.0,
+        "mean_absolute_linear_channel_difference": 0.0,
+        "total_pixels": 2073600
+      },
+      "original_blas_arena_bytes": 13300224
+    },
+    {
+      "variant": "grid-05",
+      "gpu_envelope_div_210_ms": 4.684523614285714,
+      "warm_completion_interval_p50_ms": 4.3606665,
+      "warm_completion_interval_p95_ms": 5.342959,
+      "warm_completion_interval_mean_ms": 4.532059494444444,
+      "submission_wall_div_210_ms": 5.3586150761904765,
+      "overlapping_passes": 209,
+      "grid": {
+        "bytes": 6594956,
+        "cells": 252458,
+        "coarsened_grids": 2,
+        "empty_cells": 194247,
+        "grids": 36,
+        "maximum_cell_references": 637,
+        "ratio": 0.5,
+        "references": 1143247,
+        "triangles": 500904
+      },
+      "image_difference": {
+        "different_rgb_pixels": 10,
+        "maximum_linear_channel_difference": 0.000701904296875,
+        "mean_absolute_linear_channel_difference": 8.732203102896733e-10,
+        "total_pixels": 2073600
+      },
+      "original_blas_arena_bytes": 13300224
+    },
+    {
+      "variant": "grid-1",
+      "gpu_envelope_div_210_ms": 4.880505161904762,
+      "warm_completion_interval_p50_ms": 4.562708,
+      "warm_completion_interval_p95_ms": 5.603375,
+      "warm_completion_interval_mean_ms": 4.746003472222222,
+      "submission_wall_div_210_ms": 5.5716946428571426,
+      "overlapping_passes": 209,
+      "grid": {
+        "bytes": 9373312,
+        "cells": 456133,
+        "coarsened_grids": 2,
+        "empty_cells": 364414,
+        "grids": 36,
+        "maximum_cell_references": 454,
+        "ratio": 1.0,
+        "references": 1430486,
+        "triangles": 500904
+      },
+      "image_difference": {
+        "different_rgb_pixels": 10,
+        "maximum_linear_channel_difference": 0.000701904296875,
+        "mean_absolute_linear_channel_difference": 8.732203102896733e-10,
+        "total_pixels": 2073600
+      },
+      "original_blas_arena_bytes": 13300224
+    },
+    {
+      "variant": "grid-2",
+      "gpu_envelope_div_210_ms": 4.5276498047619045,
+      "warm_completion_interval_p50_ms": 4.2203335,
+      "warm_completion_interval_p95_ms": 5.1795,
+      "warm_completion_interval_mean_ms": 4.390303705555556,
+      "submission_wall_div_210_ms": 5.2134831380952384,
+      "overlapping_passes": 209,
+      "grid": {
+        "bytes": 12852648,
+        "cells": 790976,
+        "coarsened_grids": 3,
+        "empty_cells": 662768,
+        "grids": 36,
+        "maximum_cell_references": 406,
+        "ratio": 2.0,
+        "references": 1630634,
+        "triangles": 500904
+      },
+      "image_difference": {
+        "different_rgb_pixels": 10,
+        "maximum_linear_channel_difference": 0.000701904296875,
+        "mean_absolute_linear_channel_difference": 8.732203102896733e-10,
+        "total_pixels": 2073600
+      },
+      "original_blas_arena_bytes": 13300224
+    },
+    {
+      "variant": "grid-bvh-after",
+      "gpu_envelope_div_210_ms": 2.5986232142857144,
+      "warm_completion_interval_p50_ms": 2.4239794999999997,
+      "warm_completion_interval_p95_ms": 3.057625,
+      "warm_completion_interval_mean_ms": 2.5382919,
+      "submission_wall_div_210_ms": 3.2903563476190474,
+      "overlapping_passes": 209,
+      "grid": {
+        "bytes": 9373312,
+        "cells": 456133,
+        "coarsened_grids": 2,
+        "empty_cells": 364414,
+        "grids": 36,
+        "maximum_cell_references": 454,
+        "ratio": 1.0,
+        "references": 1430486,
+        "triangles": 500904
+      },
+      "image_difference": {
+        "different_rgb_pixels": 0,
+        "maximum_linear_channel_difference": 0.0,
+        "mean_absolute_linear_channel_difference": 0.0,
+        "total_pixels": 2073600
+      },
+      "original_blas_arena_bytes": 13300224
+    }
+  ]
+}

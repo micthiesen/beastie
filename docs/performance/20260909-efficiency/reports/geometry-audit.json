@@ -1,0 +1,642 @@
+{
+  "global_unique_colors": 4468,
+  "global_unique_full_surface_records": 111676,
+  "global_unique_normals": 129058,
+  "meshes": [
+    {
+      "constant_colors": 92580,
+      "depth_maxleaf": [
+        20,
+        4
+      ],
+      "disjoint_rectangle_pairs": 42072,
+      "flat_normals": 92580,
+      "instance_count": 1,
+      "nodes": 56071,
+      "overlay": false,
+      "planar_pair_candidates": 46419,
+      "root": 45184,
+      "triangles": 92580,
+      "unique_colors": 103,
+      "unique_normals": 2750
+    },
+    {
+      "constant_colors": 76692,
+      "depth_maxleaf": [
+        20,
+        4
+      ],
+      "disjoint_rectangle_pairs": 27935,
+      "flat_normals": 76692,
+      "instance_count": 1,
+      "nodes": 44103,
+      "overlay": false,
+      "planar_pair_candidates": 30294,
+      "root": 283984,
+      "triangles": 76692,
+      "unique_colors": 18,
+      "unique_normals": 6548
+    },
+    {
+      "constant_colors": 73508,
+      "depth_maxleaf": [
+        18,
+        4
+      ],
+      "disjoint_rectangle_pairs": 18204,
+      "flat_normals": 73508,
+      "instance_count": 1,
+      "nodes": 45731,
+      "overlay": false,
+      "planar_pair_candidates": 60657,
+      "root": 218384,
+      "triangles": 73508,
+      "unique_colors": 13,
+      "unique_normals": 3724
+    },
+    {
+      "constant_colors": 10240,
+      "depth_maxleaf": [
+        17,
+        4
+      ],
+      "disjoint_rectangle_pairs": 5054,
+      "flat_normals": 41652,
+      "instance_count": 0,
+      "nodes": 24025,
+      "overlay": false,
+      "planar_pair_candidates": 5774,
+      "root": 349520,
+      "triangles": 41652,
+      "unique_colors": 4161,
+      "unique_normals": 2370
+    },
+    {
+      "constant_colors": 39708,
+      "depth_maxleaf": [
+        17,
+        4
+      ],
+      "disjoint_rectangle_pairs": 0,
+      "flat_normals": 0,
+      "instance_count": 1,
+      "nodes": 22785,
+      "overlay": false,
+      "planar_pair_candidates": 0,
+      "root": 382864,
+      "triangles": 39708,
+      "unique_colors": 4,
+      "unique_normals": 65134
+    },
+    {
+      "constant_colors": 28732,
+      "depth_maxleaf": [
+        16,
+        4
+      ],
+      "disjoint_rectangle_pairs": 14366,
+      "flat_normals": 28732,
+      "instance_count": 1,
+      "nodes": 18199,
+      "overlay": false,
+      "planar_pair_candidates": 15148,
+      "root": 166144,
+      "triangles": 28732,
+      "unique_colors": 126,
+      "unique_normals": 6
+    },
+    {
+      "constant_colors": 26172,
+      "depth_maxleaf": [
+        16,
+        4
+      ],
+      "disjoint_rectangle_pairs": 10594,
+      "flat_normals": 26172,
+      "instance_count": 1,
+      "nodes": 15153,
+      "overlay": true,
+      "planar_pair_candidates": 13713,
+      "root": 199952,
+      "triangles": 26172,
+      "unique_colors": 6,
+      "unique_normals": 3146
+    },
+    {
+      "constant_colors": 26172,
+      "depth_maxleaf": [
+        16,
+        4
+      ],
+      "disjoint_rectangle_pairs": 10594,
+      "flat_normals": 26172,
+      "instance_count": 1,
+      "nodes": 15137,
+      "overlay": false,
+      "planar_pair_candidates": 13653,
+      "root": 24576,
+      "triangles": 26172,
+      "unique_colors": 6,
+      "unique_normals": 3146
+    },
+    {
+      "constant_colors": 18876,
+      "depth_maxleaf": [
+        16,
+        4
+      ],
+      "disjoint_rectangle_pairs": 7152,
+      "flat_normals": 18876,
+      "instance_count": 1,
+      "nodes": 11117,
+      "overlay": false,
+      "planar_pair_candidates": 8016,
+      "root": 114560,
+      "triangles": 18876,
+      "unique_colors": 3,
+      "unique_normals": 3127
+    },
+    {
+      "constant_colors": 18876,
+      "depth_maxleaf": [
+        16,
+        4
+      ],
+      "disjoint_rectangle_pairs": 7152,
+      "flat_normals": 18876,
+      "instance_count": 1,
+      "nodes": 11047,
+      "overlay": true,
+      "planar_pair_candidates": 8016,
+      "root": 8192,
+      "triangles": 18876,
+      "unique_colors": 3,
+      "unique_normals": 3127
+    },
+    {
+      "constant_colors": 14496,
+      "depth_maxleaf": [
+        16,
+        4
+      ],
+      "disjoint_rectangle_pairs": 5374,
+      "flat_normals": 14496,
+      "instance_count": 1,
+      "nodes": 8405,
+      "overlay": false,
+      "planar_pair_candidates": 6842,
+      "root": 131200,
+      "triangles": 14496,
+      "unique_colors": 4,
+      "unique_normals": 3180
+    },
+    {
+      "constant_colors": 14496,
+      "depth_maxleaf": [
+        16,
+        4
+      ],
+      "disjoint_rectangle_pairs": 5378,
+      "flat_normals": 14496,
+      "instance_count": 1,
+      "nodes": 8427,
+      "overlay": true,
+      "planar_pair_candidates": 6834,
+      "root": 147712,
+      "triangles": 14496,
+      "unique_colors": 4,
+      "unique_normals": 3180
+    },
+    {
+      "constant_colors": 11772,
+      "depth_maxleaf": [
+        15,
+        4
+      ],
+      "disjoint_rectangle_pairs": 0,
+      "flat_normals": 0,
+      "instance_count": 12,
+      "nodes": 6721,
+      "overlay": false,
+      "planar_pair_candidates": 0,
+      "root": 0,
+      "triangles": 11772,
+      "unique_colors": 3,
+      "unique_normals": 20484
+    },
+    {
+      "constant_colors": 5868,
+      "depth_maxleaf": [
+        14,
+        4
+      ],
+      "disjoint_rectangle_pairs": 0,
+      "flat_normals": 0,
+      "instance_count": 2,
+      "nodes": 3339,
+      "overlay": false,
+      "planar_pair_candidates": 0,
+      "root": 40960,
+      "triangles": 5868,
+      "unique_colors": 1,
+      "unique_normals": 9808
+    },
+    {
+      "constant_colors": 2124,
+      "depth_maxleaf": [
+        12,
+        4
+      ],
+      "disjoint_rectangle_pairs": 910,
+      "flat_normals": 2124,
+      "instance_count": 4,
+      "nodes": 1219,
+      "overlay": false,
+      "planar_pair_candidates": 972,
+      "root": 164096,
+      "triangles": 2124,
+      "unique_colors": 2,
+      "unique_normals": 327
+    },
+    {
+      "constant_colors": 2124,
+      "depth_maxleaf": [
+        12,
+        4
+      ],
+      "disjoint_rectangle_pairs": 0,
+      "flat_normals": 0,
+      "instance_count": 2,
+      "nodes": 1227,
+      "overlay": false,
+      "planar_pair_candidates": 0,
+      "root": 110720,
+      "triangles": 2124,
+      "unique_colors": 1,
+      "unique_normals": 2892
+    },
+    {
+      "constant_colors": 1548,
+      "depth_maxleaf": [
+        12,
+        4
+      ],
+      "disjoint_rectangle_pairs": 0,
+      "flat_normals": 0,
+      "instance_count": 1,
+      "nodes": 883,
+      "overlay": false,
+      "planar_pair_candidates": 0,
+      "root": 113024,
+      "triangles": 1548,
+      "unique_colors": 1,
+      "unique_normals": 2836
+    },
+    {
+      "constant_colors": 972,
+      "depth_maxleaf": [
+        11,
+        4
+      ],
+      "disjoint_rectangle_pairs": 0,
+      "flat_normals": 0,
+      "instance_count": 2,
+      "nodes": 579,
+      "overlay": false,
+      "planar_pair_candidates": 0,
+      "root": 216464,
+      "triangles": 972,
+      "unique_colors": 1,
+      "unique_normals": 1344
+    },
+    {
+      "constant_colors": 728,
+      "depth_maxleaf": [
+        11,
+        4
+      ],
+      "disjoint_rectangle_pairs": 2,
+      "flat_normals": 728,
+      "instance_count": 1,
+      "nodes": 495,
+      "overlay": true,
+      "planar_pair_candidates": 712,
+      "root": 217872,
+      "triangles": 728,
+      "unique_colors": 1,
+      "unique_normals": 1
+    },
+    {
+      "constant_colors": 684,
+      "depth_maxleaf": [
+        10,
+        4
+      ],
+      "disjoint_rectangle_pairs": 0,
+      "flat_normals": 0,
+      "instance_count": 2,
+      "nodes": 391,
+      "overlay": false,
+      "planar_pair_candidates": 0,
+      "root": 199168,
+      "triangles": 684,
+      "unique_colors": 1,
+      "unique_normals": 1136
+    },
+    {
+      "constant_colors": 452,
+      "depth_maxleaf": [
+        10,
+        4
+      ],
+      "disjoint_rectangle_pairs": 6,
+      "flat_normals": 452,
+      "instance_count": 1,
+      "nodes": 305,
+      "overlay": true,
+      "planar_pair_candidates": 435,
+      "root": 382288,
+      "triangles": 452,
+      "unique_colors": 1,
+      "unique_normals": 1
+    },
+    {
+      "constant_colors": 396,
+      "depth_maxleaf": [
+        9,
+        4
+      ],
+      "disjoint_rectangle_pairs": 0,
+      "flat_normals": 0,
+      "instance_count": 1,
+      "nodes": 225,
+      "overlay": false,
+      "planar_pair_candidates": 0,
+      "root": 114048,
+      "triangles": 396,
+      "unique_colors": 1,
+      "unique_normals": 568
+    },
+    {
+      "constant_colors": 336,
+      "depth_maxleaf": [
+        12,
+        4
+      ],
+      "disjoint_rectangle_pairs": 168,
+      "flat_normals": 336,
+      "instance_count": 1,
+      "nodes": 233,
+      "overlay": false,
+      "planar_pair_candidates": 168,
+      "root": 199696,
+      "triangles": 336,
+      "unique_colors": 4,
+      "unique_normals": 6
+    },
+    {
+      "constant_colors": 288,
+      "depth_maxleaf": [
+        8,
+        4
+      ],
+      "disjoint_rectangle_pairs": 144,
+      "flat_normals": 288,
+      "instance_count": 1,
+      "nodes": 199,
+      "overlay": true,
+      "planar_pair_candidates": 164,
+      "root": 217616,
+      "triangles": 288,
+      "unique_colors": 1,
+      "unique_normals": 6
+    },
+    {
+      "constant_colors": 252,
+      "depth_maxleaf": [
+        8,
+        4
+      ],
+      "disjoint_rectangle_pairs": 0,
+      "flat_normals": 0,
+      "instance_count": 1,
+      "nodes": 141,
+      "overlay": false,
+      "planar_pair_candidates": 0,
+      "root": 130944,
+      "triangles": 252,
+      "unique_colors": 1,
+      "unique_normals": 456
+    },
+    {
+      "constant_colors": 252,
+      "depth_maxleaf": [
+        8,
+        4
+      ],
+      "disjoint_rectangle_pairs": 0,
+      "flat_normals": 0,
+      "instance_count": 2,
+      "nodes": 141,
+      "overlay": false,
+      "planar_pair_candidates": 0,
+      "root": 198912,
+      "triangles": 252,
+      "unique_colors": 1,
+      "unique_normals": 408
+    },
+    {
+      "constant_colors": 220,
+      "depth_maxleaf": [
+        8,
+        4
+      ],
+      "disjoint_rectangle_pairs": 1,
+      "flat_normals": 220,
+      "instance_count": 1,
+      "nodes": 145,
+      "overlay": true,
+      "planar_pair_candidates": 218,
+      "root": 114304,
+      "triangles": 220,
+      "unique_colors": 1,
+      "unique_normals": 1
+    },
+    {
+      "constant_colors": 164,
+      "depth_maxleaf": [
+        8,
+        4
+      ],
+      "disjoint_rectangle_pairs": 82,
+      "flat_normals": 164,
+      "instance_count": 1,
+      "nodes": 119,
+      "overlay": true,
+      "planar_pair_candidates": 112,
+      "root": 217488,
+      "triangles": 164,
+      "unique_colors": 1,
+      "unique_normals": 6
+    },
+    {
+      "constant_colors": 160,
+      "depth_maxleaf": [
+        8,
+        4
+      ],
+      "disjoint_rectangle_pairs": 0,
+      "flat_normals": 160,
+      "instance_count": 1,
+      "nodes": 113,
+      "overlay": true,
+      "planar_pair_candidates": 159,
+      "root": 216336,
+      "triangles": 160,
+      "unique_colors": 1,
+      "unique_normals": 1
+    },
+    {
+      "constant_colors": 148,
+      "depth_maxleaf": [
+        8,
+        4
+      ],
+      "disjoint_rectangle_pairs": 74,
+      "flat_normals": 148,
+      "instance_count": 1,
+      "nodes": 99,
+      "overlay": true,
+      "planar_pair_candidates": 91,
+      "root": 112768,
+      "triangles": 148,
+      "unique_colors": 1,
+      "unique_normals": 6
+    },
+    {
+      "constant_colors": 132,
+      "depth_maxleaf": [
+        9,
+        4
+      ],
+      "disjoint_rectangle_pairs": 66,
+      "flat_normals": 132,
+      "instance_count": 1,
+      "nodes": 93,
+      "overlay": true,
+      "planar_pair_candidates": 66,
+      "root": 112896,
+      "triangles": 132,
+      "unique_colors": 5,
+      "unique_normals": 6
+    },
+    {
+      "constant_colors": 108,
+      "depth_maxleaf": [
+        7,
+        4
+      ],
+      "disjoint_rectangle_pairs": 0,
+      "flat_normals": 0,
+      "instance_count": 2,
+      "nodes": 65,
+      "overlay": false,
+      "planar_pair_candidates": 0,
+      "root": 147584,
+      "triangles": 108,
+      "unique_colors": 1,
+      "unique_normals": 264
+    },
+    {
+      "constant_colors": 108,
+      "depth_maxleaf": [
+        7,
+        4
+      ],
+      "disjoint_rectangle_pairs": 54,
+      "flat_normals": 108,
+      "instance_count": 1,
+      "nodes": 73,
+      "overlay": true,
+      "planar_pair_candidates": 69,
+      "root": 45056,
+      "triangles": 108,
+      "unique_colors": 1,
+      "unique_normals": 6
+    },
+    {
+      "constant_colors": 48,
+      "depth_maxleaf": [
+        6,
+        4
+      ],
+      "disjoint_rectangle_pairs": 24,
+      "flat_normals": 48,
+      "instance_count": 1,
+      "nodes": 39,
+      "overlay": false,
+      "planar_pair_candidates": 24,
+      "root": 283920,
+      "triangles": 48,
+      "unique_colors": 1,
+      "unique_normals": 6
+    },
+    {
+      "constant_colors": 48,
+      "depth_maxleaf": [
+        6,
+        4
+      ],
+      "disjoint_rectangle_pairs": 24,
+      "flat_normals": 48,
+      "instance_count": 24,
+      "nodes": 37,
+      "overlay": false,
+      "planar_pair_candidates": 24,
+      "root": 382800,
+      "triangles": 48,
+      "unique_colors": 4,
+      "unique_normals": 6
+    },
+    {
+      "constant_colors": 4,
+      "depth_maxleaf": [
+        4,
+        4
+      ],
+      "disjoint_rectangle_pairs": 2,
+      "flat_normals": 12,
+      "instance_count": 1,
+      "nodes": 9,
+      "overlay": false,
+      "planar_pair_candidates": 2,
+      "root": 199680,
+      "triangles": 12,
+      "unique_colors": 2,
+      "unique_normals": 6
+    }
+  ],
+  "tlas_primary_world_shadow_depth_maxleaf": [
+    [
+      6,
+      2
+    ],
+    [
+      7,
+      1
+    ],
+    [
+      5,
+      1
+    ]
+  ],
+  "totals_triangles_flat_color_rectpairs_meshnormals_meshcolors_nodes": [
+    500904,
+    437220,
+    469484,
+    155432,
+    140019,
+    4489,
+    297090
+  ]
+}

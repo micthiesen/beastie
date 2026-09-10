@@ -1,12 +1,15 @@
-# Unified ray-traced aquarium
+# Unified aquarium renderer
 
 ## Production contract
 
 The player sees one crafted aquarium and care deck, with typography belonging to its materials.
-All visible marks, including text, are geometric intersections in a custom ordinary-GPU compute
-ray tracer. Bevy retains windowing, input, transforms, assets and capture; its old scene raster
-passes are replaced, not a player-selectable fallback. A final fullscreen transfer presents the
-computed image and is not a sprite or alternate scene rendering path.
+All visible marks, including text, retain their authored geometric appearance. The renderer may
+use raster visibility, ordinary-GPU ray tracing, shared lighting caches or a hybrid when native
+still and motion comparisons preserve that appearance. Production combines raster visibility,
+shared compute lighting and dynamic shadow maps, with original-ray fallbacks. Bevy retains
+windowing, input, transforms, assets and capture. Shared scene/material logic and portable GPU
+features are required; ray-tracing hardware is optional, never required. See the
+[architecture efficiency record](renderer-efficiency.md).
 
 ## Implementation
 
@@ -40,11 +43,19 @@ Windows/Linux native execution. Every accepted material finding must be fixed be
 
 ## Delivered implementation
 
-The production path uses cached, incrementally uploaded mesh BLAS arenas and a per-frame instance
+Hardware rasterization writes packed triangle/instance IDs at the original quarter-pixel coverage
+positions. Compute reconstructs attributes and runs the shared lighting, optics and coverage
+rules. Larger IDs use a wider visibility attachment; oversized attachments select compute primary
+visibility. Depth is transient and discarded. Raster boundary rounding can differ from traced
+triangle coverage; accepted native differences and visual limits are recorded in the
+[architecture efficiency review](renderer-efficiency.md).
+
+Secondary rays use cached, incrementally uploaded mesh BLAS arenas and a per-frame instance
 TLAS, with near-first traversal on ordinary compute. Mesh BVHs use depth-bounded, 12-bin SAH;
 primary, world-only and shadow instance roots exclude irrelevant geometry before traversal.
 Ray reciprocals and parallel-axis masks are computed once per coordinate space. Intersection
-positions/edges occupy 48-byte records; normals and colors live in a separate 96-byte array.
+positions/edges occupy 48-byte records; normals and colors use a lossless per-mesh dictionary
+of 96-byte surface records. The bounded traversal stacks hold 16 TLAS and 24 BLAS entries.
 GPU buffer growth reserves modest slack instead of rounding already-reserved arenas to powers of two.
 
 Identical creature parts and canonical UI icons share immutable meshes and BVHs. Icon placement
@@ -55,10 +66,23 @@ rounded, position-shaded geometry keeps its original tessellation. CPU mesh asse
 without duplicate raster uploads. The [performance review](renderer-performance.md) records native
 measurements, reference engines, rejected experiments and opt-in GPU/CPU reporting.
 
- Six fixed area-light visibility samples
+Six fixed area-light visibility samples
 (refined to twelve for mixed visibility on upward rough surfaces),
 a bounded diffuse bounce and selected glossy reflections create dimensional light without temporal
 history. Two world and four UI coverage samples preserve stable silhouettes and geometric text.
+Stationary receivers cache exact static shadow bits and static bounce hits; moving occluders and
+bounce candidates remain current. Camera, geometry, material, visibility, membership and viewport
+changes invalidate the appropriate records. Equal-distance bounce ambiguity retains original
+full-world traversal. Binding limits reduce cached coverage records rather than lighting samples.
+
+Dynamic shadow visibility uses twelve 1024² depth maps at validated viewports up to 1920×1080,
+with the original light vectors, receiver offsets and refinement order. Current caster bounds fit
+the projections each frame. This introduces small sampled shadow-edge differences, accepted in
+native stills and motion; it is not exact static-cache equivalence. Larger viewports, unavailable
+capabilities and pipeline warmup retain the shared ray path. A finite-distance ambiguity also
+traces the original ray. No temporal shadow filtering, RTX feature or vendor-specific shader is
+required. The 48 MiB map allocation trades storage for measured throughput.
+
 Skin uses authored soft fill, and UI inlays use controlled studio illumination within the same ray
 shader. No physical glass/refraction or true subsurface transport is claimed. The gold-reference pass
 adds procedural surface reflection pools, warped caustics, wavelength-dependent depth tint,
@@ -74,7 +98,7 @@ Bright-pass bloom was tried and removed because it echoed fine lettering. See th
 
 The bundled Atkinson font is shaped with rustybuzz and its outlines tessellated with lyon, including
 holes, kerning, ligatures, wrapping and clipping. Glyphs are planar inlaid geometry. Text and panels
-share primary ray intersections; UI geometry is excluded from secondary world illumination.
+share primary visibility and shading; UI geometry is excluded from secondary world illumination.
 Bevy retains CPU meshes/material descriptions, windowing and input, but no PBR scene render,
 sprite, text atlas or separate UI raster path is active. There is no alternate renderer toggle.
 

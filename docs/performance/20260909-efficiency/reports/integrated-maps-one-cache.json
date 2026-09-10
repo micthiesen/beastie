@@ -1,0 +1,137 @@
+[
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "cold",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "warm",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "creature-left-low",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "creature-right-low",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "carried-ball",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "released-ball-left",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "ball-right-plant-sway",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "settings",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "title",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "continue",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "static-transform",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 2
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "static-normals",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 3
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "static-hidden",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 4
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "static-visible",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 5
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "static-removed",
+    "max_linear_rgb_difference": 0.0,
+    "mean_linear_rgb_difference": 0.0,
+    "resolution": 1024,
+    "static_revision": 6
+  }
+]

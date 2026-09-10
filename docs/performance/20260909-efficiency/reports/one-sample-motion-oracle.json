@@ -1,0 +1,92 @@
+[
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "cold",
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "warm",
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "creature-left-low",
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "creature-right-low",
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "carried-ball",
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "released-ball-left",
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "ball-right-plant-sway",
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": false,
+    "different_rgb_pixels": 0,
+    "frame": "settings",
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "title",
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "continue",
+    "static_revision": 1
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "static-transform",
+    "static_revision": 2
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "static-normals",
+    "static_revision": 3
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "static-hidden",
+    "static_revision": 4
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "static-visible",
+    "static_revision": 5
+  },
+  {
+    "cache_cleared": true,
+    "different_rgb_pixels": 0,
+    "frame": "static-removed",
+    "static_revision": 6
+  }
+]

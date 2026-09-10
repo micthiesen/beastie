@@ -1,0 +1,2045 @@
+{
+  "measurement": "21bounded batches of10frames. Sum perchunk GPU envelopes excludes CPU gaps but includes withinchunk fill/drain. Warm intrabatch completion cadence excludes warmupframes0..29 and all interbatch boundaries. Whole envelope/210 includes interbatch GPUwait/readback/CPUrecording gaps and is not a GPU-only cost. Everyframe includes all12dynamic shadow depth passes,primaryvisibility raster andcompute.",
+  "runs": [
+    {
+      "variant": "shadowmap-batch10-control-before",
+      "whole_envelope_div210_ms": 3.3157136904761906,
+      "sum_chunk_envelopes_div210_ms": 2.6409819476190473,
+      "warm_sum_chunk_envelopes_div180_ms": 2.5807759277777773,
+      "warm_intra_batch_completion_median_ms": 2.442167,
+      "warm_intra_batch_completion_p95_ms": 3.033292,
+      "warm_intervals": 162,
+      "invalid_timestamps": 0,
+      "image_difference": {
+        "different_rgb_pixels": 0,
+        "maximum_linear_channel_difference": 0.0,
+        "mean_absolute_linear_channel_difference": 0.0,
+        "total_pixels": 2073600
+      },
+      "shadow_maps": {
+        "batched_command_buffers": "21batches of10frames,wait andresolve betweenbatches for maps andtracecontrols",
+        "bounded_batch_frames": 10,
+        "caster_instances": 27,
+        "depth_bytes": 50331648,
+        "enabled": false,
+        "layers": 12,
+        "measurement_includes_all_twelve_depth_passes": true,
+        "reference": "same shader,original shadow rays,static caches disabled",
+        "resolution": 1024,
+        "uniform_bytes": 1744
+      },
+      "chunks": [
+        {
+          "first_frame": 0,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 39.113499999999995,
+          "gpu_envelope_per_frame_ms": 3.9113499999999997,
+          "within_chunk_completion_intervals_ms": [
+            3.0887499999999997,
+            2.4743329999999997,
+            2.461792,
+            3.3704579999999997,
+            2.445667,
+            2.3991659999999997,
+            2.422625,
+            2.47875,
+            2.428709
+          ]
+        },
+        {
+          "first_frame": 10,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 25.548333,
+          "gpu_envelope_per_frame_ms": 2.5548333,
+          "within_chunk_completion_intervals_ms": [
+            2.493959,
+            2.4246659999999998,
+            2.522417,
+            2.449125,
+            2.412292,
+            2.551541,
+            3.080292,
+            2.6378749999999997,
+            2.39925
+          ]
+        },
+        {
+          "first_frame": 20,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 25.404709,
+          "gpu_envelope_per_frame_ms": 2.5404709,
+          "within_chunk_completion_intervals_ms": [
+            2.44,
+            2.480667,
+            2.427083,
+            2.482583,
+            2.496167,
+            2.394417,
+            2.7737909999999997,
+            2.7740839999999998,
+            2.3745
+          ]
+        },
+        {
+          "first_frame": 30,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.561541,
+          "gpu_envelope_per_frame_ms": 2.5561540999999997,
+          "within_chunk_completion_intervals_ms": [
+            2.5069589999999997,
+            2.462333,
+            2.4139999999999997,
+            2.504458,
+            2.517625,
+            2.397875,
+            2.794542,
+            2.825833,
+            2.4176249999999997
+          ]
+        },
+        {
+          "first_frame": 40,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.3535,
+          "gpu_envelope_per_frame_ms": 2.53535,
+          "within_chunk_completion_intervals_ms": [
+            2.430708,
+            2.4238329999999997,
+            2.4615,
+            2.435167,
+            2.6611249999999997,
+            2.382792,
+            2.5288749999999998,
+            2.892875,
+            2.367166
+          ]
+        },
+        {
+          "first_frame": 50,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.416041999999997,
+          "gpu_envelope_per_frame_ms": 2.5416041999999996,
+          "within_chunk_completion_intervals_ms": [
+            2.450417,
+            2.4267499999999997,
+            2.436708,
+            2.424792,
+            2.401917,
+            2.413791,
+            2.40825,
+            2.431167,
+            3.190625
+          ]
+        },
+        {
+          "first_frame": 60,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 26.585957999999998,
+          "gpu_envelope_per_frame_ms": 2.6585957999999996,
+          "within_chunk_completion_intervals_ms": [
+            2.603792,
+            2.493166,
+            2.817917,
+            3.212417,
+            2.454541,
+            2.396084,
+            2.600416,
+            2.762167,
+            2.406333
+          ]
+        },
+        {
+          "first_frame": 70,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.741667,
+          "gpu_envelope_per_frame_ms": 2.5741667,
+          "within_chunk_completion_intervals_ms": [
+            2.5368749999999998,
+            3.033292,
+            3.1059579999999998,
+            2.438417,
+            2.395708,
+            2.356292,
+            2.386292,
+            2.379333,
+            2.3655
+          ]
+        },
+        {
+          "first_frame": 80,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.599874999999997,
+          "gpu_envelope_per_frame_ms": 2.5599874999999996,
+          "within_chunk_completion_intervals_ms": [
+            2.496041,
+            2.986917,
+            3.019875,
+            2.409208,
+            2.4019589999999997,
+            2.415708,
+            2.406333,
+            2.4139999999999997,
+            2.3939999999999997
+          ]
+        },
+        {
+          "first_frame": 90,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 26.037875,
+          "gpu_envelope_per_frame_ms": 2.6037875,
+          "within_chunk_completion_intervals_ms": [
+            2.4775419999999997,
+            3.280083,
+            2.825542,
+            2.417291,
+            2.3721669999999997,
+            2.402167,
+            2.3937079999999997,
+            2.754958,
+            2.370959
+          ]
+        },
+        {
+          "first_frame": 100,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.608292,
+          "gpu_envelope_per_frame_ms": 2.5608291999999997,
+          "within_chunk_completion_intervals_ms": [
+            2.555208,
+            3.076917,
+            2.7977909999999997,
+            2.387,
+            2.389709,
+            2.4173329999999997,
+            2.406167,
+            2.413,
+            2.369833
+          ]
+        },
+        {
+          "first_frame": 110,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 24.891292,
+          "gpu_envelope_per_frame_ms": 2.4891292,
+          "within_chunk_completion_intervals_ms": [
+            2.480625,
+            2.3987499999999997,
+            2.4078749999999998,
+            2.400625,
+            2.728542,
+            2.71175,
+            2.393958,
+            2.375209,
+            2.401958
+          ]
+        },
+        {
+          "first_frame": 120,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.522875,
+          "gpu_envelope_per_frame_ms": 2.5522875,
+          "within_chunk_completion_intervals_ms": [
+            2.5277909999999997,
+            2.445334,
+            2.482541,
+            2.3685,
+            2.361625,
+            2.811,
+            2.711834,
+            2.4129579999999997,
+            2.386958
+          ]
+        },
+        {
+          "first_frame": 130,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 26.423665999999997,
+          "gpu_envelope_per_frame_ms": 2.6423666,
+          "within_chunk_completion_intervals_ms": [
+            2.487333,
+            2.5077089999999997,
+            2.4692499999999997,
+            2.404791,
+            2.3619589999999997,
+            2.790333,
+            2.724083,
+            2.401042,
+            2.417458
+          ]
+        },
+        {
+          "first_frame": 140,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 26.164165999999998,
+          "gpu_envelope_per_frame_ms": 2.6164166,
+          "within_chunk_completion_intervals_ms": [
+            2.490875,
+            2.399458,
+            2.409083,
+            2.452709,
+            2.380708,
+            2.556167,
+            2.932,
+            2.39325,
+            2.386291
+          ]
+        },
+        {
+          "first_frame": 150,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.798917,
+          "gpu_envelope_per_frame_ms": 2.5798917,
+          "within_chunk_completion_intervals_ms": [
+            3.276542,
+            2.455333,
+            2.385875,
+            2.390459,
+            2.4049579999999997,
+            2.4176249999999997,
+            2.885458,
+            2.575459,
+            2.389583
+          ]
+        },
+        {
+          "first_frame": 160,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 26.108832999999997,
+          "gpu_envelope_per_frame_ms": 2.6108833,
+          "within_chunk_completion_intervals_ms": [
+            2.5298339999999997,
+            2.451875,
+            2.590708,
+            2.8046249999999997,
+            2.476417,
+            2.358,
+            3.163541,
+            2.4240839999999997,
+            2.375833
+          ]
+        },
+        {
+          "first_frame": 170,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 26.259542,
+          "gpu_envelope_per_frame_ms": 2.6259542,
+          "within_chunk_completion_intervals_ms": [
+            2.56075,
+            2.4282079999999997,
+            2.390583,
+            2.9401249999999997,
+            2.680417,
+            2.4045829999999997,
+            3.0164999999999997,
+            2.580667,
+            2.371542
+          ]
+        },
+        {
+          "first_frame": 180,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.834542,
+          "gpu_envelope_per_frame_ms": 2.5834542,
+          "within_chunk_completion_intervals_ms": [
+            2.506417,
+            2.413,
+            2.394792,
+            2.627,
+            2.861125,
+            2.454833,
+            2.7228749999999997,
+            2.6806669999999997,
+            2.406333
+          ]
+        },
+        {
+          "first_frame": 190,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.965542,
+          "gpu_envelope_per_frame_ms": 2.5965542,
+          "within_chunk_completion_intervals_ms": [
+            2.523167,
+            2.4722079999999997,
+            2.455292,
+            2.7565,
+            2.761916,
+            2.439,
+            2.6017919999999997,
+            2.801917,
+            2.372583
+          ]
+        },
+        {
+          "first_frame": 200,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.665542,
+          "gpu_envelope_per_frame_ms": 2.5665541999999997,
+          "within_chunk_completion_intervals_ms": [
+            2.466583,
+            2.425334,
+            2.452625,
+            2.4165829999999997,
+            3.424083,
+            2.367375,
+            2.492709,
+            2.393958,
+            2.3820419999999998
+          ]
+        }
+      ]
+    },
+    {
+      "variant": "shadowmap-batch10-512",
+      "whole_envelope_div210_ms": 4.3383642857142855,
+      "sum_chunk_envelopes_div210_ms": 2.0344624857142857,
+      "warm_sum_chunk_envelopes_div180_ms": 1.9697171166666667,
+      "warm_intra_batch_completion_median_ms": 1.8499165,
+      "warm_intra_batch_completion_p95_ms": 2.589833,
+      "warm_intervals": 162,
+      "invalid_timestamps": 0,
+      "image_difference": {
+        "different_rgb_pixels": 2878,
+        "maximum_linear_channel_difference": 0.3037109375,
+        "mean_absolute_linear_channel_difference": 3.092715892281552e-05,
+        "total_pixels": 2073600
+      },
+      "shadow_maps": {
+        "batched_command_buffers": "21batches of10frames,wait andresolve betweenbatches for maps andtracecontrols",
+        "bounded_batch_frames": 10,
+        "caster_instances": 27,
+        "depth_bytes": 12582912,
+        "enabled": true,
+        "layers": 12,
+        "measurement_includes_all_twelve_depth_passes": true,
+        "reference": "same shader,original shadow rays,static caches disabled",
+        "resolution": 512,
+        "uniform_bytes": 1744
+      },
+      "chunks": [
+        {
+          "first_frame": 0,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 34.587958,
+          "gpu_envelope_per_frame_ms": 3.4587958,
+          "within_chunk_completion_intervals_ms": [
+            2.832709,
+            1.8681249999999998,
+            1.8145829999999998,
+            1.8293329999999999,
+            1.8386669999999998,
+            1.8434579999999998,
+            1.835542,
+            1.848708,
+            1.8021669999999999
+          ]
+        },
+        {
+          "first_frame": 10,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 18.870874999999998,
+          "gpu_envelope_per_frame_ms": 1.8870874999999998,
+          "within_chunk_completion_intervals_ms": [
+            1.8954579999999999,
+            1.854417,
+            1.868166,
+            1.842917,
+            1.8350419999999998,
+            1.8728749999999998,
+            1.822708,
+            1.8271249999999999,
+            1.8062079999999998
+          ]
+        },
+        {
+          "first_frame": 20,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 19.229208,
+          "gpu_envelope_per_frame_ms": 1.9229208,
+          "within_chunk_completion_intervals_ms": [
+            1.958125,
+            1.8305829999999998,
+            1.805084,
+            1.8202909999999999,
+            1.867292,
+            1.865208,
+            2.067125,
+            1.98725,
+            1.779167
+          ]
+        },
+        {
+          "first_frame": 30,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.086,
+          "gpu_envelope_per_frame_ms": 2.0086,
+          "within_chunk_completion_intervals_ms": [
+            1.888083,
+            1.871292,
+            1.8455409999999999,
+            1.984292,
+            1.8299999999999998,
+            1.8239999999999998,
+            2.907292,
+            1.8803329999999998,
+            1.7877079999999999
+          ]
+        },
+        {
+          "first_frame": 40,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.847165999999998,
+          "gpu_envelope_per_frame_ms": 1.9847165999999998,
+          "within_chunk_completion_intervals_ms": [
+            2.932333,
+            1.833958,
+            1.868792,
+            1.845,
+            1.871333,
+            1.80225,
+            1.8813339999999998,
+            1.8436249999999998,
+            1.797666
+          ]
+        },
+        {
+          "first_frame": 50,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 18.857792,
+          "gpu_envelope_per_frame_ms": 1.8857792,
+          "within_chunk_completion_intervals_ms": [
+            1.900166,
+            1.8546669999999998,
+            1.8388749999999998,
+            1.838542,
+            1.8599999999999999,
+            1.865375,
+            1.877875,
+            1.8085829999999998,
+            1.789542
+          ]
+        },
+        {
+          "first_frame": 60,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.083416,
+          "gpu_envelope_per_frame_ms": 1.9083416,
+          "within_chunk_completion_intervals_ms": [
+            1.9074579999999999,
+            1.839125,
+            1.846083,
+            1.885,
+            1.8274169999999998,
+            2.022125,
+            1.903,
+            1.7985419999999999,
+            1.803416
+          ]
+        },
+        {
+          "first_frame": 70,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.068333,
+          "gpu_envelope_per_frame_ms": 2.0068333,
+          "within_chunk_completion_intervals_ms": [
+            1.899625,
+            2.074042,
+            1.8023749999999998,
+            1.839958,
+            1.863667,
+            1.8376249999999998,
+            2.890583,
+            1.8255839999999999,
+            1.7804579999999999
+          ]
+        },
+        {
+          "first_frame": 80,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.808792,
+          "gpu_envelope_per_frame_ms": 1.9808792,
+          "within_chunk_completion_intervals_ms": [
+            2.884292,
+            1.845875,
+            1.8463749999999999,
+            1.8632499999999999,
+            1.8203749999999999,
+            1.8585829999999999,
+            1.830625,
+            1.850333,
+            1.808209
+          ]
+        },
+        {
+          "first_frame": 90,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 18.888166,
+          "gpu_envelope_per_frame_ms": 1.8888165999999997,
+          "within_chunk_completion_intervals_ms": [
+            1.9077499999999998,
+            1.856542,
+            1.8349579999999999,
+            1.859875,
+            1.825875,
+            1.840708,
+            1.8410419999999998,
+            1.8474169999999999,
+            1.8155409999999998
+          ]
+        },
+        {
+          "first_frame": 100,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.277459,
+          "gpu_envelope_per_frame_ms": 2.0277459,
+          "within_chunk_completion_intervals_ms": [
+            1.9195,
+            1.838708,
+            1.866167,
+            1.8207499999999999,
+            2.090083,
+            1.8259589999999999,
+            2.465041,
+            2.391917,
+            1.8141669999999999
+          ]
+        },
+        {
+          "first_frame": 110,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 21.186332999999998,
+          "gpu_envelope_per_frame_ms": 2.1186333,
+          "within_chunk_completion_intervals_ms": [
+            2.11325,
+            2.660916,
+            1.839959,
+            1.853333,
+            2.589833,
+            2.327959,
+            1.872166,
+            1.8386669999999998,
+            1.794333
+          ]
+        },
+        {
+          "first_frame": 120,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.870959,
+          "gpu_envelope_per_frame_ms": 1.9870959,
+          "within_chunk_completion_intervals_ms": [
+            1.896458,
+            1.8564999999999998,
+            1.8677089999999998,
+            1.842166,
+            1.8360839999999998,
+            1.839083,
+            1.854042,
+            1.84625,
+            1.78925
+          ]
+        },
+        {
+          "first_frame": 130,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 18.978790999999998,
+          "gpu_envelope_per_frame_ms": 1.8978790999999997,
+          "within_chunk_completion_intervals_ms": [
+            1.905209,
+            1.84425,
+            1.8915,
+            1.805958,
+            1.845958,
+            1.86075,
+            1.8317089999999998,
+            1.911541,
+            1.828125
+          ]
+        },
+        {
+          "first_frame": 140,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.202916,
+          "gpu_envelope_per_frame_ms": 2.0202915999999997,
+          "within_chunk_completion_intervals_ms": [
+            1.9027919999999998,
+            1.852833,
+            1.880709,
+            2.106541,
+            1.800084,
+            2.418583,
+            2.3885,
+            1.8655419999999998,
+            1.768166
+          ]
+        },
+        {
+          "first_frame": 150,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.776666,
+          "gpu_envelope_per_frame_ms": 1.9776665999999998,
+          "within_chunk_completion_intervals_ms": [
+            2.721667,
+            1.865041,
+            1.812584,
+            1.857208,
+            1.8514169999999999,
+            1.832291,
+            1.835,
+            1.87175,
+            1.8191249999999999
+          ]
+        },
+        {
+          "first_frame": 160,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.6765,
+          "gpu_envelope_per_frame_ms": 1.9676500000000001,
+          "within_chunk_completion_intervals_ms": [
+            1.8884999999999998,
+            1.8495,
+            1.854333,
+            1.8515,
+            1.8252089999999999,
+            1.84625,
+            1.85075,
+            1.8428749999999998,
+            1.7754999999999999
+          ]
+        },
+        {
+          "first_frame": 170,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.08775,
+          "gpu_envelope_per_frame_ms": 1.9087749999999999,
+          "within_chunk_completion_intervals_ms": [
+            1.9021249999999998,
+            1.922,
+            1.8315,
+            1.805875,
+            1.852167,
+            1.844125,
+            1.8995419999999998,
+            1.954958,
+            1.819083
+          ]
+        },
+        {
+          "first_frame": 180,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.222832999999998,
+          "gpu_envelope_per_frame_ms": 2.0222833,
+          "within_chunk_completion_intervals_ms": [
+            1.9038329999999999,
+            1.963334,
+            1.957541,
+            1.829,
+            1.838625,
+            1.8524999999999998,
+            2.9800839999999997,
+            1.880166,
+            1.7898749999999999
+          ]
+        },
+        {
+          "first_frame": 190,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.78425,
+          "gpu_envelope_per_frame_ms": 1.978425,
+          "within_chunk_completion_intervals_ms": [
+            2.8815839999999997,
+            1.8289579999999999,
+            1.847125,
+            1.849208,
+            1.8428339999999999,
+            1.861,
+            1.8375,
+            1.838625,
+            1.801583
+          ]
+        },
+        {
+          "first_frame": 200,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 18.844959,
+          "gpu_envelope_per_frame_ms": 1.8844959,
+          "within_chunk_completion_intervals_ms": [
+            1.894167,
+            1.8282079999999998,
+            1.862584,
+            1.8388749999999998,
+            1.865375,
+            1.84625,
+            1.84675,
+            1.8916659999999998,
+            1.742584
+          ]
+        }
+      ]
+    },
+    {
+      "variant": "shadowmap-batch10-1024",
+      "whole_envelope_div210_ms": 4.357618452380953,
+      "sum_chunk_envelopes_div210_ms": 2.066159142857143,
+      "warm_sum_chunk_envelopes_div180_ms": 1.9981308055555556,
+      "warm_intra_batch_completion_median_ms": 1.8784164999999997,
+      "warm_intra_batch_completion_p95_ms": 2.4835,
+      "warm_intervals": 162,
+      "invalid_timestamps": 0,
+      "image_difference": {
+        "different_rgb_pixels": 1629,
+        "maximum_linear_channel_difference": 0.3037109375,
+        "mean_absolute_linear_channel_difference": 1.6198699121122007e-05,
+        "total_pixels": 2073600
+      },
+      "shadow_maps": {
+        "batched_command_buffers": "21batches of10frames,wait andresolve betweenbatches for maps andtracecontrols",
+        "bounded_batch_frames": 10,
+        "caster_instances": 27,
+        "depth_bytes": 50331648,
+        "enabled": true,
+        "layers": 12,
+        "measurement_includes_all_twelve_depth_passes": true,
+        "reference": "same shader,original shadow rays,static caches disabled",
+        "resolution": 1024,
+        "uniform_bytes": 1744
+      },
+      "chunks": [
+        {
+          "first_frame": 0,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 33.85725,
+          "gpu_envelope_per_frame_ms": 3.385725,
+          "within_chunk_completion_intervals_ms": [
+            1.9129589999999999,
+            1.868333,
+            1.849875,
+            1.849208,
+            1.850792,
+            2.076542,
+            1.883,
+            2.8047079999999998,
+            1.87025
+          ]
+        },
+        {
+          "first_frame": 10,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 20.452541999999998,
+          "gpu_envelope_per_frame_ms": 2.0452541999999996,
+          "within_chunk_completion_intervals_ms": [
+            2.04125,
+            1.868375,
+            1.852334,
+            1.952416,
+            1.86425,
+            1.9425839999999999,
+            2.8272909999999998,
+            1.89275,
+            1.7981669999999998
+          ]
+        },
+        {
+          "first_frame": 20,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 19.920082999999998,
+          "gpu_envelope_per_frame_ms": 1.9920082999999997,
+          "within_chunk_completion_intervals_ms": [
+            2.826667,
+            1.870042,
+            1.86575,
+            1.8694579999999998,
+            1.871,
+            1.8535,
+            1.8734169999999999,
+            1.86975,
+            1.828916
+          ]
+        },
+        {
+          "first_frame": 30,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.594167,
+          "gpu_envelope_per_frame_ms": 1.9594166999999998,
+          "within_chunk_completion_intervals_ms": [
+            1.926208,
+            1.9035,
+            1.8528749999999998,
+            1.875417,
+            1.8678329999999999,
+            1.854625,
+            1.8926669999999999,
+            1.8721249999999998,
+            1.826292
+          ]
+        },
+        {
+          "first_frame": 40,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.370708999999998,
+          "gpu_envelope_per_frame_ms": 2.0370709,
+          "within_chunk_completion_intervals_ms": [
+            1.914917,
+            1.8834579999999999,
+            1.873792,
+            1.884,
+            2.019125,
+            1.8930829999999998,
+            2.5517499999999997,
+            2.2967079999999997,
+            1.8104589999999998
+          ]
+        },
+        {
+          "first_frame": 50,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.999458999999998,
+          "gpu_envelope_per_frame_ms": 2.0999459,
+          "within_chunk_completion_intervals_ms": [
+            2.424458,
+            1.900042,
+            1.8848749999999999,
+            2.014125,
+            2.6715,
+            1.913667,
+            1.866333,
+            1.8628749999999998,
+            1.799667
+          ]
+        },
+        {
+          "first_frame": 60,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.407792,
+          "gpu_envelope_per_frame_ms": 1.9407792000000001,
+          "within_chunk_completion_intervals_ms": [
+            1.97325,
+            1.86025,
+            1.8450829999999998,
+            1.875459,
+            1.878541,
+            1.8764999999999998,
+            1.856167,
+            1.909292,
+            1.785583
+          ]
+        },
+        {
+          "first_frame": 70,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.337084,
+          "gpu_envelope_per_frame_ms": 1.9337084,
+          "within_chunk_completion_intervals_ms": [
+            1.9321249999999999,
+            1.8806669999999999,
+            1.8787079999999998,
+            1.8898329999999999,
+            1.8464589999999999,
+            1.8789159999999998,
+            2.000542,
+            1.862042,
+            1.9181249999999999
+          ]
+        },
+        {
+          "first_frame": 80,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.511042,
+          "gpu_envelope_per_frame_ms": 2.0511042,
+          "within_chunk_completion_intervals_ms": [
+            1.8930829999999998,
+            1.9904169999999999,
+            1.901792,
+            1.890083,
+            1.9973329999999998,
+            2.934459,
+            1.878291,
+            1.890459,
+            1.8243749999999999
+          ]
+        },
+        {
+          "first_frame": 90,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 21.307084,
+          "gpu_envelope_per_frame_ms": 2.1307084,
+          "within_chunk_completion_intervals_ms": [
+            1.868375,
+            1.855,
+            1.880167,
+            2.872667,
+            1.856458,
+            1.8784999999999998,
+            1.8530419999999999,
+            1.873958,
+            1.820042
+          ]
+        },
+        {
+          "first_frame": 100,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 18.900833,
+          "gpu_envelope_per_frame_ms": 1.8900833,
+          "within_chunk_completion_intervals_ms": [
+            1.9572919999999998,
+            1.848458,
+            1.8786669999999999,
+            1.841542,
+            1.8888749999999999,
+            1.865125,
+            1.8787079999999998,
+            1.867,
+            1.804625
+          ]
+        },
+        {
+          "first_frame": 110,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.358417,
+          "gpu_envelope_per_frame_ms": 1.9358416999999999,
+          "within_chunk_completion_intervals_ms": [
+            1.906667,
+            1.877125,
+            1.863958,
+            1.8766669999999999,
+            1.8705829999999999,
+            1.981584,
+            1.8783329999999998,
+            1.8810829999999998,
+            1.943209
+          ]
+        },
+        {
+          "first_frame": 120,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.351958,
+          "gpu_envelope_per_frame_ms": 2.0351958,
+          "within_chunk_completion_intervals_ms": [
+            2.059042,
+            1.8450419999999998,
+            1.874541,
+            1.922375,
+            1.85625,
+            2.4835,
+            2.354834,
+            1.8612909999999998,
+            1.820625
+          ]
+        },
+        {
+          "first_frame": 130,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 21.039084,
+          "gpu_envelope_per_frame_ms": 2.1039084,
+          "within_chunk_completion_intervals_ms": [
+            1.882417,
+            1.8672499999999999,
+            2.012958,
+            2.7679169999999997,
+            1.8423749999999999,
+            1.870625,
+            1.862458,
+            1.8701249999999998,
+            1.810709
+          ]
+        },
+        {
+          "first_frame": 140,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 18.920917,
+          "gpu_envelope_per_frame_ms": 1.8920917,
+          "within_chunk_completion_intervals_ms": [
+            1.9551669999999999,
+            1.880958,
+            1.87425,
+            1.866334,
+            1.8674579999999998,
+            1.89075,
+            1.8539999999999999,
+            1.8910829999999998,
+            1.786959
+          ]
+        },
+        {
+          "first_frame": 150,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.342041,
+          "gpu_envelope_per_frame_ms": 1.9342040999999999,
+          "within_chunk_completion_intervals_ms": [
+            1.920458,
+            1.871333,
+            1.8741249999999998,
+            1.882834,
+            1.877916,
+            1.9822499999999998,
+            1.960542,
+            1.8816249999999999,
+            1.8238329999999998
+          ]
+        },
+        {
+          "first_frame": 160,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.277957999999998,
+          "gpu_envelope_per_frame_ms": 2.0277958,
+          "within_chunk_completion_intervals_ms": [
+            1.9521659999999998,
+            1.9324169999999998,
+            1.874375,
+            1.871958,
+            1.954917,
+            2.811625,
+            1.861,
+            1.910958,
+            1.815542
+          ]
+        },
+        {
+          "first_frame": 170,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.050209,
+          "gpu_envelope_per_frame_ms": 2.0050209,
+          "within_chunk_completion_intervals_ms": [
+            1.923875,
+            1.866209,
+            1.9028749999999999,
+            1.863958,
+            1.87275,
+            1.8777499999999998,
+            1.84175,
+            1.877875,
+            1.829917
+          ]
+        },
+        {
+          "first_frame": 180,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 19.118499999999997,
+          "gpu_envelope_per_frame_ms": 1.9118499999999998,
+          "within_chunk_completion_intervals_ms": [
+            1.920459,
+            1.884166,
+            1.869209,
+            1.856541,
+            1.886417,
+            1.86225,
+            1.8592499999999998,
+            1.868083,
+            1.911667
+          ]
+        },
+        {
+          "first_frame": 190,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.287708,
+          "gpu_envelope_per_frame_ms": 2.0287707999999998,
+          "within_chunk_completion_intervals_ms": [
+            1.927292,
+            1.865708,
+            1.869167,
+            1.905166,
+            1.9784169999999999,
+            2.9285829999999997,
+            1.882834,
+            1.867333,
+            1.8043749999999998
+          ]
+        },
+        {
+          "first_frame": 200,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.488583,
+          "gpu_envelope_per_frame_ms": 2.0488583,
+          "within_chunk_completion_intervals_ms": [
+            2.023625,
+            1.9097499999999998,
+            1.867084,
+            2.286416,
+            2.56925,
+            1.851959,
+            1.889416,
+            1.870209,
+            1.8305829999999998
+          ]
+        }
+      ]
+    },
+    {
+      "variant": "shadowmap-batch10-2048",
+      "whole_envelope_div210_ms": 4.645999604761904,
+      "sum_chunk_envelopes_div210_ms": 2.199336114285714,
+      "warm_sum_chunk_envelopes_div180_ms": 2.128224311111111,
+      "warm_intra_batch_completion_median_ms": 2.020792,
+      "warm_intra_batch_completion_p95_ms": 2.675083,
+      "warm_intervals": 162,
+      "invalid_timestamps": 0,
+      "image_difference": {
+        "different_rgb_pixels": 840,
+        "maximum_linear_channel_difference": 0.30322265625,
+        "mean_absolute_linear_channel_difference": 8.073500645013504e-06,
+        "total_pixels": 2073600
+      },
+      "shadow_maps": {
+        "batched_command_buffers": "21batches of10frames,wait andresolve betweenbatches for maps andtracecontrols",
+        "bounded_batch_frames": 10,
+        "caster_instances": 27,
+        "depth_bytes": 201326592,
+        "enabled": true,
+        "layers": 12,
+        "measurement_includes_all_twelve_depth_passes": true,
+        "reference": "same shader,original shadow rays,static caches disabled",
+        "resolution": 2048,
+        "uniform_bytes": 1744
+      },
+      "chunks": [
+        {
+          "first_frame": 0,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 36.001332999999995,
+          "gpu_envelope_per_frame_ms": 3.6001332999999995,
+          "within_chunk_completion_intervals_ms": [
+            1.978208,
+            1.974375,
+            1.9671669999999999,
+            1.9894159999999999,
+            2.054542,
+            1.977542,
+            2.6582909999999997,
+            2.6004169999999998,
+            1.867333
+          ]
+        },
+        {
+          "first_frame": 10,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 22.452792,
+          "gpu_envelope_per_frame_ms": 2.2452791999999997,
+          "within_chunk_completion_intervals_ms": [
+            3.187583,
+            2.0560419999999997,
+            2.0495829999999997,
+            2.9237919999999997,
+            2.0187079999999997,
+            2.03375,
+            2.018417,
+            2.021041,
+            1.9565839999999999
+          ]
+        },
+        {
+          "first_frame": 20,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 20.326083,
+          "gpu_envelope_per_frame_ms": 2.0326083,
+          "within_chunk_completion_intervals_ms": [
+            2.014875,
+            2.004833,
+            2.035708,
+            2.029709,
+            2.01525,
+            2.047208,
+            2.026042,
+            2.01675,
+            1.971083
+          ]
+        },
+        {
+          "first_frame": 30,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 21.948207999999997,
+          "gpu_envelope_per_frame_ms": 2.1948207999999996,
+          "within_chunk_completion_intervals_ms": [
+            2.039459,
+            2.011875,
+            2.031541,
+            2.014875,
+            2.184292,
+            2.179792,
+            2.051666,
+            2.273875,
+            2.808542
+          ]
+        },
+        {
+          "first_frame": 40,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 21.159499999999998,
+          "gpu_envelope_per_frame_ms": 2.1159499999999998,
+          "within_chunk_completion_intervals_ms": [
+            2.0361249999999997,
+            2.017125,
+            2.021584,
+            2.0078329999999998,
+            2.000792,
+            2.004708,
+            2.014417,
+            2.002875,
+            1.952583
+          ]
+        },
+        {
+          "first_frame": 50,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 21.186542,
+          "gpu_envelope_per_frame_ms": 2.1186542,
+          "within_chunk_completion_intervals_ms": [
+            2.0288749999999998,
+            2.0229589999999997,
+            2.000166,
+            2.019542,
+            2.0225,
+            2.010917,
+            2.210541,
+            2.230542,
+            2.286625
+          ]
+        },
+        {
+          "first_frame": 60,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 22.38525,
+          "gpu_envelope_per_frame_ms": 2.238525,
+          "within_chunk_completion_intervals_ms": [
+            2.170042,
+            2.894167,
+            2.000291,
+            2.001834,
+            2.675083,
+            2.233583,
+            1.9729999999999999,
+            2.0222919999999998,
+            1.945917
+          ]
+        },
+        {
+          "first_frame": 70,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.645374999999998,
+          "gpu_envelope_per_frame_ms": 2.0645374999999997,
+          "within_chunk_completion_intervals_ms": [
+            1.9902499999999999,
+            2.003333,
+            1.980292,
+            2.000416,
+            1.9985419999999998,
+            1.98,
+            2.0091669999999997,
+            1.9931249999999998,
+            1.9304999999999999
+          ]
+        },
+        {
+          "first_frame": 80,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 21.6485,
+          "gpu_envelope_per_frame_ms": 2.16485,
+          "within_chunk_completion_intervals_ms": [
+            2.000667,
+            1.975167,
+            1.984208,
+            2.006875,
+            2.1734999999999998,
+            2.125167,
+            2.030208,
+            2.256208,
+            2.721917
+          ]
+        },
+        {
+          "first_frame": 90,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 21.52975,
+          "gpu_envelope_per_frame_ms": 2.152975,
+          "within_chunk_completion_intervals_ms": [
+            1.998125,
+            3.012834,
+            1.986958,
+            2.044625,
+            1.987333,
+            1.9992919999999998,
+            1.9805,
+            1.986167,
+            1.9175829999999998
+          ]
+        },
+        {
+          "first_frame": 100,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.201,
+          "gpu_envelope_per_frame_ms": 2.0201000000000002,
+          "within_chunk_completion_intervals_ms": [
+            2.0273339999999997,
+            2.00475,
+            1.975458,
+            1.973542,
+            1.968791,
+            2.009792,
+            1.986292,
+            1.970958,
+            1.943875
+          ]
+        },
+        {
+          "first_frame": 110,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.504583,
+          "gpu_envelope_per_frame_ms": 2.0504583,
+          "within_chunk_completion_intervals_ms": [
+            1.9975829999999999,
+            2.004709,
+            2.001916,
+            1.981542,
+            1.984583,
+            2.079959,
+            2.16725,
+            1.991958,
+            1.921333
+          ]
+        },
+        {
+          "first_frame": 120,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 21.617832999999997,
+          "gpu_envelope_per_frame_ms": 2.1617832999999997,
+          "within_chunk_completion_intervals_ms": [
+            2.038125,
+            2.258834,
+            1.989291,
+            2.1156669999999997,
+            2.887292,
+            1.977458,
+            2.023792,
+            2.012583,
+            1.9203329999999998
+          ]
+        },
+        {
+          "first_frame": 130,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.251167,
+          "gpu_envelope_per_frame_ms": 2.0251167,
+          "within_chunk_completion_intervals_ms": [
+            2.044625,
+            2.004584,
+            2.077625,
+            1.9981659999999999,
+            2.004042,
+            1.985417,
+            2.0117499999999997,
+            2.030458,
+            1.935417
+          ]
+        },
+        {
+          "first_frame": 140,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.964042,
+          "gpu_envelope_per_frame_ms": 2.0964042,
+          "within_chunk_completion_intervals_ms": [
+            2.025458,
+            2.012167,
+            2.052333,
+            2.107167,
+            2.158791,
+            2.008834,
+            2.012666,
+            2.032459,
+            2.148708
+          ]
+        },
+        {
+          "first_frame": 150,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 21.552042,
+          "gpu_envelope_per_frame_ms": 2.1552042,
+          "within_chunk_completion_intervals_ms": [
+            2.011875,
+            2.034917,
+            2.03425,
+            2.969,
+            1.98725,
+            2.027875,
+            2.007958,
+            1.9925419999999998,
+            1.9427079999999999
+          ]
+        },
+        {
+          "first_frame": 160,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.846208,
+          "gpu_envelope_per_frame_ms": 2.0846208,
+          "within_chunk_completion_intervals_ms": [
+            2.073458,
+            2.115834,
+            2.020375,
+            2.014666,
+            2.028625,
+            2.031959,
+            2.057791,
+            2.109792,
+            2.033333
+          ]
+        },
+        {
+          "first_frame": 170,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 21.611833,
+          "gpu_envelope_per_frame_ms": 2.1611833000000003,
+          "within_chunk_completion_intervals_ms": [
+            2.028041,
+            2.011209,
+            2.040416,
+            2.112667,
+            2.099417,
+            2.125166,
+            2.860417,
+            2.00725,
+            1.949125
+          ]
+        },
+        {
+          "first_frame": 180,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 22.726709,
+          "gpu_envelope_per_frame_ms": 2.2726709,
+          "within_chunk_completion_intervals_ms": [
+            2.027416,
+            2.12125,
+            2.85675,
+            2.289125,
+            2.055709,
+            2.042958,
+            2.044375,
+            2.01675,
+            1.9472919999999998
+          ]
+        },
+        {
+          "first_frame": 190,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 20.556417,
+          "gpu_envelope_per_frame_ms": 2.0556417,
+          "within_chunk_completion_intervals_ms": [
+            2.0185839999999997,
+            2.054541,
+            2.041292,
+            2.027292,
+            2.0463329999999997,
+            2.0367919999999997,
+            2.0105,
+            2.016458,
+            1.993042
+          ]
+        },
+        {
+          "first_frame": 200,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 21.745417,
+          "gpu_envelope_per_frame_ms": 2.1745417,
+          "within_chunk_completion_intervals_ms": [
+            2.078041,
+            2.021209,
+            2.0321249999999997,
+            2.1371249999999997,
+            2.176458,
+            2.037,
+            2.014917,
+            2.25825,
+            2.6451249999999997
+          ]
+        }
+      ]
+    },
+    {
+      "variant": "shadowmap-batch10-control-after",
+      "whole_envelope_div210_ms": 3.3014083333333333,
+      "sum_chunk_envelopes_div210_ms": 2.623147009523809,
+      "warm_sum_chunk_envelopes_div180_ms": 2.559300683333333,
+      "warm_intra_batch_completion_median_ms": 2.4285829999999997,
+      "warm_intra_batch_completion_p95_ms": 3.000292,
+      "warm_intervals": 162,
+      "invalid_timestamps": 0,
+      "image_difference": {
+        "different_rgb_pixels": 0,
+        "maximum_linear_channel_difference": 0.0,
+        "mean_absolute_linear_channel_difference": 0.0,
+        "total_pixels": 2073600
+      },
+      "shadow_maps": {
+        "batched_command_buffers": "21batches of10frames,wait andresolve betweenbatches for maps andtracecontrols",
+        "bounded_batch_frames": 10,
+        "caster_instances": 27,
+        "depth_bytes": 50331648,
+        "enabled": false,
+        "layers": 12,
+        "measurement_includes_all_twelve_depth_passes": true,
+        "reference": "same shader,original shadow rays,static caches disabled",
+        "resolution": 1024,
+        "uniform_bytes": 1744
+      },
+      "chunks": [
+        {
+          "first_frame": 0,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 38.598957999999996,
+          "gpu_envelope_per_frame_ms": 3.8598957999999994,
+          "within_chunk_completion_intervals_ms": [
+            2.412667,
+            2.525,
+            2.436333,
+            2.6730419999999997,
+            2.4262919999999997,
+            2.7276249999999997,
+            2.787458,
+            2.467333,
+            2.374917
+          ]
+        },
+        {
+          "first_frame": 10,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 25.845374999999997,
+          "gpu_envelope_per_frame_ms": 2.5845374999999997,
+          "within_chunk_completion_intervals_ms": [
+            2.441042,
+            2.521625,
+            2.4354999999999998,
+            2.5614999999999997,
+            2.925208,
+            2.919542,
+            2.380041,
+            2.4724589999999997,
+            2.371375
+          ]
+        },
+        {
+          "first_frame": 20,
+          "frames": 10,
+          "warmup": true,
+          "gpu_envelope_ms": 25.742416,
+          "gpu_envelope_per_frame_ms": 2.5742415999999997,
+          "within_chunk_completion_intervals_ms": [
+            2.4071249999999997,
+            2.377458,
+            2.646584,
+            2.562791,
+            2.5374589999999997,
+            3.2399999999999998,
+            2.391416,
+            2.395334,
+            2.401166
+          ]
+        },
+        {
+          "first_frame": 30,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 26.67375,
+          "gpu_envelope_per_frame_ms": 2.667375,
+          "within_chunk_completion_intervals_ms": [
+            2.465417,
+            2.438958,
+            2.4085419999999997,
+            2.5103329999999997,
+            2.864417,
+            3.2998749999999997,
+            2.3838749999999997,
+            2.859375,
+            2.641167
+          ]
+        },
+        {
+          "first_frame": 40,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 26.43,
+          "gpu_envelope_per_frame_ms": 2.643,
+          "within_chunk_completion_intervals_ms": [
+            2.4016249999999997,
+            2.4441669999999998,
+            2.448791,
+            2.506542,
+            2.930417,
+            2.7435,
+            2.433875,
+            2.966208,
+            2.716042
+          ]
+        },
+        {
+          "first_frame": 50,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.336624999999998,
+          "gpu_envelope_per_frame_ms": 2.5336624999999997,
+          "within_chunk_completion_intervals_ms": [
+            2.4286659999999998,
+            2.464209,
+            2.425916,
+            2.428042,
+            2.4382919999999997,
+            2.421458,
+            2.4122079999999997,
+            2.586709,
+            2.942208
+          ]
+        },
+        {
+          "first_frame": 60,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 24.949165999999998,
+          "gpu_envelope_per_frame_ms": 2.4949166,
+          "within_chunk_completion_intervals_ms": [
+            2.4205829999999997,
+            2.41225,
+            2.408083,
+            2.391584,
+            2.441291,
+            2.4262919999999997,
+            2.513083,
+            2.3827499999999997,
+            2.767875
+          ]
+        },
+        {
+          "first_frame": 70,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 24.945417,
+          "gpu_envelope_per_frame_ms": 2.4945417,
+          "within_chunk_completion_intervals_ms": [
+            2.4517919999999997,
+            2.402542,
+            2.403708,
+            2.392042,
+            2.4093329999999997,
+            2.4448749999999997,
+            2.606,
+            2.506167,
+            2.4529579999999997
+          ]
+        },
+        {
+          "first_frame": 80,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 24.671625,
+          "gpu_envelope_per_frame_ms": 2.4671624999999997,
+          "within_chunk_completion_intervals_ms": [
+            2.465042,
+            2.441458,
+            2.441542,
+            2.426417,
+            2.402625,
+            2.386791,
+            2.4194999999999998,
+            2.411584,
+            2.41975
+          ]
+        },
+        {
+          "first_frame": 90,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.626416,
+          "gpu_envelope_per_frame_ms": 2.5626416,
+          "within_chunk_completion_intervals_ms": [
+            3.582458,
+            2.41825,
+            2.427375,
+            2.419709,
+            2.367333,
+            2.404375,
+            2.3561669999999997,
+            2.3886249999999998,
+            2.4355409999999997
+          ]
+        },
+        {
+          "first_frame": 100,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.012833,
+          "gpu_envelope_per_frame_ms": 2.5012833,
+          "within_chunk_completion_intervals_ms": [
+            2.9481669999999998,
+            2.470166,
+            2.4299999999999997,
+            2.3652919999999997,
+            2.387375,
+            2.381875,
+            2.376,
+            2.3766249999999998,
+            2.403625
+          ]
+        },
+        {
+          "first_frame": 110,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.542958,
+          "gpu_envelope_per_frame_ms": 2.5542958,
+          "within_chunk_completion_intervals_ms": [
+            2.4932499999999997,
+            2.6944999999999997,
+            3.293417,
+            2.405083,
+            2.393958,
+            2.375209,
+            2.3865,
+            2.4695,
+            2.371166
+          ]
+        },
+        {
+          "first_frame": 120,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.2335,
+          "gpu_envelope_per_frame_ms": 2.5233499999999998,
+          "within_chunk_completion_intervals_ms": [
+            2.4285,
+            2.638667,
+            3.000292,
+            2.388375,
+            2.345083,
+            2.37275,
+            2.374292,
+            2.430958,
+            2.389042
+          ]
+        },
+        {
+          "first_frame": 130,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 24.979416,
+          "gpu_envelope_per_frame_ms": 2.4979416,
+          "within_chunk_completion_intervals_ms": [
+            2.512,
+            2.519084,
+            3.001916,
+            2.379917,
+            2.3489999999999998,
+            2.38125,
+            2.3645419999999997,
+            2.386541,
+            2.441375
+          ]
+        },
+        {
+          "first_frame": 140,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 26.198874999999997,
+          "gpu_envelope_per_frame_ms": 2.6198875,
+          "within_chunk_completion_intervals_ms": [
+            2.4337079999999998,
+            2.411959,
+            2.770583,
+            2.897083,
+            2.3976249999999997,
+            2.747709,
+            2.779541,
+            2.38475,
+            2.405709
+          ]
+        },
+        {
+          "first_frame": 150,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 26.367583999999997,
+          "gpu_envelope_per_frame_ms": 2.6367583999999997,
+          "within_chunk_completion_intervals_ms": [
+            2.540459,
+            2.45625,
+            2.406666,
+            3.3398749999999997,
+            2.379375,
+            2.435084,
+            3.2007499999999998,
+            2.390416,
+            2.3859589999999997
+          ]
+        },
+        {
+          "first_frame": 160,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.893458,
+          "gpu_envelope_per_frame_ms": 2.5893458,
+          "within_chunk_completion_intervals_ms": [
+            2.437458,
+            2.524375,
+            2.637917,
+            2.761792,
+            2.3965829999999997,
+            2.379583,
+            2.869375,
+            2.65575,
+            2.355667
+          ]
+        },
+        {
+          "first_frame": 170,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 26.247332999999998,
+          "gpu_envelope_per_frame_ms": 2.6247333,
+          "within_chunk_completion_intervals_ms": [
+            2.488958,
+            2.515125,
+            2.4477919999999997,
+            3.163541,
+            2.489334,
+            2.726666,
+            2.800167,
+            2.393125,
+            2.377125
+          ]
+        },
+        {
+          "first_frame": 180,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.583707999999998,
+          "gpu_envelope_per_frame_ms": 2.5583707999999996,
+          "within_chunk_completion_intervals_ms": [
+            2.480458,
+            2.405875,
+            2.379209,
+            2.4086659999999998,
+            2.3947499999999997,
+            2.636625,
+            2.7639169999999997,
+            2.8465,
+            2.393833
+          ]
+        },
+        {
+          "first_frame": 190,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.613125,
+          "gpu_envelope_per_frame_ms": 2.5613125,
+          "within_chunk_completion_intervals_ms": [
+            2.571542,
+            2.40325,
+            2.364708,
+            2.6325,
+            2.382875,
+            2.3972089999999997,
+            3.030166,
+            2.62675,
+            2.394959
+          ]
+        },
+        {
+          "first_frame": 200,
+          "frames": 10,
+          "warmup": false,
+          "gpu_envelope_ms": 25.368333999999997,
+          "gpu_envelope_per_frame_ms": 2.5368334,
+          "within_chunk_completion_intervals_ms": [
+            2.4790829999999997,
+            2.3825,
+            2.410209,
+            2.3785,
+            2.405166,
+            2.3954169999999997,
+            2.8827499999999997,
+            2.8423749999999997,
+            2.397792
+          ]
+        }
+      ]
+    }
+  ]
+}

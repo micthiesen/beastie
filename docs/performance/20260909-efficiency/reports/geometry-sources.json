@@ -1,0 +1,1352 @@
+[
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 18, generation: 0}",
+    "triangles": 41652
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 24, generation: 0}",
+    "triangles": 132
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 0, generation: 0}",
+    "triangles": 39708
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 1, generation: 0}",
+    "triangles": 5868
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 2, generation: 0}",
+    "triangles": 2124
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 3, generation: 0}",
+    "triangles": 108
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 4, generation: 0}",
+    "triangles": 972
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 5, generation: 0}",
+    "triangles": 252
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 6, generation: 0}",
+    "triangles": 684
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 7, generation: 0}",
+    "triangles": 2124
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 1, generation: 0}",
+    "triangles": 5868
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 2, generation: 0}",
+    "triangles": 2124
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 3, generation: 0}",
+    "triangles": 108
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 4, generation: 0}",
+    "triangles": 972
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 5, generation: 0}",
+    "triangles": 252
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 6, generation: 0}",
+    "triangles": 684
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 7, generation: 0}",
+    "triangles": 2124
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 8, generation: 0}",
+    "triangles": 1548
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 9, generation: 0}",
+    "triangles": 396
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 10, generation: 0}",
+    "triangles": 252
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 7, generation: 0}",
+    "triangles": 2124
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 11, generation: 0}",
+    "triangles": 11772
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 11, generation: 0}",
+    "triangles": 11772
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 11, generation: 0}",
+    "triangles": 11772
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 11, generation: 0}",
+    "triangles": 11772
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 11, generation: 0}",
+    "triangles": 11772
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 11, generation: 0}",
+    "triangles": 11772
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 11, generation: 0}",
+    "triangles": 11772
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 11, generation: 0}",
+    "triangles": 11772
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 11, generation: 0}",
+    "triangles": 11772
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 11, generation: 0}",
+    "triangles": 11772
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 11, generation: 0}",
+    "triangles": 11772
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 11, generation: 0}",
+    "triangles": 11772
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 7, generation: 0}",
+    "triangles": 2124
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 25, generation: 0}",
+    "triangles": 18876
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 26, generation: 0}",
+    "triangles": 26172
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 27, generation: 0}",
+    "triangles": 14496
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 28, generation: 0}",
+    "triangles": 108
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 29, generation: 0}",
+    "triangles": 164
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 30, generation: 0}",
+    "triangles": 288
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 31, generation: 0}",
+    "triangles": 148
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 32, generation: 0}",
+    "triangles": 160
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 33, generation: 0}",
+    "triangles": 728
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 34, generation: 0}",
+    "triangles": 452
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 35, generation: 0}",
+    "triangles": 220
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 17, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 19, generation: 0}",
+    "triangles": 73508
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 20, generation: 0}",
+    "triangles": 76692
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 21, generation: 0}",
+    "triangles": 18876
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 22, generation: 0}",
+    "triangles": 26172
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 23, generation: 0}",
+    "triangles": 14496
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 12, generation: 0}",
+    "triangles": 12
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 13, generation: 0}",
+    "triangles": 28732
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 14, generation: 0}",
+    "triangles": 92580
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 15, generation: 0}",
+    "triangles": 48
+  },
+  {
+    "components": [
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>",
+      "<Enable the debug feature to see the name>"
+    ],
+    "mesh": "AssetId<bevy_mesh::mesh::Mesh>{ index: 16, generation: 0}",
+    "triangles": 336
+  }
+]

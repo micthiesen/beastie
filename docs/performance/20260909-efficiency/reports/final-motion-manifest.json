@@ -1,0 +1,170 @@
+{
+  "version": 8,
+  "experience": "gold-reference",
+  "suite": "gold-reference",
+  "scenario": "fixtures/scenarios/gold-reference-motion.jsonl",
+  "scenario_sha256": "7d75c6f04db32cf24271c32199b2b83495d1b500560749c67f6c4e298f081fd1",
+  "initial_save": null,
+  "initial_save_sha256": null,
+  "commit": "a19edc90450ed0b6beae6541270730693607ee8c",
+  "working_tree_dirty": true,
+  "game_binary_sha256": "fdefbb2e606ffb24ec0f04c10eead02c06e794ddec7a04a6ed15b3d0ee21ec79",
+  "platform": "macos",
+  "build_profile": "debug",
+  "fake_ai": true,
+  "tts_requested": false,
+  "fixture_dialogue_delay_ms": null,
+  "seed": 42,
+  "video_fps": 60,
+  "presentation": "1280x720 native Bevy voxel framebuffer",
+  "input_mode": "script-only; live device input disabled",
+  "audible_mix_captured": false,
+  "reference_mix_generated": true,
+  "artifacts": [
+    {
+      "path": "audio-05a5d3ebdddfa97d9173cbb6cff64fb65edea27d5602fb909bc42a58fb16c053.wav",
+      "bytes": 1058444,
+      "sha256": "05a5d3ebdddfa97d9173cbb6cff64fb65edea27d5602fb909bc42a58fb16c053"
+    },
+    {
+      "path": "audio-overview.png",
+      "bytes": 4663,
+      "sha256": "2c109726df086f611153b16af68aefbe9ba754c3123d2e17c7dc1f6d56edc13b"
+    },
+    {
+      "path": "audio-reconstruction.json",
+      "bytes": 455,
+      "sha256": "d38b071b4e27125e244a54829272739eb15ea99e79b8c9bd766d7836e28f46ab"
+    },
+    {
+      "path": "audio.jsonl",
+      "bytes": 346487,
+      "sha256": "9b14402ab28f9025048673c40a45708c2050068f7394e818be1b471e72b3d876"
+    },
+    {
+      "path": "captures/gameplay-return.png",
+      "bytes": 478725,
+      "sha256": "22a32af8236d6f9f819aaa228ed52dad72088d3afdfdce7013e1ad751c865076"
+    },
+    {
+      "path": "captures/reduced-motion.png",
+      "bytes": 354230,
+      "sha256": "2771f22c279c6ae020b67ee7a5832b7f6996617051aa59f3c4ba26a9b18eb8e2"
+    },
+    {
+      "path": "captures/selection-moving.png",
+      "bytes": 480340,
+      "sha256": "d926d0c1670a02d6f11da4dab86fbb78178d572a8780dbbbd0c84ccffdc9d950"
+    },
+    {
+      "path": "captures/settings-moving.png",
+      "bytes": 357093,
+      "sha256": "9e029e70d67beb834790e6aa185101ea3194f03296aa5eb3799d291d09b62555"
+    },
+    {
+      "path": "captures/title-alive.png",
+      "bytes": 509718,
+      "sha256": "c872bc08ab4e789694409f7390d2cf7b440022e703d8c1cfd7ae76ca0ca7f391"
+    },
+    {
+      "path": "captures/water-moving.png",
+      "bytes": 479327,
+      "sha256": "cbf7018e6658dadf6f00b6a00d05b5f461586d30cde098ea4fe8a4f4fa950b93"
+    },
+    {
+      "path": "captures/water-start.png",
+      "bytes": 473840,
+      "sha256": "bb4f949f8d729440f2326df8013a5aa11723b5102032585c7005efc208fee7ac"
+    },
+    {
+      "path": "events.jsonl",
+      "bytes": 48824,
+      "sha256": "178b73a2f08c8e8b80fab7142ba9db772e77d7a69457a6ad0556d49f46b3218d"
+    },
+    {
+      "path": "filmstrips/gameplay-return-001.png",
+      "bytes": 338518,
+      "sha256": "d1f1cec4aa5557d51cf22c4572bb263b74c4fdc2386c584aa70ed38c59a1f5e7"
+    },
+    {
+      "path": "filmstrips/overview-001.png",
+      "bytes": 209996,
+      "sha256": "facc60374e92e7ca58ec0bce549751031573ad44d9e77cbbf34a8fb0ccc534f0"
+    },
+    {
+      "path": "filmstrips/reduced-motion-001.png",
+      "bytes": 456349,
+      "sha256": "bee114d6a9633f2b88f1127b3e9593a56a610de558a923b9df286349831ada44"
+    },
+    {
+      "path": "filmstrips/selection-moving-001.png",
+      "bytes": 542848,
+      "sha256": "f73a9d74f2c46322c0637ef1208b24c8d6f1d950c0ca6079a3d049ee3b7064d8"
+    },
+    {
+      "path": "filmstrips/settings-moving-001.png",
+      "bytes": 360414,
+      "sha256": "43f7e10aff07e5de3cd9eaa7ae6feb1c8e351744de2de51d27f7b79cb0c50fa9"
+    },
+    {
+      "path": "filmstrips/title-alive-001.png",
+      "bytes": 561618,
+      "sha256": "8571693a649f0a14564c93675ad22015a32ea6e8c52420a4f1af1543c4d4b7fd"
+    },
+    {
+      "path": "filmstrips/water-moving-001.png",
+      "bytes": 595273,
+      "sha256": "49b0a2b8df1eb7062cb10557dda848082e5200b5f936514c24de145084e64a13"
+    },
+    {
+      "path": "filmstrips/water-start-001.png",
+      "bytes": 580681,
+      "sha256": "d4ce0faa45b3abf40fa8af1ddd578e2c51d4a2728706791fb8e38a25d5555a00"
+    },
+    {
+      "path": "first-frame.json",
+      "bytes": 64,
+      "sha256": "844247273af21650c9e03a74bd45d8af1b3a9dd951a633d7c76086639782f7d5"
+    },
+    {
+      "path": "inputs.jsonl",
+      "bytes": 1360,
+      "sha256": "5303df4fe34ad7cbdd02b92f55e30f9ccb3ef36cb13a09a601095a9ecb36732c"
+    },
+    {
+      "path": "markers.jsonl",
+      "bytes": 536,
+      "sha256": "55e903266f2209bf4a087e9079abe6ca877dbe665a0d1d2c9ac2c40bb3610830"
+    },
+    {
+      "path": "reference-mix.wav",
+      "bytes": 740924,
+      "sha256": "e82a681251bf4155be5da05a74e5617880cb16f33c5bd29d27dca95f5e78f9af"
+    },
+    {
+      "path": "review.md",
+      "bytes": 850,
+      "sha256": "9f7f173af6591c58bdb96ce12119947044c2d0743fb84ff095db996f464cbe3c"
+    },
+    {
+      "path": "session-audio-reference.mp4",
+      "bytes": 802904,
+      "sha256": "f4f55856fb4259dc54f73f41262d96885da17ee4dd7a421c0fbc1418eab79938"
+    },
+    {
+      "path": "session.mp4",
+      "bytes": 721619,
+      "sha256": "042226e3a29500d64b714d40361d29da9994dbfc973c5fcc8f913a10eede7d70"
+    },
+    {
+      "path": "state.jsonl",
+      "bytes": 1292444,
+      "sha256": "70321c0e82ae4387fa139f7a43cc1116df2bc41b0bf2c1dfb4c0081074bac95b"
+    },
+    {
+      "path": "video-visibility.log",
+      "bytes": 1308,
+      "sha256": "a824b2160d4e5760faf2141ced6e8b6e3dd77f9fbe88a0cbd8788c97c32cb2a7"
+    }
+  ]
+}

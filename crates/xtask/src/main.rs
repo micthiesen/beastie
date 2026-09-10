@@ -84,6 +84,9 @@ enum Task {
     },
     /// Run the game shell with fixture or environment-configured local AI.
     Dev {
+        /// Optimized interactive build with assertions; use dev for unoptimized debugging.
+        #[arg(long, default_value = "dev-perf", value_parser = ["dev", "dev-perf"])]
+        profile: String,
         #[arg(long)]
         fake_ai: bool,
         /// Outer worker watchdog in milliseconds.
@@ -391,6 +394,7 @@ fn main() -> Result<()> {
             startup_retries,
         }),
         Task::Dev {
+            profile,
             fake_ai,
             ai_timeout_ms,
             stt_backend,
@@ -406,6 +410,7 @@ fn main() -> Result<()> {
             stay_open,
             new_game,
         } => dev(DevOptions {
+            profile: &profile,
             fake_ai,
             ai_timeout_ms,
             stt_backend: &stt_backend,
@@ -593,6 +598,7 @@ fn verify() -> Result<()> {
 }
 
 struct DevOptions<'a> {
+    profile: &'a str,
     fake_ai: bool,
     ai_timeout_ms: Option<u64>,
     stt_backend: &'a str,
@@ -611,6 +617,7 @@ struct DevOptions<'a> {
 
 fn dev(options: DevOptions<'_>) -> Result<()> {
     let DevOptions {
+        profile,
         fake_ai,
         ai_timeout_ms,
         stt_backend,
@@ -699,13 +706,15 @@ fn dev(options: DevOptions<'_>) -> Result<()> {
             "beastie-game",
             "--bin",
             "beastie-game",
+            "--profile",
+            profile,
             "--locked",
         ],
     )?;
     let game = std::env::current_dir()
         .context("failed to locate repository root")?
         .join("target")
-        .join("debug")
+        .join(if profile == "dev" { "debug" } else { profile })
         .join(format!("beastie-game{}", std::env::consts::EXE_SUFFIX));
     let mut command = Command::new(game);
     if fake_ai {

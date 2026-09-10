@@ -1,9 +1,27 @@
-// Geometry, letters and interface all intersect in this same ordinary-compute path.
-struct Triangle { a:vec4<f32>, e1:vec4<f32>, e2:vec4<f32> }
+// Startup diagnostic ablation; Full=0 preserves ordinary rendering. See args::RenderProbe.
+const RENDER_PROBE:u32=0u;
+// Original key-light disk directions, in six-then-refinement order.
+const SHADOW_LIGHTS=array<vec3<f32>,12>(
+    vec3(0.05096472054719925,0.7933255434036255,0.6066607236862183),
+    vec3(0.009911677800118923,0.7206313610076904,0.6932475566864014),
+    vec3(-0.14901669323444366,0.7691977620124817,0.6213926076889038),
+    vec3(-0.04697708785533905,0.8873977065086365,0.45860496163368225),
+    vec3(0.19340457022190094,0.8202420473098755,0.5383285284042358),
+    vec3(0.09651350229978561,0.6482056975364685,0.755324125289917),
+    vec3(-0.06492169946432114,0.8274002075195312,0.5578477382659912),
+    vec3(0.08141004294157028,0.8517171144485474,0.5176392793655396),
+    vec3(0.14080367982387543,0.7288109660148621,0.6700812578201294),
+    vec3(-0.08936631679534912,0.674760103225708,0.7326066493988037),
+    vec3(-0.20070503652095795,0.8257325887680054,0.5271462202072144),
+    vec3(0.07114649564027786,0.9093708395957947,0.4098570942878723));
+const CACHE_BOUNCE:bool=true;
+const RASTER_PRIMARY:bool=true;
+// Shared geometry, lettering and interface shading after raster or compute visibility.
+struct Triangle { a:vec3<f32>, surface:u32, e1:vec4<f32>, e2:vec4<f32> }
 struct TriangleSurface { n0:vec4<f32>, n1:vec4<f32>, n2:vec4<f32>, c0:vec4<f32>, c1:vec4<f32>, c2:vec4<f32> }
 struct Node { lo:vec3<f32>, first:u32, hi:vec3<f32>, count:u32 }
 struct Instance { world:mat4x4<f32>, inverse:mat4x4<f32>, material:vec4<f32>, tint:vec4<f32>, root:u32, transmission:f32, pad1:u32, pad2:u32 }
-struct Params { world_from_clip:mat4x4<f32>, size:vec4<u32>, water:vec4<f32>, roots:vec4<u32> }
+struct Params { world_from_clip:mat4x4<f32>, size:vec4<u32>, water:vec4<f32>, roots:vec4<u32>, shadow_roots:vec4<u32>, cache_roots:vec4<u32>, static_instances:array<vec4<u32>,4> }
 @group(0) @binding(0) var<storage,read> triangles:array<Triangle>;
 @group(0) @binding(1) var<storage,read> nodes:array<Node>;
 @group(0) @binding(2) var<storage,read> instances:array<Instance>;
@@ -11,6 +29,12 @@ struct Params { world_from_clip:mat4x4<f32>, size:vec4<u32>, water:vec4<f32>, ro
 @group(0) @binding(4) var<uniform> params:Params;
 @group(0) @binding(5) var output:texture_storage_2d<rgba16float,write>;
 @group(0) @binding(6) var<storage,read> surfaces:array<TriangleSurface>;
+@group(0) @binding(8) var<storage,read_write> shadow_masks:array<u32>;
+@group(0) @binding(7) var visibility:texture_2d<u32>;
+@group(0) @binding(9) var<storage,read_write> bounce_cache:array<u32>;
+struct ShadowMapParams { clip_from_world:array<mat4x4<f32>,12>, depth_ranges:array<vec4<f32>,12>, info:vec4<u32> }
+@group(0) @binding(10) var dynamic_shadow_maps:texture_depth_2d_array;
+@group(0) @binding(11) var<uniform> shadow_map_params:ShadowMapParams;
 struct Hit { t:f32, u:f32, v:f32, triangle:u32, instance:u32 }
 // Cache reciprocals per ray coordinate space, never once per visited box.
 // Parallel axes use finite arithmetic, including origins exactly on a slab.
@@ -43,13 +67,20 @@ fn triangle_hit(o:vec3<f32>, d:vec3<f32>, index:u32, closest:Hit) -> Hit {
     return Hit(t,u,v,index,closest.instance);
 }
 fn trace(o:vec3<f32>, d:vec3<f32>, limit:f32, secondary:bool, any_hit:bool) -> Hit {
+    let root=select(params.roots.x,select(params.roots.y,params.roots.z,any_hit),secondary);
+    return trace_root(o,d,limit,secondary,any_hit,root);
+}
+fn trace_root(o:vec3<f32>, d:vec3<f32>, limit:f32, secondary:bool, any_hit:bool, root:u32) -> Hit {
+    return trace_root_excluding(o,d,limit,secondary,any_hit,root,0xffffffffu,0xffffffffu);
+}
+fn trace_root_excluding(o:vec3<f32>, d:vec3<f32>, limit:f32, secondary:bool, any_hit:bool, root:u32, excluded_instance:u32, excluded_triangle:u32) -> Hit {
     var closest=Hit(limit,0.0,0.0,0u,0xffffffffu);
     let world_ray=slab_ray(o,d);
     // Each stack stores only deferred far siblings, with their already tested
-    // entry distances. Depth-bounded CPU trees have <=32 levels, hence <=31 siblings.
+    // entry distances. CPU trees bound TLAS depth to15 and BLAS depth to23 edges.
     // Recheck the saved distance against a closer hit without repeating slabs.
-    var stack:array<vec2<u32>,32>; var depth=0u;
-    var current=select(params.roots.x,select(params.roots.y,params.roots.z,any_hit),secondary);
+    var stack:array<vec2<u32>,16>; var depth=0u;
+    var current=root;
     if(current==0xffffffffu) { return closest; }
     var entry=box_hit(world_ray,tlas[current].lo,tlas[current].hi,closest.t);
     loop {
@@ -75,7 +106,7 @@ fn trace(o:vec3<f32>, d:vec3<f32>, limit:f32, secondary:bool, any_hit:bool) -> H
                     let local_o=(instance.inverse*vec4(o,1.0)).xyz;
                     let local_d=(instance.inverse*vec4(d,0.0)).xyz;
                     let local_ray=slab_ray(local_o,local_d);
-                    var local_stack:array<vec2<u32>,32>; var local_depth=0u;
+                    var local_stack:array<vec2<u32>,24>; var local_depth=0u;
                     var local_current=instance.root;
                     var local_entry=box_hit(local_ray,nodes[local_current].lo,nodes[local_current].hi,closest.t);
                     loop {
@@ -96,6 +127,7 @@ fn trace(o:vec3<f32>, d:vec3<f32>, limit:f32, secondary:bool, any_hit:bool) -> H
                                 if(near_entry<closest.t) { local_current=near_index; local_entry=near_entry; continue; }
                             } else {
                                 for(var tri=n.first;tri<n.first+n.count;tri++) {
+                                    if(item==excluded_instance && tri==excluded_triangle) { continue; }
                                     let hit=triangle_hit(local_o,local_d,tri,closest);
                                     if(hit.t<closest.t) { closest=hit; closest.instance=item; if(any_hit) { return closest; } }
                                 }
@@ -112,6 +144,48 @@ fn trace(o:vec3<f32>, d:vec3<f32>, limit:f32, secondary:bool, any_hit:bool) -> H
         depth--; let next=stack[depth]; current=next.x; entry=bitcast<f32>(next.y);
     }
     return closest;
+}
+// Static-only and full-world trees can choose different equal-distance surfaces.
+// Classify those rays once, then preserve the original full-world tie behavior.
+struct CachedBounce { hit:Hit, mask:u32 }
+fn cached_bounce(origin:vec3<f32>, direction:vec3<f32>, cache_index:u32, previous_mask:u32) -> CachedBounce {
+    var mask=previous_mask;
+    var bounce=Hit(2.5,0.0,0.0,0u,0xffffffffu);
+    if((mask&(1u<<24u))!=0u) {
+        if((mask&(1u<<25u))!=0u) {
+            return CachedBounce(trace(origin,direction,2.5,true,false),mask);
+        }
+        let word=bounce_cache[cache_index];
+        if(word!=0u) {
+            let slot=(word&255u)-1u;
+            let item=params.static_instances[slot/4u][slot%4u];
+            let inverse=instances[item].inverse;
+            bounce=triangle_hit((inverse*vec4(origin,1.0)).xyz,(inverse*vec4(direction,0.0)).xyz,word>>8u,bounce);
+            if(bounce.t<2.5) { bounce.instance=item; }
+        }
+    } else {
+        bounce=trace_root(origin,direction,2.5,true,false,params.cache_roots.x);
+        var word=0u;
+        if(bounce.instance!=0xffffffffu) {
+            word=(bounce.triangle<<8u)|instances[bounce.instance].pad1;
+            // All accepted distances are positive finite f32 values. The next
+            // representable value admits equal hits despite strict t<limit tests.
+            let upper=bitcast<f32>(bitcast<u32>(bounce.t)+1u);
+            let other=trace_root_excluding(origin,direction,upper,true,false,params.cache_roots.x,bounce.instance,bounce.triangle);
+            if(other.instance!=0xffffffffu && other.t==bounce.t) { mask=mask|(1u<<25u); }
+        }
+        bounce_cache[cache_index]=word;
+        mask=mask|(1u<<24u);
+        if((mask&(1u<<25u))!=0u) {
+            return CachedBounce(trace(origin,direction,2.5,true,false),mask);
+        }
+    }
+    let moving=trace_root(origin,direction,2.5,true,false,params.cache_roots.y);
+    if(moving.instance!=0xffffffffu) {
+        if(moving.t<bounce.t) { bounce=moving; }
+        else if(moving.t==bounce.t) { bounce=trace(origin,direction,2.5,true,false); }
+    }
+    return CachedBounce(bounce,mask);
 }
 // Moving irregular cell boundaries approximate focused surface light without a
 // repeated sinusoidal lattice. Stable hash positions keep this deterministic.
@@ -207,7 +281,7 @@ fn environment(d:vec3<f32>) -> vec3<f32> {
     return mix(vec3(0.10,0.17,0.16),vec3(0.60,0.77,0.78),clamp(d.y*0.5+0.5,0.0,1.0));
 }
 fn normal_at(hit:Hit, d:vec3<f32>) -> vec3<f32> {
-    let tri=surfaces[hit.triangle];
+    let tri=surfaces[triangles[hit.triangle].surface];
     let geometry=triangles[hit.triangle];
     let n=tri.n0.xyz*(1.0-hit.u-hit.v)+tri.n1.xyz*hit.u+tri.n2.xyz*hit.v;
     let transformed=normalize((transpose(instances[hit.instance].inverse)*vec4(n,0.0)).xyz);
@@ -215,11 +289,35 @@ fn normal_at(hit:Hit, d:vec3<f32>) -> vec3<f32> {
     return select(transformed,-transformed,dot(geometric,d)>0.0);
 }
 fn albedo_at(hit:Hit) -> vec3<f32> {
-    let tri=surfaces[hit.triangle];
+    let tri=surfaces[triangles[hit.triangle].surface];
     return max(vec3(0.0),(tri.c0.xyz*(1.0-hit.u-hit.v)+tri.c1.xyz*hit.u+tri.c2.xyz*hit.v)*instances[hit.instance].tint.xyz);
 }
 struct Lighting { diffuse:vec3<f32>, reflection:vec3<f32> }
-fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
+fn dynamic_shadow_blocked(origin:vec3<f32>,light:vec3<f32>,sample:u32) -> bool {
+    if(shadow_map_params.info.x==0u) {
+        return trace_root(origin,light,35.0,true,true,params.shadow_roots.y).instance!=0xffffffffu;
+    }
+    if(shadow_map_params.info.w==0u) { return false; }
+    let clip=shadow_map_params.clip_from_world[sample]*vec4(origin,1.0);
+    // Outside the fitted projection of all dynamic caster bounds, no caster can
+    // intersect this directional ray. Receivers may legitimately lie below z=0.
+    if(abs(clip.x)>1.0 || abs(clip.y)>1.0) { return false; }
+    let uv=vec2(clip.x*0.5+0.5,0.5-clip.y*0.5);
+    let size=i32(shadow_map_params.info.y);
+    let pixel=clamp(vec2<i32>(floor(uv*f32(size))),vec2(0),vec2(size-1));
+    let depth=textureLoad(dynamic_shadow_maps,pixel,i32(sample),0);
+    if(depth==0.0) { return false; }
+    let range=shadow_map_params.depth_ranges[sample];
+    let distance=(depth-clip.z)*range.y/range.z;
+    // A one-layer shadow map cannot resolve a closer blocker hidden behind a
+    // blocker beyond the ray limit. Keep exact traversal for that uncommon case.
+    if(distance>=35.0) {
+        return trace_root(origin,light,35.0,true,true,params.shadow_roots.y).instance!=0xffffffffu;
+    }
+    return distance>0.0001;
+}
+
+fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit,cache_index:u32) -> Lighting {
     if(hit.instance==0xffffffffu) { return Lighting(vec3(0.0),vec3(0.038,0.067,0.072)); }
     let material=instances[hit.instance].material; let base=albedo_at(hit);
     let n=normal_at(hit,d); let p=o+d*hit.t;
@@ -235,50 +333,85 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
     var geometric=normalize((transpose(instances[hit.instance].inverse)*vec4(cross(triangle.e1.xyz,triangle.e2.xyz),0.0)).xyz);
     if(dot(geometric,d)>0.0) { geometric=-geometric; }
     let origin=p+geometric*0.008+n*0.06;
-    var visible=0u; var shadow_samples=0u;
-    // Broad rough ground reveals penumbra bands. Keep articulated/glossy surfaces
-    // on six rays, and spend extra visibility samples on that quiet receiving bed.
-    let refine_shadow=material.x>0.9 && n.y>0.95;
-    let light_u=normalize(cross(vec3(0.0,1.0,0.0),key));
-    let light_v=cross(key,light_u);
-    for(var s=0u;s<12u;s++) {
-        // Interleave the disk: six directions first, then refine its penumbra.
-        // Uniformly lit/occluded surfaces retain the original six-ray budget.
-        if(s==6u && (!refine_shadow || visible==0u || visible==6u)) { break; }
-        let disk_index=(s%6u)*2u+s/6u;
-        let angle=f32(disk_index)*2.399963;
-        let radius=sqrt((f32(disk_index)+0.5)/12.0)*0.25;
-        let light=normalize(key+(light_u*cos(angle)+light_v*sin(angle))*radius);
-        let shadow=trace(origin,light,35.0,true,true);
-        visible+=select(0u,1u,shadow.instance==0xffffffffu);
-        shadow_samples++;
+    let can_cache=params.shadow_roots.z!=0u && cache_index!=0xffffffffu && instances[hit.instance].pad1!=0u;
+    var mask=0u;
+    let record=cache_index*3u;
+    if(can_cache) {
+        if(shadow_masks[record+1u]!=instances[hit.instance].pad2 || shadow_masks[record+2u]!=hit.triangle) {
+            shadow_masks[record+1u]=instances[hit.instance].pad2;
+            shadow_masks[record+2u]=hit.triangle;
+            shadow_masks[record]=0u;
+        }
+        mask=shadow_masks[record];
     }
-    var visibility=f32(visible)/f32(shadow_samples);
+    var visibility=1.0;
+    if(RENDER_PROBE!=2u) {
+        var visible=0u; var shadow_samples=0u;
+        // Broad rough ground reveals penumbra bands. Keep articulated/glossy surfaces
+        // on six rays, and spend extra visibility samples on that quiet receiving bed.
+        let refine_shadow=material.x>0.9 && n.y>0.95;
+        for(var s=0u;s<12u;s++) {
+            // Interleave the disk: six directions first, then refine its penumbra.
+            // Uniformly lit/occluded surfaces retain the original six-ray budget.
+            if(s==6u && (!refine_shadow || visible==0u || visible==6u)) { break; }
+            let light=SHADOW_LIGHTS[s];
+            var blocked=false;
+            if(can_cache) {
+                let known=1u<<(s+12u); let occluded=1u<<s;
+                if((mask&known)==0u) {
+                    let fixed_hit=trace_root(origin,light,35.0,true,true,params.shadow_roots.x);
+                    mask=mask|known;
+                    if(fixed_hit.instance!=0xffffffffu) { mask=mask|occluded; }
+                }
+                blocked=(mask&occluded)!=0u;
+                if(!blocked) {
+                    blocked=dynamic_shadow_blocked(origin,light,s);
+                }
+            } else {
+                if(shadow_map_params.info.x!=0u) {
+                    blocked=trace_root(origin,light,35.0,true,true,params.shadow_roots.x).instance!=0xffffffffu;
+                    if(!blocked) { blocked=dynamic_shadow_blocked(origin,light,s); }
+                } else {
+                    blocked=trace(origin,light,35.0,true,true).instance!=0xffffffffu;
+                }
+            }
+            visible+=select(1u,0u,blocked);
+            shadow_samples++;
+        }
+        visibility=f32(visible)/f32(shadow_samples);
+    }
     if(params.size.w==1u) { visibility=1.0; }
     let softness=instances[hit.instance].transmission;
     visibility=mix(visibility,1.0,softness);
     let diffuse=max(dot(n,key),0.0)*visibility;
     var indirect=environment(n)*0.30;
     // One deterministic secondary ray captures nearby color bleeding without history ghosting.
-    let tangent=normalize(cross(select(vec3(0.0,1.0,0.0),vec3(1.0,0.0,0.0),abs(n.y)>0.9),n));
-    let bounce_dir=normalize(n+tangent*0.45);
-    let bounce=trace(origin,bounce_dir,2.5,true,false);
-    if(bounce.instance!=0xffffffffu) {
-        let bounce_base=albedo_at(bounce); let bn=normal_at(bounce,bounce_dir);
-        let proximity=1.0-clamp(bounce.t/2.5,0.0,1.0);
-        indirect=mix(indirect, bounce_base*(0.12+max(dot(bn,key),0.0)*0.25),proximity*0.6*(1.0-softness));
+    if(RENDER_PROBE!=3u) {
+        let tangent=normalize(cross(select(vec3(0.0,1.0,0.0),vec3(1.0,0.0,0.0),abs(n.y)>0.9),n));
+        let bounce_dir=normalize(n+tangent*0.45);
+        var bounce=Hit(2.5,0.0,0.0,0u,0xffffffffu);
+        if(CACHE_BOUNCE && can_cache && params.cache_roots.w!=0u) {
+            let cached=cached_bounce(origin,bounce_dir,cache_index,mask);
+            bounce=cached.hit; mask=cached.mask;
+        } else { bounce=trace(origin,bounce_dir,2.5,true,false); }
+
+        if(bounce.instance!=0xffffffffu) {
+            let bounce_base=albedo_at(bounce); let bn=normal_at(bounce,bounce_dir);
+            let proximity=1.0-clamp(bounce.t/2.5,0.0,1.0);
+            indirect=mix(indirect, bounce_base*(0.12+max(dot(bn,key),0.0)*0.25),proximity*0.6*(1.0-softness));
+        }
+        // Reuse the existing short diffuse bounce for contact darkening. A second
+        // occlusion traversal adds too much cost on ordinary-compute ray tracing.
+        let contact=select(0.0,1.0-smoothstep(0.06,0.85,bounce.t),bounce.instance!=0xffffffffu);
+        indirect*=1.0-contact*0.48*(1.0-softness);
     }
-    // Reuse the existing short diffuse bounce for contact darkening. A second
-    // occlusion traversal adds too much cost on ordinary-compute ray tracing.
-    let contact=select(0.0,1.0-smoothstep(0.06,0.85,bounce.t),bounce.instance!=0xffffffffu);
-    indirect*=1.0-contact*0.48*(1.0-softness);
     let rough=clamp(material.x,0.1,1.0); let metal=material.y;
     let half_vector=normalize(key-d);
     let spec=pow(max(dot(n,half_vector),0.0),mix(120.0,4.0,rough*rough));
     let fresnel=mix(vec3(0.04),base,metal);
     let reflection_direction=reflect(d,n);
     var reflected=environment(reflection_direction);
-    if(metal>0.3 || rough<0.3) {
+    if(RENDER_PROBE!=4u && (metal>0.3 || rough<0.3)) {
         let reflected_hit=trace(origin,reflection_direction,20.0,true,false);
         if(reflected_hit.instance!=0xffffffffu) {
             let reflected_normal=normal_at(reflected_hit,reflection_direction);
@@ -291,7 +424,7 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
     let submerged=p.z<2.15 && abs(p.x)<7.75 && p.y>=-2.13;
     let caustic_weight=select(0.0,max(n.y,0.0)*exp(-max(p.y+1.75,0.0)*0.85)*params.water.y,submerged);
     var caustic_light=0.0;
-    if(caustic_weight>0.025 && visibility>0.0) {
+    if(RENDER_PROBE!=5u && caustic_weight>0.025 && visibility>0.0) {
         caustic_light=caustic(p.xz,params.water.x)*caustic_weight*visibility;
     }
     // Bounded practical fill beneath the four warm top lamps. Keep it softer and
@@ -311,9 +444,28 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit) -> Lighting {
     if(base.g>base.r*1.2 && base.g>base.b*1.15 && material.w<0.5) {
         indirect+=vec3(0.16,0.23,0.12)*(0.12+0.24*abs(n.x));
     }
+    if(can_cache) { shadow_masks[record]=mask; }
     return Lighting((indirect+vec3(1.0,0.89,0.70)*diffuse*1.08
         +vec3(1.0,0.91,0.66)*caustic_light*1.15+vec3(0.8,0.48,0.18)*warm_edge)*(1.0-metal*0.65)*grain,
         fresnel*(spec*visibility*(1.8-rough)+reflected*(0.2+0.5*metal)));
+}
+fn primary_hit(o:vec3<f32>, d:vec3<f32>, pixel:vec2<u32>, sample:u32) -> Hit {
+    if(!RASTER_PRIMARY) { return trace(o,d,1500.0,false,false); }
+    let offsets=array<vec2<u32>,4>(vec2(0u,0u),vec2(1u,1u),vec2(1u,0u),vec2(0u,1u));
+    let words=textureLoad(visibility,vec2<i32>(pixel*2u+offsets[sample]),0).xy;
+    let ids=select(words,vec2(words.x>>8u,words.x&255u),params.roots.w==1u);
+    if(ids.y==0u) { return Hit(1500.0,0.0,0.0,0u,0xffffffffu); }
+    let instance=ids.y-1u;
+    let local_o=(instances[instance].inverse*vec4(o,1.0)).xyz;
+    let local_d=(instances[instance].inverse*vec4(d,0.0)).xyz;
+    // Raster coverage already proves this triangle contains the sample. Solve
+    // barycentrics without repeating a differently rounded edge rejection.
+    let tri=triangles[ids.x];
+    let p=cross(local_d,tri.e2.xyz);
+    let reciprocal=1.0/dot(tri.e1.xyz,p);
+    let delta=local_o-tri.a.xyz;
+    let q=cross(delta,tri.e1.xyz);
+    return Hit(dot(tri.e2.xyz,q)*reciprocal,dot(delta,p)*reciprocal,dot(local_d,q)*reciprocal,ids.x,instance);
 }
 @compute @workgroup_size(8,8)
 fn trace_frame(@builtin(global_invocation_id) gid:vec3<u32>) {
@@ -323,7 +475,7 @@ fn trace_frame(@builtin(global_invocation_id) gid:vec3<u32>) {
     var first_normal=vec3(0.0);
     var first_light=Lighting(vec3(0.0),vec3(0.0));
     var behind=vec3(0.0); var behind_ready=false;
-    var samples=4u;
+    var samples=select(4u,1u,RENDER_PROBE==6u);
     for(var sample=0u;sample<samples;sample++) {
         let offsets=array<vec2<f32>,4>(vec2(0.25,0.25),vec2(0.75,0.75),vec2(0.75,0.25),vec2(0.25,0.75));
         let offset=offsets[sample];
@@ -332,23 +484,37 @@ fn trace_frame(@builtin(global_invocation_id) gid:vec3<u32>) {
         let near=params.world_from_clip*vec4(clip,1.0,1.0);
         let far=params.world_from_clip*vec4(clip,0.0,1.0);
         let origin=near.xyz/near.w; let direction=normalize(far.xyz/far.w-origin);
-        let hit=trace(origin,direction,1500.0,false,false);
+        let hit=primary_hit(origin,direction,gid.xy,sample);
+        if(RENDER_PROBE==1u) {
+            var primary_color=vec3(0.038,0.067,0.072);
+            if(hit.instance!=0xffffffffu) { primary_color=albedo_at(hit); }
+            if(sample==0u) {
+                if(hit.instance==0xffffffffu) { samples=2u; }
+                else if(instances[hit.instance].material.w<0.5) { samples=2u; }
+            }
+            color+=primary_color/f32(samples);
+            continue;
+        }
         var light=first_light;
         var base=vec3(0.0); var n=vec3(0.0);
         if(hit.instance!=0xffffffffu) { base=albedo_at(hit); n=normal_at(hit,direction); }
         // Visibility is sampled four times. Locally coplanar samples share illumination,
         // never coverage or albedo; letters and silhouette edges retain exact ray coverage.
         if(sample==0u || hit.instance!=first.instance || dot(n,first_normal)<0.995) {
-            light=lighting(origin,direction,hit);
+            let cache_index=select(0xffffffffu,(gid.y*params.size.x+gid.x)*params.shadow_roots.z+sample,sample<params.shadow_roots.z);
+            light=lighting(origin,direction,hit,cache_index);
         }
         if(sample==0u) {
             first=hit; first_light=light; first_normal=n;
             // Fine inlaid glyphs need four coverage samples; the chunky aquarium uses two.
-            if(hit.instance==0xffffffffu) { samples=2u; }
-            else if(instances[hit.instance].material.w<0.5) { samples=2u; }
+            if(RENDER_PROBE!=6u) {
+                if(hit.instance==0xffffffffu) { samples=2u; }
+                else if(instances[hit.instance].material.w<0.5) { samples=2u; }
+            }
         }
-        var sample_color=water_optics(base*light.diffuse+light.reflection,origin,direction,hit);
-        if(hit.instance!=0xffffffffu && instances[hit.instance].material.w>0.5
+        var sample_color=base*light.diffuse+light.reflection;
+        if(RENDER_PROBE!=5u) { sample_color=water_optics(sample_color,origin,direction,hit); }
+        if(RENDER_PROBE!=5u && hit.instance!=0xffffffffu && instances[hit.instance].material.w>0.5
             && instances[hit.instance].transmission>0.0) {
             // Only the large settings plate opts in. One world-only continuation
             // per pixel retains aquarium context; inlaid text remains opaque.

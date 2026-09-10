@@ -21,6 +21,20 @@ use bevy::{
 #[derive(Component)]
 pub struct RayOverlay;
 
+/// Explicit immutable environment eligibility. All other entities remain dynamic.
+#[derive(Component)]
+pub struct RayStatic;
+
+#[derive(Clone, PartialEq)]
+struct StaticSignature {
+    entity: u64,
+    index: u32,
+    packed_triangles: u32,
+    mesh: AssetId<Mesh>,
+    transform: [u32; 16],
+    material: [u32; 8],
+}
+
 #[derive(Clone, Copy, Debug, ShaderType)]
 pub struct Triangle {
     pub a: Vec4,
@@ -38,7 +52,8 @@ pub struct Triangle {
 /// and colors remain lossless in a separate array with the same triangle index.
 #[derive(Clone, Copy, Debug, ShaderType)]
 pub struct GeometryTriangle {
-    pub a: Vec4,
+    pub a: Vec3,
+    pub surface: u32,
     pub e1: Vec4,
     pub e2: Vec4,
 }
@@ -54,9 +69,10 @@ pub struct TriangleSurface {
 }
 
 impl Triangle {
-    pub fn geometry(&self) -> GeometryTriangle {
+    pub fn geometry(&self, surface: u32) -> GeometryTriangle {
         GeometryTriangle {
-            a: self.a,
+            a: self.a.truncate(),
+            surface,
             e1: (self.b.truncate() - self.a.truncate()).extend(0.0),
             e2: (self.c.truncate() - self.a.truncate()).extend(0.0),
         }
@@ -101,6 +117,9 @@ pub struct GpuInstance {
 pub struct GeometryChunk {
     pub triangle_offset: u32,
     pub node_offset: u32,
+    pub surface_offset: u32,
+    pub surfaces: Arc<Vec<TriangleSurface>>,
+    pub surface_indices: Arc<Vec<u32>>,
     pub revision: u64,
     pub triangles: Arc<Vec<Triangle>>,
     pub nodes: Arc<Vec<BvhNode>>,
@@ -111,11 +130,18 @@ pub struct RayScene {
     pub geometry: Vec<GeometryChunk>,
     pub triangle_count: u32,
     pub node_count: u32,
+    pub surface_count: u32,
     pub instances: Vec<GpuInstance>,
     pub tlas_nodes: Vec<BvhNode>,
     /// Auxiliary roots share the primary instance array. MAX denotes no members.
     pub world_root: u32,
     pub shadow_root: u32,
+    pub static_shadow_root: u32,
+    pub dynamic_shadow_root: u32,
+    pub static_revision: u64,
+    pub static_world_root: u32,
+    pub dynamic_world_root: u32,
+    pub static_instances: [u32; 16],
     pub geometry_revision: u64,
 }
 
@@ -125,10 +151,17 @@ impl Default for RayScene {
             geometry: Vec::new(),
             triangle_count: 0,
             node_count: 0,
+            surface_count: 0,
             instances: Vec::new(),
             tlas_nodes: Vec::new(),
             world_root: u32::MAX,
             shadow_root: u32::MAX,
+            static_shadow_root: u32::MAX,
+            dynamic_shadow_root: u32::MAX,
+            static_revision: 0,
+            static_world_root: u32::MAX,
+            dynamic_world_root: u32::MAX,
+            static_instances: [u32::MAX; 16],
             geometry_revision: 0,
         }
     }
@@ -193,6 +226,10 @@ impl Bounds {
 
 struct MeshBlas {
     triangles: Arc<Vec<Triangle>>,
+    surfaces: Arc<Vec<TriangleSurface>>,
+    surface_indices: Arc<Vec<u32>>,
+    packed_surfaces: u32,
+    surface_capacity: u32,
     nodes: Vec<BvhNode>,
     bounds: Bounds,
     packed_root: u32,
@@ -205,8 +242,10 @@ struct MeshBlas {
 #[derive(Resource, Default)]
 struct MeshCache {
     meshes: HashMap<AssetId<Mesh>, MeshBlas>,
+    static_snapshot: Vec<StaticSignature>,
     triangle_count: u32,
     node_count: u32,
+    surface_count: u32,
     revision: u64,
 }
 
@@ -219,6 +258,8 @@ type SceneInstances<'w, 's> = Query<
         &'static GlobalTransform,
         Option<&'static InheritedVisibility>,
         Option<&'static RayOverlay>,
+        Option<&'static RayStatic>,
+        Entity,
     ),
 >;
 
@@ -262,12 +303,18 @@ fn extract_scene(
         if let Some(old) = old.filter(|old| {
             old.triangle_capacity >= blas.triangles.len() as u32
                 && old.node_capacity >= blas.nodes.len() as u32
+                && old.surface_capacity >= blas.surfaces.len() as u32
         }) {
+            blas.packed_surfaces = old.packed_surfaces;
+            blas.surface_capacity = old.surface_capacity;
             blas.packed_root = old.packed_root;
             blas.packed_triangles = old.packed_triangles;
             blas.triangle_capacity = old.triangle_capacity;
             blas.node_capacity = old.node_capacity;
         } else {
+            blas.packed_surfaces = cache.surface_count;
+            blas.surface_capacity = (blas.surfaces.len() as u32).next_power_of_two();
+            cache.surface_count += blas.surface_capacity;
             blas.packed_root = cache.node_count;
             blas.packed_triangles = cache.triangle_count;
             blas.triangle_capacity = (blas.triangles.len() as u32).next_power_of_two();
@@ -286,17 +333,26 @@ fn extract_scene(
             .values()
             .map(|mesh| mesh.triangle_capacity)
             .sum();
+        let live_surfaces: u32 = cache
+            .meshes
+            .values()
+            .map(|mesh| mesh.surface_capacity)
+            .sum();
         let live_nodes: u32 = cache.meshes.values().map(|mesh| mesh.node_capacity).sum();
         // Reclaim removed/replaced allocations before dead space can grow without
         // bound. Most frames update only the small effects mesh in its old slot.
         if cache.triangle_count > live_triangles.saturating_mul(2).saturating_add(1024)
             || cache.node_count > live_nodes.saturating_mul(2).saturating_add(1024)
+            || cache.surface_count > live_surfaces.saturating_mul(2).saturating_add(1024)
         {
             cache.revision = cache.revision.wrapping_add(1);
             let revision = cache.revision;
             let mut triangle_offset = 0;
             let mut node_offset = 0;
+            let mut surface_offset = 0;
             for blas in cache.meshes.values_mut() {
+                blas.packed_surfaces = surface_offset;
+                surface_offset += blas.surface_capacity;
                 blas.packed_triangles = triangle_offset;
                 blas.packed_root = node_offset;
                 triangle_offset += blas.triangle_capacity;
@@ -305,6 +361,7 @@ fn extract_scene(
             }
             cache.triangle_count = triangle_offset;
             cache.node_count = node_offset;
+            cache.surface_count = surface_offset;
         }
         scene.geometry = cache
             .meshes
@@ -313,11 +370,13 @@ fn extract_scene(
             .collect();
         scene.triangle_count = cache.triangle_count;
         scene.node_count = cache.node_count;
+        scene.surface_count = cache.surface_count;
         scene.geometry_revision = scene.geometry_revision.wrapping_add(1);
     }
     let mut instances = Vec::new();
     let mut bounds = Vec::new();
-    for (mesh, material, transform, visibility, overlay) in &query {
+    let mut stationary = Vec::new();
+    for (mesh, material, transform, visibility, overlay, ray_static, entity) in &query {
         if visibility.is_some_and(|visible| !visible.get()) {
             continue;
         }
@@ -339,6 +398,25 @@ fn extract_scene(
         if !inverse.is_finite() {
             continue;
         }
+        if ray_static.is_some() && overlay.is_none() {
+            stationary.push(StaticSignature {
+                entity: entity.to_bits(),
+                index: entity.index_u32(),
+                packed_triangles: blas.packed_triangles,
+                mesh: mesh.id(),
+                transform: matrix.to_cols_array().map(f32::to_bits),
+                material: [
+                    material.perceptual_roughness.to_bits(),
+                    material.metallic.to_bits(),
+                    u32::from(material.unlit),
+                    material.diffuse_transmission.to_bits(),
+                    tint.x.to_bits(),
+                    tint.y.to_bits(),
+                    tint.z.to_bits(),
+                    tint.w.to_bits(),
+                ],
+            });
+        }
         bounds.push(blas.bounds.transformed(matrix));
         instances.push(GpuInstance {
             world_from_local: matrix,
@@ -352,26 +430,65 @@ fn extract_scene(
             tint,
             root: blas.packed_root,
             transmission: material.diffuse_transmission.clamp(0.0, 1.0),
-            pad1: 0,
-            pad2: 0,
+            pad1: u32::from(ray_static.is_some() && overlay.is_none()),
+            pad2: entity.index_u32(),
         });
+    }
+    stationary.sort_by_key(|entry| entry.entity);
+    for instance in instances.iter_mut().filter(|i| i.pad1 != 0) {
+        instance.pad1 = stationary
+            .iter()
+            .position(|entry| entry.index == instance.pad2)
+            .unwrap() as u32
+            + 1;
+    }
+    if cache.static_snapshot != stationary
+        || stationary
+            .iter()
+            .any(|entry| modified.contains(&entry.mesh))
+    {
+        scene.static_revision = scene.static_revision.wrapping_add(1);
+        cache.static_snapshot = stationary;
     }
     let (nodes, order) = build_bvh_strategy(&bounds, 2, false);
     scene.instances = order.iter().map(|&index| instances[index]).collect();
     scene.tlas_nodes = nodes;
     let mut world = Vec::new();
+    let mut static_world = Vec::new();
+    let mut dynamic_world = Vec::new();
+    scene.static_instances = [u32::MAX; 16];
     let mut shadow = Vec::new();
+    let mut static_shadow = Vec::new();
+    let mut dynamic_shadow = Vec::new();
     for (index, &source) in order.iter().enumerate() {
         let material = scene.instances[index].material;
         if material.w <= 0.5 {
             world.push((index, bounds[source]));
+            let slot = scene.instances[index].pad1;
+            if slot != 0 {
+                static_world.push((index, bounds[source]));
+                if slot <= 16 {
+                    scene.static_instances[slot as usize - 1] = index as u32;
+                }
+            } else {
+                dynamic_world.push((index, bounds[source]));
+            }
             if material.z <= 0.5 {
                 shadow.push((index, bounds[source]));
+                if scene.instances[index].pad1 != 0 {
+                    static_shadow.push((index, bounds[source]));
+                } else {
+                    dynamic_shadow.push((index, bounds[source]));
+                }
             }
         }
     }
     scene.world_root = append_filtered_tlas(&mut scene.tlas_nodes, &world);
+    scene.static_world_root = append_filtered_tlas(&mut scene.tlas_nodes, &static_world);
+    scene.dynamic_world_root = append_filtered_tlas(&mut scene.tlas_nodes, &dynamic_world);
     scene.shadow_root = append_filtered_tlas(&mut scene.tlas_nodes, &shadow);
+    scene.static_shadow_root = append_filtered_tlas(&mut scene.tlas_nodes, &static_shadow);
+    scene.dynamic_shadow_root = append_filtered_tlas(&mut scene.tlas_nodes, &dynamic_shadow);
 }
 
 /// Singleton leaves let each auxiliary tree retain the primary instance IDs,
@@ -412,6 +529,9 @@ fn pack_chunk(blas: &mut MeshBlas, revision: u64) {
         .collect();
     blas.chunk = Some(GeometryChunk {
         triangle_offset: blas.packed_triangles,
+        surface_offset: blas.packed_surfaces,
+        surfaces: blas.surfaces.clone(),
+        surface_indices: blas.surface_indices.clone(),
         node_offset: blas.packed_root,
         revision,
         triangles: blas.triangles.clone(),
@@ -492,8 +612,14 @@ fn mesh_blas(mesh: &Mesh) -> Option<MeshBlas> {
         min: nodes[0].min,
         max: nodes[0].max,
     };
+    let triangles: Vec<_> = order.into_iter().map(|index| triangles[index]).collect();
+    let (surfaces, surface_indices) = surface_palette(&triangles);
     Some(MeshBlas {
-        triangles: Arc::new(order.into_iter().map(|index| triangles[index]).collect()),
+        triangles: Arc::new(triangles),
+        surfaces: Arc::new(surfaces),
+        surface_indices: Arc::new(surface_indices),
+        packed_surfaces: 0,
+        surface_capacity: 0,
         nodes,
         bounds,
         packed_root: 0,
@@ -504,14 +630,37 @@ fn mesh_blas(mesh: &Mesh) -> Option<MeshBlas> {
     })
 }
 
+/// Lossless, per-mesh surface dictionary. Keys preserve every authored bit,
+/// including signed zero; geometry and interpolated normals/colors do not change.
+fn surface_palette(triangles: &[Triangle]) -> (Vec<TriangleSurface>, Vec<u32>) {
+    let mut dictionary = HashMap::<[u32; 24], u32>::new();
+    let mut surfaces = Vec::new();
+    let mut indices = Vec::with_capacity(triangles.len());
+    for triangle in triangles {
+        let surface = triangle.surface();
+        let mut key = [0; 24];
+        for (output, vector) in key.chunks_exact_mut(4).zip([
+            surface.n0, surface.n1, surface.n2, surface.c0, surface.c1, surface.c2,
+        ]) {
+            output.copy_from_slice(&vector.to_array().map(f32::to_bits));
+        }
+        let index = *dictionary.entry(key).or_insert_with(|| {
+            let index = u32::try_from(surfaces.len()).expect("surface index must fit u32");
+            surfaces.push(surface);
+            index
+        });
+        indices.push(index);
+    }
+    (surfaces, indices)
+}
+
 /// Leaves refer to contiguous ranges in the returned permutation. Internal
 /// children are allocated together so the shader derives right as left + 1.
 ///
-/// At most 31 edges separate root and leaf. Each accepted SAH split leaves enough
-/// depth for median splitting both children down to the requested leaf size.
-/// Median fallback therefore always fits, even for adversarial centroid spacing.
-/// Near-first shader traversal defers at most one sibling per ancestor, requiring
-/// at most 31 of its 32 stack slots. The u32 domain also bounds packed node indices.
+/// BLAS trees have at most23 edges, TLAS trees15. Each accepted SAH split
+/// reserves enough remaining depth for median fallback, even for adversarial
+/// centroid spacing. The matching shader stacks have24 and16 entries. TLAS
+/// singleton trees support32,768 instances; voxels share instanced meshes.
 fn build_bvh(bounds: &[Bounds], leaf_size: usize) -> (Vec<BvhNode>, Vec<usize>) {
     build_bvh_strategy(bounds, leaf_size, true)
 }
@@ -532,11 +681,17 @@ fn build_bvh_strategy(
     if bounds.is_empty() {
         return (Vec::new(), Vec::new());
     }
+    let max_depth = if sah { BLAS_MAX_DEPTH } else { TLAS_MAX_DEPTH };
+    assert!(
+        bounds.len() <= leaf_size.saturating_mul(1usize << max_depth),
+        "BVH primitive count exceeds the bounded traversal capacity"
+    );
     let mut order: Vec<_> = (0..bounds.len()).collect();
     let mut builder = BvhBuilder {
         bounds,
         leaf_size,
         sah,
+        max_depth,
         nodes: vec![BvhNode::default()],
     };
     builder.split(&mut order, 0, 0, 0);
@@ -544,7 +699,8 @@ fn build_bvh_strategy(
 }
 
 const SAH_BINS: usize = 12;
-const BVH_MAX_DEPTH: u32 = 31;
+const BLAS_MAX_DEPTH: u32 = 23;
+const TLAS_MAX_DEPTH: u32 = 15;
 
 #[derive(Clone, Copy)]
 struct SahBin {
@@ -581,6 +737,7 @@ struct BvhBuilder<'a> {
     bounds: &'a [Bounds],
     leaf_size: usize,
     sah: bool,
+    max_depth: u32,
     nodes: Vec<BvhNode>,
 }
 
@@ -599,7 +756,7 @@ impl BvhBuilder<'_> {
             return;
         }
         assert!(
-            depth < BVH_MAX_DEPTH,
+            depth < self.max_depth,
             "BVH split exhausted shader stack budget"
         );
         let centers = order.iter().fold(Bounds::empty(), |total, index| {
@@ -652,7 +809,7 @@ impl BvhBuilder<'_> {
         // at most leaf_size * 2^(30-depth) primitives in that remaining budget.
         let child_capacity = self
             .leaf_size
-            .saturating_mul(1usize << (BVH_MAX_DEPTH - depth - 1));
+            .saturating_mul(1usize << (self.max_depth - depth - 1));
         let mut best = None;
         let mut best_cost = f64::INFINITY;
         for axis in 0..3 {
@@ -749,9 +906,9 @@ mod tests {
     fn split_triangle_preserves_edges_and_all_surface_attributes() {
         let blas = mesh_blas(&triangle_mesh()).unwrap();
         for tri in blas.triangles.iter() {
-            let geometry = tri.geometry();
+            let geometry = tri.geometry(0);
             let surface = tri.surface();
-            assert_eq!(geometry.a, tri.a);
+            assert_eq!(geometry.a, tri.a.truncate());
             assert_eq!(geometry.e1.truncate(), tri.b.truncate() - tri.a.truncate());
             assert_eq!(geometry.e2.truncate(), tri.c.truncate() - tri.a.truncate());
             assert_eq!(
@@ -760,6 +917,42 @@ mod tests {
                 ],
                 [tri.n0, tri.n1, tri.n2, tri.c0, tri.c1, tri.c2]
             );
+        }
+    }
+
+    #[test]
+    fn surface_dictionary_preserves_exact_attributes_and_ignores_positions() {
+        let triangle = mesh_blas(&triangle_mesh()).unwrap().triangles[0];
+        let mut moved = triangle;
+        moved.a.x += 7.0;
+        let mut changed = triangle;
+        changed.c1.y += 0.125;
+        let mut signed_zero = triangle;
+        signed_zero.n0.w = -0.0;
+        let triangles = [triangle, moved, changed, signed_zero, changed];
+        let (surfaces, indices) = surface_palette(&triangles);
+        assert_eq!(indices, [0, 0, 1, 2, 1]);
+        assert_eq!(surfaces.len(), 3);
+        for (triangle, index) in triangles.iter().zip(indices) {
+            let actual = surfaces[index as usize];
+            let expected = triangle.surface();
+            for (a, b) in [
+                actual.n0, actual.n1, actual.n2, actual.c0, actual.c1, actual.c2,
+            ]
+            .into_iter()
+            .zip([
+                expected.n0,
+                expected.n1,
+                expected.n2,
+                expected.c0,
+                expected.c1,
+                expected.c2,
+            ]) {
+                assert_eq!(
+                    a.to_array().map(f32::to_bits),
+                    b.to_array().map(f32::to_bits)
+                );
+            }
         }
     }
 
@@ -814,7 +1007,7 @@ mod tests {
         let mut visited = vec![false; bounds.len()];
         let mut stack = vec![(0, 0)];
         while let Some((index, depth)) = stack.pop() {
-            assert!(depth < 32, "shader traversal stack limit");
+            assert!(depth <= BLAS_MAX_DEPTH, "shader traversal stack limit");
             let node = nodes[index];
             if node.count > 0 {
                 for position in node.first..node.first + node.count {
@@ -994,17 +1187,147 @@ mod tests {
             bounds: &bounds,
             leaf_size: 4,
             sah: true,
+            max_depth: BLAS_MAX_DEPTH,
             nodes: vec![BvhNode::default()],
         };
         let centers = bounds.iter().fold(Bounds::empty(), |total, bounds| {
             total.point(bounds.center())
         });
         let mut order: Vec<_> = (0..8).collect();
-        assert!(builder.sah_split(&order, centers, 30).is_none());
-        builder.split(&mut order, 0, 0, 30);
+        assert!(
+            builder
+                .sah_split(&order, centers, BLAS_MAX_DEPTH - 1)
+                .is_none()
+        );
+        builder.split(&mut order, 0, 0, BLAS_MAX_DEPTH - 1);
         assert_eq!(builder.nodes.len(), 3);
         assert_eq!(builder.nodes[1].count, 4);
         assert_eq!(builder.nodes[2].count, 4);
+    }
+
+    #[test]
+    fn stationary_shadow_revision_tracks_only_eligible_scene_changes() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<MeshCache>()
+            .init_resource::<RayScene>()
+            .add_message::<AssetEvent<Mesh>>()
+            .add_systems(Update, extract_scene);
+        let fixed_mesh = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(triangle_mesh());
+        let moving_mesh = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(triangle_mesh());
+        let material = app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial::default());
+        let fixed = app
+            .world_mut()
+            .spawn((
+                RayStatic,
+                Mesh3d(fixed_mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                GlobalTransform::IDENTITY,
+                InheritedVisibility::VISIBLE,
+            ))
+            .id();
+        let moving = app
+            .world_mut()
+            .spawn((
+                Mesh3d(moving_mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                GlobalTransform::from_translation(Vec3::X),
+                InheritedVisibility::VISIBLE,
+            ))
+            .id();
+        app.update();
+        let revision = app.world().resource::<RayScene>().static_revision;
+        assert!(revision > 0);
+        {
+            let scene = app.world().resource::<RayScene>();
+            let fixed_leaf = scene.tlas_nodes[scene.static_shadow_root as usize];
+            let moving_leaf = scene.tlas_nodes[scene.dynamic_shadow_root as usize];
+            assert_eq!(scene.instances[fixed_leaf.first as usize].pad1, 1);
+            assert_eq!(scene.instances[moving_leaf.first as usize].pad1, 0);
+        }
+        // Move across the static instance to permute the primary TLAS order.
+        app.world_mut()
+            .entity_mut(moving)
+            .insert(GlobalTransform::from_translation(-Vec3::X));
+        app.world_mut().write_message(AssetEvent::Modified {
+            id: moving_mesh.id(),
+        });
+        app.update();
+        assert_eq!(app.world().resource::<RayScene>().static_revision, revision);
+        app.world_mut().entity_mut(moving).insert(RayOverlay);
+        app.update();
+        assert_eq!(app.world().resource::<RayScene>().static_revision, revision);
+        app.world_mut()
+            .entity_mut(fixed)
+            .insert(GlobalTransform::from_translation(Vec3::Y));
+        app.update();
+        assert_eq!(
+            app.world().resource::<RayScene>().static_revision,
+            revision + 1
+        );
+        app.world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .get_mut(&fixed_mesh)
+            .unwrap()
+            .insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; 3]);
+        app.world_mut().write_message(AssetEvent::Modified {
+            id: fixed_mesh.id(),
+        });
+        app.update();
+        assert_eq!(
+            app.world().resource::<RayScene>().static_revision,
+            revision + 2
+        );
+        app.world_mut()
+            .entity_mut(fixed)
+            .insert(InheritedVisibility::HIDDEN);
+        app.update();
+        assert_eq!(
+            app.world().resource::<RayScene>().static_revision,
+            revision + 3
+        );
+        assert_eq!(
+            app.world().resource::<RayScene>().static_shadow_root,
+            u32::MAX
+        );
+        app.world_mut()
+            .entity_mut(fixed)
+            .insert(InheritedVisibility::VISIBLE);
+        app.update();
+        assert_eq!(
+            app.world().resource::<RayScene>().static_revision,
+            revision + 4
+        );
+        app.world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .get_mut(&material)
+            .unwrap()
+            .unlit = true;
+        app.update();
+        assert_eq!(
+            app.world().resource::<RayScene>().static_revision,
+            revision + 5
+        );
+        assert_eq!(
+            app.world().resource::<RayScene>().static_shadow_root,
+            u32::MAX
+        );
+        app.world_mut().entity_mut(fixed).remove::<RayStatic>();
+        app.update();
+        assert_eq!(
+            app.world().resource::<RayScene>().static_revision,
+            revision + 6
+        );
     }
 
     #[test]

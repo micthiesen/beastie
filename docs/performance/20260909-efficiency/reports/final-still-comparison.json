@@ -1,0 +1,550 @@
+{
+  "frames": [
+    {
+      "group": "gold",
+      "name": "continued.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071277,
+      "pixels_over_8": 1013,
+      "mae_255": 0.019535268775720163,
+      "maximum_channel_difference": 147,
+      "before_sha256": "f829d8c73db2513309c88a4a9491fd5327d635ea135da05436def7dffea0afbe",
+      "after_sha256": "2b9ff7d2973d2371f92760677a140f87da850563d1048e02f54f826a47532155"
+    },
+    {
+      "group": "gold",
+      "name": "gameplay.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071277,
+      "pixels_over_8": 1013,
+      "mae_255": 0.019535268775720163,
+      "maximum_channel_difference": 147,
+      "before_sha256": "f829d8c73db2513309c88a4a9491fd5327d635ea135da05436def7dffea0afbe",
+      "after_sha256": "2b9ff7d2973d2371f92760677a140f87da850563d1048e02f54f826a47532155"
+    },
+    {
+      "group": "gold",
+      "name": "selected-toy.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071215,
+      "pixels_over_8": 1074,
+      "mae_255": 0.021938014403292183,
+      "maximum_channel_difference": 153,
+      "before_sha256": "6ff1129cbfd83a1520f79011f25d0258033a8e7b076632048b6c51e738f42096",
+      "after_sha256": "e81b44426fa36216fa760af3b6b39b52df95e56d86bd6f50fcab24998931f79b"
+    },
+    {
+      "group": "gold",
+      "name": "settings-large.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072032,
+      "pixels_over_8": 744,
+      "mae_255": 0.01688496656378601,
+      "maximum_channel_difference": 147,
+      "before_sha256": "293a934888e108c1229aa8b237372eab4d38c1ae6a763a2b6859cccb41d646a0",
+      "after_sha256": "c1265092717623e83b1803bb9af6254ff61977adb736eace91f313d20d5b250d"
+    },
+    {
+      "group": "gold",
+      "name": "settings-sound.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072036,
+      "pixels_over_8": 740,
+      "mae_255": 0.01664689429012346,
+      "maximum_channel_difference": 147,
+      "before_sha256": "fe9e0cb3fb47a455d3d4c5c141b59be799540e1a4b2b527e73f0c8dac4b09821",
+      "after_sha256": "959f0e4355e79d483da44fa1ddaf64414f0c9bd8f055ac025b598339ef5fb1a2"
+    },
+    {
+      "group": "gold",
+      "name": "settings.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072033,
+      "pixels_over_8": 742,
+      "mae_255": 0.016796231995884772,
+      "maximum_channel_difference": 147,
+      "before_sha256": "2c5cf4aa56f799e79f3b22a746197b56422ec5c3f8f38ad899c1181b65a240c2",
+      "after_sha256": "801ae2a85c8fea91e452fd05af1b988c213a880fcf6570d6197a933df7fdef94"
+    },
+    {
+      "group": "gold",
+      "name": "title-return.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2069394,
+      "pixels_over_8": 1563,
+      "mae_255": 0.01830938143004115,
+      "maximum_channel_difference": 122,
+      "before_sha256": "f02e99f5fb4894dcf9eb32840e68c21d1a9131b94d1af5ef958eb65231d9d686",
+      "after_sha256": "72972d61036bc11a68292f990b14735dbd326733b44f47e44d9081fdc80c964a"
+    },
+    {
+      "group": "gold",
+      "name": "title-screen.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2069394,
+      "pixels_over_8": 1563,
+      "mae_255": 0.01830938143004115,
+      "maximum_channel_difference": 122,
+      "before_sha256": "f02e99f5fb4894dcf9eb32840e68c21d1a9131b94d1af5ef958eb65231d9d686",
+      "after_sha256": "72972d61036bc11a68292f990b14735dbd326733b44f47e44d9081fdc80c964a"
+    },
+    {
+      "group": "ui",
+      "name": "large-bindings.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2073084,
+      "pixels_over_8": 408,
+      "mae_255": 0.013929719650205763,
+      "maximum_channel_difference": 147,
+      "before_sha256": "003703260a7bb5a62b64f7d2a33211b529e371332446014ddab49f5081946ce2",
+      "after_sha256": "e71b6c810b0a29ba946c2610aabcfbbcb4625a4682231ed1e97d4a3437fc9d62"
+    },
+    {
+      "group": "ui",
+      "name": "large-comfort.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072003,
+      "pixels_over_8": 772,
+      "mae_255": 0.01748440715020576,
+      "maximum_channel_difference": 147,
+      "before_sha256": "4f660fa968364c85b176f57847190588a7e8adf1fd2ba032b0131153f16785c6",
+      "after_sha256": "d4c6b8eb3250fe626670b6f1b3e33612162b0e138cf3eafdc08a832d63e317de"
+    },
+    {
+      "group": "ui",
+      "name": "large-context.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2073015,
+      "pixels_over_8": 425,
+      "mae_255": 0.013766878858024691,
+      "maximum_channel_difference": 147,
+      "before_sha256": "6a60231dee100c37ca00060a107ddb418972fa311f85fe652bfef4a04b660a1d",
+      "after_sha256": "c6c48107797ff613e937bfd1ee01e401b531fdbbefd25869b8b4bddd9c9c8357"
+    },
+    {
+      "group": "ui",
+      "name": "large-controls.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072032,
+      "pixels_over_8": 742,
+      "mae_255": 0.016861496913580246,
+      "maximum_channel_difference": 147,
+      "before_sha256": "6316162274fa480a320737852b23e56215ea64246757d26d2f198d3b9fbd06b1",
+      "after_sha256": "100b05705969853f0de646e6ffb03976503f7763af68a22cf961ea713aa096f2"
+    },
+    {
+      "group": "ui",
+      "name": "large-data.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072298,
+      "pixels_over_8": 648,
+      "mae_255": 0.016480195473251028,
+      "maximum_channel_difference": 147,
+      "before_sha256": "8b039e457e90212afc90501e9082e31f20b88bc8d5c2ab62d807cca63161a754",
+      "after_sha256": "814562f3394b6646795caac5bc17bc248a2da38b26e092a4011c99573fe9af4b"
+    },
+    {
+      "group": "ui",
+      "name": "large-drop.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071275,
+      "pixels_over_8": 1014,
+      "mae_255": 0.01913773148148148,
+      "maximum_channel_difference": 147,
+      "before_sha256": "bf3dc5beb0534ca613f62b2c9075dda543cedc872df7892316a61c6b97f5ee91",
+      "after_sha256": "a6b3b80f16b3a8fd63f924e39e41cd423c5f6cfb21b3e0ab3494a49710ca7a09"
+    },
+    {
+      "group": "ui",
+      "name": "large-food.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072387,
+      "pixels_over_8": 705,
+      "mae_255": 0.019346868569958847,
+      "maximum_channel_difference": 157,
+      "before_sha256": "29fce5a1c1d01c90b693729a9ff5a44db8a78a7a64b7ced5cfd336934aa4dde9",
+      "after_sha256": "deadc9d736446d419f99d052a95016daab52992e6199097beafd54855f5f650d"
+    },
+    {
+      "group": "ui",
+      "name": "large-keyboard.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072871,
+      "pixels_over_8": 351,
+      "mae_255": 0.0036029128086419756,
+      "maximum_channel_difference": 111,
+      "before_sha256": "74a3748a90fec69ab60d4d05efce2260044efe731e1d19e561a30ffadd0251c7",
+      "after_sha256": "c072aff4030517de9ea1ae81e96572e0140dd2e4615ebc09f6fd0096ab870c4b"
+    },
+    {
+      "group": "ui",
+      "name": "large-quiet.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071275,
+      "pixels_over_8": 1015,
+      "mae_255": 0.019558738425925926,
+      "maximum_channel_difference": 147,
+      "before_sha256": "103706f56936e0b657f80384cf53aec335f652e0aabac1d04c25ac43ae7ec597",
+      "after_sha256": "a4077389210108f9043c270ca071e86e1a0eb1f374fe8603a57e87452d9c8bb7"
+    },
+    {
+      "group": "ui",
+      "name": "large-rename.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071268,
+      "pixels_over_8": 1022,
+      "mae_255": 0.019787326388888887,
+      "maximum_channel_difference": 147,
+      "before_sha256": "fe6c978ddd9cd4534e1c270b4680943c255064bc7ba820890662f43fa2bf3870",
+      "after_sha256": "ece7566e9c322986d698acc8380a060055636029578e3e111acb4d3efe7847b3"
+    },
+    {
+      "group": "ui",
+      "name": "large-reset.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071557,
+      "pixels_over_8": 861,
+      "mae_255": 0.018437982253086422,
+      "maximum_channel_difference": 147,
+      "before_sha256": "41aaa30bdc8293bf73ebeff091db79af08cddfea3bce038805ebc227a3c14c36",
+      "after_sha256": "485c1d134a6ac20bff4e73b4aa4b16b76bde05688d62bb735cb23f8b4d1badb2"
+    },
+    {
+      "group": "ui",
+      "name": "large-sound.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072032,
+      "pixels_over_8": 744,
+      "mae_255": 0.01688496656378601,
+      "maximum_channel_difference": 147,
+      "before_sha256": "293a934888e108c1229aa8b237372eab4d38c1ae6a763a2b6859cccb41d646a0",
+      "after_sha256": "c1265092717623e83b1803bb9af6254ff61977adb736eace91f313d20d5b250d"
+    },
+    {
+      "group": "ui",
+      "name": "large-speech.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071357,
+      "pixels_over_8": 1003,
+      "mae_255": 0.019992283950617282,
+      "maximum_channel_difference": 147,
+      "before_sha256": "f02e18a484e27cb308f451ecf8e99de43a2a026be8c5582ef64a140a826b3933",
+      "after_sha256": "7d009771ad8dc0c4ed6accbf4ca3e263abc57f3d275dee1fa14ed7b228fbe9f0"
+    },
+    {
+      "group": "ui",
+      "name": "large-toys.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072438,
+      "pixels_over_8": 654,
+      "mae_255": 0.016129597479423868,
+      "maximum_channel_difference": 147,
+      "before_sha256": "78cbf23058687cae5ed4619fd91fa44fe837a02f56368a18d7e582b7faf3e65f",
+      "after_sha256": "18b71345042700f8fbe08eaf012f7a9a02ca50a3a2883d4c894c7c2040279bfc"
+    },
+    {
+      "group": "ui",
+      "name": "normal-bindings.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2073088,
+      "pixels_over_8": 404,
+      "mae_255": 0.013689879115226337,
+      "maximum_channel_difference": 147,
+      "before_sha256": "aa14c94e4b3713b191c1638e1c739a6d8cee4a062cf8e12ced1d910a7fa05f22",
+      "after_sha256": "9ebb5f76b5186a6f656f492c3ff0bfbbf1c94d7efab21b9de6af50675f46e755"
+    },
+    {
+      "group": "ui",
+      "name": "normal-comfort.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072033,
+      "pixels_over_8": 742,
+      "mae_255": 0.016796231995884772,
+      "maximum_channel_difference": 147,
+      "before_sha256": "2c5cf4aa56f799e79f3b22a746197b56422ec5c3f8f38ad899c1181b65a240c2",
+      "after_sha256": "801ae2a85c8fea91e452fd05af1b988c213a880fcf6570d6197a933df7fdef94"
+    },
+    {
+      "group": "ui",
+      "name": "normal-context.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2073017,
+      "pixels_over_8": 423,
+      "mae_255": 0.013799189814814816,
+      "maximum_channel_difference": 147,
+      "before_sha256": "8531309466de10d74f86a990a1f3608b87da7b0649dfb9291f5ecad55d3f9605",
+      "after_sha256": "e4e263ee124050a7ee56476be56ca0d8dc91b248184635304f2db6bd3246909f"
+    },
+    {
+      "group": "ui",
+      "name": "normal-controls.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072042,
+      "pixels_over_8": 732,
+      "mae_255": 0.01659014917695473,
+      "maximum_channel_difference": 147,
+      "before_sha256": "94c314edd3b20ec738a8e0db1e5c3a6868f3419e3de5adcbf365b31c04cc8003",
+      "after_sha256": "c64f51b38abaaba04c38f6cdc5a53e01c0304425150bf25d2e93e20afb95a1bc"
+    },
+    {
+      "group": "ui",
+      "name": "normal-data.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072296,
+      "pixels_over_8": 650,
+      "mae_255": 0.01638599537037037,
+      "maximum_channel_difference": 147,
+      "before_sha256": "93519d8bb48832c000c7d77144d346a58157b975e63d522e1436cafe26c96af4",
+      "after_sha256": "bbe8417d1decd0833fa935b6e5d20c59725cc21e7f0dcf601ce87ad6d01fc2c3"
+    },
+    {
+      "group": "ui",
+      "name": "normal-drop.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071286,
+      "pixels_over_8": 1003,
+      "mae_255": 0.01888117283950617,
+      "maximum_channel_difference": 147,
+      "before_sha256": "22730ff649c509fd16c1d50e43e882f9a0e89c9cf54179bf06b6da561b63b251",
+      "after_sha256": "f132aa457ed9ad1f9219a2998882f3b7c5f2c74f49215a3e4d9fd2e8a1029e5a"
+    },
+    {
+      "group": "ui",
+      "name": "normal-food.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072447,
+      "pixels_over_8": 645,
+      "mae_255": 0.015958076131687243,
+      "maximum_channel_difference": 147,
+      "before_sha256": "7ce4ae471a6694903a1e67d36e632fdfe5c93a0520291e15672bf67624a0d87e",
+      "after_sha256": "16b1100d2dcbd3c1cb08e4c146002b6cb2d785de722092d56987fc34f102867c"
+    },
+    {
+      "group": "ui",
+      "name": "normal-keyboard.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072875,
+      "pixels_over_8": 347,
+      "mae_255": 0.0035038901748971197,
+      "maximum_channel_difference": 97,
+      "before_sha256": "be0ae1f11fdd78eeed0e476c7ce830c282537dccac10694829c9cf73291fdced",
+      "after_sha256": "3297c3d57eca7cbaebf915b2c0ced86fdd05409d9fcbdb7bb151107407e496a9"
+    },
+    {
+      "group": "ui",
+      "name": "normal-quiet.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071277,
+      "pixels_over_8": 1013,
+      "mae_255": 0.019535268775720163,
+      "maximum_channel_difference": 147,
+      "before_sha256": "f829d8c73db2513309c88a4a9491fd5327d635ea135da05436def7dffea0afbe",
+      "after_sha256": "2b9ff7d2973d2371f92760677a140f87da850563d1048e02f54f826a47532155"
+    },
+    {
+      "group": "ui",
+      "name": "normal-rename.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071276,
+      "pixels_over_8": 1014,
+      "mae_255": 0.01954812885802469,
+      "maximum_channel_difference": 147,
+      "before_sha256": "8eac0284592845519dddcf2e481956276c39798c3f5ce63ecebe324955a6e0ff",
+      "after_sha256": "6f9b9b92d4f3b31e83396c523b49f376b8931b4f7e810b0d0b703b97a05b29fd"
+    },
+    {
+      "group": "ui",
+      "name": "normal-reset.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071561,
+      "pixels_over_8": 857,
+      "mae_255": 0.018410011574074073,
+      "maximum_channel_difference": 147,
+      "before_sha256": "ca79ad9e0d4f09a4a59c789f886a8070ff3a7f0f58079aff6998fd2841067aac",
+      "after_sha256": "e91dfee3f9b0b630b23c11e9fbd2dc3ce72a5b80a93761b1d8300a3beb5b396d"
+    },
+    {
+      "group": "ui",
+      "name": "normal-sound.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072036,
+      "pixels_over_8": 740,
+      "mae_255": 0.01664689429012346,
+      "maximum_channel_difference": 147,
+      "before_sha256": "fe9e0cb3fb47a455d3d4c5c141b59be799540e1a4b2b527e73f0c8dac4b09821",
+      "after_sha256": "959f0e4355e79d483da44fa1ddaf64414f0c9bd8f055ac025b598339ef5fb1a2"
+    },
+    {
+      "group": "ui",
+      "name": "normal-speech.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2071391,
+      "pixels_over_8": 969,
+      "mae_255": 0.019181938014403294,
+      "maximum_channel_difference": 147,
+      "before_sha256": "f6a9d99e104c03906ddeff809cf7095ce4f7bf616105ddc1804693451b4c4b96",
+      "after_sha256": "b90449c9fb5277263401dd7d89408eeeb76c0d32657120d5dd289ac18c4c7afa"
+    },
+    {
+      "group": "ui",
+      "name": "normal-toys.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "pixels": 2073600,
+      "exact_pixels": 2072445,
+      "pixels_over_8": 647,
+      "mae_255": 0.01603877314814815,
+      "maximum_channel_difference": 147,
+      "before_sha256": "76988c88e1fc7f6f35cbbf696b8fc91c0e91884a8d9b58cfcee07fbec88bcbfc",
+      "after_sha256": "e6303d4d888ac298df32987eb186218394189393b94050304a2a7d2665f9ac7b"
+    }
+  ],
+  "aggregate": {
+    "frames": 36,
+    "exact_fraction": 0.9991563250171468,
+    "mae_255": 0.016786725358653404,
+    "pixels_over_8": 29002
+  }
+}
