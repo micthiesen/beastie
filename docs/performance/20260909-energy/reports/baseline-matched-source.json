@@ -1,0 +1,16 @@
+{
+  "base": "41c700631f090c1f4ffd57aee8d9000c03c6dc69",
+  "source": "/tmp/beastie-energy-20260909/baseline-matched-src",
+  "files": {
+    "Cargo.toml": {
+      "before": "9ce5751c5cad2b87a13cc0c08d59f5043a566445ec5cbec837123604379a41f6",
+      "after": "8b8a64e6e5bbe0e7f79f333e7ba1bb7b789a137067f3522f73cf82b165f00116"
+    },
+    "crates/beastie-game/src/ray_stats.rs": {
+      "before": "a0f550b20f7c73dd2dc929502b161e21c1e359cb3231b43af04e4c0eb10c2cea",
+      "after": "c4bd19e22f303ef6882c7d2cfa0440defc02a9ad1e9082406b4391f5ebacc4bd"
+    }
+  },
+  "binary_sha256": "132eace44eacc5e91d48da849643c831233207c4d748163a12049d1c7b7320a2",
+  "only_changes": "objc2 dev-perf override and legacy Bevy diagnostic collector removal; old custom collector/shadow API unchanged"
+}

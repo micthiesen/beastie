@@ -33,7 +33,7 @@ codegen-units = 1
 lto = true
 strip = true
 
-# Interactive CPU profiling without a release bundle or disabled safety checks.
+# Interactive CPU profiling while retaining application assertions and overflow checks.
 [profile.dev-perf]
 inherits = "dev"
 opt-level = 2
@@ -43,3 +43,9 @@ overflow-checks = true
 incremental = true
 codegen-units = 16
 lto = false
+
+# Objective-C per-message validation is a development-only dependency cost.
+# Disable this crate's debug checks only for interactive profiling; application
+# assertions, overflow checks, and the normal dev/test verification remain enabled.
+[profile.dev-perf.package."objc2@0.6.4"]
+debug-assertions = false

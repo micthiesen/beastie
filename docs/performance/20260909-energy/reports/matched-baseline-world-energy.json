@@ -1,0 +1,3065 @@
+{
+  "schema": 1,
+  "binary": "/tmp/beastie-energy-20260909/beastie-baseline-matched",
+  "binary_sha256": "132eace44eacc5e91d48da849643c831233207c4d748163a12049d1c7b7320a2",
+  "scenario": "world",
+  "command": [
+    "/tmp/beastie-energy-20260909/beastie-baseline-matched",
+    "--fake-ai",
+    "--script",
+    "/Users/michael/Code/beastie/fixtures/scenarios/renderer-perf-world.jsonl",
+    "--render-report",
+    "/tmp/beastie-energy-20260909/matched-baseline-world.json",
+    "--render-uncapped"
+  ],
+  "scope": "Kernel-accounted CPU energy excludes GPU, display, AI workers and battery losses",
+  "timebase_numer": 125,
+  "timebase_denom": 3,
+  "samples": [
+    {
+      "monotonic_s": 913477.357149875,
+      "unix_s": 1789021700.469656,
+      "counters": {
+        "ri_user_time": 1455,
+        "ri_system_time": 15129,
+        "ri_pkg_idle_wkups": 0,
+        "ri_interrupt_wkups": 0,
+        "ri_cycles": 3082210,
+        "ri_instructions": 4589855,
+        "ri_energy_nj": 320602,
+        "ri_penergy_nj": 320602,
+        "ri_phys_footprint": 180296,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 0.002275375067256391
+    },
+    {
+      "monotonic_s": 913477.467308833,
+      "unix_s": 1789021700.579814,
+      "counters": {
+        "ri_user_time": 311647,
+        "ri_system_time": 503623,
+        "ri_pkg_idle_wkups": 0,
+        "ri_interrupt_wkups": 0,
+        "ri_cycles": 146205973,
+        "ri_instructions": 309529515,
+        "ri_energy_nj": 127752119,
+        "ri_penergy_nj": 127746404,
+        "ri_phys_footprint": 17220352,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 0.1124325420241803
+    },
+    {
+      "monotonic_s": 913477.575587875,
+      "unix_s": 1789021700.688094,
+      "counters": {
+        "ri_user_time": 1978198,
+        "ri_system_time": 972310,
+        "ri_pkg_idle_wkups": 0,
+        "ri_interrupt_wkups": 1,
+        "ri_cycles": 539477153,
+        "ri_instructions": 1605494391,
+        "ri_energy_nj": 585965429,
+        "ri_penergy_nj": 585812325,
+        "ri_phys_footprint": 36766728,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 0.22070954204536974
+    },
+    {
+      "monotonic_s": 913477.68564675,
+      "unix_s": 1789021700.798153,
+      "counters": {
+        "ri_user_time": 4438231,
+        "ri_system_time": 1205584,
+        "ri_pkg_idle_wkups": 0,
+        "ri_interrupt_wkups": 16,
+        "ri_cycles": 1031465419,
+        "ri_instructions": 3412253739,
+        "ri_energy_nj": 1216202286,
+        "ri_penergy_nj": 1215895810,
+        "ri_phys_footprint": 122520656,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 0.3307719170115888
+    },
+    {
+      "monotonic_s": 913477.795703041,
+      "unix_s": 1789021700.90821,
+      "counters": {
+        "ri_user_time": 7044790,
+        "ri_system_time": 1409529,
+        "ri_pkg_idle_wkups": 0,
+        "ri_interrupt_wkups": 31,
+        "ri_cycles": 1559086117,
+        "ri_instructions": 5471867002,
+        "ri_energy_nj": 1982010223,
+        "ri_penergy_nj": 1981582519,
+        "ri_phys_footprint": 173261976,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 0.44082412496209145
+    },
+    {
+      "monotonic_s": 913477.899693083,
+      "unix_s": 1789021701.0121999,
+      "counters": {
+        "ri_user_time": 9424433,
+        "ri_system_time": 1540187,
+        "ri_pkg_idle_wkups": 0,
+        "ri_interrupt_wkups": 45,
+        "ri_cycles": 2032080605,
+        "ri_instructions": 7350926628,
+        "ri_energy_nj": 2619016309,
+        "ri_penergy_nj": 2618534926,
+        "ri_phys_footprint": 246957304,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 0.5448141250526533
+    },
+    {
+      "monotonic_s": 913478.0097515,
+      "unix_s": 1789021701.1222599,
+      "counters": {
+        "ri_user_time": 11417685,
+        "ri_system_time": 2096230,
+        "ri_pkg_idle_wkups": 0,
+        "ri_interrupt_wkups": 62,
+        "ri_cycles": 2498882483,
+        "ri_instructions": 8903364633,
+        "ri_energy_nj": 3251411725,
+        "ri_penergy_nj": 3250769578,
+        "ri_phys_footprint": 680854824,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 0.6548732500523329
+    },
+    {
+      "monotonic_s": 913478.114223791,
+      "unix_s": 1789021701.226732,
+      "counters": {
+        "ri_user_time": 12143856,
+        "ri_system_time": 3274353,
+        "ri_pkg_idle_wkups": 3,
+        "ri_interrupt_wkups": 78,
+        "ri_cycles": 2810516826,
+        "ri_instructions": 9386476385,
+        "ri_energy_nj": 3483016978,
+        "ri_penergy_nj": 3481829296,
+        "ri_phys_footprint": 1179633080,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 0.759346125065349
+    },
+    {
+      "monotonic_s": 913478.223020833,
+      "unix_s": 1789021701.33553,
+      "counters": {
+        "ri_user_time": 12770747,
+        "ri_system_time": 4010203,
+        "ri_pkg_idle_wkups": 3,
+        "ri_interrupt_wkups": 87,
+        "ri_cycles": 3040295234,
+        "ri_instructions": 9614160039,
+        "ri_energy_nj": 3634238763,
+        "ri_penergy_nj": 3630358778,
+        "ri_phys_footprint": 1180517840,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 0.8681430419674143
+    },
+    {
+      "monotonic_s": 913478.33094475,
+      "unix_s": 1789021701.443455,
+      "counters": {
+        "ri_user_time": 13289250,
+        "ri_system_time": 4712726,
+        "ri_pkg_idle_wkups": 10,
+        "ri_interrupt_wkups": 101,
+        "ri_cycles": 3228092572,
+        "ri_instructions": 9828672345,
+        "ri_energy_nj": 3750543626,
+        "ri_penergy_nj": 3746217966,
+        "ri_phys_footprint": 1181140432,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 0.9760675419820473
+    },
+    {
+      "monotonic_s": 913478.440998291,
+      "unix_s": 1789021701.5535092,
+      "counters": {
+        "ri_user_time": 13855461,
+        "ri_system_time": 5529137,
+        "ri_pkg_idle_wkups": 16,
+        "ri_interrupt_wkups": 115,
+        "ri_cycles": 3396489271,
+        "ri_instructions": 10038289218,
+        "ri_energy_nj": 3825089595,
+        "ri_penergy_nj": 3820335235,
+        "ri_phys_footprint": 1182811600,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 1.0861203749664128
+    },
+    {
+      "monotonic_s": 913478.551122166,
+      "unix_s": 1789021701.6636329,
+      "counters": {
+        "ri_user_time": 14418514,
+        "ri_system_time": 6337985,
+        "ri_pkg_idle_wkups": 23,
+        "ri_interrupt_wkups": 131,
+        "ri_cycles": 3539576042,
+        "ri_instructions": 10242189383,
+        "ri_energy_nj": 3884142583,
+        "ri_penergy_nj": 3878882321,
+        "ri_phys_footprint": 1182860752,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 1.1962451670551673
+    },
+    {
+      "monotonic_s": 913478.661192833,
+      "unix_s": 1789021701.773704,
+      "counters": {
+        "ri_user_time": 15109729,
+        "ri_system_time": 7329171,
+        "ri_pkg_idle_wkups": 28,
+        "ri_interrupt_wkups": 145,
+        "ri_cycles": 3687404552,
+        "ri_instructions": 10448079890,
+        "ri_energy_nj": 3934327747,
+        "ri_penergy_nj": 3928698824,
+        "ri_phys_footprint": 1182877136,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 1.3063157079741359
+    },
+    {
+      "monotonic_s": 913478.771272958,
+      "unix_s": 1789021701.883785,
+      "counters": {
+        "ri_user_time": 15829494,
+        "ri_system_time": 8360815,
+        "ri_pkg_idle_wkups": 37,
+        "ri_interrupt_wkups": 160,
+        "ri_cycles": 3834870087,
+        "ri_instructions": 10665046566,
+        "ri_energy_nj": 3983980343,
+        "ri_penergy_nj": 3977880004,
+        "ri_phys_footprint": 1183466960,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 1.4163964170729741
+    },
+    {
+      "monotonic_s": 913478.881368875,
+      "unix_s": 1789021701.9938822,
+      "counters": {
+        "ri_user_time": 16640969,
+        "ri_system_time": 9455150,
+        "ri_pkg_idle_wkups": 44,
+        "ri_interrupt_wkups": 173,
+        "ri_cycles": 4006552306,
+        "ri_instructions": 10881755558,
+        "ri_energy_nj": 4040192232,
+        "ri_penergy_nj": 4033001744,
+        "ri_phys_footprint": 1183778280,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 1.5264957919716835
+    },
+    {
+      "monotonic_s": 913478.989420333,
+      "unix_s": 1789021702.1019342,
+      "counters": {
+        "ri_user_time": 17422583,
+        "ri_system_time": 10570620,
+        "ri_pkg_idle_wkups": 52,
+        "ri_interrupt_wkups": 188,
+        "ri_cycles": 4160962389,
+        "ri_instructions": 11093360977,
+        "ri_energy_nj": 4088457536,
+        "ri_penergy_nj": 4080476993,
+        "ri_phys_footprint": 1183811048,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 1.6345483750337735
+    },
+    {
+      "monotonic_s": 913479.09950975,
+      "unix_s": 1789021702.212024,
+      "counters": {
+        "ri_user_time": 18354710,
+        "ri_system_time": 11880229,
+        "ri_pkg_idle_wkups": 59,
+        "ri_interrupt_wkups": 203,
+        "ri_cycles": 4342126903,
+        "ri_instructions": 11321803733,
+        "ri_energy_nj": 4141643610,
+        "ri_penergy_nj": 4132891206,
+        "ri_phys_footprint": 1186252264,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 1.7446365830255672
+    },
+    {
+      "monotonic_s": 913479.205400708,
+      "unix_s": 1789021702.317916,
+      "counters": {
+        "ri_user_time": 19221169,
+        "ri_system_time": 13092507,
+        "ri_pkg_idle_wkups": 67,
+        "ri_interrupt_wkups": 218,
+        "ri_cycles": 4511264759,
+        "ri_instructions": 11538897942,
+        "ri_energy_nj": 4192428052,
+        "ri_penergy_nj": 4182949132,
+        "ri_phys_footprint": 1186285032,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 1.8505285000428557
+    },
+    {
+      "monotonic_s": 913479.3147025,
+      "unix_s": 1789021702.427218,
+      "counters": {
+        "ri_user_time": 20023461,
+        "ri_system_time": 14217999,
+        "ri_pkg_idle_wkups": 76,
+        "ri_interrupt_wkups": 233,
+        "ri_cycles": 4667676842,
+        "ri_instructions": 11753632405,
+        "ri_energy_nj": 4241267802,
+        "ri_penergy_nj": 4231087522,
+        "ri_phys_footprint": 1186334184,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 1.9598260830389336
+    },
+    {
+      "monotonic_s": 913479.424759333,
+      "unix_s": 1789021702.5372748,
+      "counters": {
+        "ri_user_time": 20947930,
+        "ri_system_time": 15348271,
+        "ri_pkg_idle_wkups": 79,
+        "ri_interrupt_wkups": 246,
+        "ri_cycles": 4848942139,
+        "ri_instructions": 11975431198,
+        "ri_energy_nj": 4288663282,
+        "ri_penergy_nj": 4265628727,
+        "ri_phys_footprint": 1187268072,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 2.0698817080119625
+    },
+    {
+      "monotonic_s": 913479.534877833,
+      "unix_s": 1789021702.647394,
+      "counters": {
+        "ri_user_time": 21779005,
+        "ri_system_time": 16586199,
+        "ri_pkg_idle_wkups": 87,
+        "ri_interrupt_wkups": 262,
+        "ri_cycles": 5016190612,
+        "ri_instructions": 12191488389,
+        "ri_energy_nj": 4338966198,
+        "ri_penergy_nj": 4315202805,
+        "ri_phys_footprint": 1187415528,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 2.180007957969792
+    },
+    {
+      "monotonic_s": 913479.645029333,
+      "unix_s": 1789021702.757548,
+      "counters": {
+        "ri_user_time": 22638975,
+        "ri_system_time": 17799577,
+        "ri_pkg_idle_wkups": 95,
+        "ri_interrupt_wkups": 277,
+        "ri_cycles": 5187033908,
+        "ri_instructions": 12408765555,
+        "ri_energy_nj": 4388199040,
+        "ri_penergy_nj": 4360986791,
+        "ri_phys_footprint": 1187431912,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 2.2901614169823006
+    },
+    {
+      "monotonic_s": 913479.748847041,
+      "unix_s": 1789021702.861365,
+      "counters": {
+        "ri_user_time": 23469643,
+        "ri_system_time": 18960848,
+        "ri_pkg_idle_wkups": 101,
+        "ri_interrupt_wkups": 289,
+        "ri_cycles": 5352665043,
+        "ri_instructions": 12623885450,
+        "ri_energy_nj": 4436157111,
+        "ri_penergy_nj": 4404252995,
+        "ri_phys_footprint": 1187481064,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 2.3939715420128778
+    },
+    {
+      "monotonic_s": 913479.8556035,
+      "unix_s": 1789021702.968128,
+      "counters": {
+        "ri_user_time": 24344897,
+        "ri_system_time": 20152518,
+        "ri_pkg_idle_wkups": 108,
+        "ri_interrupt_wkups": 303,
+        "ri_cycles": 5525285025,
+        "ri_instructions": 12841187446,
+        "ri_energy_nj": 4485197148,
+        "ri_penergy_nj": 4448518957,
+        "ri_phys_footprint": 1187481064,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 2.500735874986276
+    },
+    {
+      "monotonic_s": 913479.957555541,
+      "unix_s": 1789021703.0700748,
+      "counters": {
+        "ri_user_time": 25302515,
+        "ri_system_time": 21354554,
+        "ri_pkg_idle_wkups": 115,
+        "ri_interrupt_wkups": 317,
+        "ri_cycles": 5704510922,
+        "ri_instructions": 13049181014,
+        "ri_energy_nj": 4534971495,
+        "ri_penergy_nj": 4494506120,
+        "ri_phys_footprint": 1187530216,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 2.602683083037846
+    },
+    {
+      "monotonic_s": 913480.06764825,
+      "unix_s": 1789021703.180168,
+      "counters": {
+        "ri_user_time": 26242775,
+        "ri_system_time": 22664283,
+        "ri_pkg_idle_wkups": 123,
+        "ri_interrupt_wkups": 331,
+        "ri_cycles": 5892073078,
+        "ri_instructions": 13280787492,
+        "ri_energy_nj": 4591485097,
+        "ri_penergy_nj": 4550240349,
+        "ri_phys_footprint": 1078232552,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 2.7127737080445513
+    },
+    {
+      "monotonic_s": 913480.177727333,
+      "unix_s": 1789021703.290247,
+      "counters": {
+        "ri_user_time": 27089746,
+        "ri_system_time": 23853616,
+        "ri_pkg_idle_wkups": 132,
+        "ri_interrupt_wkups": 347,
+        "ri_cycles": 6057405972,
+        "ri_instructions": 13501671726,
+        "ri_energy_nj": 4642351658,
+        "ri_penergy_nj": 4600145402,
+        "ri_phys_footprint": 1079756264,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 2.822872458025813
+    },
+    {
+      "monotonic_s": 913480.287194583,
+      "unix_s": 1789021703.3997161,
+      "counters": {
+        "ri_user_time": 28100911,
+        "ri_system_time": 24860449,
+        "ri_pkg_idle_wkups": 137,
+        "ri_interrupt_wkups": 362,
+        "ri_cycles": 6248872616,
+        "ri_instructions": 13732074099,
+        "ri_energy_nj": 4686278174,
+        "ri_penergy_nj": 4621055337,
+        "ri_phys_footprint": 1079805416,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 2.932322375010699
+    },
+    {
+      "monotonic_s": 913480.397322416,
+      "unix_s": 1789021703.509844,
+      "counters": {
+        "ri_user_time": 29172042,
+        "ri_system_time": 26119703,
+        "ri_pkg_idle_wkups": 141,
+        "ri_interrupt_wkups": 375,
+        "ri_cycles": 6453667779,
+        "ri_instructions": 13972637597,
+        "ri_energy_nj": 4740106879,
+        "ri_penergy_nj": 4662037521,
+        "ri_phys_footprint": 1079870952,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 3.0424496249761432
+    },
+    {
+      "monotonic_s": 913480.497454375,
+      "unix_s": 1789021703.609976,
+      "counters": {
+        "ri_user_time": 30031317,
+        "ri_system_time": 27246958,
+        "ri_pkg_idle_wkups": 145,
+        "ri_interrupt_wkups": 389,
+        "ri_cycles": 6616846020,
+        "ri_instructions": 14177951098,
+        "ri_energy_nj": 4787932857,
+        "ri_penergy_nj": 4707162723,
+        "ri_phys_footprint": 1079903720,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 3.142583208042197
+    },
+    {
+      "monotonic_s": 913480.605593416,
+      "unix_s": 1789021703.718116,
+      "counters": {
+        "ri_user_time": 30995507,
+        "ri_system_time": 28435926,
+        "ri_pkg_idle_wkups": 150,
+        "ri_interrupt_wkups": 401,
+        "ri_cycles": 6802492058,
+        "ri_instructions": 14404196027,
+        "ri_energy_nj": 4837762837,
+        "ri_penergy_nj": 4747735630,
+        "ri_phys_footprint": 1079952872,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 3.25071775005199
+    },
+    {
+      "monotonic_s": 913480.715683291,
+      "unix_s": 1789021703.828206,
+      "counters": {
+        "ri_user_time": 32033235,
+        "ri_system_time": 29515690,
+        "ri_pkg_idle_wkups": 155,
+        "ri_interrupt_wkups": 416,
+        "ri_cycles": 6997620327,
+        "ri_instructions": 14631123200,
+        "ri_energy_nj": 4883274535,
+        "ri_penergy_nj": 4773981554,
+        "ri_phys_footprint": 1079985640,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 3.3608089999761432
+    },
+    {
+      "monotonic_s": 913480.822177041,
+      "unix_s": 1789021703.9347022,
+      "counters": {
+        "ri_user_time": 33022897,
+        "ri_system_time": 30635205,
+        "ri_pkg_idle_wkups": 164,
+        "ri_interrupt_wkups": 431,
+        "ri_cycles": 7187476816,
+        "ri_instructions": 14854739018,
+        "ri_energy_nj": 4929972974,
+        "ri_penergy_nj": 4806317214,
+        "ri_phys_footprint": 1080018408,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 3.467308499966748
+    },
+    {
+      "monotonic_s": 913480.922973583,
+      "unix_s": 1789021704.035498,
+      "counters": {
+        "ri_user_time": 33906946,
+        "ri_system_time": 31745667,
+        "ri_pkg_idle_wkups": 171,
+        "ri_interrupt_wkups": 445,
+        "ri_cycles": 7356076634,
+        "ri_instructions": 15058967008,
+        "ri_energy_nj": 4976756662,
+        "ri_penergy_nj": 4847440147,
+        "ri_phys_footprint": 1080034792,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 3.5681012080749497
+    },
+    {
+      "monotonic_s": 913481.029755916,
+      "unix_s": 1789021704.142281,
+      "counters": {
+        "ri_user_time": 34889549,
+        "ri_system_time": 32926237,
+        "ri_pkg_idle_wkups": 178,
+        "ri_interrupt_wkups": 460,
+        "ri_cycles": 7541826588,
+        "ri_instructions": 15278365998,
+        "ri_energy_nj": 5026085209,
+        "ri_penergy_nj": 4887159215,
+        "ri_phys_footprint": 1080083944,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 3.6748840420041233
+    },
+    {
+      "monotonic_s": 913481.139820875,
+      "unix_s": 1789021704.252346,
+      "counters": {
+        "ri_user_time": 35818414,
+        "ri_system_time": 34159158,
+        "ri_pkg_idle_wkups": 190,
+        "ri_interrupt_wkups": 473,
+        "ri_cycles": 7721110810,
+        "ri_instructions": 15501915190,
+        "ri_energy_nj": 5078102160,
+        "ri_penergy_nj": 4935111956,
+        "ri_phys_footprint": 1080116712,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 3.7849437500117347
+    },
+    {
+      "monotonic_s": 913481.249881666,
+      "unix_s": 1789021704.362407,
+      "counters": {
+        "ri_user_time": 36721249,
+        "ri_system_time": 35344698,
+        "ri_pkg_idle_wkups": 198,
+        "ri_interrupt_wkups": 486,
+        "ri_cycles": 7897551372,
+        "ri_instructions": 15721367048,
+        "ri_energy_nj": 5127285682,
+        "ri_penergy_nj": 4977557037,
+        "ri_phys_footprint": 1080149480,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 3.8950049580307677
+    },
+    {
+      "monotonic_s": 913481.359935583,
+      "unix_s": 1789021704.4724622,
+      "counters": {
+        "ri_user_time": 37581460,
+        "ri_system_time": 36347851,
+        "ri_pkg_idle_wkups": 201,
+        "ri_interrupt_wkups": 501,
+        "ri_cycles": 8094934262,
+        "ri_instructions": 15942981371,
+        "ri_energy_nj": 5193873539,
+        "ri_penergy_nj": 5035212382,
+        "ri_phys_footprint": 1080165864,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 4.005056124995463
+    },
+    {
+      "monotonic_s": 913481.469989875,
+      "unix_s": 1789021704.582516,
+      "counters": {
+        "ri_user_time": 38382087,
+        "ri_system_time": 37386161,
+        "ri_pkg_idle_wkups": 208,
+        "ri_interrupt_wkups": 516,
+        "ri_cycles": 8254140718,
+        "ri_instructions": 16159489971,
+        "ri_energy_nj": 5244704347,
+        "ri_penergy_nj": 5082244723,
+        "ri_phys_footprint": 1080215016,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 4.115112958010286
+    },
+    {
+      "monotonic_s": 913481.578469833,
+      "unix_s": 1789021704.690997,
+      "counters": {
+        "ri_user_time": 39440898,
+        "ri_system_time": 38565066,
+        "ri_pkg_idle_wkups": 213,
+        "ri_interrupt_wkups": 531,
+        "ri_cycles": 8456497237,
+        "ri_instructions": 16385276564,
+        "ri_energy_nj": 5292728799,
+        "ri_penergy_nj": 5113881599,
+        "ri_phys_footprint": 1080247784,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 4.223596542025916
+    },
+    {
+      "monotonic_s": 913481.688669833,
+      "unix_s": 1789021704.801203,
+      "counters": {
+        "ri_user_time": 40513456,
+        "ri_system_time": 39850082,
+        "ri_pkg_idle_wkups": 223,
+        "ri_interrupt_wkups": 547,
+        "ri_cycles": 8656394337,
+        "ri_instructions": 16619257484,
+        "ri_energy_nj": 5346613178,
+        "ri_penergy_nj": 5159170112,
+        "ri_phys_footprint": 1080296936,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 4.333808375056833
+    },
+    {
+      "monotonic_s": 913481.794862291,
+      "unix_s": 1789021704.907393,
+      "counters": {
+        "ri_user_time": 41403744,
+        "ri_system_time": 40879172,
+        "ri_pkg_idle_wkups": 227,
+        "ri_interrupt_wkups": 560,
+        "ri_cycles": 8823451197,
+        "ri_instructions": 16828689802,
+        "ri_energy_nj": 5391699371,
+        "ri_penergy_nj": 5193562523,
+        "ri_phys_footprint": 1080329704,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 4.439996125060134
+    },
+    {
+      "monotonic_s": 913481.905014708,
+      "unix_s": 1789021705.017545,
+      "counters": {
+        "ri_user_time": 42386821,
+        "ri_system_time": 42211041,
+        "ri_pkg_idle_wkups": 235,
+        "ri_interrupt_wkups": 575,
+        "ri_cycles": 9010499918,
+        "ri_instructions": 17056813726,
+        "ri_energy_nj": 5447364819,
+        "ri_penergy_nj": 5248569765,
+        "ri_phys_footprint": 1080362472,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 4.550144625012763
+    },
+    {
+      "monotonic_s": 913482.010783625,
+      "unix_s": 1789021705.123314,
+      "counters": {
+        "ri_user_time": 43213083,
+        "ri_system_time": 43366711,
+        "ri_pkg_idle_wkups": 241,
+        "ri_interrupt_wkups": 590,
+        "ri_cycles": 9181296361,
+        "ri_instructions": 17265581744,
+        "ri_energy_nj": 5500423064,
+        "ri_penergy_nj": 5300874712,
+        "ri_phys_footprint": 1080411624,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 4.655915791983716
+    },
+    {
+      "monotonic_s": 913482.120889791,
+      "unix_s": 1789021705.233421,
+      "counters": {
+        "ri_user_time": 44102989,
+        "ri_system_time": 44585466,
+        "ri_pkg_idle_wkups": 248,
+        "ri_interrupt_wkups": 606,
+        "ri_cycles": 9360283014,
+        "ri_instructions": 17502059784,
+        "ri_energy_nj": 5557085602,
+        "ri_penergy_nj": 5356937271,
+        "ri_phys_footprint": 1080657384,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 4.766020499984734
+    },
+    {
+      "monotonic_s": 913482.230972,
+      "unix_s": 1789021705.343504,
+      "counters": {
+        "ri_user_time": 45015513,
+        "ri_system_time": 45728498,
+        "ri_pkg_idle_wkups": 258,
+        "ri_interrupt_wkups": 620,
+        "ri_cycles": 9542172105,
+        "ri_instructions": 17725245095,
+        "ri_energy_nj": 5609253522,
+        "ri_penergy_nj": 5402580916,
+        "ri_phys_footprint": 1080690152,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 4.876100125024095
+    },
+    {
+      "monotonic_s": 913482.341038583,
+      "unix_s": 1789021705.4535701,
+      "counters": {
+        "ri_user_time": 45889854,
+        "ri_system_time": 46892287,
+        "ri_pkg_idle_wkups": 263,
+        "ri_interrupt_wkups": 635,
+        "ri_cycles": 9712795435,
+        "ri_instructions": 17943799420,
+        "ri_energy_nj": 5658929977,
+        "ri_penergy_nj": 5447636598,
+        "ri_phys_footprint": 1080591848,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 4.986160792061128
+    },
+    {
+      "monotonic_s": 913482.448066291,
+      "unix_s": 1789021705.560599,
+      "counters": {
+        "ri_user_time": 46972480,
+        "ri_system_time": 48025302,
+        "ri_pkg_idle_wkups": 264,
+        "ri_interrupt_wkups": 644,
+        "ri_cycles": 9917369106,
+        "ri_instructions": 18173864318,
+        "ri_energy_nj": 5707124346,
+        "ri_penergy_nj": 5476054933,
+        "ri_phys_footprint": 1080591848,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 5.093192833010107
+    },
+    {
+      "monotonic_s": 913482.55817,
+      "unix_s": 1789021705.6707032,
+      "counters": {
+        "ri_user_time": 47947050,
+        "ri_system_time": 49083756,
+        "ri_pkg_idle_wkups": 264,
+        "ri_interrupt_wkups": 646,
+        "ri_cycles": 10103802215,
+        "ri_instructions": 18399384801,
+        "ri_energy_nj": 5753446390,
+        "ri_penergy_nj": 5505557193,
+        "ri_phys_footprint": 1080657384,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 5.203296083025634
+    },
+    {
+      "monotonic_s": 913482.667597291,
+      "unix_s": 1789021705.780131,
+      "counters": {
+        "ri_user_time": 48909699,
+        "ri_system_time": 50147853,
+        "ri_pkg_idle_wkups": 264,
+        "ri_interrupt_wkups": 648,
+        "ri_cycles": 10286252194,
+        "ri_instructions": 18620240269,
+        "ri_energy_nj": 5799764498,
+        "ri_penergy_nj": 5537617576,
+        "ri_phys_footprint": 1080722920,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 5.3127221670001745
+    },
+    {
+      "monotonic_s": 913482.772404125,
+      "unix_s": 1789021705.884938,
+      "counters": {
+        "ri_user_time": 49898054,
+        "ri_system_time": 51020755,
+        "ri_pkg_idle_wkups": 264,
+        "ri_interrupt_wkups": 649,
+        "ri_cycles": 10470849858,
+        "ri_instructions": 18847783680,
+        "ri_energy_nj": 5836510185,
+        "ri_penergy_nj": 5541745529,
+        "ri_phys_footprint": 1080772072,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 5.417528667021543
+    },
+    {
+      "monotonic_s": 913482.877468166,
+      "unix_s": 1789021705.9900029,
+      "counters": {
+        "ri_user_time": 50826304,
+        "ri_system_time": 52037457,
+        "ri_pkg_idle_wkups": 265,
+        "ri_interrupt_wkups": 651,
+        "ri_cycles": 10645699772,
+        "ri_instructions": 19057166952,
+        "ri_energy_nj": 5879189139,
+        "ri_penergy_nj": 5567537345,
+        "ri_phys_footprint": 1080788456,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 5.522600583033636
+    },
+    {
+      "monotonic_s": 913482.987570041,
+      "unix_s": 1789021706.100105,
+      "counters": {
+        "ri_user_time": 51733513,
+        "ri_system_time": 53311098,
+        "ri_pkg_idle_wkups": 265,
+        "ri_interrupt_wkups": 653,
+        "ri_cycles": 10824987526,
+        "ri_instructions": 19282706063,
+        "ri_energy_nj": 5931596488,
+        "ri_penergy_nj": 5617097886,
+        "ri_phys_footprint": 1080821224,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 5.632695417036302
+    },
+    {
+      "monotonic_s": 913483.091367958,
+      "unix_s": 1789021706.203904,
+      "counters": {
+        "ri_user_time": 52631197,
+        "ri_system_time": 54546451,
+        "ri_pkg_idle_wkups": 266,
+        "ri_interrupt_wkups": 655,
+        "ri_cycles": 11005600473,
+        "ri_instructions": 19504675511,
+        "ri_energy_nj": 5987281575,
+        "ri_penergy_nj": 5672053415,
+        "ri_phys_footprint": 1080853992,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 5.73649495805148
+    },
+    {
+      "monotonic_s": 913483.197893583,
+      "unix_s": 1789021706.31043,
+      "counters": {
+        "ri_user_time": 53443448,
+        "ri_system_time": 55639086,
+        "ri_pkg_idle_wkups": 268,
+        "ri_interrupt_wkups": 658,
+        "ri_cycles": 11190346476,
+        "ri_instructions": 19725446450,
+        "ri_energy_nj": 6049703577,
+        "ri_penergy_nj": 5733766841,
+        "ri_phys_footprint": 1081181672,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 5.843018874991685
+    },
+    {
+      "monotonic_s": 913483.307970416,
+      "unix_s": 1789021706.420507,
+      "counters": {
+        "ri_user_time": 54164238,
+        "ri_system_time": 56662342,
+        "ri_pkg_idle_wkups": 269,
+        "ri_interrupt_wkups": 660,
+        "ri_cycles": 11350385046,
+        "ri_instructions": 19940711031,
+        "ri_energy_nj": 6104668231,
+        "ri_penergy_nj": 5788291528,
+        "ri_phys_footprint": 1081198056,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 5.953098458005115
+    },
+    {
+      "monotonic_s": 913483.413133041,
+      "unix_s": 1789021706.525671,
+      "counters": {
+        "ri_user_time": 54983812,
+        "ri_system_time": 57819257,
+        "ri_pkg_idle_wkups": 269,
+        "ri_interrupt_wkups": 662,
+        "ri_cycles": 11510606828,
+        "ri_instructions": 20151912925,
+        "ri_energy_nj": 6153248673,
+        "ri_penergy_nj": 5836058676,
+        "ri_phys_footprint": 1081099752,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 6.058260750025511
+    },
+    {
+      "monotonic_s": 913483.515543125,
+      "unix_s": 1789021706.6280808,
+      "counters": {
+        "ri_user_time": 55818556,
+        "ri_system_time": 59012851,
+        "ri_pkg_idle_wkups": 269,
+        "ri_interrupt_wkups": 664,
+        "ri_cycles": 11678089094,
+        "ri_instructions": 20358008034,
+        "ri_energy_nj": 6202946678,
+        "ri_penergy_nj": 5885044550,
+        "ri_phys_footprint": 1081148904,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 6.160669417004101
+    },
+    {
+      "monotonic_s": 913483.623047083,
+      "unix_s": 1789021706.7355862,
+      "counters": {
+        "ri_user_time": 56676809,
+        "ri_system_time": 60195890,
+        "ri_pkg_idle_wkups": 269,
+        "ri_interrupt_wkups": 666,
+        "ri_cycles": 11851785069,
+        "ri_instructions": 20575919048,
+        "ri_energy_nj": 6256102403,
+        "ri_penergy_nj": 5937273878,
+        "ri_phys_footprint": 1081165288,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 6.268172333016992
+    },
+    {
+      "monotonic_s": 913483.724738541,
+      "unix_s": 1789021706.837278,
+      "counters": {
+        "ri_user_time": 57462074,
+        "ri_system_time": 61314574,
+        "ri_pkg_idle_wkups": 269,
+        "ri_interrupt_wkups": 668,
+        "ri_cycles": 12008063138,
+        "ri_instructions": 20777164757,
+        "ri_energy_nj": 6303925844,
+        "ri_penergy_nj": 5984400560,
+        "ri_phys_footprint": 1081214440,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 6.36986420804169
+    },
+    {
+      "monotonic_s": 913483.834847666,
+      "unix_s": 1789021706.947388,
+      "counters": {
+        "ri_user_time": 58280955,
+        "ri_system_time": 62431707,
+        "ri_pkg_idle_wkups": 269,
+        "ri_interrupt_wkups": 670,
+        "ri_cycles": 12166870779,
+        "ri_instructions": 20989252543,
+        "ri_energy_nj": 6352242267,
+        "ri_penergy_nj": 6030623486,
+        "ri_phys_footprint": 1081230824,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 6.479976666974835
+    },
+    {
+      "monotonic_s": 913483.945026625,
+      "unix_s": 1789021707.057568,
+      "counters": {
+        "ri_user_time": 59186574,
+        "ri_system_time": 63622561,
+        "ri_pkg_idle_wkups": 269,
+        "ri_interrupt_wkups": 672,
+        "ri_cycles": 12344498249,
+        "ri_instructions": 21210252827,
+        "ri_energy_nj": 6401306540,
+        "ri_penergy_nj": 6072098249,
+        "ri_phys_footprint": 1081296360,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 6.5901624580146745
+    },
+    {
+      "monotonic_s": 913484.049552125,
+      "unix_s": 1789021707.1620932,
+      "counters": {
+        "ri_user_time": 60009644,
+        "ri_system_time": 64765800,
+        "ri_pkg_idle_wkups": 269,
+        "ri_interrupt_wkups": 673,
+        "ri_cycles": 12513081517,
+        "ri_instructions": 21431331147,
+        "ri_energy_nj": 6454242422,
+        "ri_penergy_nj": 6122465128,
+        "ri_phys_footprint": 1081411048,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 6.694677000050433
+    },
+    {
+      "monotonic_s": 913484.155729916,
+      "unix_s": 1789021707.2682722,
+      "counters": {
+        "ri_user_time": 60868435,
+        "ri_system_time": 65951248,
+        "ri_pkg_idle_wkups": 269,
+        "ri_interrupt_wkups": 676,
+        "ri_cycles": 12680257686,
+        "ri_instructions": 21648333384,
+        "ri_energy_nj": 6504169863,
+        "ri_penergy_nj": 6170487682,
+        "ri_phys_footprint": 1081345512,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 6.800857583060861
+    },
+    {
+      "monotonic_s": 913484.257371083,
+      "unix_s": 1789021707.369913,
+      "counters": {
+        "ri_user_time": 61844786,
+        "ri_system_time": 67048159,
+        "ri_pkg_idle_wkups": 270,
+        "ri_interrupt_wkups": 678,
+        "ri_cycles": 12860712363,
+        "ri_instructions": 21854461308,
+        "ri_energy_nj": 6550343566,
+        "ri_penergy_nj": 6205730700,
+        "ri_phys_footprint": 1081361896,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 6.902498792042024
+    },
+    {
+      "monotonic_s": 913484.364696666,
+      "unix_s": 1789021707.4772391,
+      "counters": {
+        "ri_user_time": 62700855,
+        "ri_system_time": 68185471,
+        "ri_pkg_idle_wkups": 270,
+        "ri_interrupt_wkups": 680,
+        "ri_cycles": 13023298041,
+        "ri_instructions": 22069130908,
+        "ri_energy_nj": 6600928946,
+        "ri_penergy_nj": 6255708728,
+        "ri_phys_footprint": 1081411048,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 7.009820958017372
+    },
+    {
+      "monotonic_s": 913484.473736333,
+      "unix_s": 1789021707.586279,
+      "counters": {
+        "ri_user_time": 63680456,
+        "ri_system_time": 69470344,
+        "ri_pkg_idle_wkups": 270,
+        "ri_interrupt_wkups": 682,
+        "ri_cycles": 13214287144,
+        "ri_instructions": 22289625133,
+        "ri_energy_nj": 6657941336,
+        "ri_penergy_nj": 6310814402,
+        "ri_phys_footprint": 1081443816,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 7.118860749993473
+    },
+    {
+      "monotonic_s": 913484.583818041,
+      "unix_s": 1789021707.696362,
+      "counters": {
+        "ri_user_time": 64620250,
+        "ri_system_time": 70400607,
+        "ri_pkg_idle_wkups": 270,
+        "ri_interrupt_wkups": 683,
+        "ri_cycles": 13419657254,
+        "ri_instructions": 22519419358,
+        "ri_energy_nj": 6713708120,
+        "ri_penergy_nj": 6341061437,
+        "ri_phys_footprint": 1081476584,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 7.2289423330221325
+    },
+    {
+      "monotonic_s": 913484.693877958,
+      "unix_s": 1789021707.806423,
+      "counters": {
+        "ri_user_time": 65645777,
+        "ri_system_time": 71263969,
+        "ri_pkg_idle_wkups": 270,
+        "ri_interrupt_wkups": 686,
+        "ri_cycles": 13605690006,
+        "ri_instructions": 22751462166,
+        "ri_energy_nj": 6748484735,
+        "ri_penergy_nj": 6341061437,
+        "ri_phys_footprint": 1081509352,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 7.339003624976613
+    },
+    {
+      "monotonic_s": 913484.803972625,
+      "unix_s": 1789021707.916518,
+      "counters": {
+        "ri_user_time": 66799085,
+        "ri_system_time": 72231062,
+        "ri_pkg_idle_wkups": 270,
+        "ri_interrupt_wkups": 688,
+        "ri_cycles": 13813735423,
+        "ri_instructions": 22989541705,
+        "ri_energy_nj": 6784012958,
+        "ri_penergy_nj": 6341061437,
+        "ri_phys_footprint": 1081558504,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 7.449100875062868
+    },
+    {
+      "monotonic_s": 913484.913297875,
+      "unix_s": 1789021708.0258439,
+      "counters": {
+        "ri_user_time": 67830020,
+        "ri_system_time": 73565637,
+        "ri_pkg_idle_wkups": 270,
+        "ri_interrupt_wkups": 689,
+        "ri_cycles": 14005430415,
+        "ri_instructions": 23220382919,
+        "ri_energy_nj": 6841182937,
+        "ri_penergy_nj": 6397194393,
+        "ri_phys_footprint": 1081591272,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 7.558437000028789
+    },
+    {
+      "monotonic_s": 913485.023402125,
+      "unix_s": 1789021708.135948,
+      "counters": {
+        "ri_user_time": 68750762,
+        "ri_system_time": 74862282,
+        "ri_pkg_idle_wkups": 270,
+        "ri_interrupt_wkups": 691,
+        "ri_cycles": 14184747856,
+        "ri_instructions": 23441726598,
+        "ri_energy_nj": 6894084580,
+        "ri_penergy_nj": 6449389289,
+        "ri_phys_footprint": 1081640424,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 7.668530208058655
+    },
+    {
+      "monotonic_s": 913485.133498625,
+      "unix_s": 1789021708.246046,
+      "counters": {
+        "ri_user_time": 69727064,
+        "ri_system_time": 76051558,
+        "ri_pkg_idle_wkups": 270,
+        "ri_interrupt_wkups": 694,
+        "ri_cycles": 14370462389,
+        "ri_instructions": 23664095034,
+        "ri_energy_nj": 6943638123,
+        "ri_penergy_nj": 6490436692,
+        "ri_phys_footprint": 1081689576,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 7.77864725003019
+    },
+    {
+      "monotonic_s": 913485.23893575,
+      "unix_s": 1789021708.3514829,
+      "counters": {
+        "ri_user_time": 70639680,
+        "ri_system_time": 77332091,
+        "ri_pkg_idle_wkups": 272,
+        "ri_interrupt_wkups": 697,
+        "ri_cycles": 14551747963,
+        "ri_instructions": 23881837596,
+        "ri_energy_nj": 6998434463,
+        "ri_penergy_nj": 6544432743,
+        "ri_phys_footprint": 1081705960,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 7.884059083065949
+    },
+    {
+      "monotonic_s": 913485.341335083,
+      "unix_s": 1789021708.453883,
+      "counters": {
+        "ri_user_time": 71149755,
+        "ri_system_time": 78065922,
+        "ri_pkg_idle_wkups": 272,
+        "ri_interrupt_wkups": 699,
+        "ri_cycles": 14734509454,
+        "ri_instructions": 24083612623,
+        "ri_energy_nj": 7100152697,
+        "ri_penergy_nj": 6645423743,
+        "ri_phys_footprint": 1081755112,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 7.986456667073071
+    },
+    {
+      "monotonic_s": 913485.451454208,
+      "unix_s": 1789021708.564003,
+      "counters": {
+        "ri_user_time": 71579887,
+        "ri_system_time": 78682987,
+        "ri_pkg_idle_wkups": 272,
+        "ri_interrupt_wkups": 702,
+        "ri_cycles": 14885840002,
+        "ri_instructions": 24290376316,
+        "ri_energy_nj": 7191399168,
+        "ri_penergy_nj": 6736185787,
+        "ri_phys_footprint": 1081771496,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 8.096590082976036
+    },
+    {
+      "monotonic_s": 913485.561635458,
+      "unix_s": 1789021708.6741838,
+      "counters": {
+        "ri_user_time": 72136353,
+        "ri_system_time": 79459918,
+        "ri_pkg_idle_wkups": 272,
+        "ri_interrupt_wkups": 704,
+        "ri_cycles": 15030711580,
+        "ri_instructions": 24499239418,
+        "ri_energy_nj": 7253623589,
+        "ri_penergy_nj": 6797929940,
+        "ri_phys_footprint": 1081820648,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 8.206760458066128
+    },
+    {
+      "monotonic_s": 913485.671759666,
+      "unix_s": 1789021708.784309,
+      "counters": {
+        "ri_user_time": 72862744,
+        "ri_system_time": 80474094,
+        "ri_pkg_idle_wkups": 273,
+        "ri_interrupt_wkups": 706,
+        "ri_cycles": 15184895761,
+        "ri_instructions": 24723146533,
+        "ri_energy_nj": 7307644246,
+        "ri_penergy_nj": 6851388042,
+        "ri_phys_footprint": 1081853416,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 8.316883667022921
+    },
+    {
+      "monotonic_s": 913485.78181775,
+      "unix_s": 1789021708.894367,
+      "counters": {
+        "ri_user_time": 73735162,
+        "ri_system_time": 81521541,
+        "ri_pkg_idle_wkups": 273,
+        "ri_interrupt_wkups": 707,
+        "ri_cycles": 15352677384,
+        "ri_instructions": 24939275703,
+        "ri_energy_nj": 7353758741,
+        "ri_penergy_nj": 6888565433,
+        "ri_phys_footprint": 1081886184,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 8.426938874996267
+    },
+    {
+      "monotonic_s": 913485.885829,
+      "unix_s": 1789021708.99838,
+      "counters": {
+        "ri_user_time": 74403902,
+        "ri_system_time": 82313951,
+        "ri_pkg_idle_wkups": 273,
+        "ri_interrupt_wkups": 709,
+        "ri_cycles": 15520962960,
+        "ri_instructions": 25141178286,
+        "ri_energy_nj": 7423433459,
+        "ri_penergy_nj": 6952550059,
+        "ri_phys_footprint": 1081918952,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 8.530951249995269
+    },
+    {
+      "monotonic_s": 913485.995891,
+      "unix_s": 1789021709.1084428,
+      "counters": {
+        "ri_user_time": 74956157,
+        "ri_system_time": 83095565,
+        "ri_pkg_idle_wkups": 273,
+        "ri_interrupt_wkups": 711,
+        "ri_cycles": 15712419781,
+        "ri_instructions": 25369965350,
+        "ri_energy_nj": 7527843750,
+        "ri_penergy_nj": 7056476789,
+        "ri_phys_footprint": 1081951720,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 8.641015417058952
+    },
+    {
+      "monotonic_s": 913486.105987708,
+      "unix_s": 1789021709.218539,
+      "counters": {
+        "ri_user_time": 75539130,
+        "ri_system_time": 83895116,
+        "ri_pkg_idle_wkups": 274,
+        "ri_interrupt_wkups": 715,
+        "ri_cycles": 15873032554,
+        "ri_instructions": 25585477563,
+        "ri_energy_nj": 7599307924,
+        "ri_penergy_nj": 7127092167,
+        "ri_phys_footprint": 1081984488,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 8.751111207995564
+    },
+    {
+      "monotonic_s": 913486.216057875,
+      "unix_s": 1789021709.32861,
+      "counters": {
+        "ri_user_time": 76187198,
+        "ri_system_time": 84837189,
+        "ri_pkg_idle_wkups": 275,
+        "ri_interrupt_wkups": 717,
+        "ri_cycles": 16020087374,
+        "ri_instructions": 25795623837,
+        "ri_energy_nj": 7652320425,
+        "ri_penergy_nj": 7179527286,
+        "ri_phys_footprint": 1082017256,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 8.861182125052437
+    },
+    {
+      "monotonic_s": 913486.326132208,
+      "unix_s": 1789021709.438685,
+      "counters": {
+        "ri_user_time": 77069811,
+        "ri_system_time": 85945049,
+        "ri_pkg_idle_wkups": 277,
+        "ri_interrupt_wkups": 720,
+        "ri_cycles": 16191499068,
+        "ri_instructions": 26013074206,
+        "ri_energy_nj": 7699517564,
+        "ri_penergy_nj": 7218936996,
+        "ri_phys_footprint": 1082050024,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 8.971255582990125
+    },
+    {
+      "monotonic_s": 913486.436084458,
+      "unix_s": 1789021709.5486379,
+      "counters": {
+        "ri_user_time": 78091708,
+        "ri_system_time": 87153433,
+        "ri_pkg_idle_wkups": 277,
+        "ri_interrupt_wkups": 722,
+        "ri_cycles": 16386579392,
+        "ri_instructions": 26235932324,
+        "ri_energy_nj": 7749965702,
+        "ri_penergy_nj": 7258101333,
+        "ri_phys_footprint": 1082099176,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 9.081217125058174
+    },
+    {
+      "monotonic_s": 913486.539047791,
+      "unix_s": 1789021709.651602,
+      "counters": {
+        "ri_user_time": 78952518,
+        "ri_system_time": 88306802,
+        "ri_pkg_idle_wkups": 277,
+        "ri_interrupt_wkups": 724,
+        "ri_cycles": 16552234377,
+        "ri_instructions": 26451045477,
+        "ri_energy_nj": 7799846048,
+        "ri_penergy_nj": 7305688054,
+        "ri_phys_footprint": 1082131944,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 9.184172542067245
+    },
+    {
+      "monotonic_s": 913486.646871208,
+      "unix_s": 1789021709.759426,
+      "counters": {
+        "ri_user_time": 79760269,
+        "ri_system_time": 89438380,
+        "ri_pkg_idle_wkups": 277,
+        "ri_interrupt_wkups": 725,
+        "ri_cycles": 16724688415,
+        "ri_instructions": 26665424984,
+        "ri_energy_nj": 7854709824,
+        "ri_penergy_nj": 7359200159,
+        "ri_phys_footprint": 1082164712,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 9.291999874985777
+    },
+    {
+      "monotonic_s": 913486.756400833,
+      "unix_s": 1789021709.8689559,
+      "counters": {
+        "ri_user_time": 80566326,
+        "ri_system_time": 90552650,
+        "ri_pkg_idle_wkups": 279,
+        "ri_interrupt_wkups": 727,
+        "ri_cycles": 16890287527,
+        "ri_instructions": 26881458557,
+        "ri_energy_nj": 7908104091,
+        "ri_penergy_nj": 7411878160,
+        "ri_phys_footprint": 1082181096,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 9.40152729197871
+    },
+    {
+      "monotonic_s": 913486.866480541,
+      "unix_s": 1789021709.9790359,
+      "counters": {
+        "ri_user_time": 81343194,
+        "ri_system_time": 91596911,
+        "ri_pkg_idle_wkups": 279,
+        "ri_interrupt_wkups": 729,
+        "ri_cycles": 17053382276,
+        "ri_instructions": 27097806860,
+        "ri_energy_nj": 7961133696,
+        "ri_penergy_nj": 7461826911,
+        "ri_phys_footprint": 1082344936,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 9.511606457992457
+    },
+    {
+      "monotonic_s": 913486.976584041,
+      "unix_s": 1789021710.089141,
+      "counters": {
+        "ri_user_time": 82213235,
+        "ri_system_time": 92641628,
+        "ri_pkg_idle_wkups": 280,
+        "ri_interrupt_wkups": 731,
+        "ri_cycles": 17222909842,
+        "ri_instructions": 27314807488,
+        "ri_energy_nj": 8006410943,
+        "ri_penergy_nj": 7495979088,
+        "ri_phys_footprint": 1082377704,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 9.621721541974694
+    },
+    {
+      "monotonic_s": 913487.07782325,
+      "unix_s": 1789021710.19038,
+      "counters": {
+        "ri_user_time": 83051594,
+        "ri_system_time": 93791022,
+        "ri_pkg_idle_wkups": 280,
+        "ri_interrupt_wkups": 733,
+        "ri_cycles": 17387261880,
+        "ri_instructions": 27516228644,
+        "ri_energy_nj": 8052874435,
+        "ri_penergy_nj": 7538428760,
+        "ri_phys_footprint": 1082394088,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 9.722956374986097
+    },
+    {
+      "monotonic_s": 913487.180350208,
+      "unix_s": 1789021710.292908,
+      "counters": {
+        "ri_user_time": 83921484,
+        "ri_system_time": 94917116,
+        "ri_pkg_idle_wkups": 280,
+        "ri_interrupt_wkups": 736,
+        "ri_cycles": 17560456524,
+        "ri_instructions": 27733265795,
+        "ri_energy_nj": 8099997778,
+        "ri_penergy_nj": 7575641490,
+        "ri_phys_footprint": 1082426856,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 9.82548333297018
+    },
+    {
+      "monotonic_s": 913487.281033875,
+      "unix_s": 1789021710.3935921,
+      "counters": {
+        "ri_user_time": 84769371,
+        "ri_system_time": 95877529,
+        "ri_pkg_idle_wkups": 281,
+        "ri_interrupt_wkups": 737,
+        "ri_cycles": 17723357760,
+        "ri_instructions": 27937321684,
+        "ri_energy_nj": 8141737420,
+        "ri_penergy_nj": 7603540934,
+        "ri_phys_footprint": 1082459624,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 9.926158167072572
+    },
+    {
+      "monotonic_s": 913487.390441583,
+      "unix_s": 1789021710.503,
+      "counters": {
+        "ri_user_time": 85715834,
+        "ri_system_time": 96844729,
+        "ri_pkg_idle_wkups": 281,
+        "ri_interrupt_wkups": 739,
+        "ri_cycles": 17902396328,
+        "ri_instructions": 28160959931,
+        "ri_energy_nj": 8183664091,
+        "ri_penergy_nj": 7623236105,
+        "ri_phys_footprint": 1082525160,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 10.035566583042964
+    },
+    {
+      "monotonic_s": 913487.496513083,
+      "unix_s": 1789021710.609073,
+      "counters": {
+        "ri_user_time": 86669524,
+        "ri_system_time": 98061980,
+        "ri_pkg_idle_wkups": 281,
+        "ri_interrupt_wkups": 741,
+        "ri_cycles": 18082936823,
+        "ri_instructions": 28377140366,
+        "ri_energy_nj": 8235452679,
+        "ri_penergy_nj": 7670983190,
+        "ri_phys_footprint": 1082557928,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 10.14164787507616
+    },
+    {
+      "monotonic_s": 913487.606619458,
+      "unix_s": 1789021710.71918,
+      "counters": {
+        "ri_user_time": 87696304,
+        "ri_system_time": 99234686,
+        "ri_pkg_idle_wkups": 281,
+        "ri_interrupt_wkups": 743,
+        "ri_cycles": 18283084290,
+        "ri_instructions": 28606068389,
+        "ri_energy_nj": 8285497530,
+        "ri_penergy_nj": 7707028445,
+        "ri_phys_footprint": 1082574312,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 10.251745957997628
+    },
+    {
+      "monotonic_s": 913487.714706041,
+      "unix_s": 1789021710.8272672,
+      "counters": {
+        "ri_user_time": 88524547,
+        "ri_system_time": 100308168,
+        "ri_pkg_idle_wkups": 282,
+        "ri_interrupt_wkups": 745,
+        "ri_cycles": 18472899041,
+        "ri_instructions": 28823806759,
+        "ri_energy_nj": 8353869922,
+        "ri_penergy_nj": 7773015947,
+        "ri_phys_footprint": 1082623464,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 10.359841292025521
+    },
+    {
+      "monotonic_s": 913487.824792583,
+      "unix_s": 1789021710.937354,
+      "counters": {
+        "ri_user_time": 89367110,
+        "ri_system_time": 101448815,
+        "ri_pkg_idle_wkups": 283,
+        "ri_interrupt_wkups": 747,
+        "ri_cycles": 18632655855,
+        "ri_instructions": 29041146169,
+        "ri_energy_nj": 8404102469,
+        "ri_penergy_nj": 7822657990,
+        "ri_phys_footprint": 1082656232,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 10.469917249982245
+    },
+    {
+      "monotonic_s": 913487.93023675,
+      "unix_s": 1789021711.042799,
+      "counters": {
+        "ri_user_time": 90382726,
+        "ri_system_time": 102586630,
+        "ri_pkg_idle_wkups": 283,
+        "ri_interrupt_wkups": 749,
+        "ri_cycles": 18825222575,
+        "ri_instructions": 29260420648,
+        "ri_energy_nj": 8451258294,
+        "ri_penergy_nj": 7856782535,
+        "ri_phys_footprint": 1082689000,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 10.575365792028606
+    },
+    {
+      "monotonic_s": 913488.039711541,
+      "unix_s": 1789021711.152274,
+      "counters": {
+        "ri_user_time": 91388714,
+        "ri_system_time": 103766502,
+        "ri_pkg_idle_wkups": 283,
+        "ri_interrupt_wkups": 751,
+        "ri_cycles": 19027841989,
+        "ri_instructions": 29489820614,
+        "ri_energy_nj": 8511628073,
+        "ri_penergy_nj": 7910663374,
+        "ri_phys_footprint": 1082721768,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 10.68483720801305
+    },
+    {
+      "monotonic_s": 913488.149786083,
+      "unix_s": 1789021711.2623491,
+      "counters": {
+        "ri_user_time": 92177019,
+        "ri_system_time": 104838934,
+        "ri_pkg_idle_wkups": 284,
+        "ri_interrupt_wkups": 754,
+        "ri_cycles": 19188461519,
+        "ri_instructions": 29705795507,
+        "ri_energy_nj": 8564833259,
+        "ri_penergy_nj": 7963193696,
+        "ri_phys_footprint": 1082770920,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 10.794911083066836
+    },
+    {
+      "monotonic_s": 913488.256179458,
+      "unix_s": 1789021711.368743,
+      "counters": {
+        "ri_user_time": 93033909,
+        "ri_system_time": 106060560,
+        "ri_pkg_idle_wkups": 284,
+        "ri_interrupt_wkups": 756,
+        "ri_cycles": 19356443071,
+        "ri_instructions": 29922750973,
+        "ri_energy_nj": 8615706332,
+        "ri_penergy_nj": 8013300557,
+        "ri_phys_footprint": 1082787304,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 10.901306707994081
+    },
+    {
+      "monotonic_s": 913488.365739958,
+      "unix_s": 1789021711.478304,
+      "counters": {
+        "ri_user_time": 93881368,
+        "ri_system_time": 107189582,
+        "ri_pkg_idle_wkups": 284,
+        "ri_interrupt_wkups": 758,
+        "ri_cycles": 19518949953,
+        "ri_instructions": 30139704916,
+        "ri_energy_nj": 8664813862,
+        "ri_penergy_nj": 8059617239,
+        "ri_phys_footprint": 1082836456,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 11.010867167031392
+    },
+    {
+      "monotonic_s": 913488.46895525,
+      "unix_s": 1789021711.5815198,
+      "counters": {
+        "ri_user_time": 94840623,
+        "ri_system_time": 108221855,
+        "ri_pkg_idle_wkups": 285,
+        "ri_interrupt_wkups": 759,
+        "ri_cycles": 19700287771,
+        "ri_instructions": 30347513140,
+        "ri_energy_nj": 8707980604,
+        "ri_penergy_nj": 8087254811,
+        "ri_phys_footprint": 1082852840,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 11.11408308299724
+    },
+    {
+      "monotonic_s": 913488.577697791,
+      "unix_s": 1789021711.690264,
+      "counters": {
+        "ri_user_time": 95820777,
+        "ri_system_time": 109367069,
+        "ri_pkg_idle_wkups": 285,
+        "ri_interrupt_wkups": 761,
+        "ri_cycles": 19888079247,
+        "ri_instructions": 30571863866,
+        "ri_energy_nj": 8756326790,
+        "ri_penergy_nj": 8122470766,
+        "ri_phys_footprint": 1082901992,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 11.222838832996786
+    },
+    {
+      "monotonic_s": 913488.680060375,
+      "unix_s": 1789021711.792628,
+      "counters": {
+        "ri_user_time": 96812823,
+        "ri_system_time": 110537775,
+        "ri_pkg_idle_wkups": 287,
+        "ri_interrupt_wkups": 763,
+        "ri_cycles": 20071887694,
+        "ri_instructions": 30789684365,
+        "ri_energy_nj": 8806562382,
+        "ri_penergy_nj": 8164723972,
+        "ri_phys_footprint": 1082918376,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 11.325208458001725
+    },
+    {
+      "monotonic_s": 913488.789251458,
+      "unix_s": 1789021711.901818,
+      "counters": {
+        "ri_user_time": 97730340,
+        "ri_system_time": 111754648,
+        "ri_pkg_idle_wkups": 287,
+        "ri_interrupt_wkups": 765,
+        "ri_cycles": 20257265969,
+        "ri_instructions": 31014521011,
+        "ri_energy_nj": 8864407222,
+        "ri_penergy_nj": 8221589061,
+        "ri_phys_footprint": 1082967528,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 11.434378999983892
+    },
+    {
+      "monotonic_s": 913488.899335708,
+      "unix_s": 1789021712.011903,
+      "counters": {
+        "ri_user_time": 98622838,
+        "ri_system_time": 112768564,
+        "ri_pkg_idle_wkups": 288,
+        "ri_interrupt_wkups": 767,
+        "ri_cycles": 20428050102,
+        "ri_instructions": 31233564678,
+        "ri_energy_nj": 8909752070,
+        "ri_penergy_nj": 8253366405,
+        "ri_phys_footprint": 1082983912,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 11.544461917015724
+    },
+    {
+      "monotonic_s": 913489.006383125,
+      "unix_s": 1789021712.1189508,
+      "counters": {
+        "ri_user_time": 99694334,
+        "ri_system_time": 113820668,
+        "ri_pkg_idle_wkups": 288,
+        "ri_interrupt_wkups": 769,
+        "ri_cycles": 20624682696,
+        "ri_instructions": 31463813161,
+        "ri_energy_nj": 8953433240,
+        "ri_penergy_nj": 8273682862,
+        "ri_phys_footprint": 1083016680,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 11.651509374962188
+    },
+    {
+      "monotonic_s": 913489.116462,
+      "unix_s": 1789021712.22903,
+      "counters": {
+        "ri_user_time": 100627968,
+        "ri_system_time": 115056695,
+        "ri_pkg_idle_wkups": 288,
+        "ri_interrupt_wkups": 771,
+        "ri_cycles": 20803761656,
+        "ri_instructions": 31682855842,
+        "ri_energy_nj": 9004937153,
+        "ri_penergy_nj": 8321226391,
+        "ri_phys_footprint": 1083065832,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 11.761585499974899
+    },
+    {
+      "monotonic_s": 913489.224946083,
+      "unix_s": 1789021712.337515,
+      "counters": {
+        "ri_user_time": 101747353,
+        "ri_system_time": 116016447,
+        "ri_pkg_idle_wkups": 288,
+        "ri_interrupt_wkups": 773,
+        "ri_cycles": 21013503839,
+        "ri_instructions": 31918414784,
+        "ri_energy_nj": 9044582952,
+        "ri_penergy_nj": 8326541601,
+        "ri_phys_footprint": 1083082216,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 11.870076625025831
+    },
+    {
+      "monotonic_s": 913489.335063166,
+      "unix_s": 1789021712.4476328,
+      "counters": {
+        "ri_user_time": 102789176,
+        "ri_system_time": 117359203,
+        "ri_pkg_idle_wkups": 289,
+        "ri_interrupt_wkups": 775,
+        "ri_cycles": 21209753546,
+        "ri_instructions": 32142411454,
+        "ri_energy_nj": 9099119658,
+        "ri_penergy_nj": 8377488537,
+        "ri_phys_footprint": 1083131368,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 11.980205375002697
+    },
+    {
+      "monotonic_s": 913489.43918325,
+      "unix_s": 1789021712.551753,
+      "counters": {
+        "ri_user_time": 103670826,
+        "ri_system_time": 118595434,
+        "ri_pkg_idle_wkups": 289,
+        "ri_interrupt_wkups": 778,
+        "ri_cycles": 21380361533,
+        "ri_instructions": 32360103304,
+        "ri_energy_nj": 9150027411,
+        "ri_penergy_nj": 8427747048,
+        "ri_phys_footprint": 1083164136,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 12.084309917059727
+    },
+    {
+      "monotonic_s": 913489.548077,
+      "unix_s": 1789021712.6606479,
+      "counters": {
+        "ri_user_time": 104563561,
+        "ri_system_time": 119863489,
+        "ri_pkg_idle_wkups": 290,
+        "ri_interrupt_wkups": 780,
+        "ri_cycles": 21555222947,
+        "ri_instructions": 32578144660,
+        "ri_energy_nj": 9201792717,
+        "ri_penergy_nj": 8478622436,
+        "ri_phys_footprint": 1083196904,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 12.193206791998819
+    },
+    {
+      "monotonic_s": 913489.657072708,
+      "unix_s": 1789021712.769644,
+      "counters": {
+        "ri_user_time": 105570638,
+        "ri_system_time": 121161120,
+        "ri_pkg_idle_wkups": 291,
+        "ri_interrupt_wkups": 782,
+        "ri_cycles": 21747701482,
+        "ri_instructions": 32802287621,
+        "ri_energy_nj": 9255327680,
+        "ri_penergy_nj": 8526843792,
+        "ri_phys_footprint": 1083229672,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 12.302198583027348
+    },
+    {
+      "monotonic_s": 913489.757931125,
+      "unix_s": 1789021712.870503,
+      "counters": {
+        "ri_user_time": 106259567,
+        "ri_system_time": 122173626,
+        "ri_pkg_idle_wkups": 292,
+        "ri_interrupt_wkups": 784,
+        "ri_cycles": 21902733579,
+        "ri_instructions": 33002152769,
+        "ri_energy_nj": 9308215803,
+        "ri_penergy_nj": 8579101416,
+        "ri_phys_footprint": 1083262440,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 12.40305712504778
+    },
+    {
+      "monotonic_s": 913489.868058708,
+      "unix_s": 1789021712.980631,
+      "counters": {
+        "ri_user_time": 107110041,
+        "ri_system_time": 123354232,
+        "ri_pkg_idle_wkups": 294,
+        "ri_interrupt_wkups": 786,
+        "ri_cycles": 22066691891,
+        "ri_instructions": 33225844920,
+        "ri_energy_nj": 9358915129,
+        "ri_penergy_nj": 8629094924,
+        "ri_phys_footprint": 1083295208,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 12.513189375051297
+    },
+    {
+      "monotonic_s": 913489.977251916,
+      "unix_s": 1789021713.089825,
+      "counters": {
+        "ri_user_time": 108010288,
+        "ri_system_time": 124553724,
+        "ri_pkg_idle_wkups": 294,
+        "ri_interrupt_wkups": 788,
+        "ri_cycles": 22241597386,
+        "ri_instructions": 33448788162,
+        "ri_energy_nj": 9407796927,
+        "ri_penergy_nj": 8671715500,
+        "ri_phys_footprint": 1083327976,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 12.622377083054744
+    },
+    {
+      "monotonic_s": 913490.08052375,
+      "unix_s": 1789021713.193098,
+      "counters": {
+        "ri_user_time": 108994881,
+        "ri_system_time": 125715462,
+        "ri_pkg_idle_wkups": 294,
+        "ri_interrupt_wkups": 789,
+        "ri_cycles": 22424409553,
+        "ri_instructions": 33674126999,
+        "ri_energy_nj": 9459151740,
+        "ri_penergy_nj": 8714881618,
+        "ri_phys_footprint": 1083360744,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 12.725655499962159
+    },
+    {
+      "monotonic_s": 913490.190600125,
+      "unix_s": 1789021713.3031738,
+      "counters": {
+        "ri_user_time": 109976237,
+        "ri_system_time": 126789689,
+        "ri_pkg_idle_wkups": 295,
+        "ri_interrupt_wkups": 792,
+        "ri_cycles": 22609709397,
+        "ri_instructions": 33896848664,
+        "ri_energy_nj": 9505400930,
+        "ri_penergy_nj": 8746098118,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 12.835724250064231
+    },
+    {
+      "monotonic_s": 913490.30068075,
+      "unix_s": 1789021713.413256,
+      "counters": {
+        "ri_user_time": 110974595,
+        "ri_system_time": 127799285,
+        "ri_pkg_idle_wkups": 295,
+        "ri_interrupt_wkups": 794,
+        "ri_cycles": 22801364881,
+        "ri_instructions": 34126396642,
+        "ri_energy_nj": 9547563385,
+        "ri_penergy_nj": 8762620733,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 12.945806792005897
+    },
+    {
+      "monotonic_s": 913490.408085458,
+      "unix_s": 1789021713.5206609,
+      "counters": {
+        "ri_user_time": 112053819,
+        "ri_system_time": 128658723,
+        "ri_pkg_idle_wkups": 295,
+        "ri_interrupt_wkups": 796,
+        "ri_cycles": 22998465458,
+        "ri_instructions": 34360629859,
+        "ri_energy_nj": 9585084832,
+        "ri_penergy_nj": 8763656321,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 13.05321050004568
+    },
+    {
+      "monotonic_s": 913490.51821825,
+      "unix_s": 1789021713.630794,
+      "counters": {
+        "ri_user_time": 112988717,
+        "ri_system_time": 129948187,
+        "ri_pkg_idle_wkups": 296,
+        "ri_interrupt_wkups": 798,
+        "ri_cycles": 23181304971,
+        "ri_instructions": 34580803981,
+        "ri_energy_nj": 9640415753,
+        "ri_penergy_nj": 8818186050,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 13.163347958005033
+    },
+    {
+      "monotonic_s": 913490.61869125,
+      "unix_s": 1789021713.7312682,
+      "counters": {
+        "ri_user_time": 113810541,
+        "ri_system_time": 131058065,
+        "ri_pkg_idle_wkups": 296,
+        "ri_interrupt_wkups": 800,
+        "ri_cycles": 23341428597,
+        "ri_instructions": 34783550137,
+        "ri_energy_nj": 9686977821,
+        "ri_penergy_nj": 8861297946,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 13.263816875056364
+    },
+    {
+      "monotonic_s": 913490.722768375,
+      "unix_s": 1789021713.8353448,
+      "counters": {
+        "ri_user_time": 114932993,
+        "ri_system_time": 132169693,
+        "ri_pkg_idle_wkups": 296,
+        "ri_interrupt_wkups": 801,
+        "ri_cycles": 23544831303,
+        "ri_instructions": 35013907875,
+        "ri_energy_nj": 9733173858,
+        "ri_penergy_nj": 8887672527,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 13.367894666967914
+    },
+    {
+      "monotonic_s": 913490.832854125,
+      "unix_s": 1789021713.945432,
+      "counters": {
+        "ri_user_time": 115982468,
+        "ri_system_time": 133164858,
+        "ri_pkg_idle_wkups": 297,
+        "ri_interrupt_wkups": 804,
+        "ri_cycles": 23756299579,
+        "ri_instructions": 35243490787,
+        "ri_energy_nj": 9788227438,
+        "ri_penergy_nj": 8919322086,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 13.477980958065018
+    },
+    {
+      "monotonic_s": 913490.942941,
+      "unix_s": 1789021714.0555189,
+      "counters": {
+        "ri_user_time": 117059075,
+        "ri_system_time": 134165500,
+        "ri_pkg_idle_wkups": 297,
+        "ri_interrupt_wkups": 805,
+        "ri_cycles": 23956333567,
+        "ri_instructions": 35474707625,
+        "ri_energy_nj": 9832459336,
+        "ri_penergy_nj": 8938438147,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 13.588066374999471
+    },
+    {
+      "monotonic_s": 913491.047286583,
+      "unix_s": 1789021714.159866,
+      "counters": {
+        "ri_user_time": 117940742,
+        "ri_system_time": 135355727,
+        "ri_pkg_idle_wkups": 299,
+        "ri_interrupt_wkups": 807,
+        "ri_cycles": 24125052451,
+        "ri_instructions": 35692359628,
+        "ri_energy_nj": 9883865847,
+        "ri_penergy_nj": 8988971510,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 13.692417999962345
+    },
+    {
+      "monotonic_s": 913491.154572166,
+      "unix_s": 1789021714.2671518,
+      "counters": {
+        "ri_user_time": 118884552,
+        "ri_system_time": 136558675,
+        "ri_pkg_idle_wkups": 300,
+        "ri_interrupt_wkups": 810,
+        "ri_cycles": 24303514905,
+        "ri_instructions": 35905815140,
+        "ri_energy_nj": 9934592914,
+        "ri_penergy_nj": 9035633692,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 13.799699041992426
+    },
+    {
+      "monotonic_s": 913491.255562875,
+      "unix_s": 1789021714.368143,
+      "counters": {
+        "ri_user_time": 119753580,
+        "ri_system_time": 137759667,
+        "ri_pkg_idle_wkups": 300,
+        "ri_interrupt_wkups": 812,
+        "ri_cycles": 24470412437,
+        "ri_instructions": 36113519450,
+        "ri_energy_nj": 9984739192,
+        "ri_penergy_nj": 9085159875,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 13.90071162499953
+    },
+    {
+      "monotonic_s": 913491.365666291,
+      "unix_s": 1789021714.478247,
+      "counters": {
+        "ri_user_time": 120611914,
+        "ri_system_time": 138970347,
+        "ri_pkg_idle_wkups": 300,
+        "ri_interrupt_wkups": 814,
+        "ri_cycles": 24637404470,
+        "ri_instructions": 36331198845,
+        "ri_energy_nj": 10035563100,
+        "ri_penergy_nj": 9135345756,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 14.010791333043016
+    },
+    {
+      "monotonic_s": 913491.469576208,
+      "unix_s": 1789021714.5821571,
+      "counters": {
+        "ri_user_time": 121586243,
+        "ri_system_time": 140101134,
+        "ri_pkg_idle_wkups": 300,
+        "ri_interrupt_wkups": 816,
+        "ri_cycles": 24819212948,
+        "ri_instructions": 36538072355,
+        "ri_energy_nj": 10083250775,
+        "ri_penergy_nj": 9173600761,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 14.114704583073035
+    },
+    {
+      "monotonic_s": 913491.578945416,
+      "unix_s": 1789021714.691527,
+      "counters": {
+        "ri_user_time": 122604809,
+        "ri_system_time": 141261653,
+        "ri_pkg_idle_wkups": 300,
+        "ri_interrupt_wkups": 818,
+        "ri_cycles": 25010330424,
+        "ri_instructions": 36764806862,
+        "ri_energy_nj": 10132910471,
+        "ri_penergy_nj": 9212537803,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 14.22407374996692
+    },
+    {
+      "monotonic_s": 913491.688292833,
+      "unix_s": 1789021714.8008761,
+      "counters": {
+        "ri_user_time": 123594941,
+        "ri_system_time": 142649082,
+        "ri_pkg_idle_wkups": 301,
+        "ri_interrupt_wkups": 820,
+        "ri_cycles": 25203626863,
+        "ri_instructions": 36995594370,
+        "ri_energy_nj": 10190569430,
+        "ri_penergy_nj": 9269428515,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 14.33342529204674
+    },
+    {
+      "monotonic_s": 913491.798387958,
+      "unix_s": 1789021714.910971,
+      "counters": {
+        "ri_user_time": 124391392,
+        "ri_system_time": 143788543,
+        "ri_pkg_idle_wkups": 301,
+        "ri_interrupt_wkups": 821,
+        "ri_cycles": 25361243123,
+        "ri_instructions": 37210839921,
+        "ri_energy_nj": 10240395239,
+        "ri_penergy_nj": 9318605894,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 14.443515417049639
+    },
+    {
+      "monotonic_s": 913491.903162708,
+      "unix_s": 1789021715.015746,
+      "counters": {
+        "ri_user_time": 125246874,
+        "ri_system_time": 144818939,
+        "ri_pkg_idle_wkups": 301,
+        "ri_interrupt_wkups": 823,
+        "ri_cycles": 25521229687,
+        "ri_instructions": 37412247090,
+        "ri_energy_nj": 10286604980,
+        "ri_penergy_nj": 9359109755,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 14.548290333012119
+    },
+    {
+      "monotonic_s": 913492.013330208,
+      "unix_s": 1789021715.1259148,
+      "counters": {
+        "ri_user_time": 126288678,
+        "ri_system_time": 145991545,
+        "ri_pkg_idle_wkups": 301,
+        "ri_interrupt_wkups": 826,
+        "ri_cycles": 25721999477,
+        "ri_instructions": 37648683572,
+        "ri_energy_nj": 10337091447,
+        "ri_penergy_nj": 9393372658,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 14.658473292016424
+    },
+    {
+      "monotonic_s": 913492.115358208,
+      "unix_s": 1789021715.227943,
+      "counters": {
+        "ri_user_time": 127194225,
+        "ri_system_time": 147087649,
+        "ri_pkg_idle_wkups": 302,
+        "ri_interrupt_wkups": 829,
+        "ri_cycles": 25894614342,
+        "ri_instructions": 37856215545,
+        "ri_energy_nj": 10384247315,
+        "ri_penergy_nj": 9431782113,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 14.760484792059287
+    },
+    {
+      "monotonic_s": 913492.225459916,
+      "unix_s": 1789021715.338045,
+      "counters": {
+        "ri_user_time": 128138565,
+        "ri_system_time": 148289067,
+        "ri_pkg_idle_wkups": 302,
+        "ri_interrupt_wkups": 831,
+        "ri_cycles": 26075030979,
+        "ri_instructions": 38075610026,
+        "ri_energy_nj": 10435116597,
+        "ri_penergy_nj": 9477019253,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 14.87058845802676
+    },
+    {
+      "monotonic_s": 913492.331205291,
+      "unix_s": 1789021715.4437912,
+      "counters": {
+        "ri_user_time": 129109171,
+        "ri_system_time": 149400570,
+        "ri_pkg_idle_wkups": 303,
+        "ri_interrupt_wkups": 833,
+        "ri_cycles": 26257510732,
+        "ri_instructions": 38295407176,
+        "ri_energy_nj": 10483202462,
+        "ri_penergy_nj": 9513656460,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 14.976331375073642
+    },
+    {
+      "monotonic_s": 913492.431306916,
+      "unix_s": 1789021715.543893,
+      "counters": {
+        "ri_user_time": 129938986,
+        "ri_system_time": 150414592,
+        "ri_pkg_idle_wkups": 304,
+        "ri_interrupt_wkups": 834,
+        "ri_cycles": 26419598938,
+        "ri_instructions": 38496725278,
+        "ri_energy_nj": 10526701811,
+        "ri_penergy_nj": 9546694079,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 15.076430791988969
+    },
+    {
+      "monotonic_s": 913492.54139725,
+      "unix_s": 1789021715.653984,
+      "counters": {
+        "ri_user_time": 130898267,
+        "ri_system_time": 151424692,
+        "ri_pkg_idle_wkups": 305,
+        "ri_interrupt_wkups": 836,
+        "ri_cycles": 26597307269,
+        "ri_instructions": 38717251658,
+        "ri_energy_nj": 10572432273,
+        "ri_penergy_nj": 9576361381,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 15.186522417003289
+    },
+    {
+      "monotonic_s": 913492.651462958,
+      "unix_s": 1789021715.76405,
+      "counters": {
+        "ri_user_time": 131817819,
+        "ri_system_time": 152694189,
+        "ri_pkg_idle_wkups": 305,
+        "ri_interrupt_wkups": 839,
+        "ri_cycles": 26776463811,
+        "ri_instructions": 38935344188,
+        "ri_energy_nj": 10624843688,
+        "ri_penergy_nj": 9626397842,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 15.29658670804929
+    },
+    {
+      "monotonic_s": 913492.75567025,
+      "unix_s": 1789021715.868258,
+      "counters": {
+        "ri_user_time": 132672489,
+        "ri_system_time": 153860194,
+        "ri_pkg_idle_wkups": 305,
+        "ri_interrupt_wkups": 842,
+        "ri_cycles": 26941281612,
+        "ri_instructions": 39151218296,
+        "ri_energy_nj": 10675670687,
+        "ri_penergy_nj": 9676321840,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 15.400797500042245
+    },
+    {
+      "monotonic_s": 913492.864051291,
+      "unix_s": 1789021715.976639,
+      "counters": {
+        "ri_user_time": 133546445,
+        "ri_system_time": 155108251,
+        "ri_pkg_idle_wkups": 306,
+        "ri_interrupt_wkups": 844,
+        "ri_cycles": 27113120317,
+        "ri_instructions": 39367360867,
+        "ri_energy_nj": 10726626835,
+        "ri_penergy_nj": 9726573558,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 15.50917750003282
+    },
+    {
+      "monotonic_s": 913492.9741275,
+      "unix_s": 1789021716.086716,
+      "counters": {
+        "ri_user_time": 134471568,
+        "ri_system_time": 156287513,
+        "ri_pkg_idle_wkups": 307,
+        "ri_interrupt_wkups": 846,
+        "ri_cycles": 27293844486,
+        "ri_instructions": 39588277980,
+        "ri_energy_nj": 10775650143,
+        "ri_penergy_nj": 9766994294,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 15.619251957978122
+    },
+    {
+      "monotonic_s": 913493.0813705,
+      "unix_s": 1789021716.19396,
+      "counters": {
+        "ri_user_time": 135387153,
+        "ri_system_time": 157281017,
+        "ri_pkg_idle_wkups": 307,
+        "ri_interrupt_wkups": 848,
+        "ri_cycles": 27468712425,
+        "ri_instructions": 39806682925,
+        "ri_energy_nj": 10820008365,
+        "ri_penergy_nj": 9794429958,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 15.726495333015919
+    },
+    {
+      "monotonic_s": 913493.189702208,
+      "unix_s": 1789021716.302293,
+      "counters": {
+        "ri_user_time": 136248198,
+        "ri_system_time": 158487769,
+        "ri_pkg_idle_wkups": 308,
+        "ri_interrupt_wkups": 850,
+        "ri_cycles": 27636401696,
+        "ri_instructions": 40026327194,
+        "ri_energy_nj": 10870218402,
+        "ri_penergy_nj": 9843361756,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 15.834828624967486
+    },
+    {
+      "monotonic_s": 913493.298096041,
+      "unix_s": 1789021716.410687,
+      "counters": {
+        "ri_user_time": 137206704,
+        "ri_system_time": 159712182,
+        "ri_pkg_idle_wkups": 309,
+        "ri_interrupt_wkups": 852,
+        "ri_cycles": 27820621839,
+        "ri_instructions": 40246835306,
+        "ri_energy_nj": 10920804650,
+        "ri_penergy_nj": 9886826668,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 15.943224125076085
+    },
+    {
+      "monotonic_s": 913493.408191041,
+      "unix_s": 1789021716.520782,
+      "counters": {
+        "ri_user_time": 138146458,
+        "ri_system_time": 160964440,
+        "ri_pkg_idle_wkups": 310,
+        "ri_interrupt_wkups": 854,
+        "ri_cycles": 27997901272,
+        "ri_instructions": 40468384959,
+        "ri_energy_nj": 10973911049,
+        "ri_penergy_nj": 9939013417,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 16.053319707978517
+    },
+    {
+      "monotonic_s": 913493.514728875,
+      "unix_s": 1789021716.627321,
+      "counters": {
+        "ri_user_time": 139216795,
+        "ri_system_time": 162138137,
+        "ri_pkg_idle_wkups": 310,
+        "ri_interrupt_wkups": 856,
+        "ri_cycles": 28196375407,
+        "ri_instructions": 40693791465,
+        "ri_energy_nj": 11023172085,
+        "ri_penergy_nj": 9974261935,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 16.1598606670741
+    },
+    {
+      "monotonic_s": 913493.623066791,
+      "unix_s": 1789021716.7356591,
+      "counters": {
+        "ri_user_time": 140181519,
+        "ri_system_time": 163303174,
+        "ri_pkg_idle_wkups": 310,
+        "ri_interrupt_wkups": 858,
+        "ri_cycles": 28379092750,
+        "ri_instructions": 40915287891,
+        "ri_energy_nj": 11073678020,
+        "ri_penergy_nj": 10015852784,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 16.268209042027593
+    },
+    {
+      "monotonic_s": 913493.733145916,
+      "unix_s": 1789021716.845738,
+      "counters": {
+        "ri_user_time": 141169819,
+        "ri_system_time": 164350551,
+        "ri_pkg_idle_wkups": 310,
+        "ri_interrupt_wkups": 860,
+        "ri_cycles": 28567730423,
+        "ri_instructions": 41140596232,
+        "ri_energy_nj": 11118814696,
+        "ri_penergy_nj": 10040140530,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 16.37826866703108
+    },
+    {
+      "monotonic_s": 913493.842478166,
+      "unix_s": 1789021716.955073,
+      "counters": {
+        "ri_user_time": 142056171,
+        "ri_system_time": 165528982,
+        "ri_pkg_idle_wkups": 311,
+        "ri_interrupt_wkups": 862,
+        "ri_cycles": 28737115563,
+        "ri_instructions": 41359253477,
+        "ri_energy_nj": 11169422892,
+        "ri_penergy_nj": 10088387128,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 16.487610917072743
+    },
+    {
+      "monotonic_s": 913493.94837375,
+      "unix_s": 1789021717.060968,
+      "counters": {
+        "ri_user_time": 143004528,
+        "ri_system_time": 166527500,
+        "ri_pkg_idle_wkups": 311,
+        "ri_interrupt_wkups": 863,
+        "ri_cycles": 28936949492,
+        "ri_instructions": 41585185299,
+        "ri_energy_nj": 11225554178,
+        "ri_penergy_nj": 10126888171,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 16.593497583060525
+    },
+    {
+      "monotonic_s": 913494.048673,
+      "unix_s": 1789021717.161268,
+      "counters": {
+        "ri_user_time": 144087670,
+        "ri_system_time": 167395887,
+        "ri_pkg_idle_wkups": 311,
+        "ri_interrupt_wkups": 865,
+        "ri_cycles": 29135119258,
+        "ri_instructions": 41804405922,
+        "ri_energy_nj": 11259713797,
+        "ri_penergy_nj": 10126888171,
+        "ri_phys_footprint": 1083377128,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 16.693799833068624
+    },
+    {
+      "monotonic_s": 913494.158776416,
+      "unix_s": 1789021717.271372,
+      "counters": {
+        "ri_user_time": 145195570,
+        "ri_system_time": 168596180,
+        "ri_pkg_idle_wkups": 313,
+        "ri_interrupt_wkups": 868,
+        "ri_cycles": 29335663117,
+        "ri_instructions": 42041827192,
+        "ri_energy_nj": 11311610594,
+        "ri_penergy_nj": 10166287768,
+        "ri_phys_footprint": 1083524584,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 16.803903833031654
+    },
+    {
+      "monotonic_s": 913494.268850416,
+      "unix_s": 1789021717.381446,
+      "counters": {
+        "ri_user_time": 146107893,
+        "ri_system_time": 169701855,
+        "ri_pkg_idle_wkups": 314,
+        "ri_interrupt_wkups": 870,
+        "ri_cycles": 29505221556,
+        "ri_instructions": 42260685447,
+        "ri_energy_nj": 11361686858,
+        "ri_penergy_nj": 10211198415,
+        "ri_phys_footprint": 1083524584,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 16.913977000047453
+    },
+    {
+      "monotonic_s": 913494.371753416,
+      "unix_s": 1789021717.484351,
+      "counters": {
+        "ri_user_time": 147050438,
+        "ri_system_time": 170848755,
+        "ri_pkg_idle_wkups": 314,
+        "ri_interrupt_wkups": 872,
+        "ri_cycles": 29694092386,
+        "ri_instructions": 42481420156,
+        "ri_energy_nj": 11416330592,
+        "ri_penergy_nj": 10259172722,
+        "ri_phys_footprint": 1083524584,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 17.01688229199499
+    },
+    {
+      "monotonic_s": 913494.480537083,
+      "unix_s": 1789021717.593135,
+      "counters": {
+        "ri_user_time": 147849909,
+        "ri_system_time": 171928357,
+        "ri_pkg_idle_wkups": 315,
+        "ri_interrupt_wkups": 874,
+        "ri_cycles": 29856372729,
+        "ri_instructions": 42696972505,
+        "ri_energy_nj": 11469437247,
+        "ri_penergy_nj": 10311789065,
+        "ri_phys_footprint": 1083393512,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 17.125665958039463
+    },
+    {
+      "monotonic_s": 913494.590405583,
+      "unix_s": 1789021717.703003,
+      "counters": {
+        "ri_user_time": 148900423,
+        "ri_system_time": 173089939,
+        "ri_pkg_idle_wkups": 316,
+        "ri_interrupt_wkups": 876,
+        "ri_cycles": 30055909121,
+        "ri_instructions": 42926770426,
+        "ri_energy_nj": 11518858869,
+        "ri_penergy_nj": 10345356180,
+        "ri_phys_footprint": 1083393512,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 17.23553083301522
+    },
+    {
+      "monotonic_s": 913494.697353375,
+      "unix_s": 1789021717.809952,
+      "counters": {
+        "ri_user_time": 149718678,
+        "ri_system_time": 174199250,
+        "ri_pkg_idle_wkups": 317,
+        "ri_interrupt_wkups": 878,
+        "ri_cycles": 30225382386,
+        "ri_instructions": 43139900038,
+        "ri_energy_nj": 11574237911,
+        "ri_penergy_nj": 10400180083,
+        "ri_phys_footprint": 1083393512,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 17.34248666698113
+    },
+    {
+      "monotonic_s": 913494.806336208,
+      "unix_s": 1789021717.918935,
+      "counters": {
+        "ri_user_time": 150659369,
+        "ri_system_time": 175400891,
+        "ri_pkg_idle_wkups": 317,
+        "ri_interrupt_wkups": 879,
+        "ri_cycles": 30409140593,
+        "ri_instructions": 43363007899,
+        "ri_energy_nj": 11624098278,
+        "ri_penergy_nj": 10440902998,
+        "ri_phys_footprint": 1083393512,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 17.451461958000436
+    },
+    {
+      "monotonic_s": 913494.910160916,
+      "unix_s": 1789021718.02276,
+      "counters": {
+        "ri_user_time": 151527640,
+        "ri_system_time": 176420460,
+        "ri_pkg_idle_wkups": 318,
+        "ri_interrupt_wkups": 881,
+        "ri_cycles": 30572034186,
+        "ri_instructions": 43564641814,
+        "ri_energy_nj": 11668678495,
+        "ri_penergy_nj": 10476728382,
+        "ri_phys_footprint": 1083393512,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 17.555286332964897
+    },
+    {
+      "monotonic_s": 913495.020236125,
+      "unix_s": 1789021718.132836,
+      "counters": {
+        "ri_user_time": 152455817,
+        "ri_system_time": 177634094,
+        "ri_pkg_idle_wkups": 318,
+        "ri_interrupt_wkups": 883,
+        "ri_cycles": 30749158794,
+        "ri_instructions": 43788038329,
+        "ri_energy_nj": 11721375838,
+        "ri_penergy_nj": 10525877594,
+        "ri_phys_footprint": 1083393512,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 17.665362917003222
+    },
+    {
+      "monotonic_s": 913495.126622583,
+      "unix_s": 1789021718.239223,
+      "counters": {
+        "ri_user_time": 153484270,
+        "ri_system_time": 178820146,
+        "ri_pkg_idle_wkups": 318,
+        "ri_interrupt_wkups": 886,
+        "ri_cycles": 30938516064,
+        "ri_instructions": 44015192971,
+        "ri_energy_nj": 11773169698,
+        "ri_penergy_nj": 10569892352,
+        "ri_phys_footprint": 1083393512,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 17.7717497079866
+    },
+    {
+      "monotonic_s": 913495.230744083,
+      "unix_s": 1789021718.343345,
+      "counters": {
+        "ri_user_time": 154334665,
+        "ri_system_time": 180016992,
+        "ri_pkg_idle_wkups": 318,
+        "ri_interrupt_wkups": 888,
+        "ri_cycles": 31106084042,
+        "ri_instructions": 44232531325,
+        "ri_energy_nj": 11824885713,
+        "ri_penergy_nj": 10620890718,
+        "ri_phys_footprint": 1083459048,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 17.875871333060786
+    },
+    {
+      "monotonic_s": 913495.339250208,
+      "unix_s": 1789021718.451852,
+      "counters": {
+        "ri_user_time": 155191798,
+        "ri_system_time": 181172460,
+        "ri_pkg_idle_wkups": 319,
+        "ri_interrupt_wkups": 890,
+        "ri_cycles": 31272115929,
+        "ri_instructions": 44447826732,
+        "ri_energy_nj": 11874558365,
+        "ri_penergy_nj": 10668172611,
+        "ri_phys_footprint": 1083590120,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 17.984375457977876
+    },
+    {
+      "monotonic_s": 913495.447997875,
+      "unix_s": 1789021718.5606,
+      "counters": {
+        "ri_user_time": 156168507,
+        "ri_system_time": 182223421,
+        "ri_pkg_idle_wkups": 319,
+        "ri_interrupt_wkups": 893,
+        "ri_cycles": 31458800646,
+        "ri_instructions": 44671687829,
+        "ri_energy_nj": 11919369708,
+        "ri_penergy_nj": 10695669175,
+        "ri_phys_footprint": 1083721192,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 18.0931248330744
+    },
+    {
+      "monotonic_s": 913495.556337666,
+      "unix_s": 1789021718.668941,
+      "counters": {
+        "ri_user_time": 157116803,
+        "ri_system_time": 183295700,
+        "ri_pkg_idle_wkups": 319,
+        "ri_interrupt_wkups": 894,
+        "ri_cycles": 31643295756,
+        "ri_instructions": 44894124427,
+        "ri_energy_nj": 11964938708,
+        "ri_penergy_nj": 10724891615,
+        "ri_phys_footprint": 1083721192,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 18.20146350003779
+    },
+    {
+      "monotonic_s": 913495.66158,
+      "unix_s": 1789021718.774184,
+      "counters": {
+        "ri_user_time": 158069603,
+        "ri_system_time": 184267165,
+        "ri_pkg_idle_wkups": 319,
+        "ri_interrupt_wkups": 896,
+        "ri_cycles": 31826772455,
+        "ri_instructions": 45108477503,
+        "ri_energy_nj": 12005730413,
+        "ri_penergy_nj": 10741889023,
+        "ri_phys_footprint": 1083721192,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 18.30671325000003
+    },
+    {
+      "monotonic_s": 913495.771712625,
+      "unix_s": 1789021718.884317,
+      "counters": {
+        "ri_user_time": 158963261,
+        "ri_system_time": 185538813,
+        "ri_pkg_idle_wkups": 320,
+        "ri_interrupt_wkups": 898,
+        "ri_cycles": 32003500366,
+        "ri_instructions": 45334862614,
+        "ri_energy_nj": 12058742528,
+        "ri_penergy_nj": 10793448413,
+        "ri_phys_footprint": 1083721192,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 18.416841082973406
+    },
+    {
+      "monotonic_s": 913495.880356041,
+      "unix_s": 1789021718.992961,
+      "counters": {
+        "ri_user_time": 159839113,
+        "ri_system_time": 186763110,
+        "ri_pkg_idle_wkups": 320,
+        "ri_interrupt_wkups": 900,
+        "ri_cycles": 32179012006,
+        "ri_instructions": 45553150074,
+        "ri_energy_nj": 12110066962,
+        "ri_penergy_nj": 10841551623,
+        "ri_phys_footprint": 1083721192,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 18.525482124998234
+    },
+    {
+      "monotonic_s": 913495.990509875,
+      "unix_s": 1789021719.103115,
+      "counters": {
+        "ri_user_time": 160779499,
+        "ri_system_time": 187925892,
+        "ri_pkg_idle_wkups": 320,
+        "ri_interrupt_wkups": 902,
+        "ri_cycles": 32359125988,
+        "ri_instructions": 45775851938,
+        "ri_energy_nj": 12158997223,
+        "ri_penergy_nj": 10881113705,
+        "ri_phys_footprint": 1083721192,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 18.635642708046362
+    },
+    {
+      "monotonic_s": 913496.097996166,
+      "unix_s": 1789021719.210602,
+      "counters": {
+        "ri_user_time": 161686116,
+        "ri_system_time": 189081824,
+        "ri_pkg_idle_wkups": 320,
+        "ri_interrupt_wkups": 905,
+        "ri_cycles": 32529790622,
+        "ri_instructions": 45994637056,
+        "ri_energy_nj": 12209980482,
+        "ri_penergy_nj": 10928784454,
+        "ri_phys_footprint": 1083721192,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 18.74312145798467
+    },
+    {
+      "monotonic_s": 913496.206327416,
+      "unix_s": 1789021719.318934,
+      "counters": {
+        "ri_user_time": 162670807,
+        "ri_system_time": 190062432,
+        "ri_pkg_idle_wkups": 320,
+        "ri_interrupt_wkups": 907,
+        "ri_cycles": 32718443423,
+        "ri_instructions": 46221717642,
+        "ri_energy_nj": 12253922982,
+        "ri_penergy_nj": 10949158015,
+        "ri_phys_footprint": 1083721192,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 18.851461000042036
+    },
+    {
+      "monotonic_s": 913496.316411125,
+      "unix_s": 1789021719.429018,
+      "counters": {
+        "ri_user_time": 163702475,
+        "ri_system_time": 191067616,
+        "ri_pkg_idle_wkups": 320,
+        "ri_interrupt_wkups": 909,
+        "ri_cycles": 32916389931,
+        "ri_instructions": 46451687426,
+        "ri_energy_nj": 12300008853,
+        "ri_penergy_nj": 10971474327,
+        "ri_phys_footprint": 1083721192,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 18.96153583296109
+    },
+    {
+      "monotonic_s": 913496.426529458,
+      "unix_s": 1789021719.539138,
+      "counters": {
+        "ri_user_time": 164104304,
+        "ri_system_time": 191767131,
+        "ri_pkg_idle_wkups": 320,
+        "ri_interrupt_wkups": 922,
+        "ri_cycles": 33026907791,
+        "ri_instructions": 46622998395,
+        "ri_energy_nj": 12336632727,
+        "ri_penergy_nj": 11007811951,
+        "ri_phys_footprint": 0,
+        "ri_proc_start_abstime": 21923456520491
+      },
+      "since_launch_seconds": 19.0717074170243
+    }
+  ],
+  "warm_summary": {
+    "seconds": 16.029207042069174,
+    "cpu_joules": 7.596525848,
+    "cpu_watts": 0.473917757008358,
+    "cpu_core_equivalents": 0.7813333321561042,
+    "interrupt_wakeups_per_s": 34.12520647867238,
+    "package_idle_wakeups_per_s": 11.167115099967745,
+    "peak_process_footprint_bytes": 1187530216,
+    "raw_counter_delta": {
+      "ri_user_time": 134932262,
+      "ri_system_time": 165647428,
+      "ri_pkg_idle_wkups": 179,
+      "ri_interrupt_wkups": 547,
+      "ri_cycles": 26573240012,
+      "ri_instructions": 32650360798,
+      "ri_energy_nj": 7596525848,
+      "ri_penergy_nj": 6345774430
+    }
+  }
+}

@@ -1,5 +1,9 @@
 # Renderer architecture efficiency
 
+This records the pass shipped at `41c7006`. The subsequent
+[energy and tail-latency review](renderer-energy.md) supersedes its current implementation and
+viewport policy; the measurements below remain historical evidence for this pass.
+
 Completed review, 2026-09-09. Baseline: `a19edc90450ed0b6beae6541270730693607ee8c`.
 The [first performance pass](renderer-performance.md) reached approximately 10 ms GPU at
 1080p on Apple M5 Max/Metal. This pass tests architectural changes that preserve perceived

@@ -19,12 +19,15 @@ mod process;
 #[cfg(test)]
 mod ray_benchmark;
 mod ray_scene;
+mod ray_shadow_index;
 mod ray_shadow_maps;
+mod ray_static_maps;
 mod ray_stats;
 #[cfg(test)]
 mod ray_validation;
 mod raytrace;
 mod recognition;
+mod render_activity;
 mod renderer;
 mod save_store;
 mod scenario;
@@ -96,6 +99,7 @@ fn main() -> bevy::app::AppExit {
         .init_asset::<StandardMaterial>()
         .add_plugins((
             host::HostPlugin,
+            render_activity::RenderActivityPlugin::from_args(&args),
             renderer::RendererPlugin,
             ray_scene::RayScenePlugin,
             ray_stats::RayStatsPlugin(args.render_report.clone(), args.render_uncapped),

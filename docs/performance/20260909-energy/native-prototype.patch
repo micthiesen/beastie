@@ -1,0 +1,1387 @@
+diff --git aa/crates/beastie-game/src/raytrace.rs bb/crates/beastie-game/src/raytrace.rs
+index 2fb0c15..4975de9 100644
+--- aa/crates/beastie-game/src/raytrace.rs
++++ bb/crates/beastie-game/src/raytrace.rs
+@@ -172,6 +172,13 @@ impl Plugin for RayTracePlugin {
+                 include_str!("ray_visibility.wgsl"),
+                 "embedded://beastie/ray_visibility.wgsl",
+             ));
++        let shadow_index = app
++            .world_mut()
++            .resource_mut::<Assets<Shader>>()
++            .add(Shader::from_wgsl(
++                include_str!("ray_shadow_index.wgsl"),
++                "embedded://beastie/ray_shadow_index.wgsl",
++            ));
+         let blit = app
+             .world_mut()
+             .resource_mut::<Assets<Shader>>()
+@@ -191,6 +198,7 @@ impl Plugin for RayTracePlugin {
+                     compute_only,
+                     blit,
+                     visibility,
++                    shadow_index,
+                 })
+                 .add_systems(RenderStartup, setup_pipeline)
+                 .add_systems(RayTracing, render);
+@@ -202,12 +210,15 @@ struct RayShaders {
+     shadows: bool,
+     compute_only: Handle<Shader>,
+     visibility: Handle<Shader>,
++    shadow_index: Handle<Shader>,
+     shader: Handle<Shader>,
+     blit: Handle<Shader>,
+ }
+ #[derive(Resource)]
+ struct RayPipeline {
+     shadow_depth: CachedRenderPipelineId,
++    indexed_depth: CachedRenderPipelineId,
++    indexed_layout: BindGroupLayoutDescriptor,
+     visibility_layout: BindGroupLayoutDescriptor,
+     visibility: [CachedRenderPipelineId; 2],
+     compute_only: CachedComputePipelineId,
+@@ -264,6 +275,10 @@ struct FrameBuffers {
+     shadow_cameras: [UniformBuffer<VisibilityParams>; 12],
+     shadow_maps: Option<(u32, Texture, TextureView, Vec<TextureView>)>,
+     shadow_requested: Option<bool>,
++    static_maps: Option<crate::ray_static_maps::StaticMaps>,
++    indexed: Option<crate::ray_shadow_index::ShadowIndex>,
++    indexed_key: Vec<(u32, u64)>,
++    shadow_experiment: Option<(bool, bool, bool, u32)>,
+     visibility_params: UniformBuffer<VisibilityParams>,
+     visibility: Option<(
+         UVec2,
+@@ -304,6 +319,8 @@ fn setup_pipeline(mut commands: Commands, shaders: Res<RayShaders>, cache: Res<P
+                 storage_buffer::<Vec<u32>>(false),
+                 texture_2d_array(TextureSampleType::Depth),
+                 uniform_buffer::<crate::ray_shadow_maps::ShadowMapParams>(false),
++                texture_2d_array(TextureSampleType::Depth),
++                uniform_buffer::<crate::ray_shadow_maps::ShadowMapParams>(false),
+             ),
+         ),
+     );
+@@ -365,7 +382,40 @@ fn setup_pipeline(mut commands: Commands, shaders: Res<RayShaders>, cache: Res<P
+             ..default()
+         },
+         depth_stencil: Some(DepthStencilState {
+-            format: TextureFormat::Depth32Float,
++            format: crate::ray_static_maps::depth_format(),
++            depth_write_enabled: Some(true),
++            depth_compare: Some(CompareFunction::Greater),
++            stencil: default(),
++            bias: default(),
++        }),
++        ..default()
++    });
++    let indexed_layout = BindGroupLayoutDescriptor::new(
++        "indexed shadow scene",
++        &BindGroupLayoutEntries::sequential(
++            ShaderStages::VERTEX,
++            (
++                storage_buffer_read_only::<Vec<Vec4>>(false),
++                storage_buffer_read_only::<Vec<GpuInstance>>(false),
++                uniform_buffer::<VisibilityParams>(false),
++            ),
++        ),
++    );
++    let indexed_depth = cache.queue_render_pipeline(RenderPipelineDescriptor {
++        label: Some("dynamic shadow depth".into()),
++        layout: vec![indexed_layout.clone()],
++        vertex: VertexState {
++            shader: shaders.shadow_index.clone(),
++            entry_point: Some("shadow_vertex".into()),
++            ..default()
++        },
++        fragment: None,
++        primitive: PrimitiveState {
++            cull_mode: None,
++            ..default()
++        },
++        depth_stencil: Some(DepthStencilState {
++            format: crate::ray_static_maps::depth_format(),
+             depth_write_enabled: Some(true),
+             depth_compare: Some(CompareFunction::Greater),
+             stencil: default(),
+@@ -400,6 +450,8 @@ fn setup_pipeline(mut commands: Commands, shaders: Res<RayShaders>, cache: Res<P
+     });
+     commands.insert_resource(RayPipeline {
+         shadow_depth,
++        indexed_depth,
++        indexed_layout,
+         visibility_layout,
+         visibility,
+         compute_only,
+@@ -568,7 +620,8 @@ fn render(
+         timing.observe_scene(
+             frame.triangles.as_ref().unwrap().size()
+                 + frame.surfaces.as_ref().unwrap().size()
+-                + frame.nodes.as_ref().unwrap().size(),
++                + frame.nodes.as_ref().unwrap().size()
++                + frame.indexed.as_ref().map_or(0, |m| m.bytes),
+             size,
+         );
+     }
+@@ -665,18 +718,75 @@ fn render(
+     let requested = *frame.shadow_requested.get_or_insert_with(|| {
+         std::env::var("BEASTIE_SHADOW_MAP_CONTROL").as_deref() != Ok("trace")
+     });
+-    let map_pipeline = cache.get_render_pipeline(pipeline.shadow_depth);
++    let (use_static, use_indexed, use_atlas, static_resolution) =
++        *frame.shadow_experiment.get_or_insert_with(|| {
++            (
++                std::env::var("BEASTIE_STATIC_MAP_CONTROL").as_deref() != Ok("rays"),
++                std::env::var("BEASTIE_SHADOW_INDEXED").as_deref() != Ok("0"),
++                std::env::var("BEASTIE_SHADOW_ATLAS").as_deref() != Ok("0"),
++                std::env::var("BEASTIE_STATIC_MAP_SIZE")
++                    .ok()
++                    .and_then(|s| s.parse().ok())
++                    .filter(|s| matches!(s, 512 | 1024))
++                    .unwrap_or(512),
++            )
++        });
++    let original_map_pipeline = cache.get_render_pipeline(pipeline.shadow_depth);
++    let map_pipeline = cache.get_render_pipeline(if use_indexed {
++        pipeline.indexed_depth
++    } else {
++        pipeline.shadow_depth
++    });
++
+     let selection = crate::ray_shadow_maps::select(
+         &device.limits(),
+         size,
+         requested,
+         appearance.shadows() && shaders.shadows,
+-        map_pipeline.is_some(),
++        map_pipeline.is_some()
++            && original_map_pipeline.is_some()
++            && (!use_atlas || device.limits().max_texture_dimension_2d >= 4096),
+     );
+     let maps_enabled = selection.enabled;
+-    let (map_params, dynamic_casters) = crate::ray_shadow_maps::fit(&scene, maps_enabled);
++    let (mut map_params, dynamic_casters) = crate::ray_shadow_maps::fit(&scene, maps_enabled);
++    map_params.info.z = u32::from(use_atlas);
++    let static_enabled = maps_enabled && use_static;
++    let redraw_static = frame
++        .static_maps
++        .as_ref()
++        .is_none_or(|m| m.revision != scene.static_revision || m.enabled != static_enabled);
++    if redraw_static {
++        frame.static_maps = Some(crate::ray_static_maps::StaticMaps::new(
++            device.wgpu_device(),
++            &scene,
++            static_enabled,
++            if static_enabled { static_resolution } else { 1 },
++            false,
++        ));
++    }
++    if use_indexed && maps_enabled {
++        let roots: std::collections::HashSet<_> = dynamic_casters
++            .iter()
++            .map(|i| scene.instances[*i].root)
++            .collect();
++        let mut key: Vec<_> = scene
++            .geometry
++            .iter()
++            .filter(|c| roots.contains(&c.node_offset))
++            .map(|c| (c.node_offset, c.revision))
++            .collect();
++        key.sort_unstable();
++        if frame.indexed.is_none() || frame.indexed_key != key {
++            frame.indexed = Some(crate::ray_shadow_index::ShadowIndex::new(
++                device.wgpu_device(),
++                &scene,
++                false,
++            ));
++            frame.indexed_key = key;
++        }
++    }
+     let allocated_size = if maps_enabled { map_size } else { 1 };
+-    let allocated_layers = if maps_enabled { 12 } else { 1 };
++    let allocated_layers = if maps_enabled && !use_atlas { 12 } else { 1 };
+     if frame
+         .shadow_maps
+         .as_ref()
+@@ -685,14 +795,14 @@ fn render(
+         let texture = device.create_texture(&TextureDescriptor {
+             label: Some("dynamic shadow depth array"),
+             size: Extent3d {
+-                width: allocated_size,
+-                height: allocated_size,
++                width: allocated_size * if maps_enabled && use_atlas { 4 } else { 1 },
++                height: allocated_size * if maps_enabled && use_atlas { 3 } else { 1 },
+                 depth_or_array_layers: allocated_layers,
+             },
+             mip_level_count: 1,
+             sample_count: 1,
+             dimension: TextureDimension::D2,
+-            format: TextureFormat::Depth32Float,
++            format: crate::ray_static_maps::depth_format(),
+             usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+             view_formats: &[],
+         });
+@@ -731,9 +841,18 @@ fn render(
+         timing.observe_shadow_maps(
+             selection.enabled,
+             selection.reason,
+-            u64::from(allocated_size).pow(2) * u64::from(allocated_layers) * 4,
++            u64::from(allocated_size).pow(2)
++                * u64::from(allocated_layers)
++                * crate::ray_static_maps::depth_bytes()
++                * if maps_enabled && use_atlas { 12 } else { 1 },
+             1744,
+         );
++        timing.observe_shadow_experiment(
++            frame.static_maps.as_ref().unwrap().bytes(),
++            if static_enabled { static_resolution } else { 0 },
++            frame.indexed.as_ref().map_or(0, |m| m.bytes),
++            use_atlas && maps_enabled,
++        );
+     }
+     if let Some(timing) = &gpu_timing {
+         let pixels = u64::from(size.x) * u64::from(size.y);
+@@ -747,8 +866,12 @@ fn render(
+                 + visibility_bytes
+                 + frame.shadow_masks.as_ref().unwrap().size()
+                 + frame.bounce_cache.as_ref().unwrap().size()
+-                + u64::from(allocated_size).pow(2) * u64::from(allocated_layers) * 4
+-                + 1744,
++                + u64::from(allocated_size).pow(2)
++                    * u64::from(allocated_layers)
++                    * crate::ray_static_maps::depth_bytes()
++                    * if maps_enabled && use_atlas { 12 } else { 1 }
++                + frame.static_maps.as_ref().unwrap().bytes()
++                + 1744 * 2,
+         );
+     }
+     frame.params.set(Params {
+@@ -807,6 +930,13 @@ fn render(
+             frame.bounce_cache.as_ref().unwrap().as_entire_binding(),
+             &frame.shadow_maps.as_ref().unwrap().2,
+             frame.shadow_map_params.binding().unwrap(),
++            wgpu::BindingResource::TextureView(&frame.static_maps.as_ref().unwrap().view),
++            frame
++                .static_maps
++                .as_ref()
++                .unwrap()
++                .uniform
++                .as_entire_binding(),
+         )),
+     );
+     let transfer = device.create_bind_group(
+@@ -832,23 +962,51 @@ fn render(
+         })
+         .flatten();
+     if maps_enabled {
+-        for layer in 0..12 {
+-            let shadow_bind = device.create_bind_group(
+-                "dynamic shadow scene",
+-                &cache.get_bind_group_layout(&pipeline.visibility_layout),
+-                &BindGroupEntries::sequential((
+-                    frame.triangles.as_ref().unwrap().as_entire_binding(),
+-                    frame.instances.binding().unwrap(),
+-                    frame.shadow_cameras[layer].binding().unwrap(),
+-                )),
++        if redraw_static && static_enabled {
++            frame.static_maps.as_ref().unwrap().record(
++                device.wgpu_device(),
++                ctx.command_encoder(),
++                original_map_pipeline.unwrap(),
++                &scene,
++                frame.triangles.as_ref().unwrap(),
++                frame.instances.buffer().unwrap(),
++                map_timing_slot.as_ref().map(|s| (&s.queries, 0)),
+             );
++        }
++        for outer in 0..if use_atlas { 1 } else { 12 } {
++            let shadow_binds: Vec<_> = (if use_atlas { 0..12 } else { outer..outer + 1 })
++                .map(|layer| {
++                    device.create_bind_group(
++                        "dynamic shadow scene",
++                        &cache.get_bind_group_layout(if use_indexed {
++                            &pipeline.indexed_layout
++                        } else {
++                            &pipeline.visibility_layout
++                        }),
++                        &BindGroupEntries::sequential((
++                            if use_indexed {
++                                frame
++                                    .indexed
++                                    .as_ref()
++                                    .unwrap()
++                                    .positions
++                                    .as_entire_binding()
++                            } else {
++                                frame.triangles.as_ref().unwrap().as_entire_binding()
++                            },
++                            frame.instances.binding().unwrap(),
++                            frame.shadow_cameras[layer].binding().unwrap(),
++                        )),
++                    )
++                })
++                .collect();
+             let mut pass = ctx
+                 .command_encoder()
+                 .begin_render_pass(&RenderPassDescriptor {
+                     label: Some("dynamic shadow depth"),
+                     color_attachments: &[],
+                     depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+-                        view: &frame.shadow_maps.as_ref().unwrap().3[layer],
++                        view: &frame.shadow_maps.as_ref().unwrap().3[outer],
+                         depth_ops: Some(Operations {
+                             load: LoadOp::Clear(0.0),
+                             store: StoreOp::Store,
+@@ -857,29 +1015,59 @@ fn render(
+                     }),
+                     timestamp_writes: map_timing_slot
+                         .as_ref()
+-                        .filter(|_| layer == 0 || layer == 11)
++                        .filter(|_| outer == 0 || outer == 11 || use_atlas)
+                         .map(|slot| wgpu::RenderPassTimestampWrites {
+                             query_set: &slot.queries,
+-                            beginning_of_pass_write_index: (layer == 0).then_some(0),
+-                            end_of_pass_write_index: (layer == 11).then_some(1),
++                            beginning_of_pass_write_index: (outer == 0
++                                && !(redraw_static && static_enabled))
++                                .then_some(0),
++                            end_of_pass_write_index: (outer == 11 || use_atlas).then_some(1),
+                         }),
+                     occlusion_query_set: None,
+                     multiview_mask: None,
+                 });
+             pass.set_pipeline(map_pipeline.unwrap());
+-            pass.set_bind_group(0, &shadow_bind, &[]);
+-            for &index in &dynamic_casters {
+-                let instance = &scene.instances[index];
+-                let chunk = scene
+-                    .geometry
+-                    .iter()
+-                    .find(|c| c.node_offset == instance.root)
+-                    .unwrap();
+-                pass.draw(
+-                    chunk.triangle_offset * 3
+-                        ..(chunk.triangle_offset + chunk.triangles.len() as u32) * 3,
+-                    index as u32..index as u32 + 1,
+-                );
++            for (local, layer) in (if use_atlas { 0..12 } else { outer..outer + 1 }).enumerate() {
++                if use_atlas {
++                    let x = (layer as u32 % 4) * map_size;
++                    let y = (layer as u32 / 4) * map_size;
++                    pass.set_viewport(
++                        x as f32,
++                        y as f32,
++                        map_size as f32,
++                        map_size as f32,
++                        0.0,
++                        1.0,
++                    );
++                    pass.set_scissor_rect(x, y, map_size, map_size);
++                }
++                pass.set_bind_group(0, &shadow_binds[local], &[]);
++                for &index in &dynamic_casters {
++                    let instance = &scene.instances[index];
++                    let chunk = scene
++                        .geometry
++                        .iter()
++                        .find(|c| c.node_offset == instance.root)
++                        .unwrap();
++                    if use_indexed {
++                        let geometry = frame.indexed.as_ref().unwrap();
++                        pass.set_index_buffer(
++                            geometry.indices.slice(..),
++                            wgpu::IndexFormat::Uint32,
++                        );
++                        pass.draw_indexed(
++                            geometry.ranges[&chunk.node_offset].clone(),
++                            0,
++                            index as u32..index as u32 + 1,
++                        );
++                    } else {
++                        pass.draw(
++                            chunk.triangle_offset * 3
++                                ..(chunk.triangle_offset + chunk.triangles.len() as u32) * 3,
++                            index as u32..index as u32 + 1,
++                        );
++                    }
++                }
+             }
+         }
+     }
+diff --git aa/crates/beastie-game/src/raytrace.wgsl bb/crates/beastie-game/src/raytrace.wgsl
+index ed7545b..1583b58 100644
+--- aa/crates/beastie-game/src/raytrace.wgsl
++++ bb/crates/beastie-game/src/raytrace.wgsl
+@@ -35,6 +35,8 @@ struct Params { world_from_clip:mat4x4<f32>, size:vec4<u32>, water:vec4<f32>, ro
+ struct ShadowMapParams { clip_from_world:array<mat4x4<f32>,12>, depth_ranges:array<vec4<f32>,12>, info:vec4<u32> }
+ @group(0) @binding(10) var dynamic_shadow_maps:texture_depth_2d_array;
+ @group(0) @binding(11) var<uniform> shadow_map_params:ShadowMapParams;
++@group(0) @binding(12) var static_shadow_maps:texture_depth_2d_array;
++@group(0) @binding(13) var<uniform> static_map_params:ShadowMapParams;
+ struct Hit { t:f32, u:f32, v:f32, triangle:u32, instance:u32 }
+ // Cache reciprocals per ray coordinate space, never once per visited box.
+ // Parallel axes use finite arithmetic, including origins exactly on a slab.
+@@ -305,7 +307,9 @@ fn dynamic_shadow_blocked(origin:vec3<f32>,light:vec3<f32>,sample:u32) -> bool {
+     let uv=vec2(clip.x*0.5+0.5,0.5-clip.y*0.5);
+     let size=i32(shadow_map_params.info.y);
+     let pixel=clamp(vec2<i32>(floor(uv*f32(size))),vec2(0),vec2(size-1));
+-    let depth=textureLoad(dynamic_shadow_maps,pixel,i32(sample),0);
++    let atlas=shadow_map_params.info.z==1u;
++    let atlas_offset=vec2<i32>(i32(sample%4u)*size,i32(sample/4u)*size);
++    let depth=textureLoad(dynamic_shadow_maps,pixel+select(vec2(0),atlas_offset,atlas),select(i32(sample),0,atlas),0);
+     if(depth==0.0) { return false; }
+     let range=shadow_map_params.depth_ranges[sample];
+     let distance=(depth-clip.z)*range.y/range.z;
+@@ -317,6 +321,30 @@ fn dynamic_shadow_blocked(origin:vec3<f32>,light:vec3<f32>,sample:u32) -> bool {
+     return distance>0.0001;
+ }
+ 
++fn static_shadow_blocked(origin:vec3<f32>,light:vec3<f32>,sample:u32,receiver:u32) -> bool {
++    if(static_map_params.info.x==0u || (static_map_params.info.z==0u && instances[receiver].pad1!=0u)) {
++        return trace_root(origin,light,35.0,true,true,params.shadow_roots.x).instance!=0xffffffffu;
++    }
++    if(static_map_params.info.w==0u) { return false; }
++    let clip=static_map_params.clip_from_world[sample]*vec4(origin,1.0);
++    // Outside the fitted projection of all dynamic caster bounds, no caster can
++    // intersect this directional ray. Receivers may legitimately lie below z=0.
++    if(abs(clip.x)>1.0 || abs(clip.y)>1.0) { return false; }
++    let uv=vec2(clip.x*0.5+0.5,0.5-clip.y*0.5);
++    let size=i32(static_map_params.info.y);
++    let pixel=clamp(vec2<i32>(floor(uv*f32(size))),vec2(0),vec2(size-1));
++    let depth=textureLoad(static_shadow_maps,pixel,i32(sample),0);
++    if(depth==0.0) { return false; }
++    let range=static_map_params.depth_ranges[sample];
++    let distance=(depth-clip.z)*range.y/range.z;
++    // A one-layer shadow map cannot resolve a closer blocker hidden behind a
++    // blocker beyond the ray limit. Keep exact traversal for that uncommon case.
++    if(distance>=35.0) {
++        return trace_root(origin,light,35.0,true,true,params.shadow_roots.x).instance!=0xffffffffu;
++    }
++    return distance>0.0001;
++}
++
+ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit,cache_index:u32) -> Lighting {
+     if(hit.instance==0xffffffffu) { return Lighting(vec3(0.0),vec3(0.038,0.067,0.072)); }
+     let material=instances[hit.instance].material; let base=albedo_at(hit);
+@@ -359,9 +387,9 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit,cache_index:u32) -> Lighting {
+             if(can_cache) {
+                 let known=1u<<(s+12u); let occluded=1u<<s;
+                 if((mask&known)==0u) {
+-                    let fixed_hit=trace_root(origin,light,35.0,true,true,params.shadow_roots.x);
++                    let fixed_blocked=static_shadow_blocked(origin,light,s,hit.instance);
+                     mask=mask|known;
+-                    if(fixed_hit.instance!=0xffffffffu) { mask=mask|occluded; }
++                    if(fixed_blocked) { mask=mask|occluded; }
+                 }
+                 blocked=(mask&occluded)!=0u;
+                 if(!blocked) {
+@@ -369,7 +397,7 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit,cache_index:u32) -> Lighting {
+                 }
+             } else {
+                 if(shadow_map_params.info.x!=0u) {
+-                    blocked=trace_root(origin,light,35.0,true,true,params.shadow_roots.x).instance!=0xffffffffu;
++                    blocked=static_shadow_blocked(origin,light,s,hit.instance);
+                     if(!blocked) { blocked=dynamic_shadow_blocked(origin,light,s); }
+                 } else {
+                     blocked=trace(origin,light,35.0,true,true).instance!=0xffffffffu;
+diff --git aa/crates/beastie-game/src/ray_shadow_maps.rs bb/crates/beastie-game/src/ray_shadow_maps.rs
+index 85a0273..b013bc6 100644
+--- aa/crates/beastie-game/src/ray_shadow_maps.rs
++++ bb/crates/beastie-game/src/ray_shadow_maps.rs
+@@ -55,11 +55,36 @@ pub fn dynamic_casters(scene: &RayScene) -> Vec<usize> {
+ }
+ 
+ pub fn fit(scene: &RayScene, enabled: bool) -> (ShadowMapParams, Vec<usize>) {
+-    let casters = dynamic_casters(scene);
++    fit_casters(scene, enabled, dynamic_casters(scene), RESOLUTION)
++}
++
++pub fn fit_static(
++    scene: &RayScene,
++    enabled: bool,
++    resolution: u32,
++) -> (ShadowMapParams, Vec<usize>) {
++    let casters = scene
++        .instances
++        .iter()
++        .enumerate()
++        .filter_map(|(id, instance)| {
++            (instance.pad1 != 0 && instance.material.w <= 0.5 && instance.material.z <= 0.5)
++                .then_some(id)
++        })
++        .collect();
++    fit_casters(scene, enabled, casters, resolution)
++}
++
++fn fit_casters(
++    scene: &RayScene,
++    enabled: bool,
++    casters: Vec<usize>,
++    resolution: u32,
++) -> (ShadowMapParams, Vec<usize>) {
+     let mut params = ShadowMapParams {
+         clip_from_world: [Mat4::IDENTITY; 12],
+         depth_ranges: [Vec4::Y; 12],
+-        info: UVec4::new(u32::from(enabled), RESOLUTION, 12, casters.len() as u32),
++        info: UVec4::new(u32::from(enabled), resolution, 12, casters.len() as u32),
+     };
+     if !enabled {
+         return (params, casters);
+diff --git aa/crates/beastie-game/src/ray_static_maps.rs bb/crates/beastie-game/src/ray_static_maps.rs
+index e69de29..b6b7ccd 100644
+--- aa/crates/beastie-game/src/ray_static_maps.rs
++++ bb/crates/beastie-game/src/ray_static_maps.rs
+@@ -0,0 +1,193 @@
++//! Scratch-only persistent static shadow layers; exact triangles, sampled visibility.
++use bevy::render::render_resource::encase;
++pub(crate) fn depth_format() -> wgpu::TextureFormat {
++    static FORMAT: std::sync::OnceLock<wgpu::TextureFormat> = std::sync::OnceLock::new();
++    *FORMAT.get_or_init(|| {
++        if std::env::var("BEASTIE_SHADOW_DEPTH").as_deref() == Ok("16") {
++            wgpu::TextureFormat::Depth16Unorm
++        } else {
++            wgpu::TextureFormat::Depth32Float
++        }
++    })
++}
++pub(crate) fn depth_bytes() -> u64 {
++    if depth_format() == wgpu::TextureFormat::Depth16Unorm {
++        2
++    } else {
++        4
++    }
++}
++pub(crate) fn encoded<
++    T: bevy::render::render_resource::ShaderType + encase::internal::WriteInto,
++>(
++    value: &T,
++) -> Vec<u8> {
++    let mut encoded = encase::StorageBuffer::new(Vec::new());
++    encoded.write(value).expect("production shader layout");
++    encoded.into_inner()
++}
++use crate::{
++    ray_scene::RayScene,
++    ray_shadow_maps::{self, ShadowMapParams},
++};
++use wgpu::util::DeviceExt;
++
++pub struct StaticMaps {
++    pub params: ShadowMapParams,
++    pub uniform: wgpu::Buffer,
++    pub view: wgpu::TextureView,
++    pub revision: u64,
++    pub resolution: u32,
++    pub enabled: bool,
++    pub caster_count: usize,
++    _texture: wgpu::Texture,
++    layers: Vec<wgpu::TextureView>,
++    matrices: Vec<wgpu::Buffer>,
++}
++impl StaticMaps {
++    pub fn new(
++        device: &wgpu::Device,
++        scene: &RayScene,
++        enabled: bool,
++        resolution: u32,
++        all_receivers: bool,
++    ) -> Self {
++        let (mut params, casters) = ray_shadow_maps::fit_static(scene, enabled, resolution);
++        params.info.z = u32::from(all_receivers);
++        let texture = device.create_texture(&wgpu::TextureDescriptor {
++            label: Some("persistent static shadow layers"),
++            size: wgpu::Extent3d {
++                width: resolution,
++                height: resolution,
++                depth_or_array_layers: if enabled { 12 } else { 1 },
++            },
++            mip_level_count: 1,
++            sample_count: 1,
++            dimension: wgpu::TextureDimension::D2,
++            format: depth_format(),
++            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
++            view_formats: &[],
++        });
++        let view = texture.create_view(&wgpu::TextureViewDescriptor {
++            dimension: Some(wgpu::TextureViewDimension::D2Array),
++            aspect: wgpu::TextureAspect::DepthOnly,
++            ..Default::default()
++        });
++        let layers = (0..if enabled { 12 } else { 1 })
++            .map(|i| {
++                texture.create_view(&wgpu::TextureViewDescriptor {
++                    dimension: Some(wgpu::TextureViewDimension::D2),
++                    aspect: wgpu::TextureAspect::DepthOnly,
++                    base_array_layer: i,
++                    array_layer_count: Some(1),
++                    ..Default::default()
++                })
++            })
++            .collect();
++        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
++            label: Some("static shadow projections"),
++            contents: &encoded(&params),
++            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
++        });
++        let matrices = params
++            .clip_from_world
++            .iter()
++            .map(|m| {
++                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
++                    label: None,
++                    contents: &encoded(m),
++                    usage: wgpu::BufferUsages::UNIFORM,
++                })
++            })
++            .collect();
++        Self {
++            params,
++            uniform,
++            view,
++            revision: scene.static_revision,
++            resolution,
++            enabled,
++            caster_count: casters.len(),
++            _texture: texture,
++            layers,
++            matrices,
++        }
++    }
++    pub fn record(
++        &self,
++        device: &wgpu::Device,
++        encoder: &mut wgpu::CommandEncoder,
++        pipeline: &wgpu::RenderPipeline,
++        scene: &RayScene,
++        geometry: &wgpu::Buffer,
++        instances: &wgpu::Buffer,
++        timestamp: Option<(&wgpu::QuerySet, u32)>,
++    ) {
++        if !self.enabled {
++            return;
++        }
++        for layer in 0..12 {
++            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
++                label: None,
++                layout: &pipeline.get_bind_group_layout(0),
++                entries: &[
++                    wgpu::BindGroupEntry {
++                        binding: 0,
++                        resource: geometry.as_entire_binding(),
++                    },
++                    wgpu::BindGroupEntry {
++                        binding: 1,
++                        resource: instances.as_entire_binding(),
++                    },
++                    wgpu::BindGroupEntry {
++                        binding: 2,
++                        resource: self.matrices[layer].as_entire_binding(),
++                    },
++                ],
++            });
++            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
++                label: Some("persistent static shadow fill"),
++                color_attachments: &[],
++                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
++                    view: &self.layers[layer],
++                    depth_ops: Some(wgpu::Operations {
++                        load: wgpu::LoadOp::Clear(0.0),
++                        store: wgpu::StoreOp::Store,
++                    }),
++                    stencil_ops: None,
++                }),
++                timestamp_writes: timestamp.filter(|_| layer == 0).map(|(queries, index)| {
++                    wgpu::RenderPassTimestampWrites {
++                        query_set: queries,
++                        beginning_of_pass_write_index: Some(index),
++                        end_of_pass_write_index: None,
++                    }
++                }),
++                occlusion_query_set: None,
++                multiview_mask: None,
++            });
++            pass.set_pipeline(pipeline);
++            pass.set_bind_group(0, &bind, &[]);
++            for (index, instance) in scene
++                .instances
++                .iter()
++                .enumerate()
++                .filter(|(_, i)| i.pad1 != 0 && i.material.w <= 0.5 && i.material.z <= 0.5)
++            {
++                let chunk = scene
++                    .geometry
++                    .iter()
++                    .find(|c| c.node_offset == instance.root)
++                    .unwrap();
++                pass.draw(
++                    chunk.triangle_offset * 3
++                        ..(chunk.triangle_offset + chunk.triangles.len() as u32) * 3,
++                    index as u32..index as u32 + 1,
++                );
++            }
++        }
++    }
++    pub fn bytes(&self) -> u64 {
++        u64::from(self.resolution).pow(2) * if self.enabled { 12 } else { 1 } * depth_bytes()
++    }
++}
+diff --git aa/crates/beastie-game/src/ray_shadow_index.rs bb/crates/beastie-game/src/ray_shadow_index.rs
+index e69de29..72d469d 100644
+--- aa/crates/beastie-game/src/ray_shadow_index.rs
++++ bb/crates/beastie-game/src/ray_shadow_index.rs
+@@ -0,0 +1,141 @@
++//! Scratch position-only indexed shadow geometry. No triangle or material simplification.
++use crate::{ray_scene::RayScene, ray_static_maps::encoded};
++use bevy::prelude::*;
++use std::collections::{HashMap, HashSet};
++use wgpu::util::DeviceExt;
++
++pub struct ShadowIndex {
++    pub positions: wgpu::Buffer,
++    pub indices: wgpu::Buffer,
++    pub ranges: HashMap<u32, std::ops::Range<u32>>,
++    pub vertices: usize,
++    pub triangles: usize,
++    pub bytes: u64,
++}
++impl ShadowIndex {
++    pub fn new(device: &wgpu::Device, scene: &RayScene, include_static: bool) -> Self {
++        let roots: HashSet<_> = scene
++            .instances
++            .iter()
++            .filter(|i| {
++                i.material.w <= 0.5 && i.material.z <= 0.5 && (include_static || i.pad1 == 0)
++            })
++            .map(|i| i.root)
++            .collect();
++        let mut positions = Vec::<Vec4>::new();
++        let mut indices = Vec::<u32>::new();
++        let mut ranges = HashMap::new();
++        for chunk in scene
++            .geometry
++            .iter()
++            .filter(|c| roots.contains(&c.node_offset))
++        {
++            let first = indices.len() as u32;
++            append_chunk(&chunk.triangles, &mut positions, &mut indices);
++            ranges.insert(chunk.node_offset, first..indices.len() as u32);
++        }
++        let vertex_count = positions.len();
++        let triangle_count = indices.len() / 3;
++        // Bindings remain legal during an empty-dynamic-scene transition.
++        if positions.is_empty() {
++            positions.push(Vec4::ZERO);
++        }
++        if indices.is_empty() {
++            indices.push(0);
++        }
++        let position_bytes = encoded(&positions);
++        let index_bytes = encoded(&indices);
++        let bytes = (position_bytes.len() + index_bytes.len()) as u64;
++        let positions = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
++            label: Some("indexed shadow positions"),
++            contents: &position_bytes,
++            usage: wgpu::BufferUsages::STORAGE,
++        });
++        let indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
++            label: Some("shadow indices"),
++            contents: &index_bytes,
++            usage: wgpu::BufferUsages::INDEX,
++        });
++        Self {
++            positions,
++            indices,
++            ranges,
++            vertices: vertex_count,
++            triangles: triangle_count,
++            bytes,
++        }
++    }
++}
++
++/// Weld only bit-identical positions after the same a+edge reconstruction as WGSL.
++/// Starting a fresh map per chunk keeps independently versioned meshes separable.
++fn append_chunk(
++    triangles: &[crate::ray_scene::Triangle],
++    positions: &mut Vec<Vec4>,
++    indices: &mut Vec<u32>,
++) {
++    let mut unique = HashMap::<[u32; 3], u32>::new();
++    for triangle in triangles {
++        let t = triangle.geometry(0);
++        for p in [t.a, t.a + t.e1.truncate(), t.a + t.e2.truncate()] {
++            let index = *unique
++                .entry(p.to_array().map(f32::to_bits))
++                .or_insert_with(|| {
++                    let index = positions.len() as u32;
++                    positions.push(p.extend(1.0));
++                    index
++                });
++            indices.push(index);
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::ray_scene::Triangle;
++
++    #[test]
++    fn indexed_shadow_stream_preserves_triangle_order_and_reconstructed_bits() {
++        let triangle = |a: Vec3, b: Vec3, c: Vec3| Triangle {
++            a: a.extend(1.0),
++            b: b.extend(1.0),
++            c: c.extend(1.0),
++            n0: Vec4::ZERO,
++            n1: Vec4::ZERO,
++            n2: Vec4::ZERO,
++            c0: Vec4::ZERO,
++            c1: Vec4::ZERO,
++            c2: Vec4::ZERO,
++        };
++        let triangles = [
++            triangle(Vec3::ZERO, Vec3::X, Vec3::Y),
++            triangle(Vec3::Y, Vec3::X, Vec3::ONE),
++            triangle(Vec3::splat(100.0), Vec3::splat(0.00003), Vec3::Z),
++        ];
++        let mut positions = Vec::new();
++        let mut indices = Vec::new();
++        append_chunk(&triangles, &mut positions, &mut indices);
++        assert!(positions.len() < indices.len());
++        for (t, indexed) in triangles.iter().zip(indices.chunks_exact(3)) {
++            let g = t.geometry(0);
++            let expected = [g.a, g.a + g.e1.truncate(), g.a + g.e2.truncate()];
++            for (p, i) in expected.into_iter().zip(indexed) {
++                assert_eq!(
++                    p.to_array().map(f32::to_bits),
++                    positions[*i as usize]
++                        .truncate()
++                        .to_array()
++                        .map(f32::to_bits)
++                );
++            }
++        }
++        let first_vertices = positions.len();
++        append_chunk(&triangles[..1], &mut positions, &mut indices);
++        assert!(
++            indices[indices.len() - 3..]
++                .iter()
++                .all(|i| *i as usize >= first_vertices)
++        );
++    }
++}
+diff --git aa/crates/beastie-game/src/ray_shadow_index.wgsl bb/crates/beastie-game/src/ray_shadow_index.wgsl
+index e69de29..fef9e86 100644
+--- aa/crates/beastie-game/src/ray_shadow_index.wgsl
++++ bb/crates/beastie-game/src/ray_shadow_index.wgsl
+@@ -0,0 +1,8 @@
++struct Instance { world:mat4x4<f32>, inverse:mat4x4<f32>, material:vec4<f32>, tint:vec4<f32>, root:u32, transmission:f32, pad1:u32, pad2:u32 }
++struct VisibilityParams { clip_from_world:mat4x4<f32> }
++@group(0) @binding(0) var<storage,read> positions:array<vec4<f32>>;
++@group(0) @binding(1) var<storage,read> instances:array<Instance>;
++@group(0) @binding(2) var<uniform> params:VisibilityParams;
++@vertex fn shadow_vertex(@builtin(vertex_index) vertex:u32,@builtin(instance_index) instance:u32)->@builtin(position) vec4<f32> {
++    return params.clip_from_world*instances[instance].world*positions[vertex];
++}
+diff --git aa/crates/beastie-game/src/ray_stats.rs bb/crates/beastie-game/src/ray_stats.rs
+index 629bc09..b8d77c2 100644
+--- aa/crates/beastie-game/src/ray_stats.rs
++++ bb/crates/beastie-game/src/ray_stats.rs
+@@ -95,6 +95,11 @@ struct ShadowMapReport {
+     resolution: u32,
+     texture_allocated_bytes: u64,
+     uniform_allocated_bytes: u64,
++    static_map_bytes: u64,
++    static_map_resolution: u32,
++    indexed_shadow_bytes: u64,
++    dynamic_atlas: bool,
++    depth_bits: u64,
+ }
+ 
+ struct GpuSample {
+@@ -156,9 +161,28 @@ impl ComputeGpuTiming {
+             },
+             texture_allocated_bytes,
+             uniform_allocated_bytes,
++            static_map_bytes: 0,
++            static_map_resolution: 0,
++            indexed_shadow_bytes: 0,
++            dynamic_atlas: false,
++            depth_bits: crate::ray_static_maps::depth_bytes() * 8,
+         });
+     }
+ 
++    pub(crate) fn observe_shadow_experiment(
++        &self,
++        static_map_bytes: u64,
++        static_map_resolution: u32,
++        indexed_shadow_bytes: u64,
++        dynamic_atlas: bool,
++    ) {
++        if let Some(report) = self.shadow_maps.lock().unwrap().as_mut() {
++            report.static_map_bytes = static_map_bytes;
++            report.static_map_resolution = static_map_resolution;
++            report.indexed_shadow_bytes = indexed_shadow_bytes;
++            report.dynamic_atlas = dynamic_atlas;
++        }
++    }
+     pub(crate) fn cpu_span(&self, name: &'static str) -> CpuPhaseSpan {
+         CpuPhaseSpan {
+             name,
+diff --git aa/crates/beastie-game/src/ray_benchmark.rs bb/crates/beastie-game/src/ray_benchmark.rs
+index e2661a3..56bab95 100644
+--- aa/crates/beastie-game/src/ray_benchmark.rs
++++ bb/crates/beastie-game/src/ray_benchmark.rs
+@@ -333,7 +333,9 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
+         true,
+     );
+     let shadow_map_enabled = map_selection.enabled;
+-    let (map_params, shadow_casters) = crate::ray_shadow_maps::fit(scene, shadow_map_enabled);
++    let atlas = std::env::var("BEASTIE_SHADOW_ATLAS").as_deref() == Ok("1");
++    let (mut map_params, shadow_casters) = crate::ray_shadow_maps::fit(scene, shadow_map_enabled);
++    map_params.info.z = u32::from(atlas);
+     let map_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+         label: Some("dynamic shadow projections"),
+         contents: &encoded(&map_params),
+@@ -342,14 +344,14 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
+     let map_texture = device.create_texture(&wgpu::TextureDescriptor {
+         label: Some("twelve dynamic shadow directions"),
+         size: wgpu::Extent3d {
+-            width: shadow_resolution,
+-            height: shadow_resolution,
+-            depth_or_array_layers: 12,
++            width: shadow_resolution * if atlas { 4 } else { 1 },
++            height: shadow_resolution * if atlas { 3 } else { 1 },
++            depth_or_array_layers: if atlas { 1 } else { 12 },
+         },
+         mip_level_count: 1,
+         sample_count: 1,
+         dimension: wgpu::TextureDimension::D2,
+-        format: wgpu::TextureFormat::Depth32Float,
++        format: crate::ray_static_maps::depth_format(),
+         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+         view_formats: &[],
+     });
+@@ -363,13 +365,53 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
+             map_texture.create_view(&wgpu::TextureViewDescriptor {
+                 dimension: Some(wgpu::TextureViewDimension::D2),
+                 aspect: wgpu::TextureAspect::DepthOnly,
+-                base_array_layer: index,
++                base_array_layer: if atlas { 0 } else { index },
+                 array_layer_count: Some(1),
+                 ..Default::default()
+             })
+         })
+         .collect();
++    let indexed = std::env::var("BEASTIE_SHADOW_INDEXED").as_deref() == Ok("1");
++    let shadow_index =
++        indexed.then(|| crate::ray_shadow_index::ShadowIndex::new(&device, scene, false));
++    let indexed_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
++        label: Some("indexed shadow"),
++        source: wgpu::ShaderSource::Wgsl(include_str!("ray_shadow_index.wgsl").into()),
++    });
+     let map_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
++        label: Some("exact dynamic caster depth"),
++        layout: None,
++        vertex: wgpu::VertexState {
++            module: if indexed {
++                &indexed_shader
++            } else {
++                &visibility_shader
++            },
++            entry_point: Some(if indexed {
++                "shadow_vertex"
++            } else {
++                "visibility_vertex"
++            }),
++            compilation_options: Default::default(),
++            buffers: &[],
++        },
++        fragment: None,
++        primitive: wgpu::PrimitiveState {
++            cull_mode: None,
++            ..Default::default()
++        },
++        depth_stencil: Some(wgpu::DepthStencilState {
++            format: crate::ray_static_maps::depth_format(),
++            depth_write_enabled: Some(true),
++            depth_compare: Some(wgpu::CompareFunction::Greater),
++            stencil: Default::default(),
++            bias: Default::default(),
++        }),
++        multisample: Default::default(),
++        multiview_mask: None,
++        cache: None,
++    });
++    let original_map_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+         label: Some("exact dynamic caster depth"),
+         layout: None,
+         vertex: wgpu::VertexState {
+@@ -384,7 +426,7 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
+             ..Default::default()
+         },
+         depth_stencil: Some(wgpu::DepthStencilState {
+-            format: wgpu::TextureFormat::Depth32Float,
++            format: crate::ray_static_maps::depth_format(),
+             depth_write_enabled: Some(true),
+             depth_compare: Some(wgpu::CompareFunction::Greater),
+             stencil: Default::default(),
+@@ -414,7 +456,10 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
+                 entries: &[
+                     wgpu::BindGroupEntry {
+                         binding: 0,
+-                        resource: buffers[0].as_entire_binding(),
++                        resource: shadow_index
++                            .as_ref()
++                            .map_or(&buffers[0], |g| &g.positions)
++                            .as_entire_binding(),
+                     },
+                     wgpu::BindGroupEntry {
+                         binding: 1,
+@@ -428,6 +473,20 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
+             })
+         })
+         .collect();
++    let static_resolution = std::env::var("BEASTIE_STATIC_MAP_SIZE")
++        .ok()
++        .and_then(|s| s.parse().ok())
++        .unwrap_or(1024);
++    let static_enabled =
++        shadow_map_enabled && std::env::var("BEASTIE_STATIC_MAP_CONTROL").as_deref() != Ok("rays");
++
++    let static_maps = crate::ray_static_maps::StaticMaps::new(
++        &device,
++        scene,
++        static_enabled,
++        static_resolution,
++        std::env::var("BEASTIE_STATIC_MAP_RECEIVERS").as_deref() == Ok("all"),
++    );
+     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+         label: Some("production trace_frame"),
+         source: wgpu::ShaderSource::Wgsl(
+@@ -490,26 +549,48 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
+         binding: 11,
+         resource: map_uniform.as_entire_binding(),
+     });
++    entries.push(wgpu::BindGroupEntry {
++        binding: 12,
++        resource: wgpu::BindingResource::TextureView(&static_maps.view),
++    });
++    entries.push(wgpu::BindGroupEntry {
++        binding: 13,
++        resource: static_maps.uniform.as_entire_binding(),
++    });
+     let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+         label: None,
+         layout: &pipeline.get_bind_group_layout(0),
+         entries: &entries,
+     });
++    let mut first_static_fill = true;
+     let measurements = measure_frames(&device, &queue, |encoder, queries, query_index| {
++        let filled_static = first_static_fill && static_maps.enabled;
++        if filled_static {
++            static_maps.record(
++                &device,
++                encoder,
++                &original_map_pipeline,
++                scene,
++                &buffers[0],
++                &buffers[2],
++                Some((queries, query_index)),
++            );
++        }
++        first_static_fill = false;
+         if shadow_map_enabled {
+-            for layer in 0..12 {
++            for outer in 0..if atlas { 1 } else { 12 } {
+                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                     label: Some("dynamic shadow depth"),
+                     color_attachments: &[],
+                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+-                        view: &map_layer_views[layer],
++                        view: &map_layer_views[outer],
+                         depth_ops: Some(wgpu::Operations {
+                             load: wgpu::LoadOp::Clear(0.0),
+                             store: wgpu::StoreOp::Store,
+                         }),
+                         stencil_ops: None,
+                     }),
+-                    timestamp_writes: if layer == 0 {
++                    timestamp_writes: if outer == 0 && !filled_static {
+                         Some(wgpu::RenderPassTimestampWrites {
+                             query_set: queries,
+                             beginning_of_pass_write_index: Some(query_index),
+@@ -522,19 +603,46 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
+                     multiview_mask: None,
+                 });
+                 pass.set_pipeline(&map_pipeline);
+-                pass.set_bind_group(0, &map_binds[layer], &[]);
+-                for &index in &shadow_casters {
+-                    let instance = scene.instances[index];
+-                    let chunk = scene
+-                        .geometry
+-                        .iter()
+-                        .find(|chunk| chunk.node_offset == instance.root)
+-                        .expect("shadow mesh range");
+-                    pass.draw(
+-                        chunk.triangle_offset * 3
+-                            ..(chunk.triangle_offset + chunk.triangles.len() as u32) * 3,
+-                        index as u32..index as u32 + 1,
+-                    );
++                for layer in if atlas { 0..12 } else { outer..outer + 1 } {
++                    if atlas {
++                        let x = (layer as u32 % 4) * shadow_resolution;
++                        let y = (layer as u32 / 4) * shadow_resolution;
++                        pass.set_viewport(
++                            x as f32,
++                            y as f32,
++                            shadow_resolution as f32,
++                            shadow_resolution as f32,
++                            0.0,
++                            1.0,
++                        );
++                        pass.set_scissor_rect(x, y, shadow_resolution, shadow_resolution);
++                    }
++                    pass.set_bind_group(0, &map_binds[layer], &[]);
++                    for &index in &shadow_casters {
++                        let instance = scene.instances[index];
++                        let chunk = scene
++                            .geometry
++                            .iter()
++                            .find(|chunk| chunk.node_offset == instance.root)
++                            .expect("shadow mesh range");
++                        if let Some(geometry) = &shadow_index {
++                            pass.set_index_buffer(
++                                geometry.indices.slice(..),
++                                wgpu::IndexFormat::Uint32,
++                            );
++                            pass.draw_indexed(
++                                geometry.ranges[&chunk.node_offset].clone(),
++                                0,
++                                index as u32..index as u32 + 1,
++                            );
++                        } else {
++                            pass.draw(
++                                chunk.triangle_offset * 3
++                                    ..(chunk.triangle_offset + chunk.triangles.len() as u32) * 3,
++                                index as u32..index as u32 + 1,
++                            );
++                        }
++                    }
+                 }
+             }
+         }
+@@ -613,6 +721,9 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
+     // Compare the warmed cache against the original combined shadow tree on the
+     // exact same frozen scene and pipeline. No traversal-order/asset-order drift.
+     let cached_pixels = radiance_bytes(&device, &queue, &texture);
++    let mut reference_static = static_maps.params.clone();
++    reference_static.info.x = 0;
++    queue.write_buffer(&static_maps.uniform, 0, &encoded(&reference_static));
+     let mut reference_maps = map_params.clone();
+     reference_maps.info.x = 0;
+     queue.write_buffer(&map_uniform, 0, &encoded(&reference_maps));
+@@ -655,8 +766,12 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
+         "gpu_timing_summary": summary,
+         "source_state": {"world_seed": 42, "creature_name": "Mop", "view": "ViewState::default (Compose)", "updates": 2, "water": params.water.to_array(), "world_from_clip": params.world_from_clip.to_cols_array()},
+         "scene": {"instances": scene.instances.len(), "live_triangles": scene.geometry.iter().map(|chunk| chunk.triangles.len()).sum::<usize>(), "triangle_arena_capacity": scene.triangle_count, "blas_node_arena_capacity": scene.node_count, "tlas_nodes": scene.tlas_nodes.len(), "gpu_geometry_bytes": geometry_bytes},
++        "shadow_depth_bits":crate::ray_static_maps::depth_bytes()*8,
++        "shadow_atlas": {"enabled":atlas,"columns":4,"rows":3,"passes":if atlas {1} else {12}},
++        "indexed_shadows": {"enabled":indexed,"unique_vertices":shadow_index.as_ref().map(|g|g.vertices),"triangles":shadow_index.as_ref().map(|g|g.triangles),"allocated_bytes":shadow_index.as_ref().map(|g|g.bytes)},
++        "persistent_static_maps":{"enabled":static_maps.enabled,"resolution":static_maps.resolution,"caster_count":static_maps.caster_count,"texture_bytes":static_maps.bytes(),"initial_fill_in_first_frame":true,"receiver_mode":if static_maps.params.info.z==1 {"all"}else{"dynamic-only"}},
+         "dynamic_shadow_maps": {"enabled":shadow_map_enabled,"reason":map_selection.reason,"resolution":shadow_resolution,"layers":12,"caster_instances":shadow_casters.len(),
+-            "depth_bytes":u64::from(shadow_resolution)*u64::from(shadow_resolution)*12*4,"uniform_bytes":encoded(&map_params).len()+12*64,
++            "depth_bytes":u64::from(shadow_resolution)*u64::from(shadow_resolution)*12*crate::ray_static_maps::depth_bytes(),"uniform_bytes":encoded(&map_params).len()+12*64,
+             "active_depth_passes":if shadow_map_enabled {12} else {0},"measurement_includes_all_active_depth_passes":true,"reference":"same shader,original shadow rays,static caches disabled"},
+         "gpu_pass_latency_samples_ms_sorted": timings,
+         "timing_validation": measurements,
+diff --git aa/crates/beastie-game/src/ray_shadow_oracle.rs bb/crates/beastie-game/src/ray_shadow_oracle.rs
+index dba04b5..c1241d5 100644
+--- aa/crates/beastie-game/src/ray_shadow_oracle.rs
++++ bb/crates/beastie-game/src/ray_shadow_oracle.rs
+@@ -82,6 +82,7 @@ async fn run(cache_samples: u32, shadow_map_enabled: bool) {
+         mapped_at_creation: false,
+     });
+     let mut previous_key = None;
++    let mut persistent_static: Option<crate::ray_static_maps::StaticMaps> = None;
+     let labels = [
+         "cold",
+         "warm",
+@@ -345,7 +346,7 @@ async fn run(cache_samples: u32, shadow_map_enabled: bool) {
+             mip_level_count: 1,
+             sample_count: 1,
+             dimension: wgpu::TextureDimension::D2,
+-            format: wgpu::TextureFormat::Depth32Float,
++            format: crate::ray_static_maps::depth_format(),
+             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+             view_formats: &[],
+         });
+@@ -380,7 +381,7 @@ async fn run(cache_samples: u32, shadow_map_enabled: bool) {
+                 ..Default::default()
+             },
+             depth_stencil: Some(wgpu::DepthStencilState {
+-                format: wgpu::TextureFormat::Depth32Float,
++                format: crate::ray_static_maps::depth_format(),
+                 depth_write_enabled: Some(true),
+                 depth_compare: Some(wgpu::CompareFunction::Greater),
+                 stencil: Default::default(),
+@@ -425,6 +426,26 @@ async fn run(cache_samples: u32, shadow_map_enabled: bool) {
+             })
+             .collect();
+ 
++        let static_enabled = shadow_map_enabled
++            && std::env::var("BEASTIE_STATIC_MAP_CONTROL").as_deref() != Ok("rays");
++        let static_resolution = std::env::var("BEASTIE_STATIC_MAP_SIZE")
++            .ok()
++            .and_then(|s| s.parse().ok())
++            .unwrap_or(1024);
++        let redraw_static = persistent_static
++            .as_ref()
++            .is_none_or(|maps| maps.revision != scene.static_revision);
++        if redraw_static {
++            persistent_static = Some(crate::ray_static_maps::StaticMaps::new(
++                &device,
++                &scene,
++                static_enabled,
++                static_resolution,
++                std::env::var("BEASTIE_STATIC_MAP_RECEIVERS").as_deref() == Ok("all"),
++            ));
++        }
++        let static_maps = persistent_static.as_ref().unwrap();
++        queue.write_buffer(&static_maps.uniform, 0, &encoded(&static_maps.params));
+         let mut entries: Vec<_> = buffers
+             .iter()
+             .zip([0, 1, 2, 3, 4, 6])
+@@ -457,6 +478,14 @@ async fn run(cache_samples: u32, shadow_map_enabled: bool) {
+             binding: 11,
+             resource: map_uniform.as_entire_binding(),
+         });
++        entries.push(wgpu::BindGroupEntry {
++            binding: 12,
++            resource: wgpu::BindingResource::TextureView(&static_maps.view),
++        });
++        entries.push(wgpu::BindGroupEntry {
++            binding: 13,
++            resource: static_maps.uniform.as_entire_binding(),
++        });
+         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+             label: None,
+             layout: &pipeline.get_bind_group_layout(0),
+@@ -464,6 +493,17 @@ async fn run(cache_samples: u32, shadow_map_enabled: bool) {
+         });
+         let dispatch = |clear_cache: bool| {
+             let mut encoder = device.create_command_encoder(&Default::default());
++            if redraw_static {
++                static_maps.record(
++                    &device,
++                    &mut encoder,
++                    &map_pipeline,
++                    &scene,
++                    &buffers[0],
++                    &buffers[2],
++                    None,
++                );
++            }
+             if clear_cache {
+                 encoder.clear_buffer(&cache, 0, None);
+             }
+@@ -561,6 +601,9 @@ async fn run(cache_samples: u32, shadow_map_enabled: bool) {
+                 &Path::new(&dir).join(format!("{step:02}-{label}-maps.png")),
+             );
+         }
++        let mut reference_static = static_maps.params.clone();
++        reference_static.info.x = 0;
++        queue.write_buffer(&static_maps.uniform, 0, &encoded(&reference_static));
+         let mut reference_maps = map_params.clone();
+         reference_maps.info.x = 0;
+         queue.write_buffer(&map_uniform, 0, &encoded(&reference_maps));
+@@ -598,7 +641,7 @@ async fn run(cache_samples: u32, shadow_map_enabled: bool) {
+             "cache oracle {label}: {different} differing RGB pixels, clear={clear}, revision={}",
+             scene.static_revision
+         );
+-        reports.push(serde_json::json!({"frame": label, "different_rgb_pixels": different, "max_linear_rgb_difference":max_difference,"mean_linear_rgb_difference":sum_difference/f64::from(WIDTH*HEIGHT*3),"resolution":shadow_resolution,"cache_cleared": clear, "static_revision": scene.static_revision}));
++        reports.push(serde_json::json!({"frame": label, "different_rgb_pixels": different, "max_linear_rgb_difference":max_difference,"mean_linear_rgb_difference":sum_difference/f64::from(WIDTH*HEIGHT*3),"resolution":shadow_resolution,"static_map_redrawn":redraw_static,"static_map_resolution":static_resolution,"cache_cleared": clear, "static_revision": scene.static_revision}));
+         if shadow_map_enabled {
+             // Broad regression bounds, not a claim of exactness or visual acceptance.
+             // Native review covers the sparse contact-edge differences separately.
+@@ -641,7 +684,7 @@ fn static_bounce_ties_preserve_full_world_order_after_dynamic_rearrangement() {
+             .unwrap()
+             .0;
+         let entry = r#"
+-@group(0) @binding(12) var<storage,read_write> result:array<vec4<u32>>;
++@group(0) @binding(14) var<storage,read_write> result:array<vec4<u32>>;
+ @compute @workgroup_size(1)
+ fn verify_bounce_tie() {
+     let origin=vec3(0.0,0.0,1.0); let direction=vec3(0.0,0.0,-1.0);
+@@ -778,7 +821,7 @@ fn verify_bounce_tie() {
+             vec![0; 4],
+             vec![0; 48],
+         ];
+-        let bindings = [0, 1, 2, 3, 4, 6, 9, 12];
++        let bindings = [0, 1, 2, 3, 4, 6, 9, 14];
+         let buffers: Vec<_> = raw
+             .iter()
+             .enumerate()
+@@ -875,7 +918,7 @@ fn shadow_map_far_blocker_keeps_nearer_finite_ray_occlusion() {
+             .unwrap()
+             .0;
+         let entry = r#"
+-@group(0) @binding(12) var<storage,read_write> result:array<u32>;
++@group(0) @binding(14) var<storage,read_write> result:array<u32>;
+ @compute @workgroup_size(1)
+ fn verify_finite_shadow() {
+     let origin=vec3(0.0); let light=vec3(0.0,0.0,1.0);
+@@ -953,7 +996,7 @@ fn verify_finite_shadow() {
+             encoded(&map_params),
+             vec![0; 8],
+         ];
+-        let bindings = [0, 1, 2, 3, 4, 11, 12];
++        let bindings = [0, 1, 2, 3, 4, 11, 14];
+         let buffers: Vec<_> = raw
+             .iter()
+             .enumerate()
+diff --git aa/crates/beastie-game/src/ray_validation.rs bb/crates/beastie-game/src/ray_validation.rs
+index 61a0433..6d80fc5 100644
+--- aa/crates/beastie-game/src/ray_validation.rs
++++ bb/crates/beastie-game/src/ray_validation.rs
+@@ -7,6 +7,7 @@ use naga::{
+ 
+ #[test]
+ fn compute_tracer_translates_without_optional_gpu_capabilities() {
++    validate_and_translate(include_str!("ray_shadow_index.wgsl"));
+     validate_and_translate(include_str!("raytrace.wgsl"));
+ }
+ 
+@@ -187,8 +188,8 @@ mod gpu_traversal {
+     const ENTRY: &str = r#"
+ struct TestRay { origin:vec4<f32>, direction:vec4<f32>, flags:vec4<u32> }
+ struct TestResult { hit:vec4<f32>, ids:vec4<u32>, normal:vec4<f32>, albedo:vec4<f32> }
+-@group(0) @binding(12) var<storage,read> test_rays:array<TestRay>;
+-@group(0) @binding(13) var<storage,read_write> test_results:array<TestResult>;
++@group(0) @binding(14) var<storage,read> test_rays:array<TestRay>;
++@group(0) @binding(15) var<storage,read_write> test_results:array<TestResult>;
+ @compute @workgroup_size(64)
+ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
+     if(id.x>=arrayLength(&test_rays)) { return; }
+@@ -355,7 +356,7 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
+             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+             mapped_at_creation: false,
+         });
+-        let bindings = [0, 1, 2, 3, 4, 6, 12, 13];
++        let bindings = [0, 1, 2, 3, 4, 6, 14, 15];
+         let entries: Vec<_> = bindings
+             .iter()
+             .map(|&binding| wgpu::BindGroupLayoutEntry {
+diff --git aa/crates/beastie-game/src/main.rs bb/crates/beastie-game/src/main.rs
+index f78db29..9bd452f 100644
+--- aa/crates/beastie-game/src/main.rs
++++ bb/crates/beastie-game/src/main.rs
+@@ -19,7 +19,9 @@ mod process;
+ #[cfg(test)]
+ mod ray_benchmark;
+ mod ray_scene;
++mod ray_shadow_index;
+ mod ray_shadow_maps;
++mod ray_static_maps;
+ mod ray_stats;
+ #[cfg(test)]
+ mod ray_validation;

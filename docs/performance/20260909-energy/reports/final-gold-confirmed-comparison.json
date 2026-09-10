@@ -1,0 +1,50 @@
+[
+  {
+    "name": "continued.png",
+    "different_pixels": 0,
+    "max255": 0,
+    "mae255": 0.0
+  },
+  {
+    "name": "gameplay.png",
+    "different_pixels": 0,
+    "max255": 0,
+    "mae255": 0.0
+  },
+  {
+    "name": "selected-toy.png",
+    "different_pixels": 0,
+    "max255": 0,
+    "mae255": 0.0
+  },
+  {
+    "name": "settings-large.png",
+    "different_pixels": 0,
+    "max255": 0,
+    "mae255": 0.0
+  },
+  {
+    "name": "settings-sound.png",
+    "different_pixels": 0,
+    "max255": 0,
+    "mae255": 0.0
+  },
+  {
+    "name": "settings.png",
+    "different_pixels": 0,
+    "max255": 0,
+    "mae255": 0.0
+  },
+  {
+    "name": "title-return.png",
+    "different_pixels": 55,
+    "max255": 24,
+    "mae255": 0.00017071759259259262
+  },
+  {
+    "name": "title-screen.png",
+    "different_pixels": 0,
+    "max255": 0,
+    "mae255": 0.0
+  }
+]

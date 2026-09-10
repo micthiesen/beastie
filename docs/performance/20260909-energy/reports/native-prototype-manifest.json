@@ -1,0 +1,10 @@
+{
+  "base_commit": "41c700631f090c1f4ffd57aee8d9000c03c6dc69",
+  "patch_sha256": "726c2203636d9bbb560310200633374f08498681bad14b338ad7d962eeedd304",
+  "binaries": {
+    "beastie-native-shadows": "2ba4fc85a751e0c55a594044aea86825dbd6ee45794ec8ef6989f615bf510259",
+    "beastie-native-depth16": "f665d3febaca1f4d4137d375339ccae006c3a9e45e50ef94cc7ed9c4ded5737d",
+    "beastie-depth16-test": "9cc6994ce3523a9b5359a8dec79fcfa4cdb2cfe6c85699f12ccc7fb138e77dc9"
+  },
+  "note": "Native prototype source adds OnceLock caching after the measured native-depth16 build; rendering algorithms unchanged."
+}

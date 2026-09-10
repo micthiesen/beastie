@@ -12,8 +12,20 @@ use wgpu::util::DeviceExt;
 
 use crate::{args::RenderProbe, ray_scene::RayScene};
 
-const WIDTH: u32 = 1920;
-const HEIGHT: u32 = 1080;
+fn dimensions() -> (u32, u32) {
+    static SIZE: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
+    *SIZE.get_or_init(|| match std::env::var("BEASTIE_BENCH_SIZE").as_deref() {
+        Ok("low") => (640, 360),
+        Ok("4k") => (3840, 2160),
+        _ => (1920, 1080),
+    })
+}
+fn width() -> u32 {
+    dimensions().0
+}
+fn height() -> u32 {
+    dimensions().1
+}
 const WARMUP: usize = 30;
 const SAMPLES: usize = 180;
 const BATCH_FRAMES: usize = 10;
@@ -77,10 +89,10 @@ fn snapshot_from_app(app: &mut App) -> (RayScene, BenchParams) {
         .query_filtered::<(&Projection, &GlobalTransform), With<Camera3d>>();
     let (projection, transform) = cameras.single(app.world()).expect("production tank camera");
     let mut projection = projection.clone();
-    projection.update(WIDTH as f32, HEIGHT as f32);
+    projection.update(width() as f32, height() as f32);
     let params = BenchParams {
         world_from_clip: transform.to_matrix() * projection.get_clip_from_view().inverse(),
-        size: UVec4::new(WIDTH, HEIGHT, scene.instances.len() as u32, 0),
+        size: UVec4::new(width(), height(), scene.instances.len() as u32, 0),
         water,
         roots: UVec4::new(0, scene.world_root, scene.shadow_root, 1),
         shadow_roots: UVec4::new(scene.static_shadow_root, scene.dynamic_shadow_root, 2, 0),
@@ -140,7 +152,12 @@ fn offscreen_renderer_benchmark() {
     bevy::tasks::block_on(benchmark(&scene, params, probe, Path::new(&output)));
 }
 
-async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, output_path: &Path) {
+async fn benchmark(
+    scene: &RayScene,
+    mut params: BenchParams,
+    probe: RenderProbe,
+    output_path: &Path,
+) {
     let instance = wgpu::Instance::default();
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions::default())
@@ -165,6 +182,11 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
     device.set_device_lost_callback(|reason, message| {
         eprintln!("shadowmap device lost: {reason:?}: {message}")
     });
+    let cache_samples = crate::raytrace::static_cache_samples(
+        UVec2::new(width(), height()),
+        device.limits().max_storage_buffer_binding_size,
+    );
+    params.shadow_roots.z = cache_samples;
     let mut geometry = vec![0u8; scene.triangle_count as usize * 48];
     let mut surfaces = vec![0u8; scene.surface_count as usize * 96];
     let mut nodes = vec![0u8; scene.node_count as usize * 32];
@@ -215,7 +237,8 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
             })
         })
         .collect();
-    let shadow_cache_bytes = u64::from(WIDTH) * u64::from(HEIGHT) * 24;
+    let shadow_cache_bytes =
+        (u64::from(width()) * u64::from(height()) * u64::from(cache_samples) * 12).max(4);
     let shadow_cache = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("stationary visibility records"),
         size: shadow_cache_bytes,
@@ -225,8 +248,8 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("offscreen production radiance"),
         size: wgpu::Extent3d {
-            width: WIDTH,
-            height: HEIGHT,
+            width: width(),
+            height: height(),
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -240,8 +263,8 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
     let visibility_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("offscreen raster visibility"),
         size: wgpu::Extent3d {
-            width: WIDTH * 2,
-            height: HEIGHT * 2,
+            width: width() * 2,
+            height: height() * 2,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -324,16 +347,21 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
             },
         ],
     });
-    let shadow_resolution = crate::ray_shadow_maps::RESOLUTION;
+    let density =
+        crate::ray_shadow_maps::density(UVec2::new(width(), height())).unwrap_or((1024, 512));
+    let shadow_resolution = density.0;
     let map_selection = crate::ray_shadow_maps::select(
         &device.limits(),
-        UVec2::new(WIDTH, HEIGHT),
+        UVec2::new(width(), height()),
         std::env::var("BEASTIE_SHADOW_MAP_CONTROL").as_deref() != Ok("trace"),
         !matches!(probe, RenderProbe::NoShadows | RenderProbe::PrimaryOnly),
         true,
     );
     let shadow_map_enabled = map_selection.enabled;
-    let (map_params, shadow_casters) = crate::ray_shadow_maps::fit(scene, shadow_map_enabled);
+    let atlas = true;
+    let (mut map_params, shadow_casters) =
+        crate::ray_shadow_maps::fit(scene, shadow_map_enabled, shadow_resolution);
+    map_params.info.z = u32::from(atlas);
     let map_uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("dynamic shadow projections"),
         contents: &encoded(&map_params),
@@ -342,14 +370,22 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
     let map_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("twelve dynamic shadow directions"),
         size: wgpu::Extent3d {
-            width: shadow_resolution,
-            height: shadow_resolution,
-            depth_or_array_layers: 12,
+            width: if shadow_map_enabled {
+                shadow_resolution * if atlas { 4 } else { 1 }
+            } else {
+                1
+            },
+            height: if shadow_map_enabled {
+                shadow_resolution * if atlas { 3 } else { 1 }
+            } else {
+                1
+            },
+            depth_or_array_layers: if atlas { 1 } else { 12 },
         },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Depth32Float,
+        format: crate::ray_static_maps::DEPTH_FORMAT,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
@@ -363,13 +399,52 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
             map_texture.create_view(&wgpu::TextureViewDescriptor {
                 dimension: Some(wgpu::TextureViewDimension::D2),
                 aspect: wgpu::TextureAspect::DepthOnly,
-                base_array_layer: index,
+                base_array_layer: if atlas { 0 } else { index },
                 array_layer_count: Some(1),
                 ..Default::default()
             })
         })
         .collect();
+    let indexed = shadow_map_enabled;
+    let shadow_index = indexed.then(|| crate::ray_shadow_index::ShadowIndex::new(&device, scene));
+    let indexed_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("indexed shadow"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("ray_shadow_index.wgsl").into()),
+    });
     let map_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("exact dynamic caster depth"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: if indexed {
+                &indexed_shader
+            } else {
+                &visibility_shader
+            },
+            entry_point: Some(if indexed {
+                "shadow_vertex"
+            } else {
+                "visibility_vertex"
+            }),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: None,
+        primitive: wgpu::PrimitiveState {
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: crate::ray_static_maps::DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Greater),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+    let original_map_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("exact dynamic caster depth"),
         layout: None,
         vertex: wgpu::VertexState {
@@ -384,7 +459,7 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth32Float,
+            format: crate::ray_static_maps::DEPTH_FORMAT,
             depth_write_enabled: Some(true),
             depth_compare: Some(wgpu::CompareFunction::Greater),
             stencil: Default::default(),
@@ -414,7 +489,10 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: buffers[0].as_entire_binding(),
+                        resource: shadow_index
+                            .as_ref()
+                            .map_or(&buffers[0], |g| &g.positions)
+                            .as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
@@ -428,6 +506,10 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
             })
         })
         .collect();
+    let static_resolution = density.1;
+    let static_enabled = shadow_map_enabled;
+    let static_maps =
+        crate::ray_static_maps::StaticMaps::new(&device, scene, static_enabled, static_resolution);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("production trace_frame"),
         source: wgpu::ShaderSource::Wgsl(
@@ -474,7 +556,7 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
     });
     let bounce_cache = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: u64::from(WIDTH) * u64::from(HEIGHT) * 8,
+        size: (u64::from(width()) * u64::from(height()) * u64::from(cache_samples) * 4).max(4),
         usage: wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
@@ -490,26 +572,53 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
         binding: 11,
         resource: map_uniform.as_entire_binding(),
     });
+    entries.push(wgpu::BindGroupEntry {
+        binding: 12,
+        resource: wgpu::BindingResource::TextureView(&static_maps.view),
+    });
+    entries.push(wgpu::BindGroupEntry {
+        binding: 13,
+        resource: static_maps.uniform.as_entire_binding(),
+    });
     let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &pipeline.get_bind_group_layout(0),
         entries: &entries,
     });
+    let mut first_static_fill = true;
     let measurements = measure_frames(&device, &queue, |encoder, queries, query_index| {
+        let filled_static = first_static_fill && static_maps.enabled;
+        if filled_static {
+            static_maps.record(
+                &device,
+                encoder,
+                &original_map_pipeline,
+                scene,
+                &buffers[0],
+                &buffers[2],
+                Some((queries, query_index)),
+            );
+        }
+        first_static_fill = false;
         if shadow_map_enabled {
-            for layer in 0..12 {
+            for (outer, layer_view) in
+                map_layer_views
+                    .iter()
+                    .enumerate()
+                    .take(if atlas { 1 } else { 12 })
+            {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("dynamic shadow depth"),
                     color_attachments: &[],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &map_layer_views[layer],
+                        view: layer_view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(0.0),
                             store: wgpu::StoreOp::Store,
                         }),
                         stencil_ops: None,
                     }),
-                    timestamp_writes: if layer == 0 {
+                    timestamp_writes: if outer == 0 && !filled_static {
                         Some(wgpu::RenderPassTimestampWrites {
                             query_set: queries,
                             beginning_of_pass_write_index: Some(query_index),
@@ -522,19 +631,46 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
                     multiview_mask: None,
                 });
                 pass.set_pipeline(&map_pipeline);
-                pass.set_bind_group(0, &map_binds[layer], &[]);
-                for &index in &shadow_casters {
-                    let instance = scene.instances[index];
-                    let chunk = scene
-                        .geometry
-                        .iter()
-                        .find(|chunk| chunk.node_offset == instance.root)
-                        .expect("shadow mesh range");
-                    pass.draw(
-                        chunk.triangle_offset * 3
-                            ..(chunk.triangle_offset + chunk.triangles.len() as u32) * 3,
-                        index as u32..index as u32 + 1,
-                    );
+                for layer in if atlas { 0..12 } else { outer..outer + 1 } {
+                    if atlas {
+                        let x = (layer as u32 % 4) * shadow_resolution;
+                        let y = (layer as u32 / 4) * shadow_resolution;
+                        pass.set_viewport(
+                            x as f32,
+                            y as f32,
+                            shadow_resolution as f32,
+                            shadow_resolution as f32,
+                            0.0,
+                            1.0,
+                        );
+                        pass.set_scissor_rect(x, y, shadow_resolution, shadow_resolution);
+                    }
+                    pass.set_bind_group(0, &map_binds[layer], &[]);
+                    for &index in &shadow_casters {
+                        let instance = scene.instances[index];
+                        let chunk = scene
+                            .geometry
+                            .iter()
+                            .find(|chunk| chunk.node_offset == instance.root)
+                            .expect("shadow mesh range");
+                        if let Some(geometry) = &shadow_index {
+                            pass.set_index_buffer(
+                                geometry.indices.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            pass.draw_indexed(
+                                geometry.range_for(&instance),
+                                0,
+                                index as u32..index as u32 + 1,
+                            );
+                        } else {
+                            pass.draw(
+                                chunk.triangle_offset * 3
+                                    ..(chunk.triangle_offset + chunk.triangles.len() as u32) * 3,
+                                index as u32..index as u32 + 1,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -595,7 +731,7 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
         });
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind, &[]);
-        pass.dispatch_workgroups(WIDTH.div_ceil(8), HEIGHT.div_ceil(8), 1);
+        pass.dispatch_workgroups(width().div_ceil(8), height().div_ceil(8), 1);
     });
     let mut timings: Vec<_> = measurements
         .gpu_ms
@@ -613,6 +749,9 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
     // Compare the warmed cache against the original combined shadow tree on the
     // exact same frozen scene and pipeline. No traversal-order/asset-order drift.
     let cached_pixels = radiance_bytes(&device, &queue, &texture);
+    let mut reference_static = static_maps.params.clone();
+    reference_static.info.x = 0;
+    queue.write_buffer(&static_maps.uniform, 0, &encoded(&reference_static));
     let mut reference_maps = map_params.clone();
     reference_maps.info.x = 0;
     queue.write_buffer(&map_uniform, 0, &encoded(&reference_maps));
@@ -624,7 +763,7 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind, &[]);
-        pass.dispatch_workgroups(WIDTH.div_ceil(8), HEIGHT.div_ceil(8), 1);
+        pass.dispatch_workgroups(width().div_ceil(8), height().div_ceil(8), 1);
     }
     queue.submit([encoder.finish()]);
     let reference_pixels = radiance_bytes(&device, &queue, &texture);
@@ -649,26 +788,30 @@ async fn benchmark(scene: &RayScene, params: BenchParams, probe: RenderProbe, ou
         save_radiance_png(&device, &queue, &texture, Path::new(&path));
     }
     let report = serde_json::json!({
-        "visibility_bytes": u64::from(WIDTH)*u64::from(HEIGHT)*4*8, "schema_version": 4, "measurement": "Surface-free frozen production scene with post-completion timestamp resolve. Isolated pass latency is per submitted frame; batched pass latencies may overlap. Bounded batches contain at most10 frames. Sum of per-batch GPU envelopes/frame excludes inter-batch CPU/readback gaps and includes batch fill/drain. Warm completion intervals exclude all batch boundaries and warmup. Global timing_validation.gpu_envelope_ms includes CPU/readback gaps and is not GPU frame cost. All active shadow depth, primary visibility and lighting passes are included. Excludes CPU scene updates, uploads and presentation.",
+        "visibility_bytes": u64::from(width())*u64::from(height())*4*8, "schema_version": 4, "measurement": "Surface-free frozen production scene with post-completion timestamp resolve. Isolated pass latency is per submitted frame; batched pass latencies may overlap. Bounded batches contain at most10 frames. Sum of per-batch GPU envelopes/frame excludes inter-batch CPU/readback gaps and includes batch fill/drain. Warm completion intervals exclude all batch boundaries and warmup. Global timing_validation.gpu_envelope_ms includes CPU/readback gaps and is not GPU frame cost. All active shadow depth, primary visibility and lighting passes are included. Excludes CPU scene updates, uploads and presentation.",
         "available": summary.isolated_pass_latency.as_ref().map_or(!timings.is_empty(), |distribution| distribution.samples > 0), "adapter": info.name, "backend": format!("{:?}", info.backend),
-        "render_probe": probe, "viewport_pixels": [WIDTH, HEIGHT], "warmup_dispatches": WARMUP, "requested_samples": SAMPLES, "pass_latency_samples": timings.len(),
+        "render_probe": probe, "viewport_pixels": [width(), height()], "warmup_dispatches": WARMUP, "requested_samples": SAMPLES, "pass_latency_samples": timings.len(),
         "gpu_timing_summary": summary,
         "source_state": {"world_seed": 42, "creature_name": "Mop", "view": "ViewState::default (Compose)", "updates": 2, "water": params.water.to_array(), "world_from_clip": params.world_from_clip.to_cols_array()},
         "scene": {"instances": scene.instances.len(), "live_triangles": scene.geometry.iter().map(|chunk| chunk.triangles.len()).sum::<usize>(), "triangle_arena_capacity": scene.triangle_count, "blas_node_arena_capacity": scene.node_count, "tlas_nodes": scene.tlas_nodes.len(), "gpu_geometry_bytes": geometry_bytes},
-        "dynamic_shadow_maps": {"enabled":shadow_map_enabled,"reason":map_selection.reason,"resolution":shadow_resolution,"layers":12,"caster_instances":shadow_casters.len(),
-            "depth_bytes":u64::from(shadow_resolution)*u64::from(shadow_resolution)*12*4,"uniform_bytes":encoded(&map_params).len()+12*64,
-            "active_depth_passes":if shadow_map_enabled {12} else {0},"measurement_includes_all_active_depth_passes":true,"reference":"same shader,original shadow rays,static caches disabled"},
+        "shadow_depth_bits":crate::ray_static_maps::DEPTH_BYTES*8,
+        "shadow_atlas": {"enabled":shadow_map_enabled,"columns":4,"rows":3,"passes":u32::from(shadow_map_enabled)},
+        "indexed_shadows": {"enabled":indexed,"unique_vertices":shadow_index.as_ref().map(|g|g.vertices),"triangles":shadow_index.as_ref().map(|g|g.triangles),"allocated_bytes":shadow_index.as_ref().map(|g|g.bytes)},
+        "persistent_static_maps":{"enabled":static_maps.enabled,"resolution":static_maps.resolution,"caster_count":static_maps.caster_count,"texture_bytes":static_maps.bytes(),"initial_fill_in_first_frame":static_maps.enabled,"receiver_mode":"dynamic-only"},
+        "dynamic_shadow_maps": {"enabled":shadow_map_enabled,"reason":map_selection.reason,"resolution":shadow_resolution,"layers":1,"directions":12,"caster_instances":shadow_casters.len(),
+            "depth_bytes":if shadow_map_enabled {u64::from(shadow_resolution)*u64::from(shadow_resolution)*12*crate::ray_static_maps::DEPTH_BYTES} else {crate::ray_static_maps::DEPTH_BYTES},"uniform_bytes":encoded(&map_params).len()+12*64,
+            "active_depth_passes":u32::from(shadow_map_enabled),"measurement_includes_all_active_depth_passes":true,"reference":"same shader,original shadow rays,static caches disabled"},
         "gpu_pass_latency_samples_ms_sorted": timings,
         "timing_validation": measurements,
         "bounce_cache": {"allocated_bytes": bounce_cache.size()},
         "shadow_cache": {"allocated_bytes": shadow_cache_bytes,
             "cold_first_dispatch_gpu_ms": if measurements.submission_mode == "isolated" && !measurements.gpu_duration_exceeds_submission_wall_indices.contains(&0) { cold_gpu_ms } else { None },
             "cold_first_dispatch_pass_latency_ms": cold_gpu_ms,
-            "records_per_pixel": 2, "bytes_per_record": 12,
+            "records_per_pixel": cache_samples, "bytes_per_record": 12,
             "static_instances": scene.instances.iter().filter(|instance| instance.pad1 != 0).count(),
             "reference_comparison": {"different_rgb_pixels": different_pixels,
-                "total_pixels": WIDTH * HEIGHT, "maximum_linear_channel_difference": maximum_linear_difference,
-                "mean_absolute_linear_channel_difference": sum_linear_difference / f64::from(WIDTH * HEIGHT * 3)}},
+                "total_pixels": width() * height(), "maximum_linear_channel_difference": maximum_linear_difference,
+                "mean_absolute_linear_channel_difference": sum_linear_difference / f64::from(width() * height() * 3)}},
     });
     std::fs::write(output_path, serde_json::to_vec_pretty(&report).unwrap())
         .expect("benchmark JSON");
@@ -734,7 +877,7 @@ fn save_radiance_png(
     path: &Path,
 ) {
     let bytes = radiance_bytes(device, queue, texture);
-    let mut image = image::RgbaImage::new(WIDTH, HEIGHT);
+    let mut image = image::RgbaImage::new(width(), height());
     for (pixel, source) in image.pixels_mut().zip(bytes.chunks_exact(8)) {
         for channel in 0..3 {
             let half = u16::from_le_bytes([source[channel * 2], source[channel * 2 + 1]]);
@@ -752,11 +895,11 @@ fn save_radiance_png(
 }
 
 fn radiance_bytes(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> Vec<u8> {
-    let bytes_per_row = WIDTH * 8;
+    let bytes_per_row = width() * 8;
     assert_eq!(bytes_per_row % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT, 0);
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("offscreen PNG readback"),
-        size: u64::from(bytes_per_row) * u64::from(HEIGHT),
+        size: u64::from(bytes_per_row) * u64::from(height()),
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -773,7 +916,7 @@ fn radiance_bytes(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Te
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(bytes_per_row),
-                rows_per_image: Some(HEIGHT),
+                rows_per_image: Some(height()),
             },
         },
         texture.size(),

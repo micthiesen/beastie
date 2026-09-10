@@ -1,0 +1,22 @@
+{
+  "state.jsonl": {
+    "equal": true,
+    "rows": 504
+  },
+  "audio.jsonl": {
+    "equal": true,
+    "rows": 504
+  },
+  "events.jsonl": {
+    "equal": true,
+    "rows": 480
+  },
+  "inputs.jsonl": {
+    "equal": true,
+    "rows": 14
+  },
+  "markers.jsonl": {
+    "equal": true,
+    "rows": 7
+  }
+}

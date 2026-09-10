@@ -1,0 +1,767 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running `target/debug/xtask verify`
+   Compiling ring v0.17.14
+   Compiling rustls v0.23.43
+    Checking rustls-webpki v0.103.14
+    Checking ureq v2.12.1
+    Checking xtask v1.0.0 (/Users/michael/Code/beastie/crates/xtask)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.85s
+   Compiling ring v0.17.14
+   Compiling rustls-webpki v0.103.14
+   Compiling rustls v0.23.43
+   Compiling ureq v2.12.1
+   Compiling xtask v1.0.0 (/Users/michael/Code/beastie/crates/xtask)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.15s
+     Running unittests src/lib.rs (target/debug/deps/beastie_ai_worker-0bf089f9a067361c)
+
+running 31 tests
+test bounded::tests::oversized_line_is_drained_without_consuming_the_next_line ... ok
+test bounded::tests::bounded_unterminated_line_is_returned_at_eof ... ok
+test idiolect::tests::article_drop_does_not_erase_an_entire_reply ... ok
+test idiolect::tests::quirks_are_stable_and_bounded ... ok
+test llama_server::tests::configured_output_limit_cannot_exceed_the_hard_http_cap ... ok
+test llama_cpp::tests::extracts_one_pretty_printed_reply_from_llama_console_output ... ok
+test llama_cpp::tests::rejects_ambiguous_multiple_valid_reply_lines ... ok
+test llama_cpp::tests::typed_social_lane_rejects_a_safe_but_semantically_empty_reply ... ok
+test llama_cpp::tests::allows_ordinary_profanity_and_mild_innuendo ... ok
+test llama_cpp::tests::recalled_memory_must_say_its_authoritative_anchor ... ok
+test prompt::tests::desired_social_act_selects_required_style_terms ... ok
+test prompt::tests::explicit_recall_stays_about_the_memory_when_a_social_habit_fires ... ok
+test prompt::tests::prohibited_and_unknown_requests_get_specific_lanes ... ok
+test llama_cpp::tests::rejects_player_echo_and_narrow_prohibited_content ... ok
+test llama_server::tests::server_prompt_puts_say_before_the_remaining_reply_fields ... ok
+test prompt::tests::prohibited_input_never_enters_authoritative_prompt_json ... ok
+test prompt::tests::prompt_puts_a_deterministic_scaffold_after_the_request ... ok
+test prompt::tests::relevant_candidate_belief_is_selected_without_inventing_support ... ok
+test tests::generated_reply_falls_back_to_requested_word_limit ... ok
+test tests::jsonl_fixture_produces_a_valid_reply ... ok
+test tests::model_failure_falls_back_to_the_authoritative_memory_anchor ... ok
+test tests::fixture_backend_receives_the_same_deterministic_idiolect_pass ... ok
+test tests::unterminated_bounded_dialogue_request_is_processed_at_eof ... ok
+test tests::oversized_dialogue_line_falls_back_and_stream_continues ... ok
+test tests::fixture_backend_changes_a_requested_retry_without_losing_grounding ... ok
+test tests::fixture_backend_keeps_relationship_motif_and_subject_grounded_without_fallback ... ok
+test prompt::tests::raw_unknown_words_cannot_select_question_object_memory_or_belief_lanes ... ok
+test tests::fixture_backend_covers_each_relationship_motif_without_fallback ... ok
+test tests::model_failure_preserves_typed_social_and_context_lanes ... ok
+test prompt::tests::typed_context_lanes_require_authoritative_concrete_words ... ok
+test tests::fixture_backend_keeps_every_safe_eval_turn_healthy ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/beastie_ai_worker-90410a6d096ed32f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/beastie-stt.rs (target/debug/deps/beastie_stt-a3f638f0b8461ce9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/beastie-tts.rs (target/debug/deps/beastie_tts-5bee41c35cac407f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/llama_cpp.rs (target/debug/deps/llama_cpp-4bd83689026501c3)
+
+running 7 tests
+test cpu_only_flags_reach_the_replaceable_process ... ok
+test fake_executable_reply_passes_strict_protocol_validation ... ok
+test malformed_first_output_is_retried_once ... ok
+test cli_and_environment_thread_overrides_are_bounded ... ok
+test prohibited_echo_falls_back_but_ordinary_profanity_passes ... ok
+test environment_selects_llama_backend_without_changing_jsonl_transport ... ok
+test timeout_and_oversized_output_use_authored_fallback ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/llama_server.rs (target/debug/deps/llama_server-1f0c7ffdee81a6bc)
+
+running 5 tests
+test supervisor_reaps_server_when_worker_is_killed ... ok
+test warm_server_reuses_one_pid_and_receives_flags_auth_and_bounded_payload ... ok
+test dropping_backend_reaps_server_process ... ok
+test environment_selects_warm_server_without_changing_jsonl_transport ... ok
+test malformed_timeout_and_oversized_responses_restart_once_then_fallback ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+
+     Running tests/stt.rs (target/debug/deps/stt-de10af864c1c889d)
+
+running 7 tests
+test absent_moonshine_engine_is_a_typed_technical_failure ... ok
+test fixture_recognizes_signal_and_reports_silence_without_a_model ... ok
+test content_addressed_audio_must_not_be_a_symlink ... ok
+test malformed_and_oversized_lines_do_not_kill_the_persistent_worker ... ok
+test missing_mismatched_and_non_pcm_audio_have_distinct_typed_failures ... ok
+test absent_parakeet_model_is_a_typed_technical_failure ... ok
+test moonshine_engine_is_persistent_and_replies_are_correlated ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/tts.rs (target/debug/deps/tts-5019885139536eee)
+
+running 11 tests
+test cache_key_binds_both_pinned_voice_artifacts ... ok
+test cache_key_changes_with_text_and_every_voice_setting ... ok
+test invalid_inputs_are_rejected_before_calling_backend ... ok
+test fake_synthesis_writes_pcm_wav_once_and_reuses_hash_cache ... ok
+test oversized_jsonl_request_is_rejected_and_next_request_runs ... ok
+test partial_cache_entry_is_replaced_before_it_can_be_returned ... ok
+test versioned_jsonl_worker_stays_alive_and_never_returns_a_path ... ok
+test espeak_applies_bounded_pitch_speed_and_pause_controls ... ok
+test espeak_process_receives_bounded_stdin_and_produces_validated_pcm ... ok
+test oversized_text_never_reaches_espeak_process ... ok
+test espeak_process_failure_and_invalid_output_fail_closed ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running unittests src/lib.rs (target/debug/deps/beastie_core-9ba3a8bc9b823348)
+
+running 99 tests
+test language::tests::unknown_concepts_cannot_create_resolved_references ... ok
+test language::tests::learned_meaning_gates_references_and_questions ... ok
+test tests::a_new_food_interrupts_idle_play_long_enough_to_be_tasted ... ok
+test language::tests::grounding_removes_unknown_objects_and_spatial_language ... ok
+test tests::an_unattended_creature_eventually_sleeps ... ok
+test tests::a_known_hated_food_is_rejected_instead_of_eaten ... ok
+test tests::active_day_scaled_repeated_visits_form_a_bounded_routine ... ok
+test tests::active_play_is_not_interrupted_by_periodic_favorite_visit ... ok
+test tests::accepted_toy_mutates_only_once_at_physical_contact ... ok
+test tests::active_toy_blocks_standalone_relationship_and_requires_its_exact_travel ... ok
+test tests::active_relationship_beat_keeps_its_embodied_priority_over_idle_scheduling ... ok
+test tests::autonomous_toy_arrival_has_no_player_social_reward ... ok
+test tests::autonomous_toy_interest_does_not_defer_the_player ... ok
+test tests::aquarium_feeding_has_fixed_phases_and_bounded_position ... ok
+test tests::comfort_emits_an_authoritative_event ... ok
+test tests::action_relationship_matching_is_exact_across_subject_families ... ok
+test tests::comfort_creates_history_improves_relationship_and_returns_to_life ... ok
+test tests::cursor_follow_and_flee_move_until_their_stop_thresholds ... ok
+test tests::cursor_is_persisted_and_uses_bounded_follow_or_flee_intent ... ok
+test tests::default_aquarium_objects_have_stable_ids_and_positions ... ok
+test tests::development_unlocks_are_grounded_monotonic_and_gate_adult_humor ... ok
+test tests::dialogue_handoff_binds_exact_owner_and_safe_boundaries ... ok
+test tests::each_need_selects_a_distinct_visible_state ... ok
+test tests::early_relationship_evidence_only_notices_without_forcing_familiar_behavior ... ok
+test tests::early_shared_toy_notice_approaches_without_claiming_contact ... ok
+test tests::disliked_repetition_raises_resentment_and_positive_care_recovers_it ... ok
+test tests::familiar_place_act_waits_for_a_current_arrival_not_stale_history ... ok
+test tests::feeding_stocks_the_aquarium_and_eating_consumes_it ... ok
+test tests::food_approach_reduces_distance_before_any_resolution ... ok
+test tests::every_relationship_family_recovers_to_independent_life ... ok
+test tests::forged_action_relationship_subject_is_rejected_by_save_validation ... ok
+test tests::full_aquarium_rejects_drop_without_mutation ... ok
+test tests::current_version_save_defaults_new_persisted_life_state ... ok
+test tests::autonomous_toy_response_happens_at_contact_once_and_round_trips ... ok
+test tests::berry_memory_arc_survives_sleep_save_and_reload ... ok
+test tests::grounded_utterance_is_a_public_typed_relationship_trigger ... ok
+test tests::cursor_follow_requires_sustained_care ... ok
+test tests::grudge_eligibility_uses_the_authoritative_rejection_boundary ... ok
+test tests::idiolect_is_plain_until_individuality_and_varies_by_identity ... ok
+test tests::identical_seeds_and_inputs_replay_identically ... ok
+test tests::invalid_save_versions_are_rejected ... ok
+test tests::autonomous_toy_owner_is_allocated_before_travel_and_survives_resume ... ok
+test tests::invalid_traits_and_zero_next_ids_are_rejected ... ok
+test tests::later_toy_offer_cannot_resolve_the_superseded_offer ... ok
+test tests::motivated_creature_initiates_nonverbal_request ... ok
+test tests::needs_traits_routines_and_favorites_choose_distinct_destinations ... ok
+test tests::new_memory_waits_for_a_later_quiet_relationship_opportunity ... ok
+test tests::new_toy_catalogue_and_mutable_positions_agree ... ok
+test tests::offline_progress_advances_elapsed_time_but_emits_one_return_path ... ok
+test tests::fractional_tick_remainder_and_mid_action_survive_save ... ok
+test tests::offline_progress_is_bounded_nonlethal_and_records_return ... ok
+test tests::idiolect_round_trips_with_the_persisted_identity ... ok
+test tests::food_relationship_context_preserves_outcome_and_survives_consumption ... ok
+test tests::physical_drop_counts_feeds_once_and_rejected_cap_does_not_count ... ok
+test tests::performance_ledger_suppresses_the_same_evidence_subject_motif_and_recipe ... ok
+test tests::positive_interactions_slowly_recover_resentment ... ok
+test tests::one_minute_equals_sixty_one_second_ticks ... ok
+test tests::mid_approach_save_resume_preserves_the_exact_future ... ok
+test tests::play_tidy_and_reunion_change_authoritative_aquarium_behavior ... ok
+test tests::food_phase_velocity_is_identical_for_batched_and_split_ticks ... ok
+test tests::player_return_never_selects_an_unrelated_grounded_motif ... ok
+test tests::performance_ledger_round_trips_without_changing_future_suppression ... ok
+test tests::rejected_toy_arrival_never_becomes_positive_evidence ... ok
+test tests::private_life_cross_seed_sequences_are_temperament_shaped ... ok
+test tests::relationship_selection_prefers_recent_supporting_evidence ... ok
+test tests::relationship_motifs_are_derived_for_all_families_with_typed_evidence ... ok
+test tests::relationship_callbacks_project_their_family_specific_embodied_intentions ... ok
+test tests::replacing_idle_travel_emits_an_explicit_interruption ... ok
+test tests::relationship_strength_requires_distinct_active_days_for_repeated_memories ... ok
+test tests::relationship_selection_is_stable_and_ledger_is_bounded ... ok
+test tests::sleeping_creature_clears_old_swim_velocity_and_keeps_its_position ... ok
+test tests::speech_attention_is_deterministic_and_can_be_ignored ... ok
+test tests::speech_is_perceived_before_words_without_interrupting_an_action ... ok
+test tests::sleep_restores_energy_and_initiative_clears_or_expires ... ok
+test tests::private_life_seed_42_has_breadth_and_exact_three_minute_replay ... ok
+test tests::stationary_food_phases_clear_old_swim_velocity_without_moving ... ok
+test tests::moving_ball_and_carried_sock_save_with_exact_continuation ... ok
+test tests::successful_toy_use_starts_the_shared_toy_callback ... ok
+test tests::superseded_and_missing_food_actions_cancel_their_relationship_receipts ... ok
+test tests::superseding_direct_action_interrupts_toy_without_payoff ... ok
+test tests::talk_is_scarce_but_allows_one_reaction_follow_up ... ok
+test tests::typed_language_exposure_makes_permitted_habits_reachable ... ok
+test tests::save_reload_preserves_future_simulation ... ok
+test tests::quiet_observation_has_bounded_varied_idle_bouts_and_exact_replay ... ok
+test tests::relationship_beats_progress_save_reload_and_yield_to_care ... ok
+test tests::v1_fixture_migrates_to_aquarium_without_legacy_runtime_fields ... ok
+test tests::pending_toy_save_and_offline_resume_resolve_exactly_once_without_old_cues ... ok
+test tests::split_ticks_and_domain_draws_are_replay_stable ... ok
+test tests::validation_rejects_an_active_relationship_beat_not_grounded_in_derived_truth ... ok
+test tests::validation_rejects_unowned_and_mismatched_toy_travel ... ok
+test tests::shared_toy_context_survives_new_eligibility_and_save_before_contact ... ok
+test tests::saved_recovery_with_stale_velocity_is_independent_of_partial_tick_steps ... ok
+test tests::toy_preferences_and_routines_persist ... ok
+test tests::v2_save_migrates_without_legacy_runtime_fields ... ok
+test tests::v3_save_migrates_relationship_expression_to_version_four ... ok
+test tests::v6_save_migrates_private_life_without_replacing_direct_toy_owner ... ok
+test tests::v4_relationship_migration_clears_only_unrepresentable_active_expression ... ok
+test tests::v5_toy_travel_migrates_conservatively ... ok
+test tests::needs_and_references_remain_valid_over_many_days ... ok
+
+test result: ok. 99 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/main.rs (target/debug/deps/beastie_game-1737447d52bc9635)
+
+running 249 tests
+test app::tests::completed_spoken_input_is_persisted_but_transient_recognition_is_not ... ok
+test app::tests::deferred_spoken_input_stays_busy_until_the_session_submits_it ... ok
+test app::tests::direct_action_during_scripted_delay_discards_completion_before_accept_or_tts ... ok
+test app::tests::microphone_acquisition_only_starts_perception_after_live_capture ... ok
+test app::tests::primary_ui_actions_remain_distinct ... ok
+test app::tests::reaction_commands_use_the_late_dialogue_supersession_path ... ok
+test app::tests::scripted_dialogue_is_fully_visible_at_capture_time ... ok
+test app::tests::protocol_mouth_timing_drives_repeatable_open_close_rest_phases ... ok
+test app::tests::submitted_speech_clears_the_deferred_message_and_failures_explain_recovery ... ok
+test app::tests::startup_recovery_is_technical_feedback_without_creature_speech ... ok
+test app::tests::unrelated_player_commands_clear_visible_speech_but_ticks_do_not ... ok
+test app::tests::toy_ui_actions_map_to_typed_play_commands ... ok
+test app::tests::text_reveal_is_unicode_safe_and_instant_is_an_accessibility_override ... ok
+test app::tests::subtitles_suppress_only_the_visible_dialogue_caption ... ok
+test app::tests::occupied_rebinding_keeps_the_swap_and_focuses_the_edited_action ... ok
+test app::tests::completed_and_canceled_rebinding_restore_the_originating_row ... ok
+test args::tests::feel_dialogue_delay_is_bounded_and_capture_only ... ok
+test audio::tests::ambient_bubbles_are_deterministic_sparse_and_avoid_long_repeats ... ok
+test audio::tests::busy_audio_postpones_bubbles_and_ducking_uses_authored_decibels ... ok
+test audio::tests::direct_outcome_removes_only_lower_priority_creature_voice ... ok
+test audio::tests::queued_relationship_cancellation_preserves_ui_and_physical_audio ... ok
+test audio::tests::semantic_cues_resolve_only_to_authored_audio ... ok
+test args::tests::feel_directory_requires_a_script ... ok
+test args::tests::feel_initial_save_requires_the_full_evidence_path ... ok
+test audio::tests::vocal_duck_finishes_at_authored_attack_and_release_boundaries ... ok
+test args::tests::render_report_requires_a_script ... ok
+test body::chain_tests::boundary_turns_keep_joints_in_tank_without_shortening_them ... ok
+test body::tests::chain_follows_a_corner_instead_of_cutting_across_it ... ok
+test body::tests::tail_spacing_is_independent_of_head_speed_and_stopping ... ok
+test args::tests::feel_seed_is_capture_only_and_conflicts_with_an_initial_save ... ok
+test capture::readiness_tests::shader_wait_is_bounded_without_consuming_capture_warmup ... ok
+test args::tests::surface_studies_are_script_only_and_default_to_production ... ok
+test args::tests::uncapped_rendering_is_opt_in_and_requires_a_scripted_report ... ok
+test args::tests::script_only_input_requires_evidence_and_is_opt_in ... ok
+test args::tests::probes_require_script_and_report_and_default_to_full ... ok
+test body::chain_tests::stopped_and_near_stationary_body_holds_its_curvature ... ok
+test audio::tests::semantic_mix_keeps_bubbles_ui_and_physical_cues_out_of_voice_priority ... ok
+test audio::tests::discarded_commands_and_missing_output_do_not_start_or_duck ... ok
+test audio::tests::authored_audio_decodes_without_opening_an_audio_device ... ok
+test capture::tests::out_of_order_readbacks_preserve_image_snapshot_association ... ok
+test capture::tests::shutdown_must_wait_for_every_submitted_frame ... ok
+test body::chain_tests::reversal_preserves_chain_spacing_instead_of_folding_into_head ... ok
+test creature::tests::anticipation_does_not_imply_consumption_and_clears_at_recovery ... ok
+test creature::tests::abrupt_tick_velocity_correction_is_continuous_and_catches_up ... ok
+test creature::tests::canceled_speech_does_not_retain_open_mouth ... ok
+test creature::tests::direct_outcome_replaces_private_life_acting_without_residue ... ok
+test creature::tests::owned_reactions_have_distinct_face_and_fin_silhouettes ... ok
+test creature::tests::reduced_motion_keeps_owned_face_but_reduces_supporting_gesture ... ok
+test creature::tests::reduced_shake_removes_recoil_oscillation_without_hiding_refusal ... ok
+test creature::tests::sleep_and_curiosity_have_distinct_readable_eyes ... ok
+test creature::tests::saved_stationary_velocity_and_arrival_never_predict_past_the_target ... ok
+test creature::tests::hover_drift_preserves_body_curvature_until_authoritative_swimming ... ok
+test dialogue::tests::bounded_reader_accepts_crlf_and_rejects_oversized_lines ... ok
+test dialogue::tests::default_watchdog_covers_both_inner_attempts_and_grace ... ok
+test creature::tests::speech_changes_width_and_aperture_then_cancels_without_residue ... ok
+test dialogue::tests::one_outstanding_talk_is_enforced ... ok
+test dialogue::tests::missing_worker_returns_a_bounded_fallback ... ok
+test creature::tests::slow_frames_consume_the_full_motion_delta_without_resetting ... ok
+test dialogue::tests::missing_executable_recovers_to_fallback ... ok
+test creature::tests::body_picking_tracks_rendered_curvature_taper_and_entity_removal ... ok
+test feel::tests::audio_and_command_time_advance_on_submission_before_readback ... ok
+test dialogue::tests::packaged_runtime_is_discovered_without_environment_configuration ... ok
+test dialogue::tests::packaged_runtime_sha_mismatch_uses_authored_dialogue_fallback ... ok
+test dialogue::tests::packaged_runtime_rejects_selected_model_byte_count_mismatch ... ok
+test feel::tests::dialogue_health_trace_contains_only_outcome_metadata ... ok
+test feel::tests::event_names_are_redacted_from_the_observability_trace ... ok
+test feel::tests::frame_timestamps_follow_the_sixty_hertz_timeline ... ok
+test feel::tests::private_talk_and_speech_candidate_text_are_never_serialized ... ok
+test glyphs::tests::clipping_stays_inside_panel_and_retains_front_winding ... ok
+test glyphs::tests::fully_occluded_labels_skip_shaping_and_tessellation ... ok
+test feel::tests::dropping_an_active_encoder_reaps_the_child ... ok
+test glyphs::tests::outline_counters_remain_open_and_accents_are_real_geometry ... ok
+test creature::tests::fins_do_not_jump_when_the_session_clock_crosses_an_hour ... ok
+test feel::tests::first_frame_heartbeat_is_published_as_complete_json ... ok
+test app::tests::genuine_v2_game_save_loads_continues_and_is_rewritten_as_v4 ... ok
+test host::input_policy_tests::native_input_is_available_unless_script_isolation_is_explicit ... ok
+test host::input_policy_tests::script_only_drains_native_messages_without_replaying_them_later ... ok
+test host::pacing_tests::ninety_and_one_twenty_hz_hosts_produce_sixty_semantic_frames_per_second ... ok
+test host::pacing_tests::slow_frame_never_skips_a_scenario_step_or_advances_twice_in_one_update ... ok
+test input::tests::compose_is_the_persistent_default_focus ... ok
+test input::tests::controller_keyboard_focus_types_deletes_submits_and_cancels ... ok
+test input::tests::disabled_microphone_can_be_explained_but_never_activated ... ok
+test input::tests::controller_focus_visits_every_enabled_semantic_region_and_wraps ... ok
+test input::tests::text_is_unicode_safe_bounded_and_strips_controls ... ok
+test input::tests::toy_choice_mouse_and_focus_select_the_same_typed_actions ... ok
+test input::tests::modal_focus_starts_on_the_first_relevant_action ... ok
+test glyphs::tests::unsupported_emoji_and_cjk_render_visible_missing_glyphs ... ok
+test glyphs::tests::wrapping_preserves_graphemes_and_explicit_lines ... ok
+test motion_trace::tests::invalid_transforms_are_flagged_without_poisoning_json_or_next_frame ... ok
+test glyphs::tests::input_text_centers_vertically_without_changing_left_padding_or_glyphs ... ok
+test microphone::tests::private_audio_root_removes_interrupted_and_current_capture_files ... ok
+test motion_trace::tests::repeated_nonidentity_rotation_and_sign_equivalence_are_motionless ... ok
+test motion_trace::tests::measures_rendered_displacement_and_shortest_rotation ... ok
+test motion_trace::tests::reset_and_long_gaps_do_not_report_meaningless_speeds ... ok
+test motion_trace::tests::small_rotation_is_measured_without_acos_roundoff ... ok
+test motion_trace::tests::zero_time_detects_movement_without_dividing_by_zero ... ok
+test process::jsonl_tests::bounded_jsonl_reader_accepts_crlf_and_rejects_unterminated_or_oversized_lines ... ok
+test ray_benchmark::batched_report_separates_overlapping_latency_from_completion_cadence ... ok
+test microphone::tests::wav_is_atomic_content_addressed_and_private ... ok
+test ray_benchmark::evidence_half_conversion_preserves_linear_radiance ... ok
+test ray_benchmark::bounded_batch_summary_excludes_cpu_gaps_and_warmup_boundaries ... ok
+test ray_benchmark::offscreen_renderer_benchmark ... ignored, explicit real GPU benchmark; requires BEASTIE_BENCH_OUTPUT, no display required
+test ray_benchmark::shadow_oracle::moving_shadow_cache_matches_uncached_frames ... ignored, requires a real GPU; no window or display required
+test ray_benchmark::shadow_oracle::moving_shadow_maps_preserve_bounded_image_error ... ignored, requires a real GPU; compares sampled shadow maps with exact ray shadows
+test ray_benchmark::impossible_batch_envelope_preserves_raw_evidence_and_rejects_cadence ... ok
+test ray_benchmark::shadow_oracle::one_sample_cache_matches_uncached_frames ... ignored, requires a real GPU; exercises the smaller-buffer adapter path
+test ray_benchmark::isolated_summary_rejects_impossible_duration_but_preserves_raw_evidence ... ok
+test ray_benchmark::shadow_oracle::shadow_map_far_blocker_keeps_nearer_finite_ray_occlusion ... ignored, requires a real GPU; protects finite shadow-ray distance semantics
+test ray_benchmark::shadow_oracle::static_bounce_ties_preserve_full_world_order_after_dynamic_rearrangement ... ignored, requires a real GPU; no window or display required
+test ray_benchmark::timestamp_audit_preserves_invalid_indices_and_detects_overlap ... ok
+test ray_scene::tests::affine_local_rays_preserve_world_hit_distance ... ok
+test ray_scene::tests::empty_and_degenerate_meshes_have_no_acceleration_structure ... ok
+test ray_scene::tests::auxiliary_tlas_preserves_instance_ids_and_ray_categories ... ok
+test ray_scene::tests::sah_rejects_unbalanced_split_when_only_one_depth_remains ... ok
+test ray_scene::tests::moving_instances_reuse_geometry_and_asset_edits_update_only_their_chunk ... ok
+test ray_scene::tests::sah_skips_dense_clusters_more_efficiently_than_median ... ok
+test ray_scene::tests::split_triangle_preserves_edges_and_all_surface_attributes ... ok
+test creature::tests::swim_phase_and_body_gestures_are_continuous_on_old_saves ... ok
+test ray_scene::tests::storage_struct_strides_match_shader_arrays ... ok
+test ray_scene::tests::surface_dictionary_preserves_exact_attributes_and_ignores_positions ... ok
+test ray_scene::tests::zero_sized_leaves_are_rejected_before_splitting - should panic ... ok
+test ray_shadow_index::lod_scale_guard_includes_shear_and_nonuniform_transforms ... ok
+test ray_shadow_index::preparation_tests::only_one_job_runs_while_scene_membership_changes ... ok
+test ray_shadow_index::preparation_tests::stale_and_disabled_results_never_upload_but_keep_cpu_cache ... ok
+test ray_scene::tests::stationary_shadow_revision_tracks_only_eligible_scene_changes ... ok
+test microphone::tests::resampling_is_bounded_and_interpolates ... ok
+test ray_shadow_index::tests::indexed_shadow_stream_preserves_triangle_order_and_reconstructed_bits ... ok
+test ray_shadow_maps::density_keeps_pixel_ratio_with_power_of_two_budget ... ok
+test ray_shadow_maps::density_policy_preserves_limits_startup_and_resize_fallback ... ok
+test glyphs::tests::stack_clipping_matches_original_vertices_colors_and_winding ... ok
+test ray_static_maps::tests::static_map_key_invalidates_scene_mode_and_density_but_normalizes_dummy ... ok
+test ray_stats::tests::cpu_phase_guard_records_early_returns_once_without_a_gpu ... ok
+test ray_stats::tests::independent_pass_samples_apply_warmup_and_reject_invalid_values ... ok
+test ray_stats::tests::nearest_rank_preserves_tail_outliers_and_handles_short_runs ... ok
+test ray_stats::tests::reporting_uses_bounded_custom_collection_without_bevy_query_pool ... ok
+test ray_stats::tests::suppressed_or_invalid_gpu_timestamps_are_not_reported_as_fast_frames ... ok
+test creature::tests::rounded_lighting_preserves_geometry_and_finite_unit_normals ... ok
+test ray_scene::tests::bvh_covers_each_primitive_once_and_bounds_children ... ok
+test ray_validation::gpu_traversal::brute_force_observes_explicit_upper_barycentric_bound ... ok
+test ray_validation::gpu_traversal::production_gpu_traversal_matches_brute_force ... ignored, requires a native GPU; run explicitly with --ignored --nocapture
+test ray_scene::tests::sah_traversal_matches_brute_force_for_parallel_inside_and_oblique_rays ... ok
+test ray_validation::presentation_shader_translates_without_optional_gpu_capabilities ... ok
+test ray_validation::gpu_traversal::surface_oracle_translates_without_optional_gpu_capabilities ... ok
+test raytrace::capacity_tests::geometry_capacity_covers_uploads_without_doubling_each_attribute_arena ... ok
+test raytrace::static_cache_reuses_one_sample_when_two_exceed_the_binding_limit ... ok
+test raytrace::visibility_tests::visibility_limits_keep_indices_and_texture_extents_representable ... ok
+test raytrace::water_tests::water_does_not_jump_back_at_one_hour_and_honors_accessibility ... ok
+test ray_validation::compute_tracer_translates_without_optional_gpu_capabilities ... ok
+test ray_validation::primary_visibility_and_fallback_translate_on_all_backends ... ok
+test dialogue::tests::duplicate_output_gets_one_retry_then_typed_fallback ... ok
+test recognition::tests::packaged_runtime_is_discovered_only_after_model_integrity_passes ... ok
+test recognition::tests::packaged_runtime_rejects_tampered_model_manifest ... ok
+test recognition::tests::packaged_runtime_rejects_tampered_worker ... ok
+test recognition::tests::recognition_errors_remain_typed ... ok
+test dialogue::tests::worker_process_is_reused_across_requests ... ok
+test render_activity::hidden_pacing_tests::automation_does_not_throttle_when_occluded ... ok
+test dialogue::tests::dropping_manager_interrupts_and_reaps_a_pending_worker ... ok
+test dialogue::tests::dropping_manager_kills_the_worker_process_group ... ok
+test render_activity::tests::automation_flags_select_override ... ok
+test dialogue::tests::unsolicited_worker_output_restarts_the_worker ... ok
+test render_activity::hidden_pacing_tests::hidden_pacing_preserves_visible_policies_and_restores_on_window_events ... ok
+test renderer::object_motion_tests::carried_object_is_visible_in_front_of_the_head ... ok
+test renderer::object_motion_tests::moving_objects_advance_between_authoritative_ticks ... ok
+test renderer::tests::articulated_pick_preserves_distance_through_rotation_and_nonuniform_scale ... ok
+test render_activity::tests::automation_is_not_suppressed_when_occluded ... ok
+test render_activity::tests::missing_events_and_visible_unfocused_windows_keep_rendering ... ok
+test renderer::tests::fractional_positions_survive_projection ... ok
+test render_activity::tests::confirmed_occlusion_suppresses_until_restore_or_focus_recovery ... ok
+test renderer::tests::exact_effect_cache_skips_mesh_mutations_but_preserves_motion_and_visibility ... ok
+test renderer::tests::letterbox_is_excluded_from_ui_input ... ok
+test renderer::tests::picking_uses_volume_instead_of_a_rectangular_silhouette ... ok
+test dialogue::tests::cancellation_releases_pending_state_and_discards_the_late_turn ... ok
+test renderer::tests::presentation_and_pointer_coordinates_agree_across_aspect_ratios ... ok
+test environment::tests::substrate_has_a_complete_top_and_no_internal_base_walls ... ok
+test dialogue::tests::watchdog_falls_back_then_restarts_for_the_next_request ... ok
+test recognition::tests::fake_worker_is_persistent_and_audio_is_deleted_after_each_request ... ok
+test renderer::tests::scenery_picking_caches_meshes_and_preserves_transformed_world_distance ... ok
+test renderer::tests::retained_labels_change_independently_and_reuse_covered_or_absent_geometry ... ok
+test recognition::tests::drop_interrupts_a_slow_worker_and_removes_private_audio ... ok
+test renderer::tests::retained_labels_support_duplicate_ids_and_title_parent_transforms ... ok
+test renderer::tests::text_cache_ignores_icon_and_color_changes_but_tracks_clipping_and_labels ... ok
+test renderer::tests::title_portrait_scales_all_part_offsets_about_the_presented_head ... ok
+test recognition::tests::malformed_worker_restarts_for_the_next_request ... ok
+test recognition::tests::slow_recognition_does_not_block_simulation_ticks_or_world_actions ... ok
+test renderer::ui_layout_tests::all_modal_labels_have_bounded_fitting_at_normal_and_large_size ... ok
+test renderer::ui_layout_tests::caption_wraps_inside_its_panel_on_both_sides ... ok
+test renderer::tests::icon_cache_reuses_geometry_across_rectangles_moves_and_visibility ... ok
+test renderer::ui_layout_tests::large_settings_labels_stop_before_their_value_controls ... ok
+test renderer::ui_layout_tests::partial_modal_overlap_clips_even_when_text_anchor_is_outside ... ok
+test renderer::ui_layout_tests::settings_value_text_stays_inside_its_button_at_large_size ... ok
+test save_store::tests::backup_promotion_preserves_both_recovered_and_displaced_generations ... ok
+test save_store::tests::loads_backup_if_replacement_was_interrupted ... ok
+test ray_validation::every_probe_translates_without_optional_gpu_capabilities ... ok
+test save_store::tests::reset_is_recoverable_and_removes_incomplete_generations ... ok
+test scenario::tests::bad_conditions_models_microphone_acquisition_without_faking_perception ... ok
+test scenario::tests::dialogue_race_fixture_is_valid_and_restores_subtitles ... ok
+test save_store::tests::replaces_a_save_without_leaving_temporary_files ... ok
+test scenario::tests::parses_each_toy_play_as_a_typed_session_command ... ok
+test scenario::tests::parses_pointer_tracking_and_physical_food_drop ... ok
+test scenario::tests::parses_session_and_capture_steps ... ok
+test scenario::tests::rejects_capture_path_traversal ... ok
+test scenario::tests::rejects_out_of_bounds_waits_and_unsafe_markers ... ok
+test scenario::tests::waits_use_exact_sixty_hertz_cadence_and_support_five_minutes ... ok
+test settings::tests::conflicting_bindings_reset_to_safe_non_printable_defaults ... ok
+test settings::tests::malformed_settings_are_reported_instead_of_silently_reset ... ok
+test settings::tests::missing_settings_use_accessible_defaults ... ok
+test settings::tests::older_settings_never_opt_the_player_into_microphone_capture ... ok
+test settings::tests::malformed_primary_recovers_valid_backup ... ok
+test settings::tests::raster_settings_migrate_without_losing_accessibility_or_bindings ... ok
+test settings::tests::rebinding_swaps_an_occupied_key_without_creating_conflicts ... ok
+test creature::tests::identical_articulated_parts_share_mesh_assets ... ok
+test settings::tests::version_one_window_scale_migrates_to_presentation_scale ... ok
+test settings::tests::persisted_values_are_bounded ... ok
+test transcript::tests::disabled_store_writes_nothing ... ok
+test settings::tests::subtitle_preference_round_trips_and_defaults_on ... ok
+test tts::tests::cache_reader_rejects_corrupt_wav_header ... ok
+test tts::tests::cache_reader_rejects_final_symlink ... ok
+test tts::tests::complete_packaged_espeak_bundle_is_discovered_but_partial_bundle_is_not ... ok
+test transcript::tests::export_omits_player_text_and_skips_partial_tail ... ok
+test renderer::tests::selection_brackets_enclose_the_projected_rotated_ball_without_depth_drift ... ok
+test tts::tests::request_voice_is_derived_deterministically_from_authoritative_identity ... ok
+test renderer::tests::retained_label_cache_evicts_old_inactive_ids_without_losing_current_text ... ok
+test environment::tests::finished_scenery_keeps_a_bounded_triangle_budget ... ok
+test voxel::tests::adjacent_voxels_remove_their_shared_faces ... ok
+test voxel::tests::bevels_add_real_facets_with_a_bounded_silhouette_change ... ok
+test voxel::tests::bevels_keep_convex_concave_and_color_boundaries_closed ... ok
+test voxel::tests::bevels_preserve_coplanar_surfaces_across_color_changes ... ok
+test voxel::tests::face_winding_matches_outward_normals ... ok
+test renderer::tests::toy_mesh_picking_follows_carried_rotation_and_preserves_bell_loop_gap ... ok
+test voxel::tests::nonplanar_bevel_faces_and_other_styles_keep_their_triangles ... ok
+test tts::tests::fake_worker_is_reused_and_wav_bytes_are_copied_from_scoped_cache ... ok
+test tts::tests::canceled_request_cannot_surface_a_wav ... ok
+test tts::tests::rejected_enqueue_preserves_the_last_accepted_request ... ok
+test voxel::tests::long_terrace_creases_do_not_divot_at_cell_boundaries ... ok
+test renderer::tests::pose_measurements_preserve_translation_rotation_scale_and_asset_changes ... ok
+test renderer::ui_layout_tests::icon_geometry_is_centered_on_its_authored_target ... ok
+test tts::tests::superseding_request_discards_the_older_completion ... ok
+test tts::tests::unsolicited_worker_output_restarts_the_worker ... ok
+test renderer::tests::title_toys_contact_the_substrate_in_their_rendered_pose ... ok
+test renderer::tests::icon_instances_follow_title_parent_and_keep_unused_slots_hidden ... ok
+test voxel::tests::planar_reduction_preserves_closed_boundaries_normals_and_colors ... ok
+test voxel::tests::stepped_ellipsoids_remain_closed_after_beveling ... ok
+test renderer::tests::canonical_icon_cache_preserves_authored_attributes_and_positions ... ok
+test renderer::tests::shelter_opening_clears_the_head_and_crown_at_the_rest_anchor ... ok
+test renderer::tests::scenery_picking_leaves_plant_gaps_and_cave_openings_empty ... ok
+test ray_benchmark::headless_snapshot_contains_real_world_and_overlay_geometry ... ok
+test ray_shadow_index::retained_shadow_meshes_survive_relocation_and_invalidate_geometry_edits ... ok
+test ray_shadow_index::tests::indexed_geometry_key_reuses_transforms_but_invalidates_mesh_edits_and_membership ... ok
+test ray_shadow_maps::light_table_and_fit_are_finite_and_conservative ... ok
+
+test result: ok. 242 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 12.34s
+
+     Running unittests src/lib.rs (target/debug/deps/beastie_protocol-49e8be14f99d3c64)
+
+running 26 tests
+test tests::acoustic_confidence_is_bounded_fixed_point ... ok
+test tests::accepts_a_bounded_reply_with_an_offered_memory ... ok
+test tests::accepts_ordinary_unicode_reply_text ... ok
+test tests::authoritative_voice_changes_with_mood_but_is_stable_per_save ... ok
+test tests::core_interpretation_projects_only_resolved_meaning ... ok
+test tests::constrained_fallback_obeys_reply_bounds ... ok
+test tests::context_bounds_reject_oversized_turns_and_objects ... ok
+test tests::recognition_protocol_accepts_a_bounded_correlated_result ... ok
+test tests::progression_word_target_and_identity_voice_are_deterministic_and_bounded ... ok
+test tests::recognition_protocol_denies_unknown_fields_at_every_level ... ok
+test tests::recognition_protocol_rejects_bad_keys_text_and_correlation ... ok
+test tests::checked_in_fallback_diversity_fixture_is_deterministic ... ok
+test tests::old_dialogue_json_gets_empty_versioned_context ... ok
+test tests::fallback_pool_rotates_by_mood_and_repetition_without_inventing_facts ... ok
+test tests::rejects_an_unsupported_request_version ... ok
+test tests::belief_ids_supports_limits_and_expression_are_authoritative ... ok
+test tests::builds_a_grounded_request_from_real_world_memory ... ok
+test tests::rejects_empty_oversized_and_control_character_replies ... ok
+test tests::prohibited_player_text_is_removed_and_only_typed_rejection_remains ... ok
+test tests::rejects_invented_memory_references ... ok
+test tests::reply_fingerprint_normalizes_case_punctuation_and_whitespace ... ok
+test tests::relationship_dialogue_keeps_exact_subject_and_mode ... ok
+test tests::tts_reply_rejects_worker_paths_and_mismatched_ids ... ok
+test tests::tts_ready_and_error_replies_round_trip_with_flattened_status ... ok
+test tests::transcript_never_serializes_player_input_or_paths ... ok
+test tests::content_boundary_covers_every_prohibited_category_without_blunting_sharpness ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/beastie_session-0e2670e82a2d2677)
+
+running 49 tests
+test tests::deferred_utterance_expires_honestly_instead_of_seizing_the_body ... ok
+test tests::event_compaction_preserves_non_idempotent_order_and_multiplicity ... ok
+test tests::durable_save_rejects_invalid_version_and_request_id ... ok
+test tests::cooldown_only_speech_also_respects_new_direct_play ... ok
+test tests::deferred_utterance_rechecks_sleep_and_resentment_before_release ... ok
+test tests::drop_food_uses_normalized_position_and_emits_aquarium_events ... ok
+test tests::every_primary_verb_is_accepted ... ok
+test tests::ignored_speech_never_turns_recognition_into_a_talk ... ok
+test tests::autonomous_toy_interest_does_not_capture_cooldown_only_words ... ok
+test tests::completed_owner_does_not_let_unrelated_private_life_capture_waiting_words ... ok
+test tests::ignored_talk_cannot_farm_language_exposure_during_cooldown ... ok
+test tests::invalid_command_does_not_mutate_the_session ... ok
+test tests::infrastructure_failure_is_distinct_from_creature_refusal ... ok
+test tests::language_exposure_command_is_typed_and_carries_no_raw_content ... ok
+test tests::ignored_talk_is_silent_and_one_reaction_follow_up_is_emitted ... ok
+test tests::legacy_play_json_defaults_to_the_ball ... ok
+test tests::future_and_invalid_v1_saves_fail_without_mutating_a_live_session ... ok
+test tests::checkpoint_load_restores_state_without_rewinding_transport_sequence ... ok
+test tests::motivated_tick_emits_one_typed_initiated_dialogue_request ... ok
+test tests::newer_utterance_supersedes_deferred_text_without_cooldown_or_habit_mutation ... ok
+test tests::current_session_save_resumes_accepted_toy_with_exact_outcome_and_id ... ok
+test tests::current_session_save_resumes_refusal_stare_without_positive_outcome ... ok
+test tests::durable_mid_food_approach_resumes_with_identical_events ... ok
+test tests::prohibited_talk_input_is_normalized_before_request_serialization ... ok
+test tests::resentment_is_a_legible_refusal_for_typed_and_spoken_without_mutation ... ok
+test tests::occupied_glance_waits_for_the_exact_toy_boundary_without_interrupting ... ok
+test tests::recognized_speech_waits_out_cooldown_instead_of_being_lost ... ok
+test tests::completed_dialogue_persists_only_semantic_history_and_fingerprint ... ok
+test tests::sleeping_creature_ignores_typed_language_without_side_effects ... ok
+test tests::dialogue_projects_the_current_action_bound_subject_and_evidence ... ok
+test tests::ordinary_player_language_teaches_permitted_lanes_without_storing_raw_text ... ok
+test tests::save_and_load_restore_world_and_random_state ... ok
+test tests::deferred_transcript_is_episode_transient_and_fixed_tick_deterministic ... ok
+test tests::repeated_direct_replacement_keeps_original_language_expiry_and_care_immediate ... ok
+test tests::tick_preserves_subsecond_remainder ... ok
+test tests::uncertain_or_missing_words_never_reach_language_or_dialogue ... ok
+test tests::malformed_oversized_and_out_of_order_speech_reject_without_mutation ... ok
+test tests::spoken_notice_precedes_words_and_identical_text_has_identical_semantics ... ok
+test tests::version_one_fixture_migrates_without_inventing_offline_time ... ok
+test tests::migrated_v1_save_has_deterministic_future_continuation ... ok
+test tests::unknown_language_is_removed_before_typed_or_spoken_prompt_grounding ... ok
+test tests::session_v3_migrates_embedded_core_v5_without_inventing_toy_payoff ... ok
+test tests::spoken_lifecycle_replays_deterministically_and_raw_words_are_not_saved ... ok
+test tests::durable_save_resumes_in_a_new_process_once_and_preserves_request_ids ... ok
+test tests::save_observation_round_trips_in_a_fresh_session ... ok
+test tests::zero_offline_resume_preserves_future_rng_exactly ... ok
+test tests::talk_projects_real_berry_memories ... ok
+test tests::long_advance_coalesces_need_notifications_without_changing_simulation ... ok
+test tests::deferred_language_waits_for_replacement_play_refusal_and_food ... ok
+
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/beastie_view-85107589e54663b8)
+
+running 58 tests
+test tests::active_speech_keeps_its_caption_and_expiry_restores_compose_focus ... ok
+test tests::audible_speech_gets_attention_without_faking_a_reaction_when_ignored ... ok
+test tests::action_relationship_context_drives_food_recognition_until_the_direct_outcome ... ok
+test tests::broad_summary_never_exposes_exact_need_or_relationship_values ... ok
+test tests::coordinate_projection_matches_the_safe_3d_arena_and_clamps ... ok
+test tests::compose_focus_is_an_underlined_field_and_nameplate_fits_identity ... ok
+test tests::creature_rename_uses_compose_buffer_and_explicit_submit ... ok
+test tests::autonomous_play_does_not_dismiss_the_players_care_invitation ... ok
+test tests::aquarium_full_rejection_is_queued_visible_and_audible ... ok
+test tests::accessibility_preferences_materially_change_the_plan ... ok
+test tests::direct_reactions_preempt_stale_punctuation ... ok
+test tests::direct_food_outcome_cancels_bound_voice_before_playing_physical_sound ... ok
+test tests::bindings_surface_emits_typed_rebind_actions_and_capture_prompt ... ok
+test tests::autonomous_travel_and_play_have_matching_behavior_labels ... ok
+test tests::food_drop_mode_makes_open_water_one_semantic_target ... ok
+test tests::binding_rows_keep_focus_gutters_and_large_text_clear_of_navigation ... ok
+test tests::labeled_controls_remain_explained_during_controller_focus ... ok
+test tests::gaze_tracks_live_cursor_food_and_moving_toy_coordinates ... ok
+test tests::gaze_does_not_guess_missing_or_non_spatial_targets ... ok
+test tests::contextual_actions_keep_their_opening_anchor_while_the_creature_moves ... ok
+test tests::labeled_settings_hover_keeps_neighboring_values_visible ... ok
+test tests::microphone_states_are_legible_without_freezing_shared_space ... ok
+test tests::paired_rejections_and_comfort_emit_one_semantic_sound_each ... ok
+test tests::mouth_and_direct_expression_share_authoritative_timing ... ok
+test tests::multiline_caption_and_large_text_grow_within_the_water_stage ... ok
+test tests::mutable_toys_keep_catalogue_identity_and_real_position ... ok
+test tests::deterministic_plan_is_viewport_independent ... ok
+test tests::modal_hides_world_picking_and_controls_have_explicit_labels ... ok
+test tests::private_toy_responses_select_exact_owned_audio_and_cancel_at_the_boundary ... ok
+test tests::relationship_interrupt_preempts_stale_presentation_and_cave_settle_is_semantic ... ok
+test tests::repeated_same_channel_cues_do_not_accumulate ... ok
+test tests::same_channel_cues_replace_instead_of_leaving_residue ... ok
+test tests::quiet_compose_keeps_its_hit_target_and_care_guidance_yields_to_care ... ok
+test tests::persistent_bar_keeps_long_summary_input_and_icon_actions_disjoint ... ok
+test tests::rail_identity_stays_below_speech_and_modal_content ... ok
+test tests::each_private_recipe_retains_phase_and_requires_contact_for_prop_effects ... ok
+test tests::save_and_transcript_controls_are_semantic_and_reset_is_confirmed ... ok
+test tests::scene_preserves_continuous_authority_and_view_does_not_mutate_it ... ok
+test tests::microphone_hover_never_covers_existing_feedback_or_modal_controls ... ok
+test tests::short_large_caption_uses_the_actual_type_metrics ... ok
+test tests::spoken_receipt_chirps_once_and_talk_acceptance_stays_visual ... ok
+test tests::microphone_help_survives_disabled_hover_and_reachable_settings_focus ... ok
+test tests::short_caption_fits_content_and_keeps_all_reaction_targets ... ok
+test tests::speech_and_rename_text_explain_their_purpose ... ok
+test tests::title_has_only_real_navigation_and_no_care_targets ... ok
+test tests::toy_context_keeps_real_actions_in_a_small_nearby_card ... ok
+test tests::status_uses_the_summary_row_without_overlapping_modes_or_compose ... ok
+test tests::toy_card_avoids_nearby_toys_and_keeps_its_opening_anchor ... ok
+test ui_art::tests::drop_food_target_does_not_own_instruction_typography ... ok
+test ui_art::tests::action_sheets_have_equal_outer_gutters_and_clear_focus_rims ... ok
+test ui_art::tests::compose_input_and_header_keep_their_control_centers ... ok
+test tests::visible_settings_surface_exposes_every_accessibility_control ... ok
+test ui_art::tests::controller_name_entry_has_name_labels_and_submission ... ok
+test ui_art::tests::settings_pages_have_readable_distinct_control_regions ... ok
+test ui_art::tests::secondary_dialog_headers_and_binding_rows_align_with_their_controls ... ok
+test tests::ui_depth_bands_and_modal_hit_regions_are_unambiguous ... ok
+test ui_art::tests::settings_rows_share_a_vertical_center_without_centering_names_horizontally ... ok
+test tests::contextual_actions_open_clear_of_the_head_throughout_the_tank ... ok
+
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/generate_relationship_feel_fixtures.rs (target/debug/deps/generate_relationship_feel_fixtures-10220c6c982c0e53)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/xtask-4aec7bc955bbf863)
+
+running 73 tests
+test dialogue_eval::tests::evaluator_watchdog_covers_both_worker_attempts ... ok
+test feel::tests::descendant_snapshot_follows_ppid_across_distinct_groups ... ok
+test dialogue_eval::tests::worker_reply_reader_is_bounded_and_accepts_crlf ... ok
+test dialogue_eval::tests::report_labels_cannot_escape_the_report_directory ... ok
+test feel::tests::interaction_suite_includes_bounded_dialogue_race_capture ... ok
+test feel::tests::private_life_suite_captures_three_distinct_deterministic_temperaments ... ok
+test feel::tests::baseline_contains_every_required_experience_in_order ... ok
+test feel::tests::only_live_zero_frame_startup_is_retryable ... ok
+test feel::tests::relationship_breadth_is_a_separate_nonverbal_taste_pass ... ok
+test asset::tests::asset_paths_cannot_escape_root ... ok
+test feel::tests::native_visibility_rejects_even_a_single_blank_frame ... ok
+test feel::tests::canonical_capture_rejects_live_input_and_unknown_records ... ok
+test asset::tests::runtime_image_is_rejected_even_when_unlisted ... ok
+test feel::tests::relationship_suite_keeps_ai_on_and_off_runs_separate ... ok
+test feel::tests::timestamps_are_stable_and_millisecond_precise ... ok
+test feel::tests::required_motif_events_reject_wrong_subject_and_mode ... ok
+test feel::tests::relationship_scenario_duration_includes_wait_and_final_hold ... ok
+test feel_audio::tests::retained_source_verification_rejects_tampering_and_unsafe_hashes ... ok
+test asset::tests::legacy_sprite_manifest_is_rejected ... ok
+test feel_audio::tests::between_snapshot_playback_is_rejected_instead_of_silently_omitted ... ok
+test feel::tests::bad_conditions_requires_actual_failure_and_deferral_evidence ... ok
+test feel_audio::tests::missing_assets_and_reused_playback_ids_are_rejected ... ok
+test feel::tests::baseline_outcome_validation_rejects_the_old_deferred_refusal_race ... ok
+test feel_audio::tests::source_offset_survives_gain_changes_and_stops_at_asset_end ... ok
+test feel_audio::tests::cancellation_mute_duck_overlap_and_missing_output_reconstruct_exactly ... ok
+test packaging::tests::installed_size_ceiling_is_enforced_without_allocating_a_large_fixture ... ok
+test packaging::tests::missing_runtime_is_a_clear_failure ... ok
+test packaging::tests::executable_format_sanity_covers_every_release_platform ... ok
+test packaging::tests::platform_artifact_names_are_stable ... ok
+test packaging::tests::platform_layout_is_explicit ... ok
+test dialogue_eval::tests::scorer_rejects_extra_protocol_fields ... ok
+test packaging::tests::parses_the_checked_in_model_manifest ... ok
+test dialogue_eval::tests::scorer_flags_generic_assistant_voice ... ok
+test packaging::tests::sha256_matches_known_empty_digest ... ok
+test packaging::tests::sha256_matches_known_sentence_digest ... ok
+test dialogue_eval::tests::checked_in_dialogue_fixtures_pass ... ok
+test feel::tests::relationship_breadth_starting_saves_are_valid_and_derive_the_required_motif ... ok
+test feel::tests::relationship_breadth_scenarios_start_the_exact_required_context ... ok
+test asset::tests::repository_sound_and_fonts_satisfy_offline_contract ... ok
+test packaging::tests::stt_model_rejects_symlinked_components ... ok
+test packaging::tests::stt_model_rejects_missing_tampered_and_unexpected_components ... ok
+test store_assets::tests::cover_crop_fills_requested_dimensions ... ok
+test store_assets::tests::jpeg_encoder_writes_requested_dimensions ... ok
+test store_assets::tests::logo_layout_is_visible_on_thumbnail ... ok
+test store_assets::tests::sha256_matches_known_vector ... ok
+test packaging::tests::runtime_without_llama_server_is_rejected ... ok
+test stt_eval::tests::normalization_is_case_and_punctuation_insensitive ... ok
+test packaging::tests::runtime_without_llama_license_is_rejected ... ok
+test stt_eval::tests::word_error_rate_counts_insertions_deletions_and_substitutions ... ok
+test stt_eval::tests::worker_reply_reader_is_bounded_and_accepts_crlf ... ok
+test tests::adapter_errors_make_play_fail_after_emitting_jsonl ... ok
+test tests::fixture_reply_obeys_hatch_word_limit ... ok
+test tests::malformed_commands_emit_errors_and_do_not_stop_the_stream ... ok
+test stt_eval::tests::selection_schema_pins_the_complete_local_runtime ... ok
+test tests::simulation_day_uses_the_accelerated_active_day ... ok
+test tests::spoken_input_order_errors_have_stable_adapter_codes ... ok
+test packaging::tests::escaping_runtime_symlink_is_rejected ... ok
+test tests::talk_output_is_grounded_in_an_offered_memory ... ok
+test packaging::tests::wrong_platform_executable_is_rejected ... ok
+test packaging::tests::symlinked_asset_root_is_rejected ... ok
+test stt_eval::tests::checked_in_corpus_and_replies_are_complete_and_immutable ... ok
+test packaging::tests::safe_sibling_runtime_symlink_is_accepted ... ok
+test packaging::tests::platform_package_preserves_sibling_platforms ... ok
+test packaging::tests::embedded_stt_packages_without_an_external_engine ... ok
+test packaging::tests::package_check_rejects_tampered_file_hash ... ok
+test packaging::tests::package_check_requires_corresponding_espeak_source ... ok
+test packaging::tests::package_check_rejects_incomplete_tts_bundle ... ok
+test packaging::tests::package_check_rejects_symlinked_files_and_directories ... ok
+test packaging::tests::failed_staging_leaves_the_destination_retryable ... ok
+test packaging::tests::tts_inputs_must_be_complete_or_absent ... ok
+test packaging::tests::stt_inputs_must_be_complete_and_packaged_contents_are_checked ... ok
+test packaging::tests::package_check_requires_the_runtime_shape ... ok
+test feel::tests::contained_child_terminates_descendant_that_creates_its_own_group ... ok
+
+test result: ok. 73 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/stage5_acceptance.rs (target/debug/deps/stage5_acceptance-cca5bb8e844f0174)
+
+running 3 tests
+test visible_scenario_wraps_the_same_semantic_arc ... ok
+test aquarium_visible_scenario_wraps_the_same_semantic_arc ... ok
+test three_day_acceptance_arc_is_deterministic_and_grounded ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests beastie_ai_worker
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests beastie_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests beastie_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests beastie_session
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests beastie_view
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+dialogue fixtures: 27/27 cases passed
+STT fixtures: 11/11 passed, WER 0.000, keyword recall 1.000
+spoken-input replay passed: fixtures/scenarios/spoken-input-foundation.jsonl
+warning: linker stderr: ld: __eh_frame section too large (max 16MB) to encode dwarf unwind offsets in compact unwind table, performance of exception handling might be affected
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `beastie-game` (bin "beastie-game") generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s

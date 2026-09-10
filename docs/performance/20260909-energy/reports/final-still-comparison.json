@@ -1,0 +1,650 @@
+[
+  {
+    "group": "gold",
+    "name": "continued.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1153,
+    "pixels_over_8": 389,
+    "maximum_255": 20,
+    "mae_255": 0.0026345486111111114,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "2b9ff7d2973d2371f92760677a140f87da850563d1048e02f54f826a47532155",
+    "after_sha256": "ed85c0ced5f1c5be7bed60a9b83b117877346fbe25bbcb77ed99dcaa37b43a67"
+  },
+  {
+    "group": "gold",
+    "name": "gameplay.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1153,
+    "pixels_over_8": 389,
+    "maximum_255": 20,
+    "mae_255": 0.0026345486111111114,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "2b9ff7d2973d2371f92760677a140f87da850563d1048e02f54f826a47532155",
+    "after_sha256": "ed85c0ced5f1c5be7bed60a9b83b117877346fbe25bbcb77ed99dcaa37b43a67"
+  },
+  {
+    "group": "gold",
+    "name": "selected-toy.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1153,
+    "pixels_over_8": 389,
+    "maximum_255": 20,
+    "mae_255": 0.0026345486111111114,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "e81b44426fa36216fa760af3b6b39b52df95e56d86bd6f50fcab24998931f79b",
+    "after_sha256": "bc8ec33c06d96ee05e471da544552bf03d105ccda951583791a0a000a03ddb8f"
+  },
+  {
+    "group": "gold",
+    "name": "settings-large.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 917,
+    "pixels_over_8": 311,
+    "maximum_255": 16,
+    "mae_255": 0.00206372170781893,
+    "worst_xy": [
+      666,
+      424
+    ],
+    "before_sha256": "c1265092717623e83b1803bb9af6254ff61977adb736eace91f313d20d5b250d",
+    "after_sha256": "d6a6b7aea600ab3be5a4d76350d54f42470b554ad9b235f34e8fe3a7a2df88fa"
+  },
+  {
+    "group": "gold",
+    "name": "settings-sound.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 917,
+    "pixels_over_8": 311,
+    "maximum_255": 16,
+    "mae_255": 0.00206372170781893,
+    "worst_xy": [
+      666,
+      424
+    ],
+    "before_sha256": "959f0e4355e79d483da44fa1ddaf64414f0c9bd8f055ac025b598339ef5fb1a2",
+    "after_sha256": "4f010fb00aa5a0083ccf62f7a9b1a0b448910538879b87f756e3f46e1fe600db"
+  },
+  {
+    "group": "gold",
+    "name": "settings.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 917,
+    "pixels_over_8": 311,
+    "maximum_255": 16,
+    "mae_255": 0.00206372170781893,
+    "worst_xy": [
+      666,
+      424
+    ],
+    "before_sha256": "801ae2a85c8fea91e452fd05af1b988c213a880fcf6570d6197a933df7fdef94",
+    "after_sha256": "0884bd809b3499cf1ecfb39513773ae82a7cf54421b5fdd7496252b8fff71ec5"
+  },
+  {
+    "group": "gold",
+    "name": "title-return.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 824,
+    "pixels_over_8": 298,
+    "maximum_255": 49,
+    "mae_255": 0.002021283436213992,
+    "worst_xy": [
+      539,
+      412
+    ],
+    "before_sha256": "72972d61036bc11a68292f990b14735dbd326733b44f47e44d9081fdc80c964a",
+    "after_sha256": "7aaf32f3bff1e91b3abbb2e06b0b558b8d54ab029e469f2e653220b8d5ee8186"
+  },
+  {
+    "group": "gold",
+    "name": "title-screen.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 879,
+    "pixels_over_8": 317,
+    "maximum_255": 49,
+    "mae_255": 0.002192001028806584,
+    "worst_xy": [
+      539,
+      412
+    ],
+    "before_sha256": "72972d61036bc11a68292f990b14735dbd326733b44f47e44d9081fdc80c964a",
+    "after_sha256": "08ad5841d6af342ad3a9be74da277fb295dd64de01ff7b604d8ec45e33b360af"
+  },
+  {
+    "group": "ui",
+    "name": "large-bindings.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 29,
+    "pixels_over_8": 4,
+    "maximum_255": 13,
+    "mae_255": 5.1279578189300414e-05,
+    "worst_xy": [
+      666,
+      789
+    ],
+    "before_sha256": "e71b6c810b0a29ba946c2610aabcfbbcb4625a4682231ed1e97d4a3437fc9d62",
+    "after_sha256": "17d90481958add5cde4a094317338051b524a4858bd34d8202298fc5effc2763"
+  },
+  {
+    "group": "ui",
+    "name": "large-comfort.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 917,
+    "pixels_over_8": 311,
+    "maximum_255": 16,
+    "mae_255": 0.00206372170781893,
+    "worst_xy": [
+      666,
+      424
+    ],
+    "before_sha256": "d4c6b8eb3250fe626670b6f1b3e33612162b0e138cf3eafdc08a832d63e317de",
+    "after_sha256": "e42f24935e06156e68b1f06365867a21e4c37537a1a7ef4cf90a9460db25a589"
+  },
+  {
+    "group": "ui",
+    "name": "large-context.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1014,
+    "pixels_over_8": 362,
+    "maximum_255": 16,
+    "mae_255": 0.0023154578189300413,
+    "worst_xy": [
+      666,
+      424
+    ],
+    "before_sha256": "c6c48107797ff613e937bfd1ee01e401b531fdbbefd25869b8b4bddd9c9c8357",
+    "after_sha256": "1bce4ab4ef35f4d23a16bf869979b7837f20019d3bd1b08819052df66410cb5c"
+  },
+  {
+    "group": "ui",
+    "name": "large-controls.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 917,
+    "pixels_over_8": 311,
+    "maximum_255": 16,
+    "mae_255": 0.00206372170781893,
+    "worst_xy": [
+      666,
+      424
+    ],
+    "before_sha256": "100b05705969853f0de646e6ffb03976503f7763af68a22cf961ea713aa096f2",
+    "after_sha256": "821a57207b70d0f65c22c052915e2ef80619a62e1e92107254452f6d4efb7823"
+  },
+  {
+    "group": "ui",
+    "name": "large-data.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 63,
+    "pixels_over_8": 12,
+    "maximum_255": 20,
+    "mae_255": 0.00013503086419753085,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "814562f3394b6646795caac5bc17bc248a2da38b26e092a4011c99573fe9af4b",
+    "after_sha256": "09006935e3f1cea9bcef8b9d4ebb5fc5ed89b441e1d89cc037dd536f80aaaecf"
+  },
+  {
+    "group": "ui",
+    "name": "large-drop.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1153,
+    "pixels_over_8": 389,
+    "maximum_255": 20,
+    "mae_255": 0.0026345486111111114,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "a6b3b80f16b3a8fd63f924e39e41cd423c5f6cfb21b3e0ab3494a49710ca7a09",
+    "after_sha256": "a2f91171a41896e5248ad0c27fb66c27e4b35a1f973e888a27b5cd5458721349"
+  },
+  {
+    "group": "ui",
+    "name": "large-food.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1065,
+    "pixels_over_8": 372,
+    "maximum_255": 20,
+    "mae_255": 0.0024228395061728397,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "deadc9d736446d419f99d052a95016daab52992e6199097beafd54855f5f650d",
+    "after_sha256": "014daf079ee6158d04fd4da0878705e7ad02f620f4316d59f033de29b45b9be8"
+  },
+  {
+    "group": "ui",
+    "name": "large-keyboard.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 57,
+    "pixels_over_8": 12,
+    "maximum_255": 20,
+    "mae_255": 0.00012297453703703702,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "c072aff4030517de9ea1ae81e96572e0140dd2e4615ebc09f6fd0096ab870c4b",
+    "after_sha256": "9ab7e8ed6a5d1df05fb90cc4d82b3ba396a4fcc015668438170c618b9c575bb2"
+  },
+  {
+    "group": "ui",
+    "name": "large-quiet.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1153,
+    "pixels_over_8": 389,
+    "maximum_255": 20,
+    "mae_255": 0.0026345486111111114,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "a4077389210108f9043c270ca071e86e1a0eb1f374fe8603a57e87452d9c8bb7",
+    "after_sha256": "f9d4a1c1f6c2d551769a2175b0b6dc3c425bb35ebcb7779c51414bd4c1c9938e"
+  },
+  {
+    "group": "ui",
+    "name": "large-rename.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1153,
+    "pixels_over_8": 389,
+    "maximum_255": 20,
+    "mae_255": 0.0026345486111111114,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "ece7566e9c322986d698acc8380a060055636029578e3e111acb4d3efe7847b3",
+    "after_sha256": "9ee7c89523aa01231df43952f3b1e3b2e8243bc5853b2261a5bcdbfbc0d2431d"
+  },
+  {
+    "group": "ui",
+    "name": "large-reset.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 102,
+    "pixels_over_8": 14,
+    "maximum_255": 20,
+    "mae_255": 0.00021010159465020576,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "485c1d134a6ac20bff4e73b4aa4b16b76bde05688d62bb735cb23f8b4d1badb2",
+    "after_sha256": "a0b3d93ac7646b13e8ab8962ed6a8c2c06259e3696362e40399a9f133f50dac5"
+  },
+  {
+    "group": "ui",
+    "name": "large-sound.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 917,
+    "pixels_over_8": 311,
+    "maximum_255": 16,
+    "mae_255": 0.00206372170781893,
+    "worst_xy": [
+      666,
+      424
+    ],
+    "before_sha256": "c1265092717623e83b1803bb9af6254ff61977adb736eace91f313d20d5b250d",
+    "after_sha256": "d6a6b7aea600ab3be5a4d76350d54f42470b554ad9b235f34e8fe3a7a2df88fa"
+  },
+  {
+    "group": "ui",
+    "name": "large-speech.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1212,
+    "pixels_over_8": 464,
+    "maximum_255": 18,
+    "mae_255": 0.0029362782921810698,
+    "worst_xy": [
+      1013,
+      354
+    ],
+    "before_sha256": "7d009771ad8dc0c4ed6accbf4ca3e263abc57f3d275dee1fa14ed7b228fbe9f0",
+    "after_sha256": "9b0d42f6162c72af8d11d714b2a8a7bee1bdc8ee87e82a62bce231ced3f3e1ca"
+  },
+  {
+    "group": "ui",
+    "name": "large-toys.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1065,
+    "pixels_over_8": 372,
+    "maximum_255": 20,
+    "mae_255": 0.0024228395061728397,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "18b71345042700f8fbe08eaf012f7a9a02ca50a3a2883d4c894c7c2040279bfc",
+    "after_sha256": "e93e805c105bba1d7303a1a42c9a3cd6e5024cbdbefc09389fb2bac8813e1c50"
+  },
+  {
+    "group": "ui",
+    "name": "normal-bindings.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 29,
+    "pixels_over_8": 4,
+    "maximum_255": 13,
+    "mae_255": 5.1279578189300414e-05,
+    "worst_xy": [
+      666,
+      789
+    ],
+    "before_sha256": "9ebb5f76b5186a6f656f492c3ff0bfbbf1c94d7efab21b9de6af50675f46e755",
+    "after_sha256": "5a3b2611192326ab7e68c64109ac60e219dcb53d3f03248023105aee0732b40a"
+  },
+  {
+    "group": "ui",
+    "name": "normal-comfort.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 917,
+    "pixels_over_8": 311,
+    "maximum_255": 16,
+    "mae_255": 0.00206372170781893,
+    "worst_xy": [
+      666,
+      424
+    ],
+    "before_sha256": "801ae2a85c8fea91e452fd05af1b988c213a880fcf6570d6197a933df7fdef94",
+    "after_sha256": "0884bd809b3499cf1ecfb39513773ae82a7cf54421b5fdd7496252b8fff71ec5"
+  },
+  {
+    "group": "ui",
+    "name": "normal-context.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1014,
+    "pixels_over_8": 362,
+    "maximum_255": 16,
+    "mae_255": 0.0023154578189300413,
+    "worst_xy": [
+      666,
+      424
+    ],
+    "before_sha256": "e4e263ee124050a7ee56476be56ca0d8dc91b248184635304f2db6bd3246909f",
+    "after_sha256": "7a8d2c936786b9d9a0c5aee262f266bbb9053b9b39dfc6b34a88d527058fc83d"
+  },
+  {
+    "group": "ui",
+    "name": "normal-controls.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 917,
+    "pixels_over_8": 311,
+    "maximum_255": 16,
+    "mae_255": 0.00206372170781893,
+    "worst_xy": [
+      666,
+      424
+    ],
+    "before_sha256": "c64f51b38abaaba04c38f6cdc5a53e01c0304425150bf25d2e93e20afb95a1bc",
+    "after_sha256": "e9c489860fa1578e4ba259c0f58c6649e9b7a357313e6e56f35acee023ae06d6"
+  },
+  {
+    "group": "ui",
+    "name": "normal-data.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 63,
+    "pixels_over_8": 12,
+    "maximum_255": 20,
+    "mae_255": 0.00013503086419753085,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "bbe8417d1decd0833fa935b6e5d20c59725cc21e7f0dcf601ce87ad6d01fc2c3",
+    "after_sha256": "982511dba7243da06bd15839d9f51ee61c4e0848526376bc1d0101d317309db2"
+  },
+  {
+    "group": "ui",
+    "name": "normal-drop.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1153,
+    "pixels_over_8": 389,
+    "maximum_255": 20,
+    "mae_255": 0.0026345486111111114,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "f132aa457ed9ad1f9219a2998882f3b7c5f2c74f49215a3e4d9fd2e8a1029e5a",
+    "after_sha256": "b704b73daf8087505e8e0712f2c45e63efca80dc7b439cc6869a00023a039875"
+  },
+  {
+    "group": "ui",
+    "name": "normal-food.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1065,
+    "pixels_over_8": 372,
+    "maximum_255": 20,
+    "mae_255": 0.0024228395061728397,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "16b1100d2dcbd3c1cb08e4c146002b6cb2d785de722092d56987fc34f102867c",
+    "after_sha256": "68525915e911514243b338dcfc67a34fc59eb6c82d29f08518cce0b6b5a2c23b"
+  },
+  {
+    "group": "ui",
+    "name": "normal-keyboard.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 57,
+    "pixels_over_8": 12,
+    "maximum_255": 20,
+    "mae_255": 0.00012297453703703702,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "3297c3d57eca7cbaebf915b2c0ced86fdd05409d9fcbdb7bb151107407e496a9",
+    "after_sha256": "83e282f105efb25b108d1b3c420cbeaa8afd9cbf7549bb2dd6738f795011c931"
+  },
+  {
+    "group": "ui",
+    "name": "normal-quiet.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1153,
+    "pixels_over_8": 389,
+    "maximum_255": 20,
+    "mae_255": 0.0026345486111111114,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "2b9ff7d2973d2371f92760677a140f87da850563d1048e02f54f826a47532155",
+    "after_sha256": "ed85c0ced5f1c5be7bed60a9b83b117877346fbe25bbcb77ed99dcaa37b43a67"
+  },
+  {
+    "group": "ui",
+    "name": "normal-rename.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1153,
+    "pixels_over_8": 389,
+    "maximum_255": 20,
+    "mae_255": 0.0026345486111111114,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "6f9b9b92d4f3b31e83396c523b49f376b8931b4f7e810b0d0b703b97a05b29fd",
+    "after_sha256": "39944a47b8218c46a23561fe173b9fe9e53b6dda0eb943962843c7e2b02924d8"
+  },
+  {
+    "group": "ui",
+    "name": "normal-reset.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 102,
+    "pixels_over_8": 14,
+    "maximum_255": 20,
+    "mae_255": 0.00021010159465020576,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "e91dfee3f9b0b630b23c11e9fbd2dc3ce72a5b80a93761b1d8300a3beb5b396d",
+    "after_sha256": "165750dd3105f7e1bec4b017448cf2df77abc32692efde3874266337989f1dc5"
+  },
+  {
+    "group": "ui",
+    "name": "normal-sound.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 917,
+    "pixels_over_8": 311,
+    "maximum_255": 16,
+    "mae_255": 0.00206372170781893,
+    "worst_xy": [
+      666,
+      424
+    ],
+    "before_sha256": "959f0e4355e79d483da44fa1ddaf64414f0c9bd8f055ac025b598339ef5fb1a2",
+    "after_sha256": "4f010fb00aa5a0083ccf62f7a9b1a0b448910538879b87f756e3f46e1fe600db"
+  },
+  {
+    "group": "ui",
+    "name": "normal-speech.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1215,
+    "pixels_over_8": 464,
+    "maximum_255": 18,
+    "mae_255": 0.0029419045781893007,
+    "worst_xy": [
+      1013,
+      354
+    ],
+    "before_sha256": "b90449c9fb5277263401dd7d89408eeeb76c0d32657120d5dd289ac18c4c7afa",
+    "after_sha256": "bf6b72ffb5191fd555d6678667920c16c131b25b76eb1415df6c3f3ade86263f"
+  },
+  {
+    "group": "ui",
+    "name": "normal-toys.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "different_rgb_pixels": 1065,
+    "pixels_over_8": 372,
+    "maximum_255": 20,
+    "mae_255": 0.0024228395061728397,
+    "worst_xy": [
+      1506,
+      783
+    ],
+    "before_sha256": "e6303d4d888ac298df32987eb186218394189393b94050304a2a7d2665f9ac7b",
+    "after_sha256": "ca8a7ab55a0d062ace3076bd537abd62724d2540cbfbc64f2914e5ca28bffead"
+  }
+]

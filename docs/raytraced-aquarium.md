@@ -75,13 +75,31 @@ bounce candidates remain current. Camera, geometry, material, visibility, member
 changes invalidate the appropriate records. Equal-distance bounce ambiguity retains original
 full-world traversal. Binding limits reduce cached coverage records rather than lighting samples.
 
-Dynamic shadow visibility uses twelve 1024² depth maps at validated viewports up to 1920×1080,
-with the original light vectors, receiver offsets and refinement order. Current caster bounds fit
-the projections each frame. This introduces small sampled shadow-edge differences, accepted in
-native stills and motion; it is not exact static-cache equivalence. Larger viewports, unavailable
-capabilities and pipeline warmup retain the shared ray path. A finite-distance ambiguity also
-traces the original ray. No temporal shadow filtering, RTX feature or vendor-specific shader is
-required. The 48 MiB map allocation trades storage for measured throughput.
+Shadow visibility retains the original twelve light vectors, receiver offsets and refinement
+order. Dynamic casters draw into a single 4×3 depth atlas; static casters use persistent depth maps
+only for moving receivers. Stationary receivers retain exact static-ray caches. Current caster
+bounds fit dynamic projections each frame; static revision and density changes rebuild static maps.
+Map sizes follow the uniformly fitted scene's pixel density, from 512/256 dynamic/static at
+640×360 to 1024/512 at 1080p and 2048/1024 at 4K. Depth16 storage is respectively 7.5, 30 and
+120 MiB. Wider or taller margins do not increase the scene's density. Viewports above 3840×2160,
+unavailable capabilities and pipeline warmup retain rays. Both map helpers trace the original ray
+within one depth quantum of the finite 35-unit limit, preserving that boundary decision.
+
+Shadow-only geometry welds bit-identical reconstructed positions and simplifies with an absolute
+0.002-world-unit metric budget, border locking and a conservative transform cap. This is an
+approximation validated by image and motion comparisons, not a geometric distance certificate.
+Original indices remain available for transforms beyond the cap; visible meshes retain their full
+geometry. One background task prepares replacement indices, and the current original triangle
+stream draws while it is pending. Stale results cannot replace current geometry. The CPU mesh cache
+owns immutable source identities. On preparation completion, LRU pruning preserves active meshes
+and evicts inactive entries toward 32 MiB/128 meshes, accounting for vector capacities and retained
+sources. Cached data survives idle or disabled intervals; this is not a global cap. The standard
+active set accounts for 34.67 MiB, including source triangles shared with the scene; transient
+staging is additional. Its indexed GPU buffers use approximately 5.03 MB.
+
+These maps introduce sparse sampled shadow-edge differences; they are not exact static-cache
+equivalence. No temporal filtering, RTX feature or vendor-specific shader is required. The
+[energy review](renderer-energy.md) records the experiments, visual evidence and tradeoffs.
 
 Skin uses authored soft fill, and UI inlays use controlled studio illumination within the same ray
 shader. No physical glass/refraction or true subsurface transport is claimed. The gold-reference pass

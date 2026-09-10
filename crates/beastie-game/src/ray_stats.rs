@@ -12,7 +12,6 @@ use std::{
 
 use bevy::{
     app::AppExit,
-    diagnostic::{DiagnosticMeasurement, DiagnosticsStore},
     platform::time::Instant,
     prelude::*,
     render::{render_resource::ShaderType, renderer::RenderAdapterInfo},
@@ -28,9 +27,8 @@ pub struct RayStatsPlugin(pub Option<PathBuf>, pub bool);
 impl Plugin for RayStatsPlugin {
     fn build(&self, app: &mut App) {
         if let Some(path) = &self.0 {
-            if !app.is_plugin_added::<bevy::render::diagnostic::RenderDiagnosticsPlugin>() {
-                app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
-            }
+            // Bevy's diagnostic frame pool grows when readbacks fall behind.
+            // Our bounded timestamp slots provide all GPU measurements below.
             let gpu = ComputeGpuTiming::default();
             app.insert_resource(gpu.clone());
             if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
@@ -57,7 +55,6 @@ struct FrameMeasurements {
     path: PathBuf,
     uncapped: bool,
     probe: crate::args::RenderProbe,
-    ray_passes: BTreeMap<String, PassMeasurements>,
     compute_gpu: PassMeasurements,
     gpu_passes: BTreeMap<&'static str, PassMeasurements>,
     cpu_phases: BTreeMap<&'static str, PassMeasurements>,
@@ -95,6 +92,11 @@ struct ShadowMapReport {
     resolution: u32,
     texture_allocated_bytes: u64,
     uniform_allocated_bytes: u64,
+    static_map_bytes: u64,
+    static_map_resolution: u32,
+    indexed_shadow_bytes: u64,
+    dynamic_atlas: bool,
+    depth_bits: u64,
 }
 
 struct GpuSample {
@@ -143,22 +145,38 @@ impl ComputeGpuTiming {
         &self,
         enabled: bool,
         reason: &'static str,
+        resolution: u32,
         texture_allocated_bytes: u64,
         uniform_allocated_bytes: u64,
     ) {
         *self.shadow_maps.lock().unwrap() = Some(ShadowMapReport {
             enabled,
             reason,
-            resolution: if enabled {
-                crate::ray_shadow_maps::RESOLUTION
-            } else {
-                0
-            },
+            resolution,
             texture_allocated_bytes,
             uniform_allocated_bytes,
+            static_map_bytes: 0,
+            static_map_resolution: 0,
+            indexed_shadow_bytes: 0,
+            dynamic_atlas: false,
+            depth_bits: crate::ray_static_maps::DEPTH_BYTES * 8,
         });
     }
 
+    pub(crate) fn observe_shadow_storage(
+        &self,
+        static_map_bytes: u64,
+        static_map_resolution: u32,
+        indexed_shadow_bytes: u64,
+        dynamic_atlas: bool,
+    ) {
+        if let Some(report) = self.shadow_maps.lock().unwrap().as_mut() {
+            report.static_map_bytes = static_map_bytes;
+            report.static_map_resolution = static_map_resolution;
+            report.indexed_shadow_bytes = indexed_shadow_bytes;
+            report.dynamic_atlas = dynamic_atlas;
+        }
+    }
     pub(crate) fn cpu_span(&self, name: &'static str) -> CpuPhaseSpan {
         CpuPhaseSpan {
             name,
@@ -337,27 +355,14 @@ fn collect_compute_timings(
     }
 }
 
-/// Bevy asynchronously publishes diagnostic frames. A frame without a new result
-/// must not repeat the last timing, and GPU and wall sample counts need not match.
+/// Each queued CPU or GPU sample is consumed once; pass and wall counts can differ.
 #[derive(Default)]
 struct PassMeasurements {
-    last_timestamp: Option<Instant>,
     samples_seen: u64,
     milliseconds: Vec<f64>,
 }
 
 impl PassMeasurements {
-    fn include(&mut self, measurement: &DiagnosticMeasurement) {
-        if self
-            .last_timestamp
-            .is_some_and(|last| measurement.time <= last)
-        {
-            return;
-        }
-        self.last_timestamp = Some(measurement.time);
-        self.include_value(measurement.value);
-    }
-
     fn include_value(&mut self, value: f64) {
         self.samples_seen += 1;
         if self.samples_seen > WARMUP_FRAMES && value.is_finite() && value > 0.0 {
@@ -488,7 +493,6 @@ fn record_and_finish(
     ready: Res<crate::raytrace::RayReady>,
     scene: Res<RayScene>,
     adapter: Option<Res<RenderAdapterInfo>>,
-    diagnostics: Res<DiagnosticsStore>,
     mut measurements: ResMut<FrameMeasurements>,
     mut exits: MessageReader<AppExit>,
 ) {
@@ -497,19 +501,6 @@ fn record_and_finish(
     }
     if let Some(started) = measurements.startup_started.take() {
         measurements.renderer_ready_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
-    }
-    for diagnostic in diagnostics.iter() {
-        let path = diagnostic.path().as_str();
-        if path.contains("/ray_trace/")
-            && (path.ends_with("/elapsed_gpu") || path.ends_with("/elapsed_cpu"))
-            && let Some(sample) = diagnostic.measurement()
-        {
-            measurements
-                .ray_passes
-                .entry(path.to_owned())
-                .or_default()
-                .include(sample);
-        }
     }
     measurements.frames_seen += 1;
     measurements.peak_scene.include(&scene);
@@ -545,12 +536,8 @@ fn record_and_finish(
         gpu_framebuffer_nominal_bytes: measurements.gpu_framebuffer_nominal_bytes,
         shadow_maps: measurements.shadow_maps.clone(),
         viewport_pixels: measurements.viewport_pixels,
-        ray_pass_measurement: "Independent asynchronous diagnostic samples; first 30 unique samples per path excluded. elapsed_gpu is hardware timestamp duration; elapsed_cpu is command recording duration. Missing GPU paths or available=false mean unavailable; zero timestamps are discarded. compute_gpu aliases gpu_passes.compute. Named GPU passes use separate query sets and resolve only after submission completion; pass durations can overlap and percentiles must not be summed. Presentation and readbacks still in flight at exit are excluded.",
-        ray_passes: measurements
-            .ray_passes
-            .iter()
-            .map(|(path, samples)| (path.clone(), samples.report()))
-            .collect(),
+        ray_pass_measurement: "Legacy Bevy ray_passes diagnostics are disabled and unavailable: their unbounded frame query pool is redundant with our bounded custom collection. ray_passes remains empty for JSON compatibility. compute_gpu aliases gpu_passes.compute. Custom named GPU passes use separate query sets and resolve after submission completion; first 30 samples per pass are excluded and invalid/zero timestamps are discarded. Pass durations can overlap and percentiles must not be summed. Presentation and readbacks still in flight at exit are excluded.",
+        ray_passes: BTreeMap::new(),
         percentile_method: "nearest rank",
         warmup_frames: WARMUP_FRAMES.min(measurements.frames_seen),
         total_frames: measurements.frames_seen,
@@ -590,7 +577,7 @@ fn percentile(sorted: &[f64], percentage: usize) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DiagnosticMeasurement, Instant, PassMeasurements, WARMUP_FRAMES, percentile};
+    use super::{PassMeasurements, WARMUP_FRAMES, percentile};
 
     #[test]
     fn cpu_phase_guard_records_early_returns_once_without_a_gpu() {
@@ -614,28 +601,26 @@ mod tests {
     }
 
     #[test]
-    fn asynchronous_samples_skip_stale_results_and_warm_up_independently() {
+    fn reporting_uses_bounded_custom_collection_without_bevy_query_pool() {
+        let mut app = bevy::prelude::App::new();
+        app.add_plugins(super::RayStatsPlugin(
+            Some("unused-report.json".into()),
+            false,
+        ));
+        assert!(app.world().contains_resource::<super::ComputeGpuTiming>());
+        assert!(!app.is_plugin_added::<bevy::render::diagnostic::RenderDiagnosticsPlugin>());
+    }
+
+    #[test]
+    fn independent_pass_samples_apply_warmup_and_reject_invalid_values() {
         let mut samples = PassMeasurements::default();
-        let start = Instant::now();
         for frame in 0..WARMUP_FRAMES + 2 {
-            let sample = DiagnosticMeasurement {
-                time: start + std::time::Duration::from_millis(frame),
-                value: frame as f64,
-            };
-            samples.include(&sample);
-            samples.include(&sample);
+            samples.include_value(frame as f64);
         }
-        samples.include(&DiagnosticMeasurement {
-            time: start,
-            value: 999.0,
-        });
         assert_eq!(samples.samples_seen, 32);
         assert_eq!(samples.milliseconds, [30.0, 31.0]);
         assert_eq!(samples.report().p95_ms, Some(31.0));
-        samples.include(&DiagnosticMeasurement {
-            time: start + std::time::Duration::from_secs(1),
-            value: f64::NAN,
-        });
+        samples.include_value(f64::NAN);
         assert_eq!(samples.report().measured_samples, 2);
     }
 

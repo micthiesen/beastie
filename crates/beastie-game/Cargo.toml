@@ -11,6 +11,7 @@ default = []
 experimental-gpl-tts = []
 
 [dependencies]
+meshopt = "=0.6.2"
 beastie-core = { path = "../beastie-core" }
 beastie-protocol = { path = "../beastie-protocol" }
 beastie-session = { path = "../beastie-session" }

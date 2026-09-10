@@ -1,0 +1,74 @@
+[
+  {
+    "name": "fullscreen-toggle-1.png",
+    "size": [
+      3024,
+      1898
+    ],
+    "sha256": "bf6dad371cde4706fca62e7f640d04aff5d622f8821a5b2c28d382a33a03e0b6"
+  },
+  {
+    "name": "fullscreen-toggle-2.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "sha256": "ccd022b010170f315c5a3c3b98545e7c0db629850a3a4188faa83041ee5b198d"
+  },
+  {
+    "name": "initial-size.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "sha256": "d98448a006c118f19093832724d58fbccb3a04097afa3485f84d80d958af9cc2"
+  },
+  {
+    "name": "size-cycle-1.png",
+    "size": [
+      2560,
+      1440
+    ],
+    "sha256": "b85d84caee7b445db34f0868f065c243ad8ceb5d3449826187243e5ec6dd6339"
+  },
+  {
+    "name": "size-cycle-2.png",
+    "size": [
+      3200,
+      1800
+    ],
+    "sha256": "03776c97cfe7e3d6a8bd18d9a14b832438e7750d15a35bcebb9e5fa159ac4d1b"
+  },
+  {
+    "name": "size-cycle-3.png",
+    "size": [
+      3840,
+      2160
+    ],
+    "sha256": "2d9e6f9d1429ee601dcc4a97c861819e320a0abe3eeebf8247b575268a6e21d4"
+  },
+  {
+    "name": "size-cycle-4.png",
+    "size": [
+      640,
+      360
+    ],
+    "sha256": "310ab7d1e2d998a803c6865b8e9d88d097f7beb68a71bdc40a6cf934fcfeeb64"
+  },
+  {
+    "name": "size-cycle-5.png",
+    "size": [
+      1280,
+      720
+    ],
+    "sha256": "f13b794c514f1d58ab7c92c9babe87f4775b51ec3e06147812540bbc50bd78a2"
+  },
+  {
+    "name": "size-cycle-6.png",
+    "size": [
+      1920,
+      1080
+    ],
+    "sha256": "a89e37cd68548677f949826724d3a77801de690c65c64d3e7bd64e0710165f89"
+  }
+]

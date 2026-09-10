@@ -4,53 +4,60 @@ Last updated: **2026-09-09**.
 
 ## Now
 
-- Beastie is the game and title brand; Mop is the default creature name. The deterministic,
-  offline creature simulation and declarative scene remain authoritative.
-- The renderer combines hardware raster visibility, shared compute lighting, exact static
-  shadow/bounce caches, compact lossless surface data and retained UI label geometry.
-  Twelve 1024² dynamic shadow maps accelerate validated viewports through 1920×1080;
-  larger views and capability limits retain original rays. No RTX requirement or backend fork.
-- On M5 Max/Metal at 1080p, corrected bounded GPU batches measure 2.075 ms/frame, with a
-  1.879 ms warmed completion median. Matched native UI wall p99 is 8.684 ms versus 17.047 ms
-  for the first-pass baseline. A 92.775-second sustained run has p99 8.687 ms, max 9.863 ms
-  and no frame above 33 ms. GPU throughput and native presentation cadence are distinct.
-- Retained geometry is 75.88 MB versus 138.60 MB, but intermediate storage is 201.71 MB and
-  measured process footprint increases. The [efficiency review](renderer-efficiency.md)
-  records memory/startup tradeoffs, methodology, rejected experiments and reproducible evidence.
-- Final verification passes 596 tests plus dialogue/STT fixtures and replay. Explicit GPU
-  traversal/cache/map/fallback checks pass. Fresh evidence covers 36 still states and 504 motion
-  frames with exact semantic traces. Small raster/shadow-edge differences are visually accepted;
-  images are not bit-identical. Native coverage remains M5 Max/Metal.
-- `cargo xtask dev` now uses optimized `dev-perf` with assertions and overflow checks.
-  Use `--profile dev` for unoptimized debugging. No release bundle or model bundle was rebuilt.
+- Beastie remains an offline, deterministic creature game. Simulation owns facts;
+  the model supplies expression, and the game works without inference or speech.
+- The renderer combines raster visibility and shared compute lighting with exact
+  static caches, persistent static shadow maps, a twelve-view dynamic shadow atlas,
+  indexed shadow-only LOD and background geometry preparation. Visible meshes and
+  foreground animation cadence retain their detail. Ordinary GPU support requires
+  no RTX hardware or vendor-specific renderer.
+- The latest paired M5 Max/Metal runs reduce 1080p GPU throughput time by about 32%
+  beyond `41c7006`, to 1.50–1.51 ms/frame. Matched ordinary task CPU energy falls
+  about 33%; hidden-only 10 Hz pacing cuts hidden task CPU energy about 85%.
+  Matched native p99 remains about 9.2 ms; 22,324 final measured frames include
+  none above 16 ms. Process footprint increases despite lower GPU allocation.
+  These are separate measurements, not whole-device battery-life claims.
+- Adaptive Depth16 maps cover reviewed viewports through 4K, using 7.5/30/120 MiB
+  at 360p/1080p/4K. Original rays remain the larger-view/adapter fallback. A bounded
+  preparation job uses original geometry while pending, avoiding synchronous
+  spawn/title stalls. Retention, approximations, native frame tails and rejected
+  experiments are recorded in the [energy review](renderer-energy.md).
+- `dev-perf` retains application assertions and overflow checks while disabling
+  development-only checks in the pinned objc2 dependency. This additional CPU-energy
+  saving is separate from renderer work; release already omits those checks.
+  Opt-in profiling now uses only bounded custom GPU counters after the redundant
+  Bevy diagnostic pool failed during fullscreen capture.
+- Verification covers 611 tests, dialogue/STT fixtures and replay, explicit GPU
+  traversal/cache/map oracles, 36 still states and 504 motion frames with identical
+  semantic traces. Combined LOD/map-density images and all six window scales plus
+  fullscreen/restore are reviewed. Native coverage remains M5 Max/Metal.
 
 ## Next
 
-Measure the finished renderer on Windows, Linux and an available lower-end GPU using `dev-perf`.
-Run the capture-free performance scenarios and gold-reference motion suite, recording the selected
-shadow mode, actual viewport/backend, wall tails, GPU statistics and memory. Compare mapped and
-original-ray controls where supported. This is the evidence needed for further device adapters
-or higher-resolution shadow maps; the current implementation already preserves ray fallback there.
-Commands and source reconstruction are in the
-[evidence guide](performance/20260909-efficiency/README.md).
+Measure this implementation on Windows, Linux and an available lower-end GPU.
+Use the capture-free world/UI/churn/sustained scenarios and gold-reference motion
+suite. Record actual viewport/backend, selected map density, frame tails, memory
+and available energy accounting. Cross-device evidence is needed before choosing
+further adapter-specific policies. Reproduction commands and raw evidence are in
+[the evidence guide](performance/20260909-energy/README.md).
 
 ## Candidates Not Chosen
 
-- **Further generic traversal rewrites:** grids, compressed BVH4/BVH8, analytic ellipsoid hints,
-  alternative workgroups and occlusion variants did not beat their measured controls.
-- **More passes or cheaper water noise:** split shadows saved too little for their memory cost;
-  integer noise showed no repeatable gain. Reproduction patches preserve these results.
-- **Larger or stationary-receiver-only maps:** 2048 maps cost 192 MiB and retain sparse errors;
-  the narrower receiver policy was slower. Fixed 1024 maps apply only in the reviewed viewport range.
-- **Physical glass and richer light transport:** remain separate visual work; no full refraction,
-  volumetric transport or subsurface-scattering claim is made.
+- **Spatial lighting reuse:** workgroup sharing, coarse producer/resolve passes and
+  multiple pixels per invocation all regressed against paired controls.
+- **Single-map soft shadows:** faster than its control but visibly weakened contact
+  and removed broad shadows; rejected.
+- **More generic traversal or index reordering:** previous grids/compressed trees
+  and the latest vertex-cache ordering showed no material repeatable benefit.
+- **Lower visible cadence or primary resolution:** retained current presentation
+  quality; hidden-window pacing provides savings without changing visible animation.
 
 ## Learned Recently
 
-- Current architecture, measurements, review, limitations and rejected experiments:
-  [renderer efficiency](renderer-efficiency.md), [renderer contract](raytraced-aquarium.md).
-- Historical first-pass measurements: [renderer performance](renderer-performance.md).
-- Visual direction: [gold refinement](style-reference/refinement.md),
-  [implementation](style-reference/implementation.md), [art bible](art-bible.md).
-- Native review and product boundaries: [feel-review loop](feel-review-loop.md),
-  [game-design philosophy](game-design-philosophy.md), [audio direction](audio-direction.md).
+- Current measurements, decisions and limitations: [renderer energy](renderer-energy.md).
+- Current rendering contract: [raytraced aquarium](raytraced-aquarium.md),
+  [architecture](architecture.md).
+- Historical measurements: [renderer efficiency](renderer-efficiency.md),
+  [first performance pass](renderer-performance.md).
+- Product and visual authority: [game-design philosophy](game-design-philosophy.md),
+  [art bible](art-bible.md), [gold refinement](style-reference/refinement.md).

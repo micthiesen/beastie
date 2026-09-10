@@ -1,0 +1,10 @@
+{
+  "beastie-final": {
+    "sha256": "b2a6fd60c57a77529efaa3ef287288c95dadb613b9978a2bf3fd0894d8179094",
+    "bytes": 120078208
+  },
+  "beastie-final-tests": {
+    "sha256": "6c7d44194a10bfd183a53595e2431aa49331aa913994d41082fb2e52a3cae407",
+    "bytes": 81178352
+  }
+}

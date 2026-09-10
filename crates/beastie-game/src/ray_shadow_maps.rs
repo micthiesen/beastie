@@ -1,21 +1,17 @@
-//! Directional depth maps for dynamic casters. The source geometry
-//! remains exact; depth-map visibility is a sampled approximation to ray queries.
+//! Directional depth maps for static and dynamic casters. Dynamic shadow meshes
+//! may use bounded LOD; both depth sampling and LOD approximate ray visibility.
 use crate::ray_scene::RayScene;
 use bevy::{prelude::*, render::render_resource::ShaderType};
 
+#[cfg(test)]
 pub const RESOLUTION: u32 = 1024;
-/// Depth32Float sampling and attachments require no optional adapter features.
-/// A one-layer dummy texture keeps the shared layout valid on the ray fallback.
-pub fn supported(limits: &wgpu::Limits) -> bool {
-    limits.max_texture_dimension_2d >= RESOLUTION && limits.max_texture_array_layers >= 12
-}
 
 #[derive(Clone, Default, ShaderType)]
 pub struct ShadowMapParams {
     pub clip_from_world: [Mat4; 12],
     /// x=min light-space z,y=depth span; other components reserved.
     pub depth_ranges: [Vec4; 12],
-    /// enabled,resolution,layers,caster_count.
+    /// enabled, resolution, layout (0=array,1=4x3 atlas), caster_count.
     pub info: UVec4,
 }
 
@@ -54,12 +50,50 @@ pub fn dynamic_casters(scene: &RayScene) -> Vec<usize> {
         .collect()
 }
 
-pub fn fit(scene: &RayScene, enabled: bool) -> (ShadowMapParams, Vec<usize>) {
-    let casters = dynamic_casters(scene);
+pub fn density(size: UVec2) -> Option<(u32, u32)> {
+    // Viewport::for_drawable fits the authored 16:9 scene uniformly. Margins on
+    // wide/tall windows do not increase its shadow texel density.
+    // Caps bound Depth16 dynamic atlas + static layers to 120 MiB at 4K.
+    if size.x == 0 || size.y == 0 || size.x > 3840 || size.y > 2160 {
+        return None;
+    }
+    let ratio = (size.x as f64 / 1920.0).min(size.y as f64 / 1080.0);
+    let dynamic = ((1024.0 * ratio).ceil() as u32)
+        .next_power_of_two()
+        .clamp(512, 2048);
+    Some((dynamic, dynamic / 2))
+}
+pub fn fit(scene: &RayScene, enabled: bool, resolution: u32) -> (ShadowMapParams, Vec<usize>) {
+    fit_casters(scene, enabled, dynamic_casters(scene), resolution)
+}
+
+pub fn fit_static(
+    scene: &RayScene,
+    enabled: bool,
+    resolution: u32,
+) -> (ShadowMapParams, Vec<usize>) {
+    let casters = scene
+        .instances
+        .iter()
+        .enumerate()
+        .filter_map(|(id, instance)| {
+            (instance.pad1 != 0 && instance.material.w <= 0.5 && instance.material.z <= 0.5)
+                .then_some(id)
+        })
+        .collect();
+    fit_casters(scene, enabled, casters, resolution)
+}
+
+fn fit_casters(
+    scene: &RayScene,
+    enabled: bool,
+    casters: Vec<usize>,
+    resolution: u32,
+) -> (ShadowMapParams, Vec<usize>) {
     let mut params = ShadowMapParams {
         clip_from_world: [Mat4::IDENTITY; 12],
         depth_ranges: [Vec4::Y; 12],
-        info: UVec4::new(u32::from(enabled), RESOLUTION, 12, casters.len() as u32),
+        info: UVec4::new(u32::from(enabled), resolution, 0, casters.len() as u32),
     };
     if !enabled {
         return (params, casters);
@@ -125,30 +159,34 @@ pub fn fit(scene: &RayScene, enabled: bool) -> (ShadowMapParams, Vec<usize>) {
 #[test]
 fn light_table_and_fit_are_finite_and_conservative() {
     let (scene, _) = crate::ray_benchmark::scene_snapshot();
-    let (params, casters) = fit(&scene, true);
-    assert!(!casters.is_empty());
-    for (index, direction) in directions().into_iter().enumerate() {
-        assert!((direction.length_squared() - 1.0).abs() < 1e-6);
-        assert!(params.clip_from_world[index].is_finite());
-        assert!(params.depth_ranges[index].y > 0.0);
-        for &id in &casters {
-            let instance = scene.instances[id];
-            let chunk = scene
-                .geometry
-                .iter()
-                .find(|chunk| chunk.node_offset == instance.root)
-                .unwrap();
-            for triangle in chunk.triangles.iter() {
-                for vertex in [triangle.a, triangle.b, triangle.c] {
-                    let clip = params.clip_from_world[index]
-                        * instance.world_from_local
-                        * vertex.truncate().extend(1.0);
-                    assert!(
-                        clip.x.abs() <= 1.00001
-                            && clip.y.abs() <= 1.00001
-                            && clip.z >= -0.00001
-                            && clip.z <= 1.00001
-                    );
+    for (params, casters) in [
+        fit(&scene, true, RESOLUTION),
+        fit_static(&scene, true, crate::ray_static_maps::RESOLUTION),
+    ] {
+        assert!(!casters.is_empty());
+        for (index, direction) in directions().into_iter().enumerate() {
+            assert!((direction.length_squared() - 1.0).abs() < 1e-6);
+            assert!(params.clip_from_world[index].is_finite());
+            assert!(params.depth_ranges[index].y > 0.0);
+            for &id in &casters {
+                let instance = scene.instances[id];
+                let chunk = scene
+                    .geometry
+                    .iter()
+                    .find(|chunk| chunk.node_offset == instance.root)
+                    .unwrap();
+                for triangle in chunk.triangles.iter() {
+                    for vertex in [triangle.a, triangle.b, triangle.c] {
+                        let clip = params.clip_from_world[index]
+                            * instance.world_from_local
+                            * vertex.truncate().extend(1.0);
+                        assert!(
+                            clip.x.abs() <= 1.00001
+                                && clip.y.abs() <= 1.00001
+                                && clip.z >= -0.00001
+                                && clip.z <= 1.00001
+                        );
+                    }
                 }
             }
         }
@@ -170,14 +208,18 @@ pub fn select(
     shadows: bool,
     pipeline_ready: bool,
 ) -> Selection {
+    let map_density = density(size);
     let reason = if !requested {
         "diagnostic-ray-control"
     } else if !shadows {
         "shadows-disabled"
-    } else if !supported(limits) {
+    } else if map_density.is_none() {
+        "viewport-outside-density-budget"
+    } else if limits.max_texture_array_layers < 12
+        || map_density
+            .is_some_and(|(resolution, _)| limits.max_texture_dimension_2d < resolution * 4)
+    {
         "adapter-limits"
-    } else if size.x == 0 || size.y == 0 || size.x > 1920 || size.y > 1080 {
-        "viewport-outside-validated-range"
     } else if !pipeline_ready {
         "pipeline-warming"
     } else {
@@ -190,12 +232,28 @@ pub fn select(
 }
 
 #[test]
-fn policy_preserves_ray_fallback_for_large_views_limits_and_startup() {
-    let limits = wgpu::Limits::default();
+fn density_keeps_pixel_ratio_with_power_of_two_budget() {
+    assert_eq!(density(UVec2::new(640, 360)), Some((512, 256)));
+    assert_eq!(density(UVec2::new(1920, 1080)), Some((1024, 512)));
+    assert_eq!(density(UVec2::new(3840, 2160)), Some((2048, 1024)));
+    assert_eq!(density(UVec2::new(3840, 1080)), Some((1024, 512)));
+    assert_eq!(density(UVec2::new(1920, 2160)), Some((1024, 512)));
+    assert_eq!(density(UVec2::new(1080, 1920)), Some((1024, 512)));
+    assert_eq!(density(UVec2::new(3841, 2160)), None);
+    assert_eq!(density(UVec2::ZERO), None);
+}
+
+#[test]
+fn density_policy_preserves_limits_startup_and_resize_fallback() {
+    let mut limits = wgpu::Limits {
+        max_texture_dimension_2d: 8192,
+        ..Default::default()
+    };
     for size in [
-        UVec2::new(1280, 720),
+        UVec2::new(640, 360),
         UVec2::new(1920, 1080),
-        UVec2::new(1440, 1080),
+        UVec2::new(3840, 2160),
+        UVec2::new(3840, 1080),
     ] {
         assert!(select(&limits, size, true, true, true).enabled);
         assert_eq!(
@@ -203,34 +261,29 @@ fn policy_preserves_ray_fallback_for_large_views_limits_and_startup() {
             "pipeline-warming"
         );
     }
-    for size in [
-        UVec2::ZERO,
-        UVec2::new(1921, 1080),
-        UVec2::new(1920, 1081),
-        UVec2::new(1080, 1920),
-        UVec2::new(3840, 2160),
-    ] {
-        assert!(!select(&limits, size, true, true, true).enabled);
+    for size in [UVec2::ZERO, UVec2::new(3841, 2160), UVec2::new(3840, 2161)] {
+        assert_eq!(
+            select(&limits, size, true, true, true).reason,
+            "viewport-outside-density-budget"
+        );
     }
-    let size = UVec2::new(1920, 1080);
-    let mut limited = limits.clone();
-    limited.max_texture_array_layers = 1;
+    limits.max_texture_dimension_2d = 4096;
+    assert!(!select(&limits, UVec2::new(3840, 2160), true, true, true).enabled);
+    assert!(select(&limits, UVec2::new(1920, 1080), true, true, true).enabled);
+    limits.max_texture_dimension_2d = 2048;
+    assert!(select(&limits, UVec2::new(640, 360), true, true, true).enabled);
+    limits.max_texture_array_layers = 1;
+    let size = UVec2::new(640, 360);
     assert_eq!(
-        select(&limited, size, true, true, true).reason,
+        select(&limits, size, true, true, true).reason,
         "adapter-limits"
     );
-    limited = limits;
-    limited.max_texture_dimension_2d = 512;
     assert_eq!(
-        select(&limited, size, true, true, true).reason,
-        "adapter-limits"
-    );
-    assert_eq!(
-        select(&limited, size, false, true, true).reason,
+        select(&limits, size, false, true, true).reason,
         "diagnostic-ray-control"
     );
     assert_eq!(
-        select(&limited, size, true, false, true).reason,
+        select(&limits, size, true, false, true).reason,
         "shadows-disabled"
     );
 }

@@ -35,6 +35,8 @@ struct Params { world_from_clip:mat4x4<f32>, size:vec4<u32>, water:vec4<f32>, ro
 struct ShadowMapParams { clip_from_world:array<mat4x4<f32>,12>, depth_ranges:array<vec4<f32>,12>, info:vec4<u32> }
 @group(0) @binding(10) var dynamic_shadow_maps:texture_depth_2d_array;
 @group(0) @binding(11) var<uniform> shadow_map_params:ShadowMapParams;
+@group(0) @binding(12) var static_shadow_maps:texture_depth_2d_array;
+@group(0) @binding(13) var<uniform> static_map_params:ShadowMapParams;
 struct Hit { t:f32, u:f32, v:f32, triangle:u32, instance:u32 }
 // Cache reciprocals per ray coordinate space, never once per visited box.
 // Parallel axes use finite arithmetic, including origins exactly on a slab.
@@ -305,14 +307,44 @@ fn dynamic_shadow_blocked(origin:vec3<f32>,light:vec3<f32>,sample:u32) -> bool {
     let uv=vec2(clip.x*0.5+0.5,0.5-clip.y*0.5);
     let size=i32(shadow_map_params.info.y);
     let pixel=clamp(vec2<i32>(floor(uv*f32(size))),vec2(0),vec2(size-1));
-    let depth=textureLoad(dynamic_shadow_maps,pixel,i32(sample),0);
+    let atlas=shadow_map_params.info.z==1u;
+    let atlas_offset=vec2<i32>(i32(sample%4u)*size,i32(sample/4u)*size);
+    let depth=textureLoad(dynamic_shadow_maps,pixel+select(vec2(0),atlas_offset,atlas),select(i32(sample),0,atlas),0);
     if(depth==0.0) { return false; }
     let range=shadow_map_params.depth_ranges[sample];
     let distance=(depth-clip.z)*range.y/range.z;
-    // A one-layer shadow map cannot resolve a closer blocker hidden behind a
-    // blocker beyond the ray limit. Keep exact traversal for that uncommon case.
-    if(distance>=35.0) {
+    // Depth16 can round a blocker just beyond t=35 back inside the ray. Include
+    // one depth step plus arithmetic margin in the exact fallback band. A farther
+    // map blocker can also hide a nearer blocker that the finite ray must find.
+    let limit_margin=range.y/(65535.0*range.z)+0.0001;
+    if(distance>=35.0-limit_margin) {
         return trace_root(origin,light,35.0,true,true,params.shadow_roots.y).instance!=0xffffffffu;
+    }
+    return distance>0.0001;
+}
+
+fn static_shadow_blocked(origin:vec3<f32>,light:vec3<f32>,sample:u32,receiver:u32) -> bool {
+    if(static_map_params.info.x==0u || instances[receiver].pad1!=0u) {
+        return trace_root(origin,light,35.0,true,true,params.shadow_roots.x).instance!=0xffffffffu;
+    }
+    if(static_map_params.info.w==0u) { return false; }
+    let clip=static_map_params.clip_from_world[sample]*vec4(origin,1.0);
+    // Outside the fitted projection of all static caster bounds, no caster can
+    // intersect this directional ray. Receivers may legitimately lie below z=0.
+    if(abs(clip.x)>1.0 || abs(clip.y)>1.0) { return false; }
+    let uv=vec2(clip.x*0.5+0.5,0.5-clip.y*0.5);
+    let size=i32(static_map_params.info.y);
+    let pixel=clamp(vec2<i32>(floor(uv*f32(size))),vec2(0),vec2(size-1));
+    let depth=textureLoad(static_shadow_maps,pixel,i32(sample),0);
+    if(depth==0.0) { return false; }
+    let range=static_map_params.depth_ranges[sample];
+    let distance=(depth-clip.z)*range.y/range.z;
+    // Depth16 can round a blocker just beyond t=35 back inside the ray. Include
+    // one depth step plus arithmetic margin in the exact fallback band. A farther
+    // map blocker can also hide a nearer blocker that the finite ray must find.
+    let limit_margin=range.y/(65535.0*range.z)+0.0001;
+    if(distance>=35.0-limit_margin) {
+        return trace_root(origin,light,35.0,true,true,params.shadow_roots.x).instance!=0xffffffffu;
     }
     return distance>0.0001;
 }
@@ -359,9 +391,9 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit,cache_index:u32) -> Lighting {
             if(can_cache) {
                 let known=1u<<(s+12u); let occluded=1u<<s;
                 if((mask&known)==0u) {
-                    let fixed_hit=trace_root(origin,light,35.0,true,true,params.shadow_roots.x);
+                    let fixed_blocked=static_shadow_blocked(origin,light,s,hit.instance);
                     mask=mask|known;
-                    if(fixed_hit.instance!=0xffffffffu) { mask=mask|occluded; }
+                    if(fixed_blocked) { mask=mask|occluded; }
                 }
                 blocked=(mask&occluded)!=0u;
                 if(!blocked) {
@@ -369,7 +401,7 @@ fn lighting(o:vec3<f32>,d:vec3<f32>,hit:Hit,cache_index:u32) -> Lighting {
                 }
             } else {
                 if(shadow_map_params.info.x!=0u) {
-                    blocked=trace_root(origin,light,35.0,true,true,params.shadow_roots.x).instance!=0xffffffffu;
+                    blocked=static_shadow_blocked(origin,light,s,hit.instance);
                     if(!blocked) { blocked=dynamic_shadow_blocked(origin,light,s); }
                 } else {
                     blocked=trace(origin,light,35.0,true,true).instance!=0xffffffffu;

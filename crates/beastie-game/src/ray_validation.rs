@@ -7,6 +7,7 @@ use naga::{
 
 #[test]
 fn compute_tracer_translates_without_optional_gpu_capabilities() {
+    validate_and_translate(include_str!("ray_shadow_index.wgsl"));
     validate_and_translate(include_str!("raytrace.wgsl"));
 }
 
@@ -187,8 +188,8 @@ mod gpu_traversal {
     const ENTRY: &str = r#"
 struct TestRay { origin:vec4<f32>, direction:vec4<f32>, flags:vec4<u32> }
 struct TestResult { hit:vec4<f32>, ids:vec4<u32>, normal:vec4<f32>, albedo:vec4<f32> }
-@group(0) @binding(12) var<storage,read> test_rays:array<TestRay>;
-@group(0) @binding(13) var<storage,read_write> test_results:array<TestResult>;
+@group(0) @binding(14) var<storage,read> test_rays:array<TestRay>;
+@group(0) @binding(15) var<storage,read_write> test_results:array<TestResult>;
 @compute @workgroup_size(64)
 fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
     if(id.x>=arrayLength(&test_rays)) { return; }
@@ -355,7 +356,7 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        let bindings = [0, 1, 2, 3, 4, 6, 12, 13];
+        let bindings = [0, 1, 2, 3, 4, 6, 14, 15];
         let entries: Vec<_> = bindings
             .iter()
             .map(|&binding| wgpu::BindGroupLayoutEntry {
@@ -366,7 +367,7 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
                         wgpu::BufferBindingType::Uniform
                     } else {
                         wgpu::BufferBindingType::Storage {
-                            read_only: binding != 13,
+                            read_only: binding != 15,
                         }
                     },
                     has_dynamic_offset: false,
@@ -401,7 +402,7 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
             })
             .collect();
         entries.push(wgpu::BindGroupEntry {
-            binding: 13,
+            binding: 15,
             resource: output.as_entire_binding(),
         });
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {

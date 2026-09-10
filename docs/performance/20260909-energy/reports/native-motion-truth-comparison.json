@@ -1,0 +1,56 @@
+{
+  "512": {
+    "state.jsonl": {
+      "equal": true,
+      "control_rows": 504,
+      "candidate_rows": 504
+    },
+    "audio.jsonl": {
+      "equal": true,
+      "control_rows": 504,
+      "candidate_rows": 504
+    },
+    "events.jsonl": {
+      "equal": true,
+      "control_rows": 480,
+      "candidate_rows": 480
+    },
+    "inputs.jsonl": {
+      "equal": true,
+      "control_rows": 14,
+      "candidate_rows": 14
+    },
+    "markers.jsonl": {
+      "equal": true,
+      "control_rows": 7,
+      "candidate_rows": 7
+    }
+  },
+  "1024": {
+    "state.jsonl": {
+      "equal": true,
+      "control_rows": 504,
+      "candidate_rows": 504
+    },
+    "audio.jsonl": {
+      "equal": true,
+      "control_rows": 504,
+      "candidate_rows": 504
+    },
+    "events.jsonl": {
+      "equal": true,
+      "control_rows": 480,
+      "candidate_rows": 480
+    },
+    "inputs.jsonl": {
+      "equal": true,
+      "control_rows": 14,
+      "candidate_rows": 14
+    },
+    "markers.jsonl": {
+      "equal": true,
+      "control_rows": 7,
+      "candidate_rows": 7
+    }
+  }
+}

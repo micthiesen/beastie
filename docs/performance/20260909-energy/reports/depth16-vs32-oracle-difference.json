@@ -1,0 +1,92 @@
+[
+  {
+    "frame": "00-cold-maps.png",
+    "changed_rgb_pixels": 2,
+    "max_255": 3,
+    "mean_255": 1.6075102880658436e-06
+  },
+  {
+    "frame": "01-warm-maps.png",
+    "changed_rgb_pixels": 3,
+    "max_255": 9,
+    "mean_255": 5.787037037037037e-06
+  },
+  {
+    "frame": "02-creature-left-low-maps.png",
+    "changed_rgb_pixels": 3,
+    "max_255": 4,
+    "mean_255": 3.536522633744856e-06
+  },
+  {
+    "frame": "03-creature-right-low-maps.png",
+    "changed_rgb_pixels": 3,
+    "max_255": 3,
+    "mean_255": 3.054269547325103e-06
+  },
+  {
+    "frame": "04-carried-ball-maps.png",
+    "changed_rgb_pixels": 1,
+    "max_255": 2,
+    "mean_255": 9.645061728395062e-07
+  },
+  {
+    "frame": "05-released-ball-left-maps.png",
+    "changed_rgb_pixels": 4,
+    "max_255": 13,
+    "mean_255": 9.002057613168725e-06
+  },
+  {
+    "frame": "06-ball-right-plant-sway-maps.png",
+    "changed_rgb_pixels": 2,
+    "max_255": 7,
+    "mean_255": 4.661779835390946e-06
+  },
+  {
+    "frame": "07-settings-maps.png",
+    "changed_rgb_pixels": 2,
+    "max_255": 3,
+    "mean_255": 1.6075102880658436e-06
+  },
+  {
+    "frame": "08-title-maps.png",
+    "changed_rgb_pixels": 1,
+    "max_255": 4,
+    "mean_255": 1.4467592592592592e-06
+  },
+  {
+    "frame": "09-continue-maps.png",
+    "changed_rgb_pixels": 2,
+    "max_255": 3,
+    "mean_255": 1.6075102880658436e-06
+  },
+  {
+    "frame": "10-static-transform-maps.png",
+    "changed_rgb_pixels": 4,
+    "max_255": 9,
+    "mean_255": 6.912294238683128e-06
+  },
+  {
+    "frame": "11-static-normals-maps.png",
+    "changed_rgb_pixels": 4,
+    "max_255": 13,
+    "mean_255": 6.751543209876543e-06
+  },
+  {
+    "frame": "12-static-hidden-maps.png",
+    "changed_rgb_pixels": 1,
+    "max_255": 12,
+    "mean_255": 4.9832818930041145e-06
+  },
+  {
+    "frame": "13-static-visible-maps.png",
+    "changed_rgb_pixels": 2,
+    "max_255": 14,
+    "mean_255": 6.590792181069959e-06
+  },
+  {
+    "frame": "14-static-removed-maps.png",
+    "changed_rgb_pixels": 0,
+    "max_255": 0,
+    "mean_255": 0.0
+  }
+]

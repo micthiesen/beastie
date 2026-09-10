@@ -1,0 +1,10 @@
+   Compiling ring v0.17.14
+   Compiling rustls v0.23.43
+   Compiling rustls-webpki v0.103.14
+   Compiling ureq v2.12.1
+   Compiling xtask v1.0.0 (/Users/michael/Code/beastie/crates/xtask)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.58s
+     Running `target/debug/xtask dev --fake-ai --script fixtures/scenarios/gold-reference.jsonl --capture-dir /tmp/beastie-energy-20260909/final-gold-confirmed`
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+    Finished `dev-perf` profile [optimized + debuginfo] target(s) in 0.13s
+[2m2026-09-10T06:22:05.955559Z[0m [33m WARN[0m [2mbevy_winit::state[0m[2m:[0m Skipped event Destroyed for unknown winit Window Id WindowId(43279827584)

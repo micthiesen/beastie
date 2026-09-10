@@ -172,6 +172,13 @@ impl Plugin for RayTracePlugin {
                 include_str!("ray_visibility.wgsl"),
                 "embedded://beastie/ray_visibility.wgsl",
             ));
+        let shadow_index = app
+            .world_mut()
+            .resource_mut::<Assets<Shader>>()
+            .add(Shader::from_wgsl(
+                include_str!("ray_shadow_index.wgsl"),
+                "embedded://beastie/ray_shadow_index.wgsl",
+            ));
         let blit = app
             .world_mut()
             .resource_mut::<Assets<Shader>>()
@@ -191,6 +198,7 @@ impl Plugin for RayTracePlugin {
                     compute_only,
                     blit,
                     visibility,
+                    shadow_index,
                 })
                 .add_systems(RenderStartup, setup_pipeline)
                 .add_systems(RayTracing, render);
@@ -202,12 +210,15 @@ struct RayShaders {
     shadows: bool,
     compute_only: Handle<Shader>,
     visibility: Handle<Shader>,
+    shadow_index: Handle<Shader>,
     shader: Handle<Shader>,
     blit: Handle<Shader>,
 }
 #[derive(Resource)]
 struct RayPipeline {
     shadow_depth: CachedRenderPipelineId,
+    indexed_depth: CachedRenderPipelineId,
+    indexed_layout: BindGroupLayoutDescriptor,
     visibility_layout: BindGroupLayoutDescriptor,
     visibility: [CachedRenderPipelineId; 2],
     compute_only: CachedComputePipelineId,
@@ -264,6 +275,10 @@ struct FrameBuffers {
     shadow_cameras: [UniformBuffer<VisibilityParams>; 12],
     shadow_maps: Option<(u32, Texture, TextureView, Vec<TextureView>)>,
     shadow_requested: Option<bool>,
+    static_maps: Option<crate::ray_static_maps::StaticMaps>,
+    indexed: Option<crate::ray_shadow_index::ShadowIndex>,
+    shadow_preparation: crate::ray_shadow_index::ShadowPreparation,
+    indexed_key: Vec<(u32, u64)>,
     visibility_params: UniformBuffer<VisibilityParams>,
     visibility: Option<(
         UVec2,
@@ -302,6 +317,8 @@ fn setup_pipeline(mut commands: Commands, shaders: Res<RayShaders>, cache: Res<P
                 texture_2d(TextureSampleType::Uint),
                 storage_buffer::<Vec<u32>>(false),
                 storage_buffer::<Vec<u32>>(false),
+                texture_2d_array(TextureSampleType::Depth),
+                uniform_buffer::<crate::ray_shadow_maps::ShadowMapParams>(false),
                 texture_2d_array(TextureSampleType::Depth),
                 uniform_buffer::<crate::ray_shadow_maps::ShadowMapParams>(false),
             ),
@@ -352,7 +369,7 @@ fn setup_pipeline(mut commands: Commands, shaders: Res<RayShaders>, cache: Res<P
         })
     };
     let shadow_depth = cache.queue_render_pipeline(RenderPipelineDescriptor {
-        label: Some("dynamic shadow depth".into()),
+        label: Some("static shadow depth".into()),
         layout: vec![visibility_layout.clone()],
         vertex: VertexState {
             shader: shaders.visibility.clone(),
@@ -365,7 +382,40 @@ fn setup_pipeline(mut commands: Commands, shaders: Res<RayShaders>, cache: Res<P
             ..default()
         },
         depth_stencil: Some(DepthStencilState {
-            format: TextureFormat::Depth32Float,
+            format: crate::ray_static_maps::DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(CompareFunction::Greater),
+            stencil: default(),
+            bias: default(),
+        }),
+        ..default()
+    });
+    let indexed_layout = BindGroupLayoutDescriptor::new(
+        "indexed shadow scene",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::VERTEX,
+            (
+                storage_buffer_read_only::<Vec<Vec4>>(false),
+                storage_buffer_read_only::<Vec<GpuInstance>>(false),
+                uniform_buffer::<VisibilityParams>(false),
+            ),
+        ),
+    );
+    let indexed_depth = cache.queue_render_pipeline(RenderPipelineDescriptor {
+        label: Some("dynamic shadow depth".into()),
+        layout: vec![indexed_layout.clone()],
+        vertex: VertexState {
+            shader: shaders.shadow_index.clone(),
+            entry_point: Some("shadow_vertex".into()),
+            ..default()
+        },
+        fragment: None,
+        primitive: PrimitiveState {
+            cull_mode: None,
+            ..default()
+        },
+        depth_stencil: Some(DepthStencilState {
+            format: crate::ray_static_maps::DEPTH_FORMAT,
             depth_write_enabled: Some(true),
             depth_compare: Some(CompareFunction::Greater),
             stencil: default(),
@@ -400,6 +450,8 @@ fn setup_pipeline(mut commands: Commands, shaders: Res<RayShaders>, cache: Res<P
     });
     commands.insert_resource(RayPipeline {
         shadow_depth,
+        indexed_depth,
+        indexed_layout,
         visibility_layout,
         visibility,
         compute_only,
@@ -422,9 +474,16 @@ fn render(
     queue: Res<RenderQueue>,
     device: Res<RenderDevice>,
     gpu_timing: Option<Res<crate::ray_stats::ComputeGpuTiming>>,
+    activity: Option<Res<crate::render_activity::RenderActivity>>,
     mut frame: Local<FrameBuffers>,
     mut ctx: RenderContext,
 ) {
+    if activity
+        .as_ref()
+        .is_some_and(|activity| !activity.should_render())
+    {
+        return;
+    }
     let (target, view) = view.into_inner();
     let Some(pipeline) = pipeline else {
         clear_target(target, &mut ctx);
@@ -568,7 +627,8 @@ fn render(
         timing.observe_scene(
             frame.triangles.as_ref().unwrap().size()
                 + frame.surfaces.as_ref().unwrap().size()
-                + frame.nodes.as_ref().unwrap().size(),
+                + frame.nodes.as_ref().unwrap().size()
+                + frame.indexed.as_ref().map_or(0, |m| m.bytes),
             size,
         );
     }
@@ -661,38 +721,74 @@ fn render(
     let shadow_cpu_span = gpu_timing
         .as_ref()
         .map(|timing| timing.cpu_span("shadow_projection_upload"));
-    let map_size = crate::ray_shadow_maps::RESOLUTION;
+    let density = crate::ray_shadow_maps::density(size).unwrap_or((1024, 512));
+    let map_size = density.0;
     let requested = *frame.shadow_requested.get_or_insert_with(|| {
         std::env::var("BEASTIE_SHADOW_MAP_CONTROL").as_deref() != Ok("trace")
     });
-    let map_pipeline = cache.get_render_pipeline(pipeline.shadow_depth);
+    let static_resolution = density.1;
+    let original_map_pipeline = cache.get_render_pipeline(pipeline.shadow_depth);
+    let map_pipeline = cache.get_render_pipeline(pipeline.indexed_depth);
     let selection = crate::ray_shadow_maps::select(
         &device.limits(),
         size,
         requested,
         appearance.shadows() && shaders.shadows,
-        map_pipeline.is_some(),
+        map_pipeline.is_some() && original_map_pipeline.is_some(),
     );
     let maps_enabled = selection.enabled;
-    let (map_params, dynamic_casters) = crate::ray_shadow_maps::fit(&scene, maps_enabled);
+    let (mut map_params, dynamic_casters) =
+        crate::ray_shadow_maps::fit(&scene, maps_enabled, map_size);
+    map_params.info.z = 1;
+    let static_enabled = maps_enabled;
+    let redraw_static = frame.static_maps.as_ref().is_none_or(|m| {
+        m.key
+            != crate::ray_static_maps::StaticMapKey::new(
+                scene.static_revision,
+                static_enabled,
+                static_resolution,
+            )
+    });
+    if redraw_static {
+        frame.static_maps = Some(crate::ray_static_maps::StaticMaps::new(
+            device.wgpu_device(),
+            &scene,
+            static_enabled,
+            if static_enabled { static_resolution } else { 1 },
+        ));
+    }
+    let desired_index_key = maps_enabled.then(|| crate::ray_shadow_index::ShadowIndex::key(&scene));
+    if let Some(prepared) = frame
+        .shadow_preparation
+        .poll(desired_index_key.as_ref(), &scene)
+    {
+        frame.indexed = Some(prepared.upload(device.wgpu_device()));
+        frame.indexed_key = desired_index_key.as_ref().unwrap().clone();
+    }
+    let indexed_ready = desired_index_key
+        .as_ref()
+        .is_some_and(|key| frame.indexed.is_some() && &frame.indexed_key == key);
+    if !indexed_ready && let Some(key) = desired_index_key {
+        frame.shadow_preparation.request(&scene, key);
+    }
     let allocated_size = if maps_enabled { map_size } else { 1 };
-    let allocated_layers = if maps_enabled { 12 } else { 1 };
+    let allocated_layers = 1;
     if frame
         .shadow_maps
         .as_ref()
         .is_none_or(|m| m.0 != allocated_size)
     {
         let texture = device.create_texture(&TextureDescriptor {
-            label: Some("dynamic shadow depth array"),
+            label: Some("dynamic shadow depth atlas"),
             size: Extent3d {
-                width: allocated_size,
-                height: allocated_size,
+                width: allocated_size * if maps_enabled { 4 } else { 1 },
+                height: allocated_size * if maps_enabled { 3 } else { 1 },
                 depth_or_array_layers: allocated_layers,
             },
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
-            format: TextureFormat::Depth32Float,
+            format: crate::ray_static_maps::DEPTH_FORMAT,
             usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
@@ -731,8 +827,18 @@ fn render(
         timing.observe_shadow_maps(
             selection.enabled,
             selection.reason,
-            u64::from(allocated_size).pow(2) * u64::from(allocated_layers) * 4,
+            if maps_enabled { map_size } else { 0 },
+            u64::from(allocated_size).pow(2)
+                * u64::from(allocated_layers)
+                * crate::ray_static_maps::DEPTH_BYTES
+                * if maps_enabled { 12 } else { 1 },
             1744,
+        );
+        timing.observe_shadow_storage(
+            frame.static_maps.as_ref().unwrap().bytes(),
+            if static_enabled { static_resolution } else { 0 },
+            frame.indexed.as_ref().map_or(0, |m| m.bytes),
+            maps_enabled,
         );
     }
     if let Some(timing) = &gpu_timing {
@@ -747,8 +853,12 @@ fn render(
                 + visibility_bytes
                 + frame.shadow_masks.as_ref().unwrap().size()
                 + frame.bounce_cache.as_ref().unwrap().size()
-                + u64::from(allocated_size).pow(2) * u64::from(allocated_layers) * 4
-                + 1744,
+                + u64::from(allocated_size).pow(2)
+                    * u64::from(allocated_layers)
+                    * crate::ray_static_maps::DEPTH_BYTES
+                    * if maps_enabled { 12 } else { 1 }
+                + frame.static_maps.as_ref().unwrap().bytes()
+                + 1744 * 2,
         );
     }
     frame.params.set(Params {
@@ -807,6 +917,13 @@ fn render(
             frame.bounce_cache.as_ref().unwrap().as_entire_binding(),
             &frame.shadow_maps.as_ref().unwrap().2,
             frame.shadow_map_params.binding().unwrap(),
+            wgpu::BindingResource::TextureView(&frame.static_maps.as_ref().unwrap().view),
+            frame
+                .static_maps
+                .as_ref()
+                .unwrap()
+                .uniform
+                .as_entire_binding(),
         )),
     );
     let transfer = device.create_bind_group(
@@ -832,54 +949,118 @@ fn render(
         })
         .flatten();
     if maps_enabled {
-        for layer in 0..12 {
-            let shadow_bind = device.create_bind_group(
-                "dynamic shadow scene",
-                &cache.get_bind_group_layout(&pipeline.visibility_layout),
-                &BindGroupEntries::sequential((
-                    frame.triangles.as_ref().unwrap().as_entire_binding(),
-                    frame.instances.binding().unwrap(),
-                    frame.shadow_cameras[layer].binding().unwrap(),
-                )),
+        if redraw_static && static_enabled {
+            frame.static_maps.as_ref().unwrap().record(
+                device.wgpu_device(),
+                ctx.command_encoder(),
+                original_map_pipeline.unwrap(),
+                &scene,
+                frame.triangles.as_ref().unwrap(),
+                frame.instances.buffer().unwrap(),
+                map_timing_slot.as_ref().map(|s| (&s.queries, 0)),
             );
+        }
+        {
+            let shadow_binds: Vec<_> = (0..12)
+                .map(|layer| {
+                    if indexed_ready {
+                        device.create_bind_group(
+                            "dynamic indexed shadow scene",
+                            &cache.get_bind_group_layout(&pipeline.indexed_layout),
+                            &BindGroupEntries::sequential((
+                                frame
+                                    .indexed
+                                    .as_ref()
+                                    .unwrap()
+                                    .positions
+                                    .as_entire_binding(),
+                                frame.instances.binding().unwrap(),
+                                frame.shadow_cameras[layer].binding().unwrap(),
+                            )),
+                        )
+                    } else {
+                        device.create_bind_group(
+                            "dynamic original shadow fallback",
+                            &cache.get_bind_group_layout(&pipeline.visibility_layout),
+                            &BindGroupEntries::sequential((
+                                frame.triangles.as_ref().unwrap().as_entire_binding(),
+                                frame.instances.binding().unwrap(),
+                                frame.shadow_cameras[layer].binding().unwrap(),
+                            )),
+                        )
+                    }
+                })
+                .collect();
             let mut pass = ctx
                 .command_encoder()
                 .begin_render_pass(&RenderPassDescriptor {
                     label: Some("dynamic shadow depth"),
                     color_attachments: &[],
                     depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
-                        view: &frame.shadow_maps.as_ref().unwrap().3[layer],
+                        view: &frame.shadow_maps.as_ref().unwrap().3[0],
                         depth_ops: Some(Operations {
                             load: LoadOp::Clear(0.0),
                             store: StoreOp::Store,
                         }),
                         stencil_ops: None,
                     }),
-                    timestamp_writes: map_timing_slot
-                        .as_ref()
-                        .filter(|_| layer == 0 || layer == 11)
-                        .map(|slot| wgpu::RenderPassTimestampWrites {
+                    timestamp_writes: map_timing_slot.as_ref().map(|slot| {
+                        wgpu::RenderPassTimestampWrites {
                             query_set: &slot.queries,
-                            beginning_of_pass_write_index: (layer == 0).then_some(0),
-                            end_of_pass_write_index: (layer == 11).then_some(1),
-                        }),
+                            beginning_of_pass_write_index: (!(redraw_static && static_enabled))
+                                .then_some(0),
+                            end_of_pass_write_index: Some(1),
+                        }
+                    }),
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-            pass.set_pipeline(map_pipeline.unwrap());
-            pass.set_bind_group(0, &shadow_bind, &[]);
-            for &index in &dynamic_casters {
-                let instance = &scene.instances[index];
-                let chunk = scene
-                    .geometry
-                    .iter()
-                    .find(|c| c.node_offset == instance.root)
-                    .unwrap();
-                pass.draw(
-                    chunk.triangle_offset * 3
-                        ..(chunk.triangle_offset + chunk.triangles.len() as u32) * 3,
-                    index as u32..index as u32 + 1,
+            pass.set_pipeline(if indexed_ready {
+                map_pipeline.unwrap()
+            } else {
+                original_map_pipeline.unwrap()
+            });
+            if indexed_ready {
+                pass.set_index_buffer(
+                    frame.indexed.as_ref().unwrap().indices.slice(..),
+                    wgpu::IndexFormat::Uint32,
                 );
+            }
+            for (layer, shadow_bind) in shadow_binds.iter().enumerate() {
+                {
+                    let x = (layer as u32 % 4) * map_size;
+                    let y = (layer as u32 / 4) * map_size;
+                    pass.set_viewport(
+                        x as f32,
+                        y as f32,
+                        map_size as f32,
+                        map_size as f32,
+                        0.0,
+                        1.0,
+                    );
+                    pass.set_scissor_rect(x, y, map_size, map_size);
+                }
+                pass.set_bind_group(0, shadow_bind, &[]);
+                for &index in &dynamic_casters {
+                    let instance = &scene.instances[index];
+                    if indexed_ready {
+                        pass.draw_indexed(
+                            frame.indexed.as_ref().unwrap().range_for(instance),
+                            0,
+                            index as u32..index as u32 + 1,
+                        );
+                    } else if let Some(chunk) = scene
+                        .geometry
+                        .iter()
+                        .find(|chunk| chunk.node_offset == instance.root)
+                    {
+                        pass.draw(
+                            chunk.triangle_offset * 3
+                                ..(chunk.triangle_offset + chunk.triangles.len() as u32) * 3,
+                            index as u32..index as u32 + 1,
+                        );
+                    }
+                }
             }
         }
     }
@@ -997,7 +1178,7 @@ pub(crate) fn shadow_cache_key(
     )
 }
 
-fn static_cache_samples(size: UVec2, binding_limit: u64) -> u32 {
+pub(crate) fn static_cache_samples(size: UVec2, binding_limit: u64) -> u32 {
     let one_sample_bytes = u64::from(size.x) * u64::from(size.y) * 12;
     if one_sample_bytes == 0 {
         return 0;

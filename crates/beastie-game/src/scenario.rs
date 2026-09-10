@@ -187,6 +187,8 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
         SettingsControls,
         LargeText,
         NormalText,
+        CycleWindowScale,
+        ToggleFullscreen,
         Rename,
         Talk,
         SelectBerry,
@@ -229,6 +231,8 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
             ScenarioUiAction::SettingsControls => UiAction::SelectSettingsPage(2),
             ScenarioUiAction::LargeText => UiAction::SetTextScale(2),
             ScenarioUiAction::NormalText => UiAction::SetTextScale(1),
+            ScenarioUiAction::CycleWindowScale => UiAction::CycleWindowScale,
+            ScenarioUiAction::ToggleFullscreen => UiAction::ToggleFullscreen,
             ScenarioUiAction::Rename => UiAction::Rename,
             ScenarioUiAction::Talk => UiAction::Talk,
             ScenarioUiAction::SelectBerry => UiAction::SelectFood(beastie_core::FoodId::Berry),
@@ -384,6 +388,14 @@ mod tests {
         assert!(matches!(
             parse_step(r#"{"version":1,"command":"ui","action":"open_settings"}"#),
             Ok(ScenarioStep::Ui(UiAction::SelectSettingsPage(0)))
+        ));
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"ui","action":"cycle_window_scale"}"#),
+            Ok(ScenarioStep::Ui(UiAction::CycleWindowScale))
+        ));
+        assert!(matches!(
+            parse_step(r#"{"version":1,"command":"ui","action":"toggle_fullscreen"}"#),
+            Ok(ScenarioStep::Ui(UiAction::ToggleFullscreen))
         ));
         assert!(matches!(
             parse_step(r#"{"version":1,"command":"set_subtitles","enabled":false}"#),

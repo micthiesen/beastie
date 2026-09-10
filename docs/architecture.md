@@ -70,13 +70,14 @@ Object instances retain authoritative IDs, positions, movement, carrying and res
 and effects never infer game outcomes from model prose.
 
 Bevy manages the native window, input, asset descriptions and continuously articulated scene.
-A custom ordinary-GPU compute ray tracer renders every visible mark, including glyph geometry.
+A custom ordinary-GPU renderer combines raster visibility with shared compute lighting for every
+visible mark, including glyph geometry. Compute traversal remains the capability fallback.
 Voxel meshes omit interior faces and retain connected bevels. Cached local triangle hierarchies
 stay unchanged as parts move; a small instance hierarchy tracks their transforms. Revised mesh
 chunks upload independently through bounded arenas. The camera is fixed, orthographic and pitched
 twelve degrees; its same projection drives ray generation and native pointer mapping.
 
-The camera runs a dedicated compute-and-present schedule. Bevy's PBR lights, raster scene and
+The camera runs a dedicated visibility, lighting and presentation schedule. Bevy's PBR lights, raster scene and
 UI/text render plugins are removed; StandardMaterial is only an authored CPU material description.
 A fullscreen transfer presents computed radiance through Bevy's ordinary screenshot-compatible
 output attachment. There are no sprites, font atlases or alternate raster scene paths.
@@ -87,6 +88,13 @@ coverage samples and four UI samples share locally coherent illumination without
 or albedo. No temporal history, denoiser, ray-query extension or dedicated RT hardware is required.
 Six visibility directions refine mixed shadows to twelve on upward rough receivers, concentrating
 soft-shadow detail on the bed. The subdued backdrop uses one continuous vertex-color gradient.
+Persistent static lighting caches and static depth maps reuse unchanged scenery. Dynamic shadow
+geometry uses an indexed, simplified position stream in one twelve-view atlas pass. Visible meshes
+retain full detail. A bounded background job prepares shadow indices while original geometry draws;
+camera-independent mesh retention avoids repeating work when objects return. Map density follows
+viewport density through 4K, with original rays beyond reviewed sizes or adapter limits.
+Explicitly occluded windows reduce host updates to 10 Hz while the game clock continues normally;
+visible and automated runs retain their existing cadence.
 UI geometry is camera-aligned with controlled studio light and is excluded from world secondary
 rays. See [raytraced-aquarium.md](raytraced-aquarium.md) for the production contract.
 
