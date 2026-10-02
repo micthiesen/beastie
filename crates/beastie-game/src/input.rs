@@ -1,8 +1,84 @@
 #[cfg(test)]
 use beastie_view::HitRegion;
-use beastie_view::{ScenePlan, UiAction};
+use beastie_view::{ScenePlan, UiAction, UiMode, ViewState};
+use unicode_segmentation::UnicodeSegmentation;
 
 pub const MAX_TALK_CHARACTERS: usize = 512;
+pub const MAX_NAME_CHARACTERS: usize = 24;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextField {
+    Message,
+    Name,
+}
+
+pub(crate) fn focused_text_field(view: &ViewState) -> Option<TextField> {
+    match (view.mode, view.focused_region.as_deref()) {
+        (UiMode::Compose, Some("compose/input")) => Some(TextField::Message),
+        (UiMode::Rename, Some("rename/input")) => Some(TextField::Name),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PasteOwner {
+    field: TextField,
+    revision: u64,
+}
+
+/// Remembers transitions, rather than comparing just the eventual destination. Leaving a field
+/// and returning to the same draft still invalidates an asynchronous clipboard result.
+#[derive(Default)]
+pub(crate) struct TextEditTracker {
+    field: Option<TextField>,
+    draft: String,
+    selected: bool,
+    revision: u64,
+}
+
+impl TextEditTracker {
+    pub(crate) fn sync(&mut self, view: &mut ViewState) {
+        let field = focused_text_field(view);
+        if field != self.field || view.text_buffer != self.draft {
+            view.text_selected = false;
+        }
+        if field != self.field
+            || view.text_buffer != self.draft
+            || view.text_selected != self.selected
+        {
+            self.revision = self.revision.wrapping_add(1);
+            self.field = field;
+            self.draft.clone_from(&view.text_buffer);
+            self.selected = view.text_selected;
+        }
+    }
+
+    pub(crate) fn invalidate(&mut self, view: &mut ViewState) {
+        view.text_selected = false;
+        self.sync(view);
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    pub(crate) fn owner(&self) -> Option<PasteOwner> {
+        self.field.map(|field| PasteOwner {
+            field,
+            revision: self.revision,
+        })
+    }
+
+    pub(crate) fn accepts(&self, owner: PasteOwner) -> bool {
+        self.owner() == Some(owner)
+    }
+}
+
+pub(crate) fn delete_view_text(view: &mut ViewState, backspace: bool) {
+    if view.text_selected {
+        view.text_buffer.clear();
+        view.text_selected = false;
+    } else if backspace {
+        backspace_text(&mut view.text_buffer);
+    }
+}
 
 #[cfg(test)]
 #[must_use]
@@ -16,7 +92,9 @@ pub fn action_at(plan: &ScenePlan, x: f32, y: f32) -> Option<UiAction> {
 #[must_use]
 pub fn region_at(plan: &ScenePlan, x: f32, y: f32) -> Option<&HitRegion> {
     plan.hit_regions.iter().rev().find(|hit| {
-        (hit.enabled || hit.id == "compose/microphone")
+        (hit.enabled
+            || hit.id == "compose/microphone"
+            || hit.shape == beastie_view::HitShape::Blocker)
             && hit.rect.contains(x.floor() as i32, y.floor() as i32)
     })
 }
@@ -39,6 +117,8 @@ pub fn move_focus(plan: &ScenePlan, current: Option<&str>, delta: i32) -> Option
                 || hit.id.starts_with("settings/")
                 || hit.id.starts_with("bindings/")
                 || hit.id.starts_with("data/")
+                || hit.id == "rename/input"
+                || hit.id == "inspect/close"
                 || hit.id == "reset/cancel"
                 || hit.id == "world/drop-food"
         })
@@ -67,12 +147,33 @@ pub fn focused_action(plan: &ScenePlan, focused: Option<&str>) -> Option<UiActio
 }
 
 pub fn append_text(buffer: &mut String, text: &str) {
-    let remaining = MAX_TALK_CHARACTERS.saturating_sub(buffer.chars().count());
-    buffer.extend(
-        text.chars()
-            .filter(|character| !character.is_control())
-            .take(remaining),
-    );
+    append_bounded_text(buffer, text, MAX_TALK_CHARACTERS);
+}
+
+/// Returns whether printable input exceeded the limit, counting Unicode scalar values like
+/// the canonical name validator. Control characters neither enter the field nor use capacity.
+/// A pasted grapheme that cannot fit is rejected whole, rather than leaving half an emoji.
+pub fn append_bounded_text(buffer: &mut String, text: &str, limit: usize) -> bool {
+    let mut remaining = limit.saturating_sub(buffer.chars().count());
+    let printable = text
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect::<String>();
+    for grapheme in printable.graphemes(true) {
+        let characters = grapheme.chars().count();
+        if characters > remaining {
+            return true;
+        }
+        buffer.push_str(grapheme);
+        remaining -= characters;
+    }
+    false
+}
+
+pub fn backspace_text(buffer: &mut String) {
+    if let Some((start, _)) = buffer.grapheme_indices(true).next_back() {
+        buffer.truncate(start);
+    }
 }
 
 #[cfg(test)]
@@ -151,6 +252,56 @@ mod tests {
     }
 
     #[test]
+    fn name_input_bounds_unicode_and_reports_only_printable_overflow() {
+        let mut name = "é".repeat(MAX_NAME_CHARACTERS - 1);
+        assert!(!append_bounded_text(
+            &mut name,
+            "\n🦎\t",
+            MAX_NAME_CHARACTERS
+        ));
+        assert_eq!(name.chars().count(), MAX_NAME_CHARACTERS);
+        assert!(name.ends_with('🦎'));
+        assert!(append_bounded_text(&mut name, "a", MAX_NAME_CHARACTERS));
+        assert!(!append_bounded_text(&mut name, "\r\n", MAX_NAME_CHARACTERS));
+        name.pop();
+        assert!(!append_bounded_text(&mut name, "水", MAX_NAME_CHARACTERS));
+        assert!(name.ends_with('水'));
+    }
+
+    #[test]
+    fn bounded_paste_never_splits_a_combining_character_or_joined_emoji() {
+        for grapheme in ["e\u{301}", "👩‍👩‍👧‍👦", "🇨🇦"] {
+            let count = grapheme.chars().count();
+            let original = "a".repeat(MAX_NAME_CHARACTERS - count + 1);
+            let mut name = original.clone();
+            assert!(append_bounded_text(
+                &mut name,
+                grapheme,
+                MAX_NAME_CHARACTERS
+            ));
+            assert_eq!(name, original);
+            backspace_text(&mut name);
+            assert!(!append_bounded_text(
+                &mut name,
+                grapheme,
+                MAX_NAME_CHARACTERS
+            ));
+            assert!(name.ends_with(grapheme));
+            assert_eq!(name.chars().count(), MAX_NAME_CHARACTERS);
+        }
+    }
+
+    #[test]
+    fn backspace_removes_one_complete_visible_character() {
+        let mut text = "Aé e\u{301}👩‍👩‍👧‍👦🇨🇦".to_owned();
+        for expected in ["Aé e\u{301}👩‍👩‍👧‍👦", "Aé e\u{301}", "Aé ", "Aé", "A", "", ""]
+        {
+            backspace_text(&mut text);
+            assert_eq!(text, expected);
+        }
+    }
+
+    #[test]
     fn toy_choice_mouse_and_focus_select_the_same_typed_actions() {
         let world = WorldState::new(42, "Mop");
         let view = ViewState {
@@ -201,6 +352,7 @@ mod tests {
         let render = plan(&world, &view).0;
         for (id, expected) in [
             ("keyboard/question", UiAction::TypeCharacter('?')),
+            ("keyboard/space", UiAction::TypeCharacter(' ')),
             ("keyboard/delete", UiAction::Backspace),
             ("keyboard/send", UiAction::SubmitText),
             ("keyboard/cancel", UiAction::CancelMode),
@@ -209,6 +361,10 @@ mod tests {
         }
         assert_eq!(
             move_focus(&render, Some("keyboard/exclamation"), 1).as_deref(),
+            Some("keyboard/space")
+        );
+        assert_eq!(
+            move_focus(&render, Some("keyboard/space"), 1).as_deref(),
             Some("keyboard/delete")
         );
         assert_eq!(

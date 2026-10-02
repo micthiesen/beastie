@@ -281,6 +281,7 @@ pub struct RecognitionCompletion {
 }
 
 pub struct RecognitionManager {
+    config: Option<RecognitionWorkerConfig>,
     commands: SyncSender<ManagerCommand>,
     completions: Receiver<RecognitionCompletion>,
     cancelled: Arc<AtomicBool>,
@@ -291,6 +292,7 @@ pub struct RecognitionManager {
 impl RecognitionManager {
     #[must_use]
     pub fn new(config: Option<RecognitionWorkerConfig>) -> Self {
+        let restart_config = config.clone();
         let (commands, command_receiver) = mpsc::sync_channel(1);
         let (completion_sender, completions) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -304,6 +306,7 @@ impl RecognitionManager {
             );
         });
         Self {
+            config: restart_config,
             commands,
             completions,
             cancelled,
@@ -355,6 +358,14 @@ impl RecognitionManager {
     #[must_use]
     pub const fn is_pending(&self) -> bool {
         self.pending
+    }
+
+    /// Discard a displaced creature's request and reclaim its private recording. The old
+    /// manager's cancellation path terminates the worker before a fresh owner can submit.
+    pub fn cancel_pending(&mut self) {
+        if self.pending {
+            *self = Self::new(self.config.clone());
+        }
     }
 
     #[cfg(test)]
@@ -528,7 +539,7 @@ fn main() {
     let mut count = 0;
     for line in io::stdin().lock().lines() {
         let line = line.unwrap();
-        if mode == "hang" { std::fs::write(marker, "started").unwrap(); std::thread::sleep(Duration::from_secs(60)); }
+        if mode == "hang" || (mode == "hang-once" && !Path::new(marker).exists()) { std::fs::write(marker, "started").unwrap(); std::thread::sleep(Duration::from_secs(60)); }
         if malformed { println!("not json"); io::stdout().flush().unwrap(); break; }
         count += 1;
         println!("{{\"protocol_version\":1,\"request_id\":{},\"outcome\":{{\"status\":\"recognized\",\"text\":\"reply {}\",\"confidence\":900}}}}", request_id(&line), count);
@@ -762,6 +773,42 @@ fn main() {
         drop(manager);
         assert!(started.elapsed() < Duration::from_secs(1));
         assert!(!audio_path.exists());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(marker).unwrap();
+        fs::remove_file(source).unwrap();
+        fs::remove_file(executable).unwrap();
+    }
+
+    #[test]
+    fn cancelled_request_releases_its_audio_and_accepts_a_new_owner() {
+        let root = temporary_path("cancel-audio");
+        let marker = temporary_path("cancel-marker");
+        let (source, executable) = compile_worker("cancel");
+        let mut manager = RecognitionManager::new(Some(config(
+            executable.clone(),
+            vec!["hang-once".into(), marker.clone().into_os_string()],
+            Duration::from_secs(30),
+        )));
+        let first = audio(&root, 10);
+        let first_path = first.path.clone();
+        assert!(manager.request(41, first));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !marker.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(marker.exists());
+        manager.cancel_pending();
+        assert!(!manager.is_pending());
+        assert!(!first_path.exists());
+        assert!(matches!(manager.try_recv(), Err(TryRecvError::Empty)));
+        assert!(manager.request(42, audio(&root, 11)));
+        let completion = manager.recv_timeout(Duration::from_secs(5));
+        assert_eq!(completion.request_id, 42);
+        assert!(matches!(
+            completion.outcome,
+            RecognitionOutcome::Recognized { .. }
+        ));
+        drop(manager);
         fs::remove_dir_all(root).unwrap();
         fs::remove_file(marker).unwrap();
         fs::remove_file(source).unwrap();

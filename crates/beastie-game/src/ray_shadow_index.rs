@@ -429,7 +429,7 @@ mod tests {
         let mut indices = Vec::new();
         append_chunk(&triangles, &mut positions, &mut indices);
         assert!(positions.len() < indices.len());
-        for (t, indexed) in triangles.iter().zip(indices.chunks_exact(3)) {
+        for (t, indexed) in triangles.iter().zip(indices.as_chunks::<3>().0.iter()) {
             let g = t.geometry(0);
             let expected = [g.a, g.a + g.e1.truncate(), g.a + g.e2.truncate()];
             for (p, i) in expected.into_iter().zip(indexed) {

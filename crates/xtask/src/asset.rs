@@ -111,7 +111,7 @@ pub(crate) fn check(manifest_path: &Path, require_runtime: bool, verbose: bool) 
             tables > 0 && bytes.len() >= 12 + tables * 16,
             "truncated font table directory"
         );
-        for table in bytes[12..12 + tables * 16].chunks_exact(16) {
+        for table in bytes[12..12 + tables * 16].as_chunks::<16>().0.iter() {
             let offset = u32::from_be_bytes(table[8..12].try_into()?) as usize;
             let length = u32::from_be_bytes(table[12..16].try_into()?) as usize;
             ensure!(

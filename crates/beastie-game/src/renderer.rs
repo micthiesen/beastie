@@ -17,6 +17,30 @@ const UNITS: f32 = 20.0;
 const PLAY_HEIGHT: f32 = 8.7;
 const PLAY_LIFT: f32 = 0.15;
 const CAMERA_PITCH: f32 = -12.0 * std::f32::consts::PI / 180.0;
+const UI_LAYER_STRIDE: f32 = 0.025;
+const ICON_DEPTH: f32 = 0.008;
+
+#[derive(Clone, Copy)]
+enum OverlayPart {
+    Face,
+    Rim,
+    Icon,
+    Selection,
+    Text,
+}
+
+/// Every primitive occupies only its own semantic layer. In particular, a lower
+/// miniature's nearest voxel face must stay behind a higher panel's background.
+fn overlay_depth(layer: i16, part: OverlayPart) -> f32 {
+    let offset = match part {
+        OverlayPart::Face => 0.001,
+        OverlayPart::Rim => 0.003,
+        OverlayPart::Icon => 0.012,
+        OverlayPart::Selection => 0.018,
+        OverlayPart::Text => 0.020,
+    };
+    8.0 + layer as f32 * UI_LAYER_STRIDE + offset
+}
 
 #[derive(Resource)]
 pub struct SceneFrame {
@@ -26,6 +50,92 @@ pub struct SceneFrame {
 pub struct TankCamera;
 #[derive(Component)]
 struct WorldObject(u64);
+
+const OBJECT_TRANSFER_MS: u64 = 200;
+
+#[derive(Clone, Copy)]
+struct ObjectTransfer {
+    started_ms: u64,
+    from: Transform,
+}
+
+/// Presentation-only carry transitions. Simulation contact and ownership remain immediate.
+#[derive(Component)]
+struct ObjectPresentation {
+    carried: bool,
+    last_ms: u64,
+    title_screen: bool,
+    previous: Transform,
+    current: Transform,
+    transfer: Option<ObjectTransfer>,
+}
+
+impl ObjectPresentation {
+    fn new(object: &beastie_view::ObjectScene, scene: &ScenePlan, pose: Transform) -> Self {
+        Self {
+            carried: object.carried,
+            last_ms: scene
+                .elapsed_ms
+                .saturating_add(scene.simulation_remainder_ms),
+            title_screen: scene.title_screen,
+            previous: pose,
+            current: pose,
+            transfer: None,
+        }
+    }
+
+    fn advance(
+        &mut self,
+        object: &beastie_view::ObjectScene,
+        scene: &ScenePlan,
+        target: Transform,
+        rendered: Transform,
+    ) -> Transform {
+        let now = scene
+            .elapsed_ms
+            .saturating_add(scene.simulation_remainder_ms);
+        if now < self.last_ms
+            || now.saturating_sub(self.last_ms) > 1_000
+            || target.translation.distance(rendered.translation) > 3.0
+            || scene.title_screen
+            || scene.title_screen != self.title_screen
+        {
+            // Loads, clock discontinuities and title staging never replay an old pickup.
+            *self = Self::new(object, scene, target);
+            return target;
+        }
+        self.previous = rendered;
+        if object.carried != self.carried {
+            // Restart from the pose actually shown, including release during pickup.
+            self.transfer = Some(ObjectTransfer {
+                started_ms: now,
+                from: self.previous,
+            });
+        }
+        self.carried = object.carried;
+        self.last_ms = now;
+        self.current = target;
+        if let Some(transfer) = self.transfer {
+            let fraction =
+                now.saturating_sub(transfer.started_ms) as f32 / OBJECT_TRANSFER_MS as f32;
+            if fraction == 0.0 {
+                self.current = transfer.from;
+            } else if fraction >= 1.0 {
+                self.transfer = None;
+            } else {
+                // Essential continuity also remains with reduced motion. No arc, bounce
+                // or decorative rotation is added; the endpoint follows the current mouth.
+                let blend = fraction * fraction * (3.0 - 2.0 * fraction);
+                self.current.translation =
+                    transfer.from.translation.lerp(target.translation, blend);
+                self.current.rotation = transfer.from.rotation.slerp(target.rotation, blend);
+                self.current.scale = transfer.from.scale.lerp(target.scale, blend);
+            }
+        }
+        self.current
+    }
+}
+
 #[derive(Component)]
 struct UiGeometry;
 #[derive(Component)]
@@ -111,8 +221,8 @@ struct TextSlot {
 
 impl UiCache {
     fn icon(&mut self, meshes: &mut Assets<Mesh>, kind: IconKind, color: [u8; 3]) -> Handle<Mesh> {
-        // Toy models author their own colors; enabled palettes must share them.
-        let color = if matches!(kind, IconKind::Toy(_)) {
+        // Object miniatures author their own colors; enabled palettes share them.
+        let color = if matches!(kind, IconKind::Toy(_) | IconKind::FoodItem(_)) {
             [0; 3]
         } else {
             color
@@ -405,19 +515,40 @@ fn object_key(kind: ObjectKind) -> String {
 /// Use the same continuous anchor for drawing, effects, and volume picking.
 pub(crate) fn object_position(object: &beastie_view::ObjectScene, scene: &ScenePlan) -> Vec3 {
     if object.carried {
-        return crate::creature::head_position(scene) + Vec3::new(0.0, -0.34, 0.65);
+        return crate::creature::head_position(scene) + carried_toy_offset(scene);
     }
     let fraction = scene.simulation_remainder_ms.min(999) as f32 / 1000.0;
-    world_position(NormalizedPosition::new(
-        object
-            .position
-            .x
-            .saturating_add((object.velocity.x as f32 * fraction).round() as i32),
-        object
-            .position
-            .y
-            .saturating_add((object.velocity.y as f32 * fraction).round() as i32),
-    ))
+    let mut position = world_position(
+        NormalizedPosition::new(
+            object
+                .position
+                .x
+                .saturating_add((object.velocity.x as f32 * fraction).round() as i32),
+            object
+                .position
+                .y
+                .saturating_add((object.velocity.y as f32 * fraction).round() as i32),
+        )
+        .clamped(),
+    );
+    if object.kind == ObjectKind::Toy(ToyId::Sock)
+        && object.response == beastie_core::ToyResponse::SockTugged
+        && object.velocity.y > 0
+    {
+        // A released sock begins at the real mouth hold and falls onto the interaction
+        // plane. The same halving velocity that drives its fall makes depth continuous
+        // across ticks; dropping `carried` must not pop it from the mouth into the head.
+        position.z = 0.65
+            * (object.velocity.y as f32 / beastie_core::SOCK_RELEASE_SPEED as f32).min(1.0)
+            * (1.0 - fraction * 0.5);
+    }
+    position
+}
+
+fn carried_toy_offset(scene: &ScenePlan) -> Vec3 {
+    world_position(beastie_core::held_toy_position(scene.creature.position))
+        - world_position(scene.creature.position)
+        + Vec3::new(0.0, 0.0, 0.65)
 }
 
 fn presented_object_position(
@@ -426,10 +557,44 @@ fn presented_object_position(
     motion: &crate::creature::CreatureMotion,
 ) -> Vec3 {
     if object.carried {
-        motion.position(scene) + Vec3::new(0.0, -0.34, 0.65)
+        motion.position(scene) + carried_toy_offset(scene)
     } else {
         object_position(object, scene)
     }
+}
+
+fn object_transform(
+    object: &beastie_view::ObjectScene,
+    scene: &ScenePlan,
+    motion: &crate::creature::CreatureMotion,
+) -> Transform {
+    let mut transform =
+        Transform::from_translation(presented_object_position(object, scene, motion));
+    let time = scene
+        .elapsed_ms
+        .saturating_add(scene.simulation_remainder_ms) as f32
+        / 1000.0;
+    if matches!(object.kind, ObjectKind::Plant) && !scene.reduced_motion {
+        transform.rotation = Quat::from_rotation_z((time / 1.9 + object.id as f32).sin() * 0.055);
+    }
+    if object.kind == ObjectKind::Toy(ToyId::Ball) {
+        transform.rotation = Quat::from_rotation_z(-transform.translation.x * 1.2);
+    }
+    if object.kind == ObjectKind::Toy(ToyId::Bell)
+        && !scene.reduced_motion
+        && !scene.reduced_shake
+        && let Some(cue) = scene.effects.iter().find(|cue| {
+            cue.target == UiTarget::Toy(ToyId::Bell) && cue.cue == PresentationCueKind::BellStrike
+        })
+    {
+        let elapsed = cue.elapsed_ms.saturating_add(scene.simulation_remainder_ms) as f32 / 1000.0;
+        transform.rotation =
+            Quat::from_rotation_z((elapsed * 18.0).sin() * (-elapsed * 1.5).exp() * 0.3);
+    }
+    if object.carried {
+        transform.rotation = Quat::from_rotation_z(-0.15);
+    }
+    transform
 }
 
 #[allow(clippy::too_many_arguments)] // Independent Bevy resources and component access.
@@ -441,50 +606,25 @@ fn sync_objects(
     appearance: Res<crate::appearance::RenderAppearance>,
     mut cache: ResMut<ObjectMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut objects: Query<(Entity, &WorldObject, &mut Transform)>,
+    mut objects: Query<(
+        Entity,
+        &WorldObject,
+        &mut Transform,
+        &mut ObjectPresentation,
+    )>,
 ) {
-    for (entity, object, mut transform) in &mut objects {
+    for (entity, object, mut transform, mut presentation) in &mut objects {
         let Some(plan) = frame.plan.objects.iter().find(|p| p.id == object.0) else {
             commands.entity(entity).despawn();
             continue;
         };
-        transform.translation = presented_object_position(plan, &frame.plan, &motion);
-        let time = frame
-            .plan
-            .elapsed_ms
-            .saturating_add(frame.plan.simulation_remainder_ms) as f32
-            / 1000.0;
-        transform.rotation = Quat::IDENTITY;
-        transform.scale = Vec3::ONE;
-        if matches!(plan.kind, ObjectKind::Plant) && !frame.plan.reduced_motion {
-            transform.rotation = Quat::from_rotation_z((time / 1.9 + plan.id as f32).sin() * 0.055);
-        }
-        if plan.kind == ObjectKind::Toy(ToyId::Ball) {
-            transform.rotation = Quat::from_rotation_z(-transform.translation.x * 1.2);
-        }
-        if plan.kind == ObjectKind::Toy(ToyId::Bell)
-            && !frame.plan.reduced_motion
-            && !frame.plan.reduced_shake
-            && let Some(cue) = frame.plan.effects.iter().find(|cue| {
-                cue.target == UiTarget::Toy(ToyId::Bell)
-                    && cue.cue == PresentationCueKind::BellStrike
-            })
-        {
-            let elapsed =
-                cue.elapsed_ms
-                    .saturating_add(frame.plan.simulation_remainder_ms) as f32
-                    / 1000.0;
-            transform.rotation =
-                Quat::from_rotation_z((elapsed * 18.0).sin() * (-elapsed * 1.5).exp() * 0.3);
-        }
-        if plan.carried {
-            transform.rotation = Quat::from_rotation_z(-0.15);
-        }
+        let target = object_transform(plan, &frame.plan, &motion);
+        *transform = presentation.advance(plan, &frame.plan, target, *transform);
     }
     for object in &frame.plan.objects {
         if objects
             .iter()
-            .any(|(_, candidate, _)| candidate.0 == object.id)
+            .any(|(_, candidate, _, _)| candidate.0 == object.id)
         {
             continue;
         }
@@ -493,8 +633,10 @@ fn sync_objects(
             .entry(object_key(object.kind))
             .or_insert_with(|| meshes.add(appearance.mesh(object_mesh(object.kind, *appearance))))
             .clone();
+        let transform = object_transform(object, &frame.plan, &motion);
         let mut entity = commands.spawn((
             WorldObject(object.id),
+            ObjectPresentation::new(object, &frame.plan, transform),
             Mesh3d(mesh),
             MeshMaterial3d(match object.kind {
                 ObjectKind::Food(_) => palette.food.clone(),
@@ -504,7 +646,7 @@ fn sync_objects(
                 ObjectKind::Plant => palette.plant.clone(),
                 ObjectKind::Cave => palette.solid.clone(),
             }),
-            Transform::from_translation(presented_object_position(object, &frame.plan, &motion)),
+            transform,
         ));
         // Caves have no sway, carry or title staging animation. Any future actual
         // transform/mesh/visibility change is still covered by static invalidation.
@@ -818,68 +960,276 @@ fn animate_bubbles(frame: Res<SceneFrame>, mut bubbles: Query<(&Bubble, &mut Tra
 }
 
 fn icon_mesh(kind: IconKind, center: Vec3, color: [u8; 3]) -> Mesh {
-    if let IconKind::Toy(toy) = kind {
-        let mesh = object_mesh(ObjectKind::Toy(toy), default());
-        let positions = mesh
-            .attribute(Mesh::ATTRIBUTE_POSITION)
-            .unwrap()
-            .as_float3()
-            .unwrap();
-        let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
-        for point in positions {
-            min = min.min(Vec3::from(*point));
-            max = max.max(Vec3::from(*point));
-        }
-        let scale = 0.54 / (max - min).max_element();
-        return mesh
-            .translated_by(-(min + max) * 0.5)
-            .scaled_by(Vec3::splat(scale))
-            .translated_by(center);
-    }
-    if kind == IconKind::Settings {
-        let mut gear = crate::voxel::VoxelModel::default();
-        for x in -4_i32..=4 {
-            for y in -4_i32..=4 {
-                let radius = x * x + y * y;
-                if radius >= 5 && (radius <= 13 || x.abs() <= 1 || y.abs() <= 1) {
-                    gear.set([x, y, 0], color);
-                }
-            }
-        }
-        return gear
-            .mesh_with_style(0.047, crate::voxel::SurfaceStyle::Sharp)
-            .translated_by(center);
-    }
-    let cell = 0.062;
-    let pattern: &[&str] = match kind {
-        IconKind::Microphone => &[
-            "  xx  ", "  xx  ", "x xx x", "x xx x", " xxxx ", "  xx  ", " xxxx ",
-        ],
-        IconKind::Food => &["  x   ", " xxx  ", "xxxxx ", "xxxxx ", " xxx  "],
-        IconKind::Settings => &[" x  x ", "xxxxxx", "xx  xx", "xx  xx", "xxxxxx", " x  x "],
-        IconKind::Send => &[
-            "x     ", "xxx   ", "xxxxx ", "xxxxxx", "xxxxx ", "xxx   ", "x     ",
-        ],
-        IconKind::Toy(_) => unreachable!("toy miniatures return above"),
+    let mesh = match kind {
+        IconKind::Toy(toy) => object_mesh(ObjectKind::Toy(toy), default()),
+        IconKind::FoodItem(food) => object_mesh(ObjectKind::Food(food), default()),
+        _ => utility_icon_mesh(kind, color),
     };
-    let mut model = crate::voxel::VoxelModel::default();
-    let mut lower = IVec2::splat(i32::MAX);
-    let mut upper = IVec2::splat(i32::MIN);
-    for (row, line) in pattern.iter().enumerate() {
-        for (column, byte) in line.bytes().enumerate() {
-            if byte == b'x' {
-                let point = IVec2::new(column as i32, -(row as i32));
-                lower = lower.min(point);
-                upper = upper.max(point);
-                model.set([point.x, point.y, 0], color);
+    let positions = mesh
+        .attribute(Mesh::ATTRIBUTE_POSITION)
+        .unwrap()
+        .as_float3()
+        .unwrap();
+    let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+    for point in positions {
+        min = min.min(Vec3::from(*point));
+        max = max.max(Vec3::from(*point));
+    }
+    let extent = max - min;
+    let scale = 1.0 / extent.truncate().max_element();
+    // Keep the actual voxel silhouette/palette, with its depth inside the UI band.
+    // Art bounds scale XY only, so a larger miniature cannot pierce a modal above it.
+    let depth_scale = if extent.z > 0.0 {
+        ICON_DEPTH / extent.z
+    } else {
+        1.0
+    };
+    mesh.translated_by(-(min + max) * 0.5)
+        .scaled_by(Vec3::new(scale, scale, depth_scale))
+        .translated_by(center)
+}
+
+fn icon_transform(icon: &beastie_view::IconCommand) -> Transform {
+    let scale = icon.bounds.w.min(icon.bounds.h).max(0) as f32 / UNITS;
+    Transform::from_translation(logical_position(
+        icon.bounds.x as f32 + icon.bounds.w as f32 * 0.5,
+        icon.bounds.y as f32 + icon.bounds.h as f32 * 0.5,
+        overlay_depth(icon.layer, OverlayPart::Icon),
+    ))
+    .with_scale(Vec3::new(scale, scale, 1.0))
+}
+
+#[cfg(test)]
+fn test_icon_kinds() -> [IconKind; 16] {
+    use beastie_core::FoodId;
+    [
+        IconKind::Food,
+        IconKind::Microphone,
+        IconKind::Send,
+        IconKind::Settings,
+        IconKind::Close,
+        IconKind::ChevronRight,
+        IconKind::Inspect,
+        IconKind::Heart,
+        IconKind::Rename,
+        IconKind::Play,
+        IconKind::Toy(ToyId::Ball),
+        IconKind::Toy(ToyId::Bell),
+        IconKind::Toy(ToyId::Sock),
+        IconKind::FoodItem(FoodId::Berry),
+        IconKind::FoodItem(FoodId::Mushroom),
+        IconKind::FoodItem(FoodId::Pellet),
+    ]
+}
+
+/// Smooth utility marks share canonical meshes; physical objects keep voxel miniatures.
+fn utility_icon_mesh(kind: IconKind, color: [u8; 3]) -> Mesh {
+    use std::f32::consts::{PI, TAU};
+    let mut shape = Geometry::default();
+    match kind {
+        IconKind::Microphone => {
+            rounded_plate(
+                &mut shape,
+                Vec3::new(0.0, 0.18, 0.0),
+                Vec2::new(0.29, 0.61),
+                color,
+                0.145,
+            );
+            icon_arc(
+                &mut shape,
+                Vec2::new(0.0, -0.02),
+                0.3,
+                PI,
+                TAU,
+                0.075,
+                color,
+            );
+            for x in [-0.3, 0.3] {
+                icon_stroke(
+                    &mut shape,
+                    Vec2::new(x, -0.02),
+                    Vec2::new(x, 0.13),
+                    0.075,
+                    color,
+                );
+            }
+            icon_stroke(
+                &mut shape,
+                Vec2::new(0.0, -0.32),
+                Vec2::new(0.0, -0.48),
+                0.075,
+                color,
+            );
+            icon_stroke(
+                &mut shape,
+                Vec2::new(-0.14, -0.48),
+                Vec2::new(0.14, -0.48),
+                0.075,
+                color,
+            );
+        }
+        IconKind::Settings => {
+            let outer: Vec<_> = (0..64)
+                .map(|index| {
+                    let angle = index as f32 * TAU / 64.0;
+                    let radius = if matches!(index % 8, 1..=4) { 0.5 } else { 0.4 };
+                    Vec2::new(angle.cos(), angle.sin()) * radius
+                })
+                .collect();
+            let inner: Vec<_> = (0..64)
+                .map(|index| {
+                    let angle = index as f32 * TAU / 64.0;
+                    Vec2::new(angle.cos(), angle.sin()) * 0.18
+                })
+                .collect();
+            flat_ring(&mut shape, Vec3::ZERO, &outer, &inner, color, false);
+        }
+        IconKind::Food => {
+            let points: Vec<_> = (0..64)
+                .map(|index| {
+                    let angle = index as f32 * TAU / 64.0;
+                    Vec2::new(angle.cos(), angle.sin()) * (0.4 + 0.075 * (angle * 4.0).cos())
+                })
+                .collect();
+            flat_fan(&mut shape, Vec3::ZERO, &points, color);
+        }
+        IconKind::Send => {
+            // Two wings retain the paper plane's open central fold at small sizes.
+            for sign in [-1.0, 1.0] {
+                front_triangle(
+                    &mut shape,
+                    [
+                        Vec3::new(-0.48, sign * 0.42, 0.0),
+                        Vec3::new(0.52, 0.0, 0.0),
+                        Vec3::new(-0.26, sign * 0.07, 0.0),
+                    ],
+                    color,
+                );
             }
         }
+        IconKind::Close => {
+            for sign in [-1.0, 1.0] {
+                icon_stroke(
+                    &mut shape,
+                    Vec2::new(-0.34, -0.34 * sign),
+                    Vec2::new(0.34, 0.34 * sign),
+                    0.12,
+                    color,
+                );
+            }
+        }
+        IconKind::ChevronRight => {
+            icon_stroke(
+                &mut shape,
+                Vec2::new(-0.22, 0.38),
+                Vec2::new(0.22, 0.0),
+                0.11,
+                color,
+            );
+            icon_stroke(
+                &mut shape,
+                Vec2::new(0.22, 0.0),
+                Vec2::new(-0.22, -0.38),
+                0.11,
+                color,
+            );
+        }
+        IconKind::Inspect => {
+            icon_arc(&mut shape, Vec2::new(-0.1, 0.1), 0.29, 0.0, TAU, 0.1, color);
+            icon_stroke(
+                &mut shape,
+                Vec2::new(0.12, -0.12),
+                Vec2::new(0.43, -0.43),
+                0.12,
+                color,
+            );
+        }
+        IconKind::Heart => {
+            // This heart is star-shaped about its center, including the upper cleft.
+            let points: Vec<_> = (0..64)
+                .map(|index| {
+                    let t = index as f32 * TAU / 64.0;
+                    Vec2::new(
+                        16.0 * t.sin().powi(3),
+                        13.0 * t.cos()
+                            - 5.0 * (2.0 * t).cos()
+                            - 2.0 * (3.0 * t).cos()
+                            - (4.0 * t).cos(),
+                    ) / 32.0
+                })
+                .collect();
+            flat_fan(&mut shape, Vec3::ZERO, &points, color);
+        }
+        IconKind::Rename => {
+            let direction = Vec2::new(1.0, 1.0).normalize();
+            let normal = Vec2::new(-direction.y, direction.x) * 0.12;
+            let start = Vec2::new(-0.26, -0.26);
+            let end = Vec2::new(0.35, 0.35);
+            let points = [start + normal, start - normal, end - normal, end + normal];
+            flat_fan(
+                &mut shape,
+                ((start + end) * 0.5).extend(0.0),
+                &points.map(|p| p - (start + end) * 0.5),
+                color,
+            );
+            front_triangle(
+                &mut shape,
+                [
+                    Vec3::new(-0.47, -0.47, 0.0),
+                    (start - normal).extend(0.0),
+                    (start + normal).extend(0.0),
+                ],
+                color,
+            );
+        }
+        IconKind::Play => front_triangle(
+            &mut shape,
+            [
+                Vec3::new(-0.34, -0.45, 0.0),
+                Vec3::new(0.44, 0.0, 0.0),
+                Vec3::new(-0.34, 0.45, 0.0),
+            ],
+            color,
+        ),
+        IconKind::Toy(_) | IconKind::FoodItem(_) => {
+            unreachable!("physical miniatures use object geometry")
+        }
     }
-    // Center occupied cells, not the padded stencil: Food has an empty last column.
-    let offset = (lower + upper).as_vec2() * (cell * 0.5);
-    model
-        .mesh_with_style(cell, crate::voxel::SurfaceStyle::Sharp)
-        .translated_by(center - offset.extend(0.0))
+    shape.mesh()
+}
+
+fn icon_stroke(shape: &mut Geometry, a: Vec2, b: Vec2, width: f32, color: [u8; 3]) {
+    let delta = b - a;
+    let rotation = Vec2::from_angle(delta.y.atan2(delta.x));
+    let points: Vec<_> = rounded_perimeter(Vec2::new(delta.length() + width, width), width * 0.5)
+        .into_iter()
+        .map(|point| rotation.rotate(point))
+        .collect();
+    flat_fan(shape, ((a + b) * 0.5).extend(0.0), &points, color);
+}
+
+fn icon_arc(
+    shape: &mut Geometry,
+    center: Vec2,
+    radius: f32,
+    start: f32,
+    end: f32,
+    width: f32,
+    color: [u8; 3],
+) {
+    let steps = ((end - start).abs() * 12.0).ceil() as usize;
+    let point = |step: usize, radius: f32| {
+        let angle = start + (end - start) * step as f32 / steps as f32;
+        center + Vec2::new(angle.cos(), angle.sin()) * radius
+    };
+    for step in 0..steps {
+        let a = point(step, radius + width * 0.5).extend(0.0);
+        let b = point(step + 1, radius + width * 0.5).extend(0.0);
+        let c = point(step + 1, radius - width * 0.5).extend(0.0);
+        let d = point(step, radius - width * 0.5).extend(0.0);
+        front_triangle(shape, [a, b, c], color);
+        front_triangle(shape, [a, c, d], color);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -980,32 +1330,6 @@ fn visible_text_boxes(
     visible
 }
 
-fn fitting_font_size(text: &beastie_view::TextCommand, bounds: TextBox) -> f32 {
-    let requested = text.role.size(text.scale >= 2);
-    let mut size = requested.min(bounds.h / 1.2);
-    // Atkinson's mean advance is about half its em. A conservative width estimate keeps
-    // small controls legible without silently drawing their label across the next control.
-    let longest = text
-        .text
-        .lines()
-        .map(|line| line.chars().count())
-        .max()
-        .unwrap_or(0) as f32;
-    if text.id == "speech/text" {
-        for _ in 0..16 {
-            let columns = (bounds.w / (size * 0.56)).floor().max(1.0);
-            let lines = (text.text.chars().count() as f32 / columns).ceil().max(1.0);
-            if lines * size * 1.2 <= bounds.h {
-                break;
-            }
-            size *= 0.92;
-        }
-    } else {
-        size = size.min(bounds.w / (longest * 0.56).max(1.0));
-    }
-    size.max(1.0)
-}
-
 #[derive(bevy::ecs::system::SystemParam)]
 struct UiSystem<'w, 's> {
     commands: Commands<'w, 's>,
@@ -1017,59 +1341,95 @@ struct UiSystem<'w, 's> {
     timing: Option<Res<'w, crate::ray_stats::ComputeGpuTiming>>,
 }
 
-/// Five joined voxel-width strips clip the corners without smooth vector geometry.
-/// Semantic hit rectangles stay generous, including the tiny omitted corners.
-fn stepped_plate(shape: &mut Geometry, center: Vec3, size: Vec3, color: [u8; 3], corner: f32) {
-    let c = corner.min(size.x * 0.2).min(size.y * 0.2);
-    shape.cuboid(center, Vec3::new(size.x - c * 4.0, size.y, size.z), color);
-    for side in [-1.0, 1.0] {
-        shape.cuboid(
-            center + Vec3::X * side * (size.x * 0.5 - c * 1.5),
-            Vec3::new(c, size.y - c * 2.0, size.z),
-            color,
-        );
-        shape.cuboid(
-            center + Vec3::X * side * (size.x * 0.5 - c * 0.5),
-            Vec3::new(c, size.y - c * 4.0, size.z),
+/// Eight segments per corner stay smooth at the largest supported native window.
+/// Duplicate tangent points on circles are harmless: front_triangle removes them.
+fn rounded_perimeter(size: Vec2, radius: f32) -> Vec<Vec2> {
+    let half = size * 0.5;
+    let radius = radius.clamp(0.0, half.min_element().max(0.0));
+    let mut points = Vec::with_capacity(36);
+    for corner in 0..4 {
+        let angle = corner as f32 * std::f32::consts::FRAC_PI_2;
+        let center = match corner {
+            0 => Vec2::new(half.x - radius, half.y - radius),
+            1 => Vec2::new(-half.x + radius, half.y - radius),
+            2 => Vec2::new(-half.x + radius, -half.y + radius),
+            _ => Vec2::new(half.x - radius, -half.y + radius),
+        };
+        for step in 0..=8 {
+            let theta = angle + step as f32 * std::f32::consts::FRAC_PI_2 / 8.0;
+            points.push(center + Vec2::new(theta.cos(), theta.sin()) * radius);
+        }
+    }
+    points
+}
+
+fn front_triangle(shape: &mut Geometry, mut points: [Vec3; 3], color: [u8; 3]) {
+    let area = (points[1] - points[0]).cross(points[2] - points[0]).z;
+    if area.abs() < 1e-10 {
+        return;
+    }
+    if area < 0.0 {
+        points.swap(1, 2);
+    }
+    shape.triangle(points, color);
+}
+
+fn flat_fan(shape: &mut Geometry, center: Vec3, points: &[Vec2], color: [u8; 3]) {
+    for index in 0..points.len() {
+        front_triangle(
+            shape,
+            [
+                center,
+                center + points[index].extend(0.0),
+                center + points[(index + 1) % points.len()].extend(0.0),
+            ],
             color,
         );
     }
 }
 
-fn stepped_rim(shape: &mut Geometry, center: Vec3, size: Vec2, color: [u8; 3], corner: f32) {
-    let c = corner.min(size.x * 0.2).min(size.y * 0.2);
-    let stroke = 0.012;
-    let upper = color.map(|v| v.saturating_add(9));
-    for side in [-1.0, 1.0] {
-        let edge = if side > 0.0 { upper } else { color };
-        shape.cuboid(
-            center + Vec3::Y * side * size.y * 0.5,
-            Vec3::new(size.x - c * 4.0, stroke, 0.026),
-            edge,
-        );
-        shape.cuboid(
-            center + Vec3::X * side * size.x * 0.5,
-            Vec3::new(stroke, size.y - c * 4.0, 0.026),
-            color,
-        );
-        for vertical in [-1.0, 1.0] {
-            for step in 0..2 {
-                let k = step as f32;
-                let x = side * (size.x * 0.5 - c * (1.5 - k));
-                let y = vertical * (size.y * 0.5 - c * (1.0 + k));
-                shape.cuboid(
-                    center + Vec3::new(x, y, 0.0),
-                    Vec3::new(c + stroke, stroke, 0.026),
-                    color,
-                );
-                shape.cuboid(
-                    center + Vec3::new(x - side * c * 0.5, y + vertical * c * 0.5, 0.0),
-                    Vec3::new(stroke, c + stroke, 0.026),
-                    color,
-                );
-            }
-        }
+fn flat_ring(
+    shape: &mut Geometry,
+    center: Vec3,
+    outer: &[Vec2],
+    inner: &[Vec2],
+    color: [u8; 3],
+    highlight: bool,
+) {
+    for index in 0..outer.len() {
+        let next = (index + 1) % outer.len();
+        let [a, b, c, d] = [outer[index], outer[next], inner[next], inner[index]]
+            .map(|point| center + point.extend(0.0));
+        let color = if highlight && outer[index].y + outer[next].y > 0.0 {
+            color.map(|value| value.saturating_add(7))
+        } else {
+            color
+        };
+        front_triangle(shape, [a, b, c], color);
+        front_triangle(shape, [a, c, d], color);
     }
+}
+
+/// Overlay surfaces need only their front face; no world lighting rays or back walls.
+fn rounded_plate(shape: &mut Geometry, center: Vec3, size: Vec2, color: [u8; 3], radius: f32) {
+    if size.min_element() <= 0.0 {
+        return;
+    }
+    flat_fan(shape, center, &rounded_perimeter(size, radius), color);
+}
+
+fn rounded_rim(shape: &mut Geometry, center: Vec3, size: Vec2, color: [u8; 3], radius: f32) {
+    if size.min_element() <= 0.0 {
+        return;
+    }
+    let stroke = 0.018_f32.min(size.min_element() * 0.5);
+    let radius = radius.min(size.min_element() * 0.5);
+    let outer = rounded_perimeter(size, radius);
+    let inner = rounded_perimeter(
+        (size - Vec2::splat(stroke * 2.0)).max(Vec2::ZERO),
+        (radius - stroke).max(0.0),
+    );
+    flat_ring(shape, center, &outer, &inner, color, true);
 }
 
 fn sync_ui(mut ui: UiSystem) {
@@ -1091,7 +1451,7 @@ fn sync_ui(mut ui: UiSystem) {
             {
                 [88, 114, 118]
             } else {
-                [216, 219, 185]
+                beastie_view::TextRole::Control.color()
             }
         })
         .collect();
@@ -1117,45 +1477,29 @@ fn sync_ui(mut ui: UiSystem) {
             let center = logical_position(
                 r.x as f32 + r.w as f32 * 0.5,
                 r.y as f32 + r.h as f32 * 0.5,
-                8.0 + rect.layer as f32 * 0.002,
+                overlay_depth(
+                    rect.layer,
+                    if rect.outline {
+                        OverlayPart::Rim
+                    } else {
+                        OverlayPart::Face
+                    },
+                ),
             );
             let color = [rect.color[0], rect.color[1], rect.color[2]];
-            let size = Vec3::new(r.w as f32 / UNITS, r.h as f32 / UNITS, 0.02);
-            let panel_id = rect.id.strip_suffix("-edge").unwrap_or(&rect.id);
-            let crafted = rect.id.starts_with("title/")
-                || rect.id.starts_with("settings/")
-                || panel_id.ends_with("-panel")
-                || matches!(
-                    panel_id,
-                    "rename/prompt-background"
-                        | "mode/drop-food-background"
-                        | "data/panel"
-                        | "reset/panel"
-                        | "bindings/panel"
-                        | "bindings/capture/panel"
-                        | "keyboard/panel"
-                );
-            let corner = if r.h > 20 { 0.050 } else { 0.025 };
+            let size = Vec2::new(r.w as f32 / UNITS, r.h as f32 / UNITS);
+            let corner = rect.corner_radius as f32 / UNITS;
             if rect.id == "settings/panel" {
                 if panel_changed {
-                    stepped_plate(&mut panel, center, size, color, corner);
+                    rounded_plate(&mut panel, center, size, color, corner);
                 }
                 has_panel = true;
                 continue;
             }
-            if crafted && rect.outline {
-                stepped_rim(&mut shape, center, size.truncate(), color, corner);
-            } else if rect.outline {
-                for y in [-size.y * 0.5, size.y * 0.5] {
-                    shape.cuboid(center + Vec3::Y * y, Vec3::new(size.x, 0.014, 0.02), color);
-                }
-                for x in [-size.x * 0.5, size.x * 0.5] {
-                    shape.cuboid(center + Vec3::X * x, Vec3::new(0.014, size.y, 0.02), color);
-                }
-            } else if crafted && r.h >= 6 && r.w >= 6 {
-                stepped_plate(&mut shape, center, size, color, corner);
+            if rect.outline {
+                rounded_rim(&mut shape, center, size, color, corner);
             } else {
-                shape.cuboid(center, size, color);
+                rounded_plate(&mut shape, center, size, color, corner);
             }
         }
 
@@ -1234,16 +1578,12 @@ fn sync_ui(mut ui: UiSystem) {
             };
             let icons = ui.frame.plan.icons.clone();
             for (index, (icon, &color)) in icons.iter().zip(&icon_colors).enumerate() {
-                let center = logical_position(
-                    icon.bounds.x as f32 + icon.bounds.w as f32 * 0.5,
-                    icon.bounds.y as f32 + icon.bounds.h as f32 * 0.5,
-                    8.05 + icon.layer as f32 * 0.002,
-                );
+                let transform = icon_transform(icon);
                 let handle = ui.cache.icon(&mut ui.meshes, icon.kind, color);
                 if let Some(&entity) = ui.cache.icon_slots.get(index) {
                     ui.commands.entity(entity).insert((
                         Mesh3d(handle),
-                        Transform::from_translation(center),
+                        transform,
                         Visibility::Inherited,
                     ));
                 } else {
@@ -1253,7 +1593,7 @@ fn sync_ui(mut ui: UiSystem) {
                             crate::ray_scene::RayOverlay,
                             Mesh3d(handle),
                             MeshMaterial3d(ui.palette.ui.clone()),
-                            Transform::from_translation(center),
+                            transform,
                             Visibility::Inherited,
                         ))
                         .id();
@@ -1322,24 +1662,50 @@ fn label_mesh(
         h: b.h,
     };
     let clips: Vec<_> = visible.iter().copied().map(to_glyph_bounds).collect();
+    let size = text.role.size(text.scale >= 2);
+    let mut content_bounds = to_glyph_bounds(bounds);
+    if text.input_state == Some(beastie_view::TextInputState::Caret) {
+        let reserve = crate::glyphs::CARET_SPACE.min(content_bounds.w.max(0.0));
+        content_bounds.w -= reserve;
+        if !text.keep_tail {
+            content_bounds.x += reserve;
+        }
+    }
+    let tail = (text.keep_tail && !clips.is_empty())
+        .then(|| lettering.tail_line(&text.text, content_bounds, size));
     let mut mesh = crate::glyphs::LetterMesh::default();
-    lettering.append(
-        &mut mesh,
-        crate::glyphs::Label {
-            text: &text.text,
-            bounds: to_glyph_bounds(bounds),
-            clips: &clips,
-            size: fitting_font_size(text, bounds),
-            centered: text.role.centered(),
-            vertical_centered: text.vertical_centered,
-            color: if text.muted {
-                [101, 128, 130]
-            } else {
-                text.role.color()
-            },
-            z: 8.08 + text.layer as f32 * 0.002,
+    let label = crate::glyphs::Label {
+        text: tail.as_deref().unwrap_or(&text.text),
+        bounds: content_bounds,
+        clips: &clips,
+        size,
+        centered: text.role.centered(),
+        vertical_centered: text.vertical_centered,
+        color: if text.muted {
+            [101, 128, 130]
+        } else {
+            text.role.color()
         },
-    );
+        z: overlay_depth(text.layer, OverlayPart::Text),
+    };
+    if let Some(state) = text.input_state {
+        let (color, part) = match state {
+            beastie_view::TextInputState::Selected => ([25, 103, 101], OverlayPart::Selection),
+            beastie_view::TextInputState::Caret => ([177, 212, 199], OverlayPart::Text),
+        };
+        lettering.append_input_decoration(
+            &mut mesh,
+            crate::glyphs::Label {
+                text: if text.keep_tail { label.text } else { "" },
+                bounds: to_glyph_bounds(bounds),
+                color,
+                z: overlay_depth(text.layer, part),
+                ..label
+            },
+            state,
+        );
+    }
+    lettering.append(&mut mesh, label);
     mesh.mesh()
 }
 
@@ -1480,7 +1846,15 @@ fn sync_effects(
                 })
                 .map_or_else(
                     || world_position(effect.position),
-                    |object| presented_object_position(object, &frame.plan, &motion),
+                    |object| {
+                        objects
+                            .iter()
+                            .find(|(id, _, _)| id.0 == object.id)
+                            .map_or_else(
+                                || presented_object_position(object, &frame.plan, &motion),
+                                |(_, _, transform)| transform.translation,
+                            )
+                    },
                 ),
         };
         let travel = if frame.plan.reduced_motion {
@@ -1748,7 +2122,7 @@ impl PickMesh {
             max: Vec3::splat(f32::NEG_INFINITY),
             triangles: Vec::new(),
         };
-        for indices in indices.chunks_exact(3) {
+        for indices in indices.as_chunks::<3>().0.iter() {
             let [Some(a), Some(b), Some(c)] = [
                 positions.get(indices[0]),
                 positions.get(indices[1]),
@@ -1891,8 +2265,8 @@ pub fn pick(
     let size = camera.logical_viewport_size()?;
     let (x, y) = Viewport::for_drawable(size.x, size.y).logical_point(cursor.x, cursor.y)?;
     if let Some(hit) = plan.hit_regions.iter().rev().find(|hit| {
-        (hit.enabled || hit.id == "compose/microphone")
-            && matches!(hit.shape, HitShape::Rect)
+        (hit.enabled || hit.id == "compose/microphone" || hit.shape == HitShape::Blocker)
+            && matches!(hit.shape, HitShape::Rect | HitShape::Blocker)
             && hit.rect.contains(x as i32, y as i32)
     }) {
         return Some(hit.clone());
@@ -2089,6 +2463,7 @@ mod tests {
                 color: [20, 30, 40, 255],
                 layer: 0,
                 outline: false,
+                corner_radius: 0,
             });
         app.update();
         assert!(
@@ -2110,6 +2485,21 @@ mod tests {
             app.world().resource::<UiCache>().icon_templates.len(),
             1,
             "moving reuses canonical voxel geometry"
+        );
+        {
+            let mut frame = app.world_mut().resource_mut::<SceneFrame>();
+            frame.plan.icons[0].bounds.w = 18;
+            frame.plan.icons[0].bounds.h = 12;
+        }
+        app.update();
+        assert!(
+            changed_meshes(&mut app).is_empty(),
+            "resizing does not upload geometry"
+        );
+        assert_eq!(app.world().get::<Mesh3d>(slot).unwrap().0, handle);
+        assert_eq!(
+            app.world().get::<Transform>(slot).unwrap().scale,
+            Vec3::new(0.6, 0.6, 1.0)
         );
         let moved = app.world().resource::<SceneFrame>().plan.icons.clone();
         app.world_mut()
@@ -2216,9 +2606,11 @@ mod tests {
                 let center = logical_position(
                     icon.bounds.x as f32 + icon.bounds.w as f32 * 0.5,
                     icon.bounds.y as f32 + icon.bounds.h as f32 * 0.5,
-                    8.05 + icon.layer as f32 * 0.002,
+                    overlay_depth(icon.layer, OverlayPart::Icon),
                 );
-                let original = icon_mesh(icon.kind, center, [216, 219, 185]);
+                let original = icon_mesh(icon.kind, Vec3::ZERO, [216, 219, 185])
+                    .scaled_by(icon_transform(icon).scale)
+                    .translated_by(center);
                 let local = app
                     .world()
                     .resource::<Assets<Mesh>>()
@@ -2289,21 +2681,13 @@ mod tests {
         let mut cache = UiCache::default();
         let mut assets = Assets::<Mesh>::default();
         let center = Vec3::new(3.371, -1.673, 8.052);
-        for kind in [
-            IconKind::Food,
-            IconKind::Microphone,
-            IconKind::Send,
-            IconKind::Settings,
-            IconKind::Toy(ToyId::Ball),
-            IconKind::Toy(ToyId::Bell),
-            IconKind::Toy(ToyId::Sock),
-        ] {
+        for kind in test_icon_kinds() {
             let handle = cache.icon(&mut assets, kind, [216, 219, 185]);
-            if matches!(kind, IconKind::Toy(_)) {
+            if matches!(kind, IconKind::Toy(_) | IconKind::FoodItem(_)) {
                 assert_eq!(
                     handle,
                     cache.icon(&mut assets, kind, [88, 114, 118]),
-                    "toy palettes share their authored colored mesh"
+                    "object palettes share their authored colored mesh"
                 );
             }
             let cached = assets.get(&handle).unwrap().clone().translated_by(center);
@@ -2335,7 +2719,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(cache.icon_templates.len(), 7);
+        assert_eq!(cache.icon_templates.len(), test_icon_kinds().len());
     }
 
     fn label_test_app() -> App {
@@ -2360,6 +2744,45 @@ mod tests {
             frame.plan.text[0].layer = 10;
         }
         app
+    }
+
+    #[test]
+    fn steady_input_decorations_only_rebuild_when_edit_state_changes() {
+        let mut app = label_test_app();
+        {
+            let mut frame = app.world_mut().resource_mut::<SceneFrame>();
+            frame.plan.text[0].role = beastie_view::TextRole::Body;
+            frame.plan.text[0].keep_tail = true;
+            frame.plan.text[0].input_state = Some(beastie_view::TextInputState::Caret);
+        }
+        app.update();
+        let handle = app.world().resource::<UiCache>().text_slots[0]
+            .mesh
+            .clone()
+            .unwrap();
+        changed_meshes(&mut app);
+        for _ in 0..3 {
+            app.world_mut().resource_mut::<SceneFrame>().plan.elapsed_ms += 1_000;
+            app.update();
+            assert!(
+                changed_meshes(&mut app).is_empty(),
+                "steady caret must not churn meshes"
+            );
+            assert_eq!(
+                app.world().resource::<UiCache>().text_slots[0]
+                    .mesh
+                    .as_ref()
+                    .unwrap()
+                    .id(),
+                handle.id()
+            );
+        }
+        app.world_mut().resource_mut::<SceneFrame>().plan.text[0].input_state =
+            Some(beastie_view::TextInputState::Selected);
+        app.update();
+        assert_eq!(changed_meshes(&mut app), vec![handle.id()]);
+        app.update();
+        assert!(changed_meshes(&mut app).is_empty());
     }
 
     #[test]
@@ -2433,6 +2856,7 @@ mod tests {
                 color: [1, 2, 3, 255],
                 layer: 11,
                 outline: false,
+                corner_radius: 0,
             });
         app.update();
         assert!(
@@ -2576,6 +3000,62 @@ mod tests {
     }
 
     #[test]
+    fn physical_object_effect_follows_the_actual_transfer_pose() {
+        let mut app = cache_test_app();
+        app.add_systems(Update, sync_effects);
+        let mut sock = beastie_view::plan(&beastie_core::WorldState::new(9, "Pickup"), &default())
+            .0
+            .objects
+            .into_iter()
+            .find(|object| object.kind == ObjectKind::Toy(ToyId::Sock))
+            .unwrap();
+        sock.carried = true;
+        let id = sock.id;
+        let effect = beastie_view::EffectScene {
+            owner: beastie_view::SemanticOwner::ToyInteraction(
+                std::num::NonZeroU64::new(3).unwrap(),
+            ),
+            cue: PresentationCueKind::SockTug,
+            position: sock.position,
+            target: UiTarget::Toy(ToyId::Sock),
+            elapsed_ms: 0,
+        };
+        {
+            let mut frame = app.world_mut().resource_mut::<SceneFrame>();
+            frame.plan.objects = vec![sock];
+            frame.plan.effects = vec![effect];
+        }
+        let mesh = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(object_mesh(ObjectKind::Toy(ToyId::Sock), default()));
+        let first = Vec3::new(-2.0, 1.0, 0.2);
+        let entity = app
+            .world_mut()
+            .spawn((
+                WorldObject(id),
+                Mesh3d(mesh),
+                Transform::from_translation(first),
+            ))
+            .id();
+        app.update();
+        let before = app.world().resource::<EffectMesh>().shape.0.clone();
+        assert_eq!(before.len(), 3);
+        assert!(before[1].0.distance(first + Vec3::new(0.0, 0.88, 0.6)) < 0.0001);
+        let transfer_step = Vec3::new(-0.14, 0.04, 0.05);
+        app.world_mut()
+            .get_mut::<Transform>(entity)
+            .unwrap()
+            .translation += transfer_step;
+        app.update();
+        let after = &app.world().resource::<EffectMesh>().shape.0;
+        for (before, after) in before.iter().zip(after) {
+            assert!((after.0 - before.0).distance(transfer_step) < 0.0001);
+            assert_eq!(after.1, before.1);
+        }
+    }
+
+    #[test]
     fn exact_effect_cache_skips_mesh_mutations_but_preserves_motion_and_visibility() {
         let mut app = cache_test_app();
         app.add_systems(Update, sync_effects);
@@ -2701,6 +3181,7 @@ mod tests {
                 color: [20, 30, 40, 255],
                 layer: 0,
                 outline: false,
+                corner_radius: 0,
             }];
             frame.plan.rects.push(beastie_view::RectCommand {
                 id: "settings/panel".into(),
@@ -2713,6 +3194,7 @@ mod tests {
                 color: [20, 30, 40, 255],
                 layer: 2,
                 outline: false,
+                corner_radius: 0,
             });
             frame.plan.hit_regions.truncate(1);
             assert_eq!(frame.plan.hit_regions.len(), 1);
@@ -3167,6 +3649,146 @@ mod object_motion_tests {
     use super::*;
 
     #[test]
+    fn observed_pickup_keeps_the_previous_pose_then_reaches_the_moving_mouth() {
+        for reduced_motion in [false, true] {
+            let mut scene = beastie_view::plan(
+                &beastie_core::WorldState::new(9, "Pickup"),
+                &beastie_view::ViewState::default(),
+            )
+            .0;
+            scene.reduced_motion = reduced_motion;
+            scene.elapsed_ms = 1_000;
+            let mut sock = scene
+                .objects
+                .iter()
+                .find(|object| object.kind == ObjectKind::Toy(ToyId::Sock))
+                .unwrap()
+                .clone();
+            let original =
+                Transform::from_xyz(2.0, 1.0, 0.0).with_rotation(Quat::from_rotation_z(0.2));
+            let mut presentation = ObjectPresentation::new(&sock, &scene, original);
+            // The ECS transform is the visible source, even if another presentation
+            // system adjusted it after the component's last sample.
+            let rendered = original.with_translation(original.translation + Vec3::X * 0.05);
+            sock.carried = true;
+            scene.simulation_remainder_ms = 16;
+            let held =
+                Transform::from_xyz(1.0, 0.0, 0.65).with_rotation(Quat::from_rotation_z(-0.15));
+            let first = presentation.advance(&sock, &scene, held, rendered);
+            assert_eq!(
+                first, rendered,
+                "pickup must not teleport or rotate on its first frame"
+            );
+            let mut previous = first;
+            for elapsed in (20..=OBJECT_TRANSFER_MS).step_by(20) {
+                scene.simulation_remainder_ms = 16 + elapsed;
+                let moving_held =
+                    held.with_translation(held.translation + Vec3::X * elapsed as f32 * 0.001);
+                let next = presentation.advance(&sock, &scene, moving_held, previous);
+                assert!(next.translation.distance(previous.translation) < 0.3);
+                assert!(next.rotation.angle_between(previous.rotation) < 0.06);
+                assert!((0.0..=0.65).contains(&next.translation.z));
+                if elapsed == OBJECT_TRANSFER_MS {
+                    assert_eq!(
+                        next, moving_held,
+                        "finish at the current mouth, not a stale target"
+                    );
+                    assert!(presentation.transfer.is_none());
+                }
+                previous = next;
+            }
+            assert!(
+                sock.carried,
+                "presentation never changes authoritative carry"
+            );
+        }
+    }
+
+    #[test]
+    fn release_during_pickup_starts_at_the_visible_pose_and_converges_to_the_fall() {
+        let mut scene =
+            beastie_view::plan(&beastie_core::WorldState::new(9, "Release"), &default()).0;
+        let mut sock = scene
+            .objects
+            .iter()
+            .find(|object| object.kind == ObjectKind::Toy(ToyId::Sock))
+            .unwrap()
+            .clone();
+        let original = Transform::from_xyz(2.0, 1.0, 0.0);
+        let held = Transform::from_xyz(1.0, 0.0, 0.65).with_rotation(Quat::from_rotation_z(-0.15));
+        let mut presentation = ObjectPresentation::new(&sock, &scene, original);
+        sock.carried = true;
+        let first = presentation.advance(&sock, &scene, held, original);
+        scene.simulation_remainder_ms = 80;
+        let midway = presentation.advance(&sock, &scene, held, first);
+        assert_ne!(midway, original);
+        assert_ne!(midway, held);
+        sock.carried = false;
+        let falling = held.with_rotation(Quat::IDENTITY);
+        assert_eq!(presentation.advance(&sock, &scene, falling, midway), midway);
+        let mut previous = midway;
+        for elapsed in (20..=OBJECT_TRANSFER_MS).step_by(20) {
+            scene.simulation_remainder_ms = 80 + elapsed;
+            let target =
+                falling.with_translation(falling.translation - Vec3::Y * elapsed as f32 * 0.001);
+            let next = presentation.advance(&sock, &scene, target, previous);
+            assert!(next.translation.distance(previous.translation) < 0.3);
+            assert!(next.rotation.angle_between(previous.rotation) < 0.06);
+            if elapsed == OBJECT_TRANSFER_MS {
+                assert_eq!(next, target);
+                assert!(presentation.transfer.is_none());
+            }
+            previous = next;
+        }
+    }
+
+    #[test]
+    fn carry_presentation_resets_on_load_clock_discontinuities_and_title_changes() {
+        let mut scene =
+            beastie_view::plan(&beastie_core::WorldState::new(9, "Reset"), &default()).0;
+        scene.elapsed_ms = 2_000;
+        let mut sock = scene
+            .objects
+            .iter()
+            .find(|object| object.kind == ObjectKind::Toy(ToyId::Sock))
+            .unwrap()
+            .clone();
+        let original = Transform::from_xyz(2.0, 1.0, 0.0);
+        let held = Transform::from_xyz(1.0, 0.0, 0.65).with_rotation(Quat::from_rotation_z(-0.15));
+        sock.carried = true;
+        let mut loaded = ObjectPresentation::new(&sock, &scene, held);
+        assert_eq!(loaded.advance(&sock, &scene, held, held), held);
+        assert!(
+            loaded.transfer.is_none(),
+            "loaded carry never invents a pickup"
+        );
+        for (now, title, target) in [
+            (1_999, false, held),
+            (3_001, false, held),
+            (2_100, false, held.with_translation(Vec3::splat(20.0))),
+            (2_100, true, held),
+        ] {
+            sock.carried = false;
+            let mut presentation = ObjectPresentation::new(&sock, &scene, original);
+            sock.carried = true;
+            let first = presentation.advance(&sock, &scene, held, original);
+            let mut discontinuous = scene.clone();
+            discontinuous.elapsed_ms = now;
+            discontinuous.title_screen = title;
+            assert_eq!(
+                presentation.advance(&sock, &discontinuous, target, first),
+                target
+            );
+            assert!(presentation.transfer.is_none());
+        }
+        let mut title = scene.clone();
+        title.title_screen = true;
+        let mut staged = ObjectPresentation::new(&sock, &title, original);
+        assert_eq!(staged.advance(&sock, &scene, held, original), held);
+        assert!(staged.transfer.is_none());
+    }
+
+    #[test]
     fn moving_objects_advance_between_authoritative_ticks() {
         let mut scene = beastie_view::plan(
             &beastie_core::WorldState::new(9, "Motion"),
@@ -3185,6 +3807,88 @@ mod object_motion_tests {
     }
 
     #[test]
+    fn toy_surface_targets_keep_authored_meshes_out_of_the_head() {
+        let mut world = beastie_core::WorldState::new(9, "Contact");
+        let anchor = NormalizedPosition::new(5_000, 5_000);
+        let radii = crate::creature::authored_head_half_extents();
+        for toy in [ToyId::Ball, ToyId::Bell, ToyId::Sock] {
+            world.aquarium.toy_states.get_mut(&toy).unwrap().position = anchor;
+            let mesh = object_mesh(ObjectKind::Toy(toy), default());
+            let vertices = mesh
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+                .as_float3()
+                .unwrap();
+            for direction in 0..24 {
+                let angle = direction as f32 * std::f32::consts::TAU / 24.0;
+                world.creature.aquarium.position = NormalizedPosition::new(
+                    5_000 + (angle.cos() * 4_500.0) as i32,
+                    5_000 + (angle.sin() * 4_500.0) as i32,
+                );
+                let target = beastie_core::approach_position(
+                    &world,
+                    beastie_core::SemanticDestination::Toy(toy),
+                )
+                .unwrap();
+                let head = world_position(target);
+                if toy == ToyId::Ball && direction == 18 {
+                    let anchor_y = world_position(anchor).y;
+                    let gap = vertices
+                        .iter()
+                        .map(|vertex| (anchor_y + vertex[1] - head.y).abs() - radii.y)
+                        .fold(f32::INFINITY, f32::min);
+                    assert!(
+                        (0.0..=0.06).contains(&gap),
+                        "vertical ball contact must look like contact, gap {gap}"
+                    );
+                }
+                for vertex in vertices {
+                    let relative = (world_position(anchor) + Vec3::from(*vertex) - head) / radii;
+                    assert!(
+                        relative.length_squared() > 1.0,
+                        "{toy:?} intersects the head from direction {direction}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn released_sock_keeps_its_mouth_anchor_and_continuous_falling_depth() {
+        let world = beastie_core::WorldState::new(9, "Drop");
+        let mut scene = beastie_view::plan(&world, &beastie_view::ViewState::default()).0;
+        let mut sock = scene
+            .objects
+            .iter()
+            .find(|object| object.kind == ObjectKind::Toy(ToyId::Sock))
+            .unwrap()
+            .clone();
+        sock.carried = true;
+        sock.position =
+            NormalizedPosition::new(scene.creature.position.x, scene.creature.position.y + 750);
+        let held = object_position(&sock, &scene);
+        sock.carried = false;
+        sock.response = beastie_core::ToyResponse::SockTugged;
+        sock.velocity = beastie_core::NormalizedVelocity {
+            x: 0,
+            y: beastie_core::SOCK_RELEASE_SPEED,
+        };
+        let released = object_position(&sock, &scene);
+        assert!(
+            held.distance(released) < 0.002,
+            "release must retain the rendered mouth anchor"
+        );
+        scene.simulation_remainder_ms = 999;
+        let before_tick = object_position(&sock, &scene);
+        sock.position.y += sock.velocity.y;
+        sock.velocity.y /= 2;
+        scene.simulation_remainder_ms = 0;
+        let after_tick = object_position(&sock, &scene);
+        assert!(before_tick.distance(after_tick) < 0.002);
+        assert!(after_tick.y < released.y && after_tick.z < released.z);
+    }
+
+    #[test]
     fn carried_object_is_visible_in_front_of_the_head() {
         let scene = beastie_view::plan(
             &beastie_core::WorldState::new(9, "Motion"),
@@ -3196,24 +3900,313 @@ mod object_motion_tests {
         let relative = object_position(&object, &scene) - crate::creature::head_position(&scene);
         assert!(relative.z > 0.55 && relative.y < 0.0);
     }
+
+    #[test]
+    fn sock_release_at_the_floor_uses_the_same_clamped_hold_anchor() {
+        for head_y in [9_400, 10_000] {
+            let mut world = beastie_core::WorldState::new(9, "Floor");
+            world.creature.aquarium.position = NormalizedPosition::new(5_000, head_y);
+            let scene = beastie_view::plan(&world, &beastie_view::ViewState::default()).0;
+            let mut sock = scene
+                .objects
+                .iter()
+                .find(|object| object.kind == ObjectKind::Toy(ToyId::Sock))
+                .unwrap()
+                .clone();
+            sock.carried = true;
+            sock.position = beastie_core::held_toy_position(world.creature.aquarium.position);
+            let carried = object_position(&sock, &scene);
+            sock.carried = false;
+            sock.response = beastie_core::ToyResponse::SockTugged;
+            sock.velocity.y = beastie_core::SOCK_RELEASE_SPEED;
+            let released = object_position(&sock, &scene);
+            assert!(carried.distance(released) < 0.0001, "head_y {head_y}");
+            assert_eq!(sock.position.y, 10_000);
+        }
+    }
 }
 
 #[cfg(test)]
 mod ui_layout_tests {
     use super::*;
 
+    fn flat_triangles(mesh: &Mesh) -> Vec<[Vec3; 3]> {
+        let positions = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let indices: Vec<_> = mesh.indices().unwrap().iter().collect();
+        indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|indices| [indices[0], indices[1], indices[2]].map(|i| Vec3::from(positions[i])))
+            .collect()
+    }
+
+    fn contains_triangle(triangle: [Vec3; 3], point: Vec2) -> bool {
+        let [a, b, c] = triangle.map(|p| p.truncate());
+        [
+            (b - a).perp_dot(point - a),
+            (c - b).perp_dot(point - b),
+            (a - c).perp_dot(point - c),
+        ]
+        .iter()
+        .all(|side| *side >= -1e-8)
+    }
+
+    #[test]
+    fn rounded_faces_and_rims_are_bounded_finite_and_keep_the_center_open() {
+        for size in [Vec2::new(6.0, 3.0), Vec2::new(1.4, 0.5), Vec2::splat(0.8)] {
+            for requested in [0.0_f32, 0.12, 0.4, 10.0] {
+                let radius = requested.min(size.min_element() * 0.5);
+                for rim in [false, true] {
+                    let mut geometry = Geometry::default();
+                    if rim {
+                        rounded_rim(&mut geometry, Vec3::ZERO, size, [177, 146, 88], requested);
+                    } else {
+                        rounded_plate(&mut geometry, Vec3::ZERO, size, [24, 43, 47], requested);
+                    }
+                    let mesh = geometry.mesh();
+                    let triangles = flat_triangles(&mesh);
+                    assert!(!triangles.is_empty());
+                    assert!(triangles.len() <= if rim { 72 } else { 36 });
+                    for triangle in &triangles {
+                        assert!(
+                            (triangle[1] - triangle[0])
+                                .cross(triangle[2] - triangle[0])
+                                .z
+                                > 0.0
+                        );
+                        for point in triangle {
+                            assert!(point.is_finite());
+                            let outside_core = (point.truncate().abs()
+                                - (size * 0.5 - Vec2::splat(radius)))
+                            .max(Vec2::ZERO);
+                            assert!(
+                                outside_core.length() <= radius + 1e-5,
+                                "{size:?}, r={radius}, p={point:?}"
+                            );
+                        }
+                        if rim {
+                            assert!(
+                                !contains_triangle(*triangle, Vec2::ZERO),
+                                "rim filled its center"
+                            );
+                        }
+                    }
+                    let normals = mesh
+                        .attribute(Mesh::ATTRIBUTE_NORMAL)
+                        .unwrap()
+                        .as_float3()
+                        .unwrap();
+                    assert!(
+                        normals
+                            .iter()
+                            .all(|normal| Vec3::from(*normal).distance(Vec3::Z) < 1e-5)
+                    );
+                    if !rim {
+                        assert!(
+                            triangles
+                                .iter()
+                                .any(|triangle| contains_triangle(*triangle, Vec2::ZERO))
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn utility_marks_are_smooth_front_faces_and_gear_inspection_counters_stay_open() {
+        for kind in test_icon_kinds() {
+            if matches!(kind, IconKind::Toy(_) | IconKind::FoodItem(_)) {
+                continue;
+            }
+            let mesh = utility_icon_mesh(kind, [244, 238, 216]);
+            let triangles = flat_triangles(&mesh);
+            assert!(!triangles.is_empty());
+            assert!(triangles.len() < 500, "{kind:?} geometry budget");
+            for triangle in &triangles {
+                assert!(triangle.iter().all(|p| p.is_finite() && p.z == 0.0));
+                assert!(
+                    (triangle[1] - triangle[0])
+                        .cross(triangle[2] - triangle[0])
+                        .z
+                        > 0.0
+                );
+            }
+            let hole = match kind {
+                IconKind::Settings => Some(Vec2::ZERO),
+                IconKind::Inspect => Some(Vec2::new(-0.1, 0.1)),
+                _ => None,
+            };
+            if let Some(hole) = hole {
+                assert!(
+                    triangles
+                        .iter()
+                        .all(|triangle| !contains_triangle(*triangle, hole)),
+                    "{kind:?} counter was filled"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn semantic_layers_order_every_overlay_primitive_without_depth_overlap() {
+        for layer in 0..128 {
+            let face = overlay_depth(layer, OverlayPart::Face);
+            let rim = overlay_depth(layer, OverlayPart::Rim);
+            let icon_back = overlay_depth(layer, OverlayPart::Icon) - ICON_DEPTH * 0.5;
+            let icon_front = overlay_depth(layer, OverlayPart::Icon) + ICON_DEPTH * 0.5;
+            let selection = overlay_depth(layer, OverlayPart::Selection);
+            let text = overlay_depth(layer, OverlayPart::Text);
+            let next_face = overlay_depth(layer + 1, OverlayPart::Face);
+            for (behind, ahead) in [
+                (face, rim),
+                (rim, icon_back),
+                (icon_front, selection),
+                (selection, text),
+                (text, next_face),
+            ] {
+                assert!(
+                    ahead - behind > 0.001,
+                    "layer {layer}: {behind} and {ahead} can fight"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn technical_notice_face_is_in_front_of_overlapping_voxel_food_icons() {
+        let world = beastie_core::WorldState::new(3, "Mop");
+        let scene = beastie_view::plan(
+            &world,
+            &beastie_view::ViewState {
+                mode: beastie_view::UiMode::FoodChoice,
+                status_message: Some(
+                    "A long recovery notice must cover the action sheet completely. ".repeat(12),
+                ),
+                ..default()
+            },
+        )
+        .0;
+        let mut notice = scene
+            .rects
+            .iter()
+            .find(|rect| rect.id == "status/background")
+            .unwrap()
+            .clone();
+        // Deliberately place the notice over the real food panel to exercise its
+        // depth contract independently of the layout's overlap avoidance.
+        notice.rect = scene
+            .rects
+            .iter()
+            .find(|rect| rect.id == "mode/food-panel")
+            .unwrap()
+            .rect;
+        let center = logical_position(
+            notice.rect.x as f32 + notice.rect.w as f32 * 0.5,
+            notice.rect.y as f32 + notice.rect.h as f32 * 0.5,
+            overlay_depth(notice.layer, OverlayPart::Face),
+        );
+        let mut face = Geometry::default();
+        rounded_plate(
+            &mut face,
+            center,
+            Vec2::new(notice.rect.w as f32, notice.rect.h as f32) / UNITS,
+            [24, 43, 47],
+            notice.corner_radius as f32 / UNITS,
+        );
+        let triangles = flat_triangles(&face.mesh());
+        let mut covered = 0;
+        for icon in scene
+            .icons
+            .iter()
+            .filter(|icon| matches!(icon.kind, IconKind::FoodItem(_)))
+        {
+            let transform = icon_transform(icon);
+            let point = transform.translation.truncate();
+            if !triangles
+                .iter()
+                .any(|triangle| contains_triangle(*triangle, point))
+            {
+                continue;
+            }
+            covered += 1;
+            let mesh = icon_mesh(icon.kind, Vec3::ZERO, [255; 3]);
+            let vertices = mesh
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .unwrap()
+                .as_float3()
+                .unwrap();
+            for vertex in vertices {
+                let actual = transform.transform_point(Vec3::from(*vertex));
+                assert!(
+                    actual.z < center.z - 0.001,
+                    "food icon at layer {} leaks through notice layer {}",
+                    icon.layer,
+                    notice.layer
+                );
+            }
+            assert!(overlay_depth(icon.layer, OverlayPart::Text) < center.z);
+        }
+        assert_eq!(
+            covered, 3,
+            "exercise all three real food miniatures under the notice"
+        );
+    }
+
+    #[test]
+    fn authored_overlay_surfaces_stay_between_the_tank_and_camera() {
+        use beastie_view::{BindableAction, UiMode};
+        let world = beastie_core::WorldState::new(3, "Mop");
+        for mode in [
+            UiMode::Title,
+            UiMode::Compose,
+            UiMode::Context(UiTarget::Creature),
+            UiMode::Inspect(UiTarget::Creature),
+            UiMode::FoodChoice,
+            UiMode::FoodDrop(beastie_core::FoodId::Berry),
+            UiMode::ToyChoice,
+            UiMode::OnScreenKeyboard,
+            UiMode::Settings,
+            UiMode::Bindings,
+            UiMode::Rebinding(BindableAction::PushToTalk),
+            UiMode::Rename,
+            UiMode::DataManagement,
+            UiMode::ConfirmReset,
+        ] {
+            let scene = beastie_view::plan(
+                &world,
+                &beastie_view::ViewState {
+                    mode,
+                    status_message: Some("A local technical notice".into()),
+                    ..default()
+                },
+            )
+            .0;
+            for layer in scene
+                .rects
+                .iter()
+                .map(|rect| rect.layer)
+                .chain(scene.icons.iter().map(|icon| icon.layer))
+                .chain(scene.text.iter().map(|text| text.layer))
+            {
+                assert!(overlay_depth(layer, OverlayPart::Face) > 8.0);
+                assert!(
+                    overlay_depth(layer, OverlayPart::Text) < 20.0,
+                    "{mode:?} layer {layer} approaches camera"
+                );
+            }
+        }
+    }
+
     #[test]
     fn icon_geometry_is_centered_on_its_authored_target() {
         let center = logical_position(148.5, 162.0, 8.12);
-        for kind in [
-            IconKind::Food,
-            IconKind::Microphone,
-            IconKind::Send,
-            IconKind::Settings,
-            IconKind::Toy(beastie_core::ToyId::Ball),
-            IconKind::Toy(beastie_core::ToyId::Bell),
-            IconKind::Toy(beastie_core::ToyId::Sock),
-        ] {
+        for kind in test_icon_kinds() {
             let mesh = icon_mesh(kind, center, [255; 3]);
             let positions = mesh
                 .attribute(Mesh::ATTRIBUTE_POSITION)
@@ -3233,6 +4226,317 @@ mod ui_layout_tests {
                 .reduce(Vec3::max)
                 .unwrap();
             assert!(((lower + upper) * 0.5 - center).length() < 1e-5, "{kind:?}");
+            assert!(
+                ((upper - lower).truncate().max_element() - 1.0).abs() < 1e-5,
+                "{kind:?}"
+            );
+            assert!(
+                upper.z - lower.z <= ICON_DEPTH + 0.00001,
+                "{kind:?} depth crosses UI layers"
+            );
+        }
+    }
+
+    #[test]
+    fn dock_summary_fits_complete_mood_and_activity_at_both_text_sizes() {
+        let world = beastie_core::WorldState::new(3, "Mop");
+        let lettering = crate::glyphs::Lettering::default();
+        for scale in [1, 2] {
+            let scene = beastie_view::plan(
+                &world,
+                &beastie_view::ViewState {
+                    text_scale: scale,
+                    ..default()
+                },
+            )
+            .0;
+            let text = scene
+                .text
+                .iter()
+                .find(|text| text.id == "compose/summary-behavior")
+                .unwrap();
+            assert_eq!(
+                text.text,
+                format!("{} · {}", scene.summary.mood_label, scene.summary.behavior)
+            );
+            let bounds = text_content_bounds(text, &scene);
+            let bounds = crate::glyphs::Bounds {
+                x: bounds.x,
+                y: bounds.y,
+                w: bounds.w,
+                h: bounds.h,
+            };
+            for mood in [
+                "content",
+                "curious",
+                "hungry",
+                "sleepy",
+                "lonely",
+                "resentful",
+            ] {
+                for behavior in [
+                    "noticing the ball",
+                    "swimming toward the ball",
+                    "watching the ball",
+                    "watching the berry",
+                    "watching the mushroom",
+                    "watching the pellet",
+                    "settling after the ball",
+                    "noticing the bell",
+                    "swimming toward the bell",
+                    "watching the bell",
+                    "settling after the bell",
+                    "noticing the sock",
+                    "swimming toward the sock",
+                    "watching the sock",
+                    "settling after the sock",
+                    "noticed something",
+                    "stopping",
+                    "watching",
+                    "turning",
+                    "swimming over",
+                    "inspecting",
+                    "eating",
+                    "rejecting food",
+                    "playing",
+                    "doing something",
+                    "settling down",
+                    "sleeping",
+                    "swimming to a toy",
+                    "seeking comfort",
+                    "watching you",
+                    "staring",
+                    "staying close",
+                    "drifting",
+                    "avoiding you",
+                    "circling",
+                    "investigating",
+                    "settling",
+                    "hovering",
+                    "noticing something to do",
+                    "heading somewhere on its own",
+                    "finishing up",
+                    "settling in the cave",
+                    "changing course",
+                    "nudging the ball",
+                    "striking the bell",
+                    "tugging the sock",
+                    "resting in the cave",
+                    "circling the plant",
+                    "foraging in the sand",
+                    "drifting through open water",
+                    "following a private routine",
+                ] {
+                    let value = format!("{mood} · {behavior}");
+                    let lines = lettering.layout_lines(&value, bounds, text.role.size(scale >= 2));
+                    assert!(lines.len() <= 2);
+                    assert_eq!(lines.join(" "), value, "scale {scale}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compact_inspection_preserves_complete_long_names_and_facts() {
+        let lettering = crate::glyphs::Lettering::default();
+        for scale in [1, 2] {
+            for name in ["Mop".to_owned(), "W".repeat(24)] {
+                let mut world = beastie_core::WorldState::new(3, &name);
+                world
+                    .creature
+                    .preferences
+                    .insert(beastie_core::FoodId::Mushroom, -0.8);
+                for target in [
+                    beastie_view::UiTarget::Creature,
+                    beastie_view::UiTarget::Cave,
+                    beastie_view::UiTarget::OpenWater,
+                    beastie_view::UiTarget::Toy(beastie_core::ToyId::Bell),
+                    beastie_view::UiTarget::Toy(beastie_core::ToyId::Sock),
+                    beastie_view::UiTarget::FoodObject(900),
+                    beastie_view::UiTarget::Plant(900),
+                ] {
+                    let scene = beastie_view::plan(
+                        &world,
+                        &beastie_view::ViewState {
+                            mode: beastie_view::UiMode::Inspect(target),
+                            text_scale: scale,
+                            ..default()
+                        },
+                    )
+                    .0;
+                    for text in scene.text.iter().filter(|text| {
+                        matches!(text.id.as_str(), "inspect/title" | "inspect/detail")
+                    }) {
+                        let bounds = text_content_bounds(text, &scene);
+                        let lines = lettering.layout_lines(
+                            &text.text,
+                            crate::glyphs::Bounds {
+                                x: bounds.x,
+                                y: bounds.y,
+                                w: bounds.w,
+                                h: bounds.h,
+                            },
+                            text.role.size(scale >= 2),
+                        );
+                        // Long unbroken names may wrap between glyphs, so compare
+                        // content without layout whitespace rather than word breaks.
+                        let expected: String =
+                            text.text.chars().filter(|c| !c.is_whitespace()).collect();
+                        let actual: String = lines
+                            .concat()
+                            .chars()
+                            .filter(|c| !c.is_whitespace())
+                            .collect();
+                        assert_eq!(actual, expected, "{} {target:?} scale {scale}", text.id);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn editable_labels_render_the_measured_suffix_at_the_requested_size() {
+        let world = beastie_core::WorldState::new(3, "Mop");
+        for scale in [1, 2] {
+            let scene = beastie_view::plan(
+                &world,
+                &beastie_view::ViewState {
+                    text_scale: scale,
+                    text_buffer: format!("{}Z", "WWWWiii ".repeat(60)),
+                    ..default()
+                },
+            )
+            .0;
+            let text = scene
+                .text
+                .iter()
+                .find(|text| text.id == "compose/input-text")
+                .unwrap();
+            assert!(text.keep_tail);
+            let bounds = text_content_bounds(text, &scene);
+            let mut lettering = crate::glyphs::Lettering::default();
+            let mut expected_text = text.clone();
+            expected_text.text = lettering.tail_line(
+                &text.text,
+                crate::glyphs::Bounds {
+                    x: bounds.x,
+                    y: bounds.y,
+                    w: bounds.w - crate::glyphs::CARET_SPACE,
+                    h: bounds.h,
+                },
+                text.role.size(scale >= 2),
+            );
+            expected_text.keep_tail = true;
+            assert!(expected_text.text.starts_with('…') && expected_text.text.ends_with('Z'));
+            let actual = label_mesh(&mut lettering, text, &[bounds], &scene);
+            let expected = label_mesh(&mut lettering, &expected_text, &[bounds], &scene);
+            assert!(actual.count_vertices() > 0);
+            assert_eq!(
+                actual.attribute(Mesh::ATTRIBUTE_POSITION),
+                expected.attribute(Mesh::ATTRIBUTE_POSITION)
+            );
+        }
+    }
+
+    #[test]
+    fn compact_caption_clears_the_authored_head_in_the_standard_center_composition() {
+        // Neutral head bounds use the actual authored voxel radius and half-cell
+        // extent, rather than the broad interaction exclusion used for toy cards.
+        // Animated turns and face readability remain native-review acceptance.
+        let half_width = crate::creature::authored_head_half_extents().x * UNITS;
+        for scale in [1, 2] {
+            for x in [4_950, 5_000, 5_189] {
+                let mut world = beastie_core::WorldState::new(3, "Mop");
+                world.creature.aquarium.position.x = x;
+                let mut view = beastie_view::ViewState {
+                    text_scale: scale,
+                    ..default()
+                };
+                view.show_speech("W".repeat(beastie_protocol::MAX_DIALOGUE_REPLY_BYTES), 0);
+                let scene = beastie_view::plan(&world, &view).0;
+                let head_x = crate::creature::head_position(&scene).x * UNITS + LOGICAL_WIDTH * 0.5;
+                for part in scene.rects.iter().filter(|part| {
+                    !part.outline && (part.id == "speech/panel" || part.id.starts_with("reaction/"))
+                }) {
+                    assert!(
+                        (part.rect.x + part.rect.w) as f32 <= head_x - half_width
+                            || part.rect.x as f32 >= head_x + half_width,
+                        "{} covers the central authored head at x{head_x}",
+                        part.id
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compact_caption_pages_and_reaction_labels_fit_the_authored_font() {
+        let world = beastie_core::WorldState::new(3, "Mop");
+        let lettering = crate::glyphs::Lettering::default();
+        for scale in [1, 2] {
+            for speech in [
+                "W".repeat(beastie_protocol::MAX_DIALOGUE_REPLY_BYTES),
+                "A quiet thought beside the water. ".repeat(12),
+                "café e\u{301} 🌿, the bell and the quiet water. ".repeat(8),
+                "👩‍👩‍👧‍👦 ".repeat(16),
+            ] {
+                let mut view = beastie_view::ViewState {
+                    text_scale: scale,
+                    ..default()
+                };
+                view.show_speech(speech.clone(), 0);
+                let mut restored = String::new();
+                loop {
+                    let scene = beastie_view::plan(&world, &view).0;
+                    let caption = scene
+                        .text
+                        .iter()
+                        .find(|text| text.id == "speech/text")
+                        .unwrap();
+                    restored.push_str(&caption.text);
+                    for text in scene
+                        .text
+                        .iter()
+                        .filter(|text| text.id == "speech/text" || text.id.starts_with("reaction/"))
+                    {
+                        let bounds = text_content_bounds(text, &scene);
+                        let lines = lettering.layout_lines(
+                            &text.text,
+                            crate::glyphs::Bounds {
+                                x: bounds.x,
+                                y: bounds.y,
+                                w: bounds.w,
+                                h: bounds.h,
+                            },
+                            text.role.size(scale >= 2),
+                        );
+                        let expected: String =
+                            text.text.chars().filter(|c| !c.is_whitespace()).collect();
+                        let actual: String = lines
+                            .concat()
+                            .chars()
+                            .filter(|c| !c.is_whitespace())
+                            .collect();
+                        assert_eq!(
+                            actual, expected,
+                            "{} page {} scale {scale}",
+                            text.id, view.speech_page
+                        );
+                    }
+                    if !scene
+                        .hit_regions
+                        .iter()
+                        .any(|hit| hit.id == "speech/next" && hit.enabled)
+                    {
+                        break;
+                    }
+                    view.change_speech_page(1, 0);
+                }
+                assert_eq!(
+                    restored, speech,
+                    "pagination must preserve the complete utterance"
+                );
+            }
         }
     }
 
@@ -3275,6 +4579,8 @@ mod ui_layout_tests {
         scene.rects.clear();
         let text = beastie_view::TextCommand {
             vertical_centered: false,
+            keep_tail: false,
+            input_state: None,
             id: "lower".into(),
             text: "Underlapping text".into(),
             x: 10,
@@ -3303,6 +4609,7 @@ mod ui_layout_tests {
             color: [0, 0, 0, 255],
             layer: 20,
             outline: false,
+            corner_radius: 0,
         });
         assert!(!cover.contains(text.x, text.y));
         let visible = visible_text_boxes(&text, bounds, &scene);
@@ -3319,14 +4626,27 @@ mod ui_layout_tests {
     }
 
     #[test]
-    fn all_modal_labels_have_bounded_fitting_at_normal_and_large_size() {
+    fn all_modal_labels_have_room_for_requested_normal_and_large_font_heights() {
         let world = beastie_core::WorldState::new(3, "Mop");
         for scale in [1, 2] {
             for mode in [
+                beastie_view::UiMode::Title,
+                beastie_view::UiMode::Compose,
                 beastie_view::UiMode::Settings,
                 beastie_view::UiMode::Bindings,
+                beastie_view::UiMode::Rebinding(beastie_view::BindableAction::PushToTalk),
                 beastie_view::UiMode::FoodChoice,
+                beastie_view::UiMode::FoodDrop(beastie_core::FoodId::Mushroom),
+                beastie_view::UiMode::ToyChoice,
+                beastie_view::UiMode::Context(beastie_view::UiTarget::Creature),
+                beastie_view::UiMode::Context(beastie_view::UiTarget::Toy(
+                    beastie_core::ToyId::Ball,
+                )),
+                beastie_view::UiMode::Inspect(beastie_view::UiTarget::Creature),
+                beastie_view::UiMode::Rename,
+                beastie_view::UiMode::OnScreenKeyboard,
                 beastie_view::UiMode::DataManagement,
+                beastie_view::UiMode::ConfirmReset,
             ] {
                 let scene = beastie_view::plan(
                     &world,
@@ -3339,7 +4659,7 @@ mod ui_layout_tests {
                 .0;
                 for text in &scene.text {
                     let bounds = text_content_bounds(text, &scene);
-                    let size = fitting_font_size(text, bounds);
+                    let size = text.role.size(text.scale >= 2);
                     assert!(bounds.w > 0.0 && bounds.h > 0.0);
                     assert!(size.is_finite());
                     assert!(size * 1.2 <= bounds.h + 0.001, "{} height", text.id);
@@ -3351,7 +4671,7 @@ mod ui_layout_tests {
     }
 
     #[test]
-    fn large_settings_labels_stop_before_their_value_controls() {
+    fn large_settings_navigation_labels_fit_inside_their_cards() {
         let world = beastie_core::WorldState::new(3, "Mop");
         let scene = beastie_view::plan(
             &world,
@@ -3363,31 +4683,49 @@ mod ui_layout_tests {
             },
         )
         .0;
-        let label = scene
-            .text
-            .iter()
-            .find(|text| text.id == "settings/data-name")
-            .expect("Save & data label");
-        let bounds = text_content_bounds(label, &scene);
-        let label_size = fitting_font_size(label, bounds);
-        let other = scene
-            .text
-            .iter()
-            .find(|text| text.id == "settings/bindings-name")
-            .expect("another settings label");
-        let other_size = fitting_font_size(other, text_content_bounds(other, &scene));
-        let value = scene
-            .text
-            .iter()
-            .find(|text| text.id == "settings/data-value")
-            .expect("Save & data value");
-        let value_bounds = text_content_bounds(value, &scene);
-        let value_size = fitting_font_size(value, value_bounds);
-        assert!(bounds.w < 100.0);
-        assert!((label_size - other_size).abs() < 0.01);
+        let lettering = crate::glyphs::Lettering::default();
+        let mut checked = 0;
+        for text in &scene.text {
+            let Some(id) = text
+                .id
+                .strip_suffix("-name")
+                .or_else(|| text.id.strip_suffix("-detail"))
+            else {
+                continue;
+            };
+            if !id.starts_with("settings/") {
+                continue;
+            }
+            let card = scene
+                .hit_regions
+                .iter()
+                .find(|hit| hit.id == id)
+                .expect("settings navigation card");
+            let bounds = text_content_bounds(text, &scene);
+            assert!(bounds.x >= card.rect.x as f32 && bounds.y >= card.rect.y as f32);
+            assert!(bounds.x + bounds.w <= (card.rect.x + card.rect.w) as f32);
+            assert!(bounds.y + bounds.h <= (card.rect.y + card.rect.h) as f32);
+            let lines = lettering.layout_lines(
+                &text.text,
+                crate::glyphs::Bounds {
+                    x: bounds.x,
+                    y: bounds.y,
+                    w: bounds.w,
+                    h: bounds.h,
+                },
+                text.role.size(true),
+            );
+            assert_eq!(
+                lines.join(" "),
+                text.text,
+                "{} lost text at its requested Large size",
+                text.id
+            );
+            checked += 1;
+        }
         assert!(
-            value_size >= value.role.size(true) - 0.01,
-            "value size {value_size}, bounds {value_bounds:?}"
+            checked >= 4,
+            "exercise navigation names and supporting copy"
         );
     }
 

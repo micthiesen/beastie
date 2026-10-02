@@ -537,6 +537,20 @@ impl AudioBank {
     pub fn speech_active(&self) -> bool {
         self.speech.as_ref().is_some_and(|s| !s.player.empty())
     }
+    /// Position of the exact owned speech source, never a completed or replaced request.
+    #[must_use]
+    pub fn speech_position(
+        &self,
+        owner: crate::feel::SpeechTraceOwner,
+    ) -> Option<std::time::Duration> {
+        let speech = self.speech.as_ref()?;
+        let playing_owner = speech.state.speech_owner?;
+        (playing_owner.dialogue_generation == owner.dialogue_generation
+            && playing_owner.dialogue_request_id == owner.dialogue_request_id
+            && playing_owner.tts_request_id == owner.tts_request_id
+            && !speech.player.empty())
+        .then(|| speech.player.get_pos())
+    }
     #[must_use]
     pub const fn ambience_duck(&self) -> f32 {
         self.ambience_duck
@@ -567,7 +581,7 @@ const fn owner_priority(owner: SemanticOwner) -> u8 {
         SemanticOwner::PrivateLife(_) => 1,
         SemanticOwner::StandaloneRelationship(_) => 1,
         SemanticOwner::ActionRelationship(_) => 2,
-        SemanticOwner::DirectOutcome => 3,
+        SemanticOwner::ToyInteraction(_) | SemanticOwner::DirectOutcome => 3,
     }
 }
 
@@ -720,6 +734,51 @@ pub const fn sound_for_cue(cue: AudioCue) -> Option<&'static str> {
     }
 }
 
+/// A 1 kHz mono source lets tests advance real player progress one millisecond per sample,
+/// without opening an output device or sleeping on a wall clock.
+#[cfg(test)]
+pub(crate) fn test_speech_playback(
+    owner: crate::feel::SpeechTraceOwner,
+    sample_count: usize,
+) -> (AudioBank, rodio::queue::SourcesQueueOutput) {
+    let (player, source) = Player::new();
+    player.append(rodio::buffer::SamplesBuffer::new(
+        std::num::NonZero::new(1).expect("one channel"),
+        std::num::NonZero::new(1_000).expect("positive sample rate"),
+        vec![0.0; sample_count],
+    ));
+    let audio = AudioBank {
+        output: None,
+        sounds: BTreeMap::new(),
+        speech: Some(ActivePlayback {
+            player,
+            state: PlaybackSnapshot {
+                playback_id: 1,
+                asset_sha256: String::new(),
+                source: "speech",
+                role: MixRole::Speech,
+                owner: None,
+                speech_owner: Some(owner),
+                channel: None,
+                gain: 1.0,
+                looping: false,
+                bytes: Arc::from([]),
+            },
+            base_gain: 1.0,
+        }),
+        one_shots: Vec::new(),
+        ambience: None,
+        effects_gain: 0.7,
+        speech_gain: 0.7,
+        ambience_duck: 1.0,
+        duck_envelope: GainEnvelope::default(),
+        creature_envelope: GainEnvelope::default(),
+        next_playback_id: 2,
+        decisions: Vec::new(),
+    };
+    (audio, source)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -728,6 +787,52 @@ mod tests {
 
     fn repository_assets() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets")
+    }
+
+    #[test]
+    fn speech_position_requires_exact_live_playback_and_closes_on_stop_or_completion() {
+        let owner = crate::feel::SpeechTraceOwner {
+            dialogue_generation: 3,
+            dialogue_request_id: 7,
+            tts_request_id: 11,
+        };
+        let (mut audio, mut source) = test_speech_playback(owner, 1_000);
+        assert_eq!(
+            audio.speech_position(owner),
+            Some(std::time::Duration::ZERO)
+        );
+        for stale in [
+            crate::feel::SpeechTraceOwner {
+                dialogue_generation: 4,
+                ..owner
+            },
+            crate::feel::SpeechTraceOwner {
+                dialogue_request_id: 8,
+                ..owner
+            },
+            crate::feel::SpeechTraceOwner {
+                tts_request_id: 12,
+                ..owner
+            },
+        ] {
+            assert_eq!(audio.speech_position(stale), None);
+        }
+        assert_eq!(source.by_ref().take(80).count(), 80);
+        let position = audio.speech_position(owner).expect("active owned speech");
+        assert!((75..=80).contains(&position.as_millis()));
+        source.by_ref().take(1_001).for_each(drop);
+        assert!(!audio.speech_active());
+        assert_eq!(audio.speech_position(owner), None);
+        audio.update_ducking(0);
+        assert_eq!(audio.speech_position(owner), None);
+
+        let (mut interrupted, _source) = test_speech_playback(owner, 1_000);
+        interrupted.stop_speech();
+        assert_eq!(interrupted.speech_position(owner), None);
+
+        let (empty, mut source) = test_speech_playback(owner, 0);
+        let _ = source.next();
+        assert_eq!(empty.speech_position(owner), None);
     }
 
     #[test]

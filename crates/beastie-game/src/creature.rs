@@ -294,6 +294,15 @@ pub(crate) fn setup_creature(
     spawn(CreaturePart::Tail, fin, false);
 }
 
+#[cfg(test)]
+pub(crate) fn authored_head_half_extents() -> Vec3 {
+    Vec3::from_array(
+        CREATURE
+            .head_radii
+            .map(|radius| (radius as f32 + 0.5) * CREATURE.head_cell),
+    )
+}
+
 /// Continuous projection used by rendering and head picking. It never changes simulation state.
 pub(crate) fn head_position(plan: &ScenePlan) -> Vec3 {
     let c = &plan.creature;

@@ -1300,6 +1300,7 @@ fn compact_advance_events(events: &mut Vec<GameEvent>) {
                 | GameEvent::PrivateLifeCompleted { .. }
                 | GameEvent::PrivateLifeInterrupted { .. }
                 | GameEvent::ToyObjectResponded { .. }
+                | GameEvent::ToyInteractionResponded { .. }
         ) {
             false
         } else if let GameEvent::RelationshipBeatStarted { motif, .. } = event {
@@ -1507,20 +1508,12 @@ mod tests {
         }
     }
 
-    fn toy_position(session: &GameSession, toy: ToyId) -> NormalizedPosition {
-        session
-            .world()
-            .aquarium
-            .objects
-            .values()
-            .find_map(|object| match object {
-                beastie_core::WorldObject::Toy {
-                    toy: candidate,
-                    position,
-                } if *candidate == toy => Some(*position),
-                _ => None,
-            })
-            .expect("default toy exists")
+    fn toy_approach_position(session: &GameSession, toy: ToyId) -> NormalizedPosition {
+        beastie_core::approach_position(
+            session.world(),
+            beastie_core::SemanticDestination::Toy(toy),
+        )
+        .expect("default toy has a physical approach surface")
     }
 
     #[test]
@@ -1611,9 +1604,15 @@ mod tests {
             to: beastie_core::ActionPhase::Brake,
         };
         let memory = GameEvent::MemoryCreated(beastie_core::MemoryId(7));
+        let response = GameEvent::ToyInteractionResponded {
+            toy: ToyId::Sock,
+            interaction_id: std::num::NonZeroU64::new(1).unwrap(),
+            response: beastie_core::ToyResponse::SockTugged,
+        };
         let mut events = vec![
             GameEvent::NeedChanged,
             autonomous_toy_played(ToyId::Sock, 1),
+            response,
             phase.clone(),
             GameEvent::NeedChanged,
             autonomous_toy_played(ToyId::Sock, 2),
@@ -1984,7 +1983,7 @@ mod tests {
             .creature
             .toy_preferences
             .insert(ToyId::Ball, 0.8);
-        session.world.creature.aquarium.position = toy_position(&session, ToyId::Ball);
+        session.world.creature.aquarium.position = toy_approach_position(&session, ToyId::Ball);
         let receipt = session
             .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
             .expect("accepted toy receipt");
@@ -2049,7 +2048,7 @@ mod tests {
             .creature
             .toy_preferences
             .insert(ToyId::Bell, -1.0);
-        session.world.creature.aquarium.position = toy_position(&session, ToyId::Bell);
+        session.world.creature.aquarium.position = toy_approach_position(&session, ToyId::Bell);
         let relationship = session.world().creature.relationship;
         let receipt = session
             .apply(command(SessionCommand::Play { toy: ToyId::Bell }))
@@ -2650,6 +2649,8 @@ mod tests {
     #[test]
     fn occupied_glance_waits_for_the_exact_toy_boundary_without_interrupting() {
         let mut session = GameSession::new(532, "Busy");
+        // Give the interaction a real approach without depending on new-save toy spacing.
+        session.world.creature.aquarium.position = NormalizedPosition::new(1_000, 1_000);
         session.world.creature.traits.sociability = 1.0;
         session.world.creature.relationship.bond = 1.0;
         session.world.creature.relationship.resentment = 0.0;
@@ -2658,9 +2659,17 @@ mod tests {
             .creature
             .toy_preferences
             .insert(ToyId::Ball, 0.8);
-        session
+        let receipt = session
             .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
             .expect("accepted toy establishes an exact owner");
+        let interaction_id = receipt
+            .events
+            .iter()
+            .find_map(|event| match event {
+                GameEvent::ToyPlayAccepted { interaction_id, .. } => Some(*interaction_id),
+                _ => None,
+            })
+            .expect("accepted toy identity");
         session
             .apply(command(SessionCommand::SpeechStarted))
             .expect("occupied creature glances");
@@ -2677,37 +2686,188 @@ mod tests {
         assert!(ended.events.contains(&GameEvent::UtteranceDeferred));
         assert!(ended.dialogue_request.is_none());
 
-        let early = session
-            .apply(command(SessionCommand::Tick {
-                milliseconds: 2_000,
-            }))
-            .expect("time advances");
-        assert!(early.dialogue_request.is_none());
-        assert!(matches!(
-            session.spoken_input,
-            SpokenInputState::Deferred { .. }
-        ));
-
-        let mut saw_contact = false;
+        let mut contacts = 0;
+        let mut approach_ticks = 0;
         let mut submitted = None;
         for _ in 0..20 {
             let observation = session
                 .apply(command(SessionCommand::Tick {
-                    milliseconds: 1_000,
+                    milliseconds: SIMULATION_TICK_MS,
                 }))
                 .expect("activity progresses toward its semantic boundary");
-            saw_contact |= observation
+            contacts += observation
                 .events
                 .iter()
-                .any(|event| matches!(event, GameEvent::ToyContacted { .. }));
+                .filter(|event| matches!(event,
+                    GameEvent::ToyContacted { interaction_id: id, toy: ToyId::Ball, origin: ToyOrigin::Player }
+                        if *id == interaction_id
+                )).count();
+            assert!(!observation.events.iter().any(|event| matches!(event,
+                GameEvent::ToyInteractionInterrupted { interaction_id: id, .. } if *id == interaction_id
+            )));
+            if contacts == 0 {
+                approach_ticks += 1;
+                assert!(
+                    observation.dialogue_request.is_none(),
+                    "language must wait for its exact toy contact"
+                );
+                assert!(matches!(
+                    &session.spoken_input,
+                    SpokenInputState::Deferred { owner: Some(DialogueActionOwner::Toy(id)), .. }
+                        if *id == interaction_id
+                ));
+                let handoff = dialogue_handoff(session.world());
+                assert_eq!(
+                    handoff.owner,
+                    Some(DialogueActionOwner::Toy(interaction_id))
+                );
+                assert_eq!(handoff.state, DialogueHandoffState::WaitingForContact);
+            }
             if observation.dialogue_request.is_some() {
                 submitted = Some(observation);
                 break;
             }
         }
         let ready = submitted.expect("deferred response becomes ready after toy contact");
-        assert!(saw_contact);
+        assert!(approach_ticks > 0, "exercise deferral during real travel");
+        assert_eq!(contacts, 1);
         assert_eq!(ready.spoken_input, Some(SpokenInputStatus::Submitted));
+    }
+
+    #[test]
+    fn deferred_language_preserves_each_committed_physical_toy_response() {
+        for channel in [InputChannel::Typed, InputChannel::Spoken] {
+            for (toy, response) in [
+                (ToyId::Ball, beastie_core::ToyResponse::BallNudged),
+                (ToyId::Bell, beastie_core::ToyResponse::BellStruck),
+                (ToyId::Sock, beastie_core::ToyResponse::SockTugged),
+            ] {
+                let mut session = GameSession::new(532, "Patient");
+                session.world.creature.aquarium.position = NormalizedPosition::new(1_000, 1_000);
+                session.world.creature.traits.sociability = 1.0;
+                session.world.creature.relationship.bond = 1.0;
+                session.world.creature.relationship.resentment = 0.0;
+                session.world.creature.toy_preferences.insert(toy, 0.8);
+                let receipt = session
+                    .apply(command(SessionCommand::Play { toy }))
+                    .unwrap();
+                let interaction_id = receipt
+                    .events
+                    .iter()
+                    .find_map(|event| match event {
+                        GameEvent::ToyPlayAccepted { interaction_id, .. } => Some(*interaction_id),
+                        _ => None,
+                    })
+                    .unwrap();
+                let queued = match channel {
+                    InputChannel::Typed => session
+                        .apply(command(SessionCommand::Talk {
+                            text: "remember the berry".to_owned(),
+                        }))
+                        .unwrap(),
+                    InputChannel::Spoken => {
+                        session
+                            .apply(command(SessionCommand::SpeechStarted))
+                            .unwrap();
+                        session
+                            .apply(command(SessionCommand::SpeechCandidate {
+                                text: "remember the berry".to_owned(),
+                                confidence: AcousticConfidence::new(900).unwrap(),
+                            }))
+                            .unwrap();
+                        session.apply(command(SessionCommand::SpeechEnded)).unwrap()
+                    }
+                };
+                assert!(queued.events.contains(&GameEvent::UtteranceDeferred));
+                assert!(queued.dialogue_request.is_none());
+                let expected = GameEvent::ToyInteractionResponded {
+                    toy,
+                    interaction_id,
+                    response,
+                };
+                let mut responses = 0;
+                let mut submitted = false;
+                for _ in 0..25 {
+                    let observation = session
+                        .apply(command(SessionCommand::Tick {
+                            milliseconds: SIMULATION_TICK_MS,
+                        }))
+                        .unwrap();
+                    responses += observation
+                        .events
+                        .iter()
+                        .filter(|event| **event == expected)
+                        .count();
+                    assert!(!observation.events.iter().any(|event| matches!(event,
+                        GameEvent::ToyInteractionInterrupted { interaction_id: id, .. } if *id == interaction_id
+                    )));
+                    if observation.dialogue_request.is_some() {
+                        assert!(observation.events.contains(&GameEvent::ToyContacted {
+                            toy,
+                            interaction_id,
+                            origin: ToyOrigin::Player,
+                        }));
+                        assert_eq!(responses, 1);
+                        submitted = true;
+                        break;
+                    }
+                    assert_eq!(
+                        responses, 0,
+                        "language must submit at its exact safe contact"
+                    );
+                }
+                assert!(submitted, "{channel:?} must finish waiting for {toy:?}");
+                let object = &session.world.aquarium.toy_states[&toy];
+                assert_eq!(object.last_response, response);
+                assert_eq!(object.last_contact_activity, Some(interaction_id));
+                let recovery = session
+                    .world
+                    .creature
+                    .interaction_state
+                    .toy_interaction
+                    .as_ref()
+                    .unwrap();
+                assert_eq!(recovery.id, interaction_id);
+                assert_eq!(recovery.phase, beastie_core::ToyInteractionPhase::Recovery);
+                match toy {
+                    ToyId::Ball => {
+                        assert_ne!(object.velocity, beastie_core::NormalizedVelocity::default())
+                    }
+                    ToyId::Bell => assert!(!object.carried),
+                    ToyId::Sock => {
+                        assert!(
+                            object.carried,
+                            "deferred Talk cannot erase the committed hold"
+                        );
+                        assert_eq!(
+                            object.position,
+                            beastie_core::held_toy_position(
+                                session.world.creature.aquarium.position
+                            )
+                        );
+                    }
+                }
+                let held_position = object.position;
+                let next = session
+                    .apply(command(SessionCommand::Tick {
+                        milliseconds: SIMULATION_TICK_MS,
+                    }))
+                    .unwrap();
+                assert!(!next.events.contains(&expected));
+                if toy == ToyId::Sock {
+                    let released = &session.world.aquarium.toy_states[&toy];
+                    assert!(!released.carried);
+                    assert_eq!(released.position, held_position);
+                    assert_eq!(
+                        released.velocity,
+                        beastie_core::NormalizedVelocity {
+                            x: 0,
+                            y: beastie_core::SOCK_RELEASE_SPEED,
+                        }
+                    );
+                }
+            }
+        }
     }
 
     fn waiting_language(channel: InputChannel, behind_toy: bool) -> GameSession {

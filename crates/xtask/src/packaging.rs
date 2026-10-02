@@ -571,6 +571,8 @@ pub fn check(
         "assets/manifest.toml",
         "assets/generated/ui/atkinson-hyperlegible-next-medium.ttf",
         "assets/licenses/atkinson-hyperlegible-next-OFL.txt",
+        "assets/generated/ui/noto-emoji-variable.ttf",
+        "assets/licenses/noto-emoji-OFL.txt",
         "models/manifest.toml",
         "models/LICENSE",
         "models/README.md",
@@ -1567,8 +1569,8 @@ impl Sha256 {
             0xc67178f2,
         ];
         let mut words = [0_u32; 64];
-        for (index, chunk) in block.chunks_exact(4).enumerate().take(16) {
-            words[index] = u32::from_be_bytes(chunk.try_into().expect("four-byte word"));
+        for (index, chunk) in block.as_chunks::<4>().0.iter().enumerate().take(16) {
+            words[index] = u32::from_be_bytes(*chunk);
         }
         for index in 16..64 {
             let x = words[index - 15];
@@ -1700,6 +1702,14 @@ tracked = false
         write_file(
             &root.join("assets/licenses/atkinson-hyperlegible-next-OFL.txt"),
             b"OFL license fixture\n",
+        );
+        write_file(
+            &root.join("assets/generated/ui/noto-emoji-variable.ttf"),
+            b"emoji font fixture",
+        );
+        write_file(
+            &root.join("assets/licenses/noto-emoji-OFL.txt"),
+            b"emoji OFL license fixture\n",
         );
         write_file(&root.join("THIRD_PARTY_NOTICES"), b"test notices\n");
         write_file(&root.join("LICENSE"), b"MIT license\n");

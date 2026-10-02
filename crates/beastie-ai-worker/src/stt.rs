@@ -460,7 +460,9 @@ fn parse_pcm16_mono_16k_wav(bytes: &[u8]) -> Result<Vec<i16>, AudioError> {
         return Err(AudioError::Invalid);
     }
     Ok(data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|sample| i16::from_le_bytes([sample[0], sample[1]]))
         .collect())
 }

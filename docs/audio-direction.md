@@ -20,11 +20,11 @@ fades. `environment/underwater-loop` is exactly 12 seconds and phase-locked at i
 | `food/eat` | 0.480 s | -6.50 dBFS | -16.68 dBFS | The simulation resolves food as eaten |
 | `food/spit-reject` | 0.560 s | -6.80 dBFS | -15.35 dBFS | The simulation resolves food as tasted then rejected |
 | `environment/sand-disturb` | 0.780 s | -13.00 dBFS | -24.55 dBFS | Creature or object makes meaningful contact with the substrate |
-| `environment/cave-settle` | 0.680 s | -10.00 dBFS | -21.39 dBFS | Creature completes a retreat/rest action in the cave |
-| `object/toy-impact` | 0.340 s | -8.50 dBFS | -18.37 dBFS | An authoritative toy collision or play action resolves |
-| `object/ball-nudge` | 0.550 s | -9.40 dBFS | -18.30 dBFS | An autonomous ball activity reaches authoritative contact and displaces the ball |
-| `object/bell-ring` | 0.820 s | -10.40 dBFS | -20.20 dBFS | An autonomous bell activity reaches authoritative contact |
-| `object/sock-rustle` | 0.480 s | -9.10 dBFS | -25.10 dBFS | An autonomous sock activity reaches authoritative contact and begins the tug |
+| `environment/cave-settle` | 0.680 s | -10.00 dBFS | -21.39 dBFS | A familiar-cave relationship beat reaches its authoritative Act phase |
+| `object/toy-impact` | 0.340 s | -8.50 dBFS | -18.37 dBFS | A legacy play outcome without a paired specific object response |
+| `object/ball-nudge` | 0.550 s | -9.40 dBFS | -18.30 dBFS | Accepted direct or autonomous ball contact commits the ball's impulse |
+| `object/bell-ring` | 0.820 s | -10.40 dBFS | -20.20 dBFS | Accepted direct or autonomous bell contact commits its strike |
+| `object/sock-rustle` | 0.480 s | -9.10 dBFS | -25.10 dBFS | Accepted direct or autonomous sock contact begins its owned tug |
 | `creature/affection` | 0.640 s | -7.50 dBFS | -16.98 dBFS | Positive touch, comfort, or attachment response |
 | `creature/surprise` | 0.420 s | -7.20 dBFS | -15.79 dBFS | Startle or high-salience unexpected event |
 | `creature/curious` | 0.580 s | -8.50 dBFS | -15.38 dBFS | Investigation begins or a novel object earns attention |
@@ -40,6 +40,12 @@ The simulation or session layer chooses semantic events. Rendering may place or 
 but must not infer that an interaction succeeded. Ambient bubble variants are selected from a
 seeded presentation stream, with 6 to 18 seconds between bursts and no run longer than two of the
 same variant, so captures remain reproducible without exposing a clock-like alternation.
+Ordinary autonomous cave shelter can remain quiet. The cave cue punctuates a salient familiar-place
+relationship beat; it is not a completion chime for every private rest. This distinction preserves
+quiet observation rather than turning autonomous activity into a stream of notifications.
+Direct toy responses use the exact toy interaction owner, separate from private-life activity
+IDs. Each physical response has one specific sound; its paired play outcome retains delight
+without stacking another generic impact. Deferred speech cannot undo a committed response.
 
 ## Mix and layering
 

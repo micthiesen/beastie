@@ -561,7 +561,7 @@ fn mesh_blas(mesh: &Mesh) -> Option<MeshBlas> {
     );
     let mut triangles = Vec::new();
     let mut bounds = Vec::new();
-    for indices in indices.chunks_exact(3) {
+    for indices in indices.as_chunks::<3>().0.iter() {
         let [Some(a), Some(b), Some(c)] = [
             positions.get(indices[0]),
             positions.get(indices[1]),
@@ -639,7 +639,7 @@ fn surface_palette(triangles: &[Triangle]) -> (Vec<TriangleSurface>, Vec<u32>) {
     for triangle in triangles {
         let surface = triangle.surface();
         let mut key = [0; 24];
-        for (output, vector) in key.chunks_exact_mut(4).zip([
+        for (output, vector) in key.as_chunks_mut::<4>().0.iter_mut().zip([
             surface.n0, surface.n1, surface.n2, surface.c0, surface.c1, surface.c2,
         ]) {
             output.copy_from_slice(&vector.to_array().map(f32::to_bits));

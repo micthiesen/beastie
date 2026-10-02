@@ -15,6 +15,7 @@ use std::num::NonZeroU64;
 pub const SIMULATION_TICK_MS: u64 = 1_000;
 pub const MAX_OFFLINE_MS: u64 = crate::ACTIVE_DAY_MS * 8;
 pub const TALK_COOLDOWN_MS: u64 = 30_000;
+pub const SOCK_RELEASE_SPEED: i32 = 650;
 // Private life needs room to read as lived time, not a showcase playlist. Arrival begins a
 // state-shaped quiet span that outlasts the authored payoff and leaves genuine observation
 // between bouts.
@@ -190,6 +191,11 @@ pub enum GameEvent {
     ToyObjectResponded {
         toy: ToyId,
         activity_id: NonZeroU64,
+        response: ToyResponse,
+    },
+    ToyInteractionResponded {
+        toy: ToyId,
+        interaction_id: NonZeroU64,
         response: ToyResponse,
     },
 }
@@ -443,6 +449,11 @@ pub fn advance_offline(
 
 fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut Vec<GameEvent>) {
     state.elapsed_ms = state.elapsed_ms.saturating_add(SIMULATION_TICK_MS);
+    let sock_was_carried = state
+        .aquarium
+        .toy_states
+        .get(&ToyId::Sock)
+        .is_some_and(|sock| sock.carried);
     advance_embodied_state(state, events);
     advance_private_life(state, events);
     advance_relationship_beat(state, events);
@@ -465,7 +476,13 @@ fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut
             to: crate::Intention::Sleep,
         });
     }
-    advance_aquarium(state, events);
+    let sock_just_released = sock_was_carried
+        && state
+            .aquarium
+            .toy_states
+            .get(&ToyId::Sock)
+            .is_some_and(|sock| !sock.carried);
+    advance_aquarium(state, sock_just_released, events);
     clear_satisfied_or_expired_initiative(state);
     maybe_initiate(state, events);
     state.creature.needs.clamp();
@@ -482,15 +499,7 @@ fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut
 }
 
 fn advance_embodied_state(state: &mut WorldState, events: &mut Vec<GameEvent>) {
-    if state
-        .creature
-        .interaction_state
-        .toy_interaction
-        .as_ref()
-        .is_some_and(|interaction| interaction.phase == crate::ToyInteractionPhase::Recovery)
-    {
-        state.creature.interaction_state.toy_interaction = None;
-    }
+    finish_toy_recovery(state);
     if state
         .creature
         .interaction_state
@@ -528,8 +537,22 @@ fn advance_embodied_state(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         && state.elapsed_ms >= state.creature.interaction_state.affectionate_until_ms
     {
         set_intention(state, Intention::Idle, events);
-        clear_travel_target(state);
-        state.creature.aquarium.steering = SteeringMode::Hover;
+        // Intention is expression, not travel ownership. Comfort alone creates this
+        // player-directed CursorSocial journey; a newer private/relationship/cursor
+        // journey can already own locomotion while its old affection timer is running.
+        if matches!(
+            (
+                state.creature.aquarium.destination,
+                state.creature.aquarium.travel_purpose,
+            ),
+            (
+                Some(SemanticDestination::Player),
+                Some(crate::TravelPurpose::CursorSocial { .. })
+            )
+        ) {
+            clear_travel_target(state);
+            state.creature.aquarium.steering = SteeringMode::Hover;
+        }
     }
 }
 
@@ -972,6 +995,9 @@ fn interrupt_toy_interaction(state: &mut WorldState, events: &mut Vec<GameEvent>
         return;
     };
     if interaction.phase == crate::ToyInteractionPhase::Recovery {
+        // Contact already committed. Language and other input must not erase the
+        // physical response or strand a held sock before its recovery boundary.
+        state.creature.interaction_state.toy_interaction = Some(interaction);
         return;
     }
     interaction.outcome = crate::ToyInteractionOutcome::Interrupted;
@@ -1080,11 +1106,8 @@ fn advance_private_life(state: &mut WorldState, events: &mut Vec<GameEvent>) {
             activity.phase_started_at_ms = state.elapsed_ms;
         }
         ActivityPhase::Recover | ActivityPhase::Settle => {
-            if let PrivateLifeKind::ToyPlay(ToyId::Sock) = activity.kind
-                && let Some(sock) = state.aquarium.toy_states.get_mut(&ToyId::Sock)
-            {
-                sock.carried = false;
-                sock.position = state.creature.aquarium.position;
+            if activity.kind == PrivateLifeKind::ToyPlay(ToyId::Sock) {
+                release_sock(state);
             }
             push_recent_activity(state, &activity, None);
             state.creature.private_life.active = None;
@@ -1119,32 +1142,9 @@ fn perform_private_life_payoff(
     activity.payoff_reached = true;
     match activity.kind {
         PrivateLifeKind::ToyPlay(toy) => {
-            let Some(object) = state.aquarium.toy_states.get_mut(&toy) else {
+            let Some(response) = respond_to_toy_contact(state, toy, activity.id) else {
                 return;
             };
-            object.last_contact_activity = Some(activity.id);
-            let response = match toy {
-                ToyId::Ball => {
-                    object.velocity = NormalizedVelocity { x: 220, y: -30 };
-                    object.position = NormalizedPosition::new(
-                        object.position.x.saturating_add(220),
-                        object.position.y.saturating_sub(30),
-                    )
-                    .clamped();
-                    ToyResponse::BallNudged
-                }
-                ToyId::Bell => {
-                    object.velocity = NormalizedVelocity::default();
-                    ToyResponse::BellStruck
-                }
-                ToyId::Sock => {
-                    object.carried = true;
-                    object.position = state.creature.aquarium.position;
-                    object.velocity = NormalizedVelocity::default();
-                    ToyResponse::SockTugged
-                }
-            };
-            object.last_response = response;
             events.push(GameEvent::ToyObjectResponded {
                 toy,
                 activity_id: activity.id,
@@ -1164,6 +1164,58 @@ fn perform_private_life_payoff(
             state.creature.needs.comfort = (state.creature.needs.comfort + 0.02).min(1.0);
         }
     }
+}
+
+/// Both contact paths mutate the same physical toy. Their own phase/payoff guards
+/// enforce exactly once: private activity and direct interaction IDs are separate
+/// namespaces, so the saved last-contact number is never a deduplication key.
+fn respond_to_toy_contact(
+    state: &mut WorldState,
+    toy: ToyId,
+    contact_id: NonZeroU64,
+) -> Option<ToyResponse> {
+    let head = state.creature.aquarium.position;
+    let object = state.aquarium.toy_states.get_mut(&toy)?;
+    let response = match toy {
+        ToyId::Ball => {
+            let dx = object.position.x - head.x;
+            let dy = object.position.y - head.y;
+            let distance = dx.abs().max(dy.abs()).max(1);
+            object.velocity = NormalizedVelocity {
+                x: dx * 220 / distance,
+                y: dy * 220 / distance,
+            };
+            ToyResponse::BallNudged
+        }
+        ToyId::Bell => {
+            object.velocity = NormalizedVelocity::default();
+            ToyResponse::BellStruck
+        }
+        ToyId::Sock => {
+            object.carried = true;
+            object.position = held_toy_position(head);
+            object.velocity = NormalizedVelocity::default();
+            ToyResponse::SockTugged
+        }
+    };
+    object.last_response = response;
+    object.last_contact_activity = Some(contact_id);
+    Some(response)
+}
+
+fn finish_toy_recovery(state: &mut WorldState) {
+    let Some(interaction) = state.creature.interaction_state.toy_interaction.as_ref() else {
+        return;
+    };
+    if interaction.phase != crate::ToyInteractionPhase::Recovery {
+        return;
+    }
+    if interaction.toy == ToyId::Sock
+        && interaction.outcome == crate::ToyInteractionOutcome::Accepted
+    {
+        release_sock(state);
+    }
+    state.creature.interaction_state.toy_interaction = None;
 }
 
 fn push_recent_activity(
@@ -1222,6 +1274,13 @@ fn resolve_toy_play(
         interaction_id,
         origin: interaction.origin,
     });
+    if let Some(response) = respond_to_toy_contact(state, interaction.toy, interaction_id) {
+        events.push(GameEvent::ToyInteractionResponded {
+            toy: interaction.toy,
+            interaction_id,
+            response,
+        });
+    }
     state.creature.needs.curiosity = (state.creature.needs.curiosity - 0.18).max(0.0);
     match interaction.origin {
         crate::ToyOrigin::Player => {
@@ -1324,6 +1383,11 @@ fn resolve_toy_interaction_offline(state: &mut WorldState) {
         return;
     };
     if interaction.phase == crate::ToyInteractionPhase::Recovery {
+        if interaction.toy == ToyId::Sock
+            && interaction.outcome == crate::ToyInteractionOutcome::Accepted
+        {
+            release_sock(state);
+        }
         clear_travel_target(state);
         return;
     }
@@ -1346,6 +1410,12 @@ fn resolve_toy_interaction_offline(state: &mut WorldState) {
     {
         state.creature.interaction_state.toy_interaction = Some(interaction);
         return;
+    }
+    // Offline completion keeps the same durable physical outcome without
+    // replaying old contact cues or leaving a sock carried across the absence.
+    let _ = respond_to_toy_contact(state, interaction.toy, interaction.id);
+    if interaction.toy == ToyId::Sock {
+        release_sock(state);
     }
     state.creature.needs.curiosity = (state.creature.needs.curiosity - 0.18).max(0.0);
     match interaction.origin {
@@ -1387,9 +1457,9 @@ fn resolve_toy_interaction_offline(state: &mut WorldState) {
         toy: interaction.toy,
         origin: interaction.origin,
     });
-    interaction.phase = crate::ToyInteractionPhase::Recovery;
+    // Absence completes recovery too. Keeping its owner would suppress the
+    // one-shot PlayerReturn trigger when advance_offline hands control back.
     clear_travel_target(state);
-    state.creature.interaction_state.toy_interaction = Some(interaction);
 }
 
 fn resolve_private_life_offline(state: &mut WorldState) {
@@ -1400,11 +1470,8 @@ fn resolve_private_life_offline(state: &mut WorldState) {
         let mut discarded_events = Vec::new();
         perform_private_life_payoff(state, &mut activity, &mut discarded_events);
     }
-    if let PrivateLifeKind::ToyPlay(ToyId::Sock) = activity.kind
-        && let Some(sock) = state.aquarium.toy_states.get_mut(&ToyId::Sock)
-    {
-        sock.carried = false;
-        sock.position = state.creature.aquarium.position;
+    if activity.kind == PrivateLifeKind::ToyPlay(ToyId::Sock) {
+        release_sock(state);
     }
     push_recent_activity(state, &activity, None);
     clear_travel_target(state);
@@ -1769,9 +1836,11 @@ fn assign_name(
     });
 }
 
-fn advance_aquarium(state: &mut WorldState, events: &mut Vec<GameEvent>) {
-    for toy in state.aquarium.toy_states.values_mut() {
-        if toy.carried {
+fn advance_aquarium(state: &mut WorldState, sock_just_released: bool, events: &mut Vec<GameEvent>) {
+    for (id, toy) in &mut state.aquarium.toy_states {
+        // Release starts at the held anchor. Its velocity then drives continuous projection
+        // and the following tick, rather than jumping a full fall step on the release frame.
+        if toy.carried || (*id == ToyId::Sock && sock_just_released) {
             continue;
         }
         toy.position = NormalizedPosition::new(
@@ -1784,6 +1853,15 @@ fn advance_aquarium(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     }
     if state.creature.current_intention != Intention::Sleep {
         advance_creature_motion(state, events);
+    }
+    let held_position = held_toy_position(state.creature.aquarium.position);
+    for toy in state
+        .aquarium
+        .toy_states
+        .values_mut()
+        .filter(|toy| toy.carried)
+    {
+        toy.position = held_position;
     }
     let mut settled = Vec::new();
     let mut expired = Vec::new();
@@ -1944,7 +2022,22 @@ fn advance_creature_motion(state: &mut WorldState, events: &mut Vec<GameEvent>) 
     if let Some(target) = target {
         steer_toward(state, target);
     } else if state.creature.aquarium.action.is_none() {
-        drift_with_cause(state);
+        if holding_toy_contact(state) {
+            state.creature.aquarium.velocity = NormalizedVelocity::default();
+        } else if let Some(target) = toy_rest_target(state, state.creature.aquarium.position) {
+            // A little backward buoyancy after contact, at the same world speed on both axes.
+            // This also lets older overlapping saves leave the toy without a position jump.
+            let position = state.creature.aquarium.position;
+            let velocity = NormalizedVelocity {
+                x: (target.x - position.x).clamp(-120, 120),
+                y: (target.y - position.y).clamp(-350, 350),
+            };
+            state.creature.aquarium.position =
+                NormalizedPosition::new(position.x + velocity.x, position.y + velocity.y).clamped();
+            state.creature.aquarium.velocity = velocity;
+        } else {
+            drift_with_cause(state);
+        }
     }
 }
 
@@ -1995,8 +2088,58 @@ fn steering_target(
     }
     let destination = state.creature.aquarium.destination?;
     let purpose = state.creature.aquarium.travel_purpose?;
-    let target = destination_position(state, destination)?;
-    if manhattan_distance(state.creature.aquarium.position, target) <= ARRIVAL_DISTANCE {
+    let Some(target) = approach_position(state, destination) else {
+        if matches!(destination, SemanticDestination::Toy(_)) {
+            // An obstructed contact is an interrupted approach, not a refusal or payoff.
+            match purpose {
+                crate::TravelPurpose::PrivateLife { .. } => {
+                    interrupt_private_life(state, ActivityInterruptionOwner::Toy, events);
+                }
+                crate::TravelPurpose::ToyInteraction { .. }
+                | crate::TravelPurpose::RefusalStare { .. } => {
+                    interrupt_toy_interaction(state, events);
+                }
+                crate::TravelPurpose::Relationship { beat_id }
+                    if state
+                        .creature
+                        .relationship_expression
+                        .active
+                        .as_ref()
+                        .is_some_and(|beat| {
+                            beat_id.get() == beat.started_at_ms.saturating_add(1)
+                                && beat.target == Some(destination)
+                        }) =>
+                {
+                    interrupt_relationship_beat(state, events);
+                }
+                _ => {}
+            }
+            interrupt_travel(state, events);
+            set_intention(state, Intention::Idle, events);
+            schedule_next_idle_bout(state);
+        }
+        return None;
+    };
+    // Contact and clear bottom resting points need precise arrival. The broad arrival
+    // zone could otherwise begin a forage while the head is still inside a nearby toy.
+    // Six fixed-point units only absorb integer ellipse projection rounding.
+    let arrival_distance = if matches!(
+        destination,
+        SemanticDestination::Toy(_) | SemanticDestination::Bottom
+    ) {
+        6
+    } else {
+        ARRIVAL_DISTANCE
+    };
+    let neighbors_clear = match destination {
+        SemanticDestination::Toy(toy) => {
+            toy_contact_clears_neighbors(state, toy, state.creature.aquarium.position)
+        }
+        _ => true,
+    };
+    if manhattan_distance(state.creature.aquarium.position, target) <= arrival_distance
+        && neighbors_clear
+    {
         state.creature.aquarium.velocity = NormalizedVelocity::default();
         dispatch_travel_arrival(state, destination, purpose, events);
         clear_travel_target(state);
@@ -2007,7 +2150,7 @@ fn steering_target(
 }
 
 /// Resolve a semantic destination against current authoritative objects and cursor state.
-/// Presentation can use this same target to bound motion without predicting simulation events.
+/// This is the object's anchor. Locomotion uses `approach_position` for physical contact.
 pub fn destination_position(
     state: &WorldState,
     destination: SemanticDestination,
@@ -2020,7 +2163,7 @@ pub fn destination_position(
                 .cursor
                 .unwrap_or(NormalizedPosition::new(5_000, 3_000)),
         ),
-        SemanticDestination::Bottom => Some(NormalizedPosition::new(5_000, 9_200)),
+        SemanticDestination::Bottom => Some(clear_bottom_position(state)),
         SemanticDestination::Food(id) => {
             state
                 .aquarium
@@ -2058,6 +2201,249 @@ pub fn destination_position(
                 | (SemanticDestination::Plant, WorldObject::Plant { position }) => Some(*position),
                 _ => None,
             }),
+    }
+}
+
+/// The creature's head approaches a toy's surface, while gaze and object rendering retain
+/// the real object anchor. The fixed-point envelope includes the head, fins and toy bounds
+/// under the shared 13.2 by 4.55 world projection; the bell's float makes its top asymmetric.
+pub fn approach_position(
+    state: &WorldState,
+    destination: SemanticDestination,
+) -> Option<NormalizedPosition> {
+    let anchor = destination_position(state, destination)?;
+    let SemanticDestination::Toy(toy) = destination else {
+        return Some(anchor);
+    };
+    let position = state.creature.aquarium.position;
+    let preferred = toy_surface_position(
+        state,
+        position,
+        anchor,
+        toy_contact_radii(toy, position.y < anchor.y),
+    );
+    if toy_contact_clears_neighbors(state, toy, preferred) {
+        return Some(preferred);
+    }
+    // Sample a fixed integer direction ring, not a path around obstacles. The maximum
+    // angular gap is about 3.6 degrees; use each candidate's own asymmetric contact side.
+    // Weighted Manhattan distance keeps the chosen alternative stable as axis-clamped
+    // steering moves toward it. Once the ordinary surface becomes clear, preserve it.
+    (0..128)
+        .map(|index| {
+            let along = (index % 32) * 2 - 32;
+            let (x, y) = match index / 32 {
+                0 => (32, along),
+                1 => (-along, 32),
+                2 => (-32, -along),
+                _ => (along, -32),
+            };
+            let radii = toy_contact_radii(toy, y < 0);
+            let ray = NormalizedPosition::new(anchor.x + x * radii.0, anchor.y + y * radii.1);
+            let distance = toy_ellipse_distance(ray, anchor, radii);
+            NormalizedPosition::new(
+                anchor.x + (ray.x - anchor.x) * 1_000 / distance,
+                anchor.y + (ray.y - anchor.y) * 1_000 / distance,
+            )
+        })
+        .filter(|candidate| {
+            *candidate == candidate.clamped()
+                && toy_contact_clears_neighbors(state, toy, *candidate)
+        })
+        .min_by_key(|candidate| {
+            (
+                (candidate.x - position.x).abs() * 3 + (candidate.y - position.y).abs(),
+                candidate.x,
+                candidate.y,
+            )
+        })
+}
+
+fn toy_contact_clears_neighbors(
+    state: &WorldState,
+    intended: ToyId,
+    position: NormalizedPosition,
+) -> bool {
+    state.aquarium.toy_states.iter().all(|(toy, object)| {
+        *toy == intended
+            || object.carried
+            || toy_ellipse_distance(
+                position,
+                object.position,
+                toy_rest_radii(*toy, position.y < object.position.y),
+            ) >= 1_000
+    })
+}
+
+/// Exact authoritative locomotion bounds for continuous presentation, including the small
+/// retreat after toy contact. Reading this target never starts or resolves an interaction.
+pub fn movement_target(state: &WorldState) -> Option<NormalizedPosition> {
+    if holding_toy_contact(state) {
+        return Some(state.creature.aquarium.position);
+    }
+    if let Some(destination) = state
+        .creature
+        .aquarium
+        .action
+        .as_ref()
+        .map(|action| action.destination)
+        .or(state.creature.aquarium.destination)
+    {
+        return approach_position(state, destination);
+    }
+    toy_rest_target(state, state.creature.aquarium.position)
+}
+
+fn toy_contact_radii(toy: ToyId, above: bool) -> (i32, i32) {
+    let vertical = match (toy, above) {
+        // The chin can meet the ball closely from above; the crest needs room below it.
+        (ToyId::Ball, true) => 2_200,
+        (ToyId::Ball, false) => 2_800,
+        (ToyId::Bell, true) => 3_400,
+        (ToyId::Bell, false) => 2_800,
+        (ToyId::Sock, true) => 1_800,
+        (ToyId::Sock, false) => 3_400,
+    };
+    (1_000, vertical)
+}
+
+fn toy_rest_radii(toy: ToyId, above: bool) -> (i32, i32) {
+    let (x, y) = toy_contact_radii(toy, above);
+    (x + 120, y + 250)
+}
+
+fn clear_bottom_position(state: &WorldState) -> NormalizedPosition {
+    let preferred = NormalizedPosition::new(5_000, 9_200);
+    let toy_sides = state
+        .aquarium
+        .toy_states
+        .iter()
+        .filter(|(_, object)| !object.carried)
+        .flat_map(|(toy, object)| {
+            let (horizontal, _) = toy_rest_radii(*toy, preferred.y < object.position.y);
+            [
+                object.position.x - horizontal,
+                object.position.x + horizontal,
+            ]
+        });
+    // Only the resting destination moves. Travel can still cross objects on its way there.
+    // A toy's full horizontal radius supplies a clear candidate at any bottom height.
+    [preferred.x, 0, 10_000]
+        .into_iter()
+        .chain(toy_sides)
+        .filter(|x| (0..=10_000).contains(x))
+        .map(|x| NormalizedPosition::new(x, preferred.y))
+        .filter(|position| {
+            state.aquarium.toy_states.iter().all(|(toy, object)| {
+                object.carried
+                    || toy_ellipse_distance(
+                        *position,
+                        object.position,
+                        toy_rest_radii(*toy, position.y < object.position.y),
+                    ) >= 1_000
+            })
+        })
+        .min_by_key(|position| ((position.x - preferred.x).abs(), position.x))
+        // Three toys can cover at most 3 * 2 * 1_120 of the 10_000-wide tank.
+        .expect("the three toy envelopes leave a clear bottom column")
+}
+
+fn toy_ellipse_distance(
+    position: NormalizedPosition,
+    anchor: NormalizedPosition,
+    radii: (i32, i32),
+) -> i32 {
+    let x = i64::from(position.x - anchor.x) * 1_000 / i64::from(radii.0);
+    let y = i64::from(position.y - anchor.y) * 1_000 / i64::from(radii.1);
+    ((x * x + y * y) as u64).isqrt() as i32
+}
+
+fn toy_surface_position(
+    state: &WorldState,
+    position: NormalizedPosition,
+    anchor: NormalizedPosition,
+    radii: (i32, i32),
+) -> NormalizedPosition {
+    let distance = toy_ellipse_distance(position, anchor, radii);
+    let target = if distance == 0 {
+        let side = if state.creature.aquarium.facing == crate::Facing::Left {
+            1
+        } else {
+            -1
+        };
+        NormalizedPosition::new(anchor.x + side * radii.0, anchor.y)
+    } else {
+        NormalizedPosition::new(
+            anchor.x + (position.x - anchor.x) * 1_000 / distance,
+            anchor.y + (position.y - anchor.y) * 1_000 / distance,
+        )
+    };
+    if target == target.clamped() {
+        return target;
+    }
+    // Clamping a surface point at a tank edge would put the head inside the toy again.
+    // Choose the nearest feasible cardinal surface instead; a horizontal side always fits.
+    [
+        NormalizedPosition::new(anchor.x - radii.0, anchor.y),
+        NormalizedPosition::new(anchor.x + radii.0, anchor.y),
+        NormalizedPosition::new(anchor.x, anchor.y - radii.1),
+        NormalizedPosition::new(anchor.x, anchor.y + radii.1),
+    ]
+    .into_iter()
+    .filter(|candidate| *candidate == candidate.clamped())
+    .min_by_key(|candidate| (candidate.x - position.x).abs() * 3 + (candidate.y - position.y).abs())
+    .expect("a toy always has an in-tank surface")
+}
+
+fn holding_toy_contact(state: &WorldState) -> bool {
+    state
+        .creature
+        .private_life
+        .active
+        .as_ref()
+        .is_some_and(|activity| {
+            activity.phase == ActivityPhase::Act
+                && matches!(activity.kind, PrivateLifeKind::ToyPlay(_))
+        })
+}
+
+fn toy_rest_target(state: &WorldState, position: NormalizedPosition) -> Option<NormalizedPosition> {
+    state
+        .aquarium
+        .toy_states
+        .iter()
+        .filter(|(_, object)| !object.carried)
+        .filter_map(|(toy, object)| {
+            let radii = toy_rest_radii(*toy, position.y < object.position.y);
+            let distance = toy_ellipse_distance(position, object.position, radii);
+            (distance < 1_000).then(|| {
+                (
+                    distance,
+                    toy_surface_position(state, position, object.position, radii),
+                )
+            })
+        })
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, target)| target)
+}
+
+/// Shared carried-object anchor, including the aquarium boundary at the floor.
+pub fn held_toy_position(head: NormalizedPosition) -> NormalizedPosition {
+    // The mouth hold is 0.34 world units below the head, matching the rendered carry pose.
+    NormalizedPosition::new(head.x, head.y + 750).clamped()
+}
+
+fn release_sock(state: &mut WorldState) {
+    let position = held_toy_position(state.creature.aquarium.position);
+    if let Some(sock) = state.aquarium.toy_states.get_mut(&ToyId::Sock)
+        && sock.carried
+    {
+        sock.carried = false;
+        sock.position = position;
+        sock.velocity = NormalizedVelocity {
+            x: 0,
+            y: SOCK_RELEASE_SPEED,
+        };
     }
 }
 
@@ -2109,10 +2495,15 @@ fn drift_with_cause(state: &mut WorldState) {
         as i32
         - curiosity / 2;
     let position = state.creature.aquarium.position;
-    state.creature.aquarium.position =
+    let proposed =
         NormalizedPosition::new(position.x.saturating_add(dx), position.y.saturating_add(dy))
             .clamped();
-    state.creature.aquarium.velocity = NormalizedVelocity { x: dx, y: dy }.clamped();
+    if toy_rest_target(state, proposed).is_some() {
+        state.creature.aquarium.velocity = NormalizedVelocity::default();
+    } else {
+        state.creature.aquarium.position = proposed;
+        state.creature.aquarium.velocity = NormalizedVelocity { x: dx, y: dy }.clamped();
+    }
 }
 
 fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
@@ -2603,6 +2994,8 @@ fn play_with_toy(
     if destination_position(state, SemanticDestination::Toy(toy)).is_none() {
         return;
     }
+    // A new offer replaces the old owner, so finish any committed carry first.
+    finish_toy_recovery(state);
     let preference = *state
         .creature
         .toy_preferences

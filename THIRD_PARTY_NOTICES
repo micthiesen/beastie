@@ -53,6 +53,14 @@ Atkinson Hyperlegible Next is distributed under the SIL Open Font License 1.1. B
 the Medium face for interface text and includes the complete license at
 `assets/licenses/atkinson-hyperlegible-next-OFL.txt`.
 
+Noto Emoji
+----------
+Copyright 2013 Google LLC.
+Noto Emoji is distributed under the SIL Open Font License 1.1. Beastie embeds and packages the
+unmodified monochrome variable TrueType font at its default weight for offline emoji fallback.
+The pinned upstream revision, source URL, byte count, and SHA-256 are recorded in
+`assets/manifest.toml`; the complete license is at `assets/licenses/noto-emoji-OFL.txt`.
+
 Beastie runtime and assets
 --------------------------
 Beastie source and generated runtime assets are distributed under the repository's MIT license,

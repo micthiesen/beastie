@@ -120,6 +120,7 @@ impl BodyChain {
         let mut parent = head;
         let mut parent_heading = self.heading;
         for index in 0..self.joints.len() {
+            let previous_heading = self.headings[index];
             if travelling {
                 // Tangent guidance is stable as earlier joints turn. Point-to-parent guidance
                 // fed those turns back into itself and made a stopped animal's tail orbit its head.
@@ -133,14 +134,16 @@ impl BodyChain {
                 };
                 let constrained =
                     parent_heading + angle_difference(desired, parent_heading).clamp(-0.26, 0.26);
-                let heading = turn_towards(self.headings[index], constrained, dt * 5.0);
-                self.headings[index] =
-                    parent_heading + angle_difference(heading, parent_heading).clamp(-0.3, 0.3);
+                // Constrain the target, not the achieved pose. A wall-constrained parent can
+                // turn away from this joint; snapping back inside its bend limit bypasses the
+                // rate limit and propagates the discontinuity all the way through the tail.
+                self.headings[index] = turn_towards(previous_heading, constrained, dt * 5.0);
             }
             // Settled hover preserves the achieved curvature. Small buoyancy changes translate
             // that pose; they do not restart a turn or erase the body's length.
             let length = if index == 0 { 0.35 } else { 0.145 };
-            self.headings[index] = bounded_heading(parent, self.headings[index], length);
+            self.headings[index] =
+                bounded_heading(parent, self.headings[index], previous_heading, length);
             self.joints[index] = parent
                 + Vec3::new(self.headings[index].cos(), self.headings[index].sin(), 0.0) * length;
             parent = self.joints[index];
@@ -157,7 +160,7 @@ impl BodyChain {
     }
 }
 
-fn bounded_heading(parent: Vec3, desired: f32, length: f32) -> f32 {
+fn bounded_heading(parent: Vec3, desired: f32, previous: f32, length: f32) -> f32 {
     let inside = |heading: f32| {
         let point = parent + Vec3::new(heading.cos(), heading.sin(), 0.0) * length;
         (-7.2..=7.2).contains(&point.x) && (-1.45..=3.65).contains(&point.y)
@@ -165,17 +168,40 @@ fn bounded_heading(parent: Vec3, desired: f32, length: f32) -> f32 {
     if inside(desired) {
         return desired;
     }
-    // Find the nearest in-tank direction instead of clamping positions and shortening joints.
-    for step in 1..=128 {
-        let offset = step as f32 * std::f32::consts::PI / 128.0;
-        for sign in [-1.0, 1.0] {
-            let candidate = desired + offset * sign;
-            if inside(candidate) {
-                return candidate;
+    // A circle intersects each wall at at most two headings. Choose the feasible boundary
+    // nearest the previous pose, not the outward target: the latter switches between opposite
+    // wall tangents as the target crosses the wall normal, flipping the entire trailing body.
+    // The tiny inset keeps sin/cos rounding from placing a joint just outside the tank.
+    const INSET: f32 = 0.00001;
+    let mut best: Option<(f32, (f32, f32))> = None;
+    let mut consider = |candidate: f32| {
+        if inside(candidate) {
+            let score = (
+                angle_difference(candidate, previous).abs(),
+                angle_difference(candidate, desired).abs(),
+            );
+            if best.is_none_or(|(_, current)| score < current) {
+                best = Some((candidate, score));
             }
         }
+    };
+    for wall in [-7.2 + INSET, 7.2 - INSET] {
+        let ratio = (wall - parent.x) / length;
+        if (-1.0..=1.0).contains(&ratio) {
+            let angle = ratio.acos();
+            consider(angle);
+            consider(-angle);
+        }
     }
-    desired
+    for wall in [-1.45 + INSET, 3.65 - INSET] {
+        let ratio = (wall - parent.y) / length;
+        if (-1.0..=1.0).contains(&ratio) {
+            let angle = ratio.asin();
+            consider(angle);
+            consider(std::f32::consts::PI - angle);
+        }
+    }
+    best.map_or(desired, |(heading, _)| heading)
 }
 
 fn joint_distance(index: usize) -> f32 {
@@ -224,7 +250,12 @@ mod chain_tests {
 
     #[test]
     fn boundary_turns_keep_joints_in_tank_without_shortening_them() {
-        for head in [Vec3::new(-6.6, 3.4, 0.0), Vec3::new(6.6, -1.15, 0.0)] {
+        for head in [
+            Vec3::new(-6.6, 3.4, 0.0),
+            Vec3::new(6.6, 3.4, 0.0),
+            Vec3::new(-6.6, -1.15, 0.0),
+            Vec3::new(6.6, -1.15, 0.0),
+        ] {
             let mut trail = BodyTrail::new(head, Vec3::NEG_Y);
             let mut chain = BodyChain::new(head, Vec3::NEG_Y, 12);
             trail.advance(head);
@@ -237,6 +268,77 @@ mod chain_tests {
                     (parent.distance(joint) - if index == 0 { 0.35 } else { 0.145 }).abs() < 0.0001
                 );
                 parent = joint;
+            }
+        }
+    }
+
+    #[test]
+    fn wall_projection_keeps_its_tangent_when_the_target_crosses_outward() {
+        let parent = Vec3::new(0.0, -1.44, 0.0);
+        let mut previous = -std::f32::consts::PI + 0.1;
+        for step in 0..=240 {
+            // Both tangents are feasible. Choosing the nearest to this outward target
+            // switches to the opposite tangent at its midpoint, almost a half-turn.
+            let desired = -std::f32::consts::FRAC_PI_2 - 0.1 + step as f32 / 1200.0;
+            let heading = bounded_heading(parent, desired, previous, 0.145);
+            assert!(angle_difference(heading, previous).abs() < 0.04);
+            let joint = parent + Vec3::new(heading.cos(), heading.sin(), 0.0) * 0.145;
+            assert!(joint.x < parent.x);
+            assert!(joint.y >= -1.45);
+            assert!((joint.distance(parent) - 0.145).abs() < 0.0001);
+            previous = heading;
+        }
+    }
+
+    #[test]
+    fn travelling_near_each_wall_and_corner_keeps_the_whole_chain_continuous() {
+        // This synthetic shallow turn reproduces the same wall-branch ambiguity as the
+        // recorded 262.800 s tail flip, not its exact trajectory. The old projection moves
+        // this tail over three world units in one frame. Reflections cover every wall.
+        for wall in 0..5 {
+            let place = |point: Vec3| match wall {
+                0 => point,
+                1 => Vec3::new(point.x, 2.2 - point.y, 0.0),
+                2 => Vec3::new(point.y - 5.75, point.x + 1.1, 0.0),
+                3 => Vec3::new(5.75 - point.y, point.x + 1.1, 0.0),
+                _ => Vec3::new(6.1 + point.x * (0.55 / 1.5), point.y, 0.0),
+            };
+            let initial = place(Vec3::new(0.0, -0.95, 0.0));
+            let forward = place(Vec3::new(1.0, -0.95, 0.0)) - initial;
+            let mut trail = BodyTrail::new(initial, forward);
+            let mut chain = BodyChain::new(initial, forward, 12);
+            for frame in 0..1000 {
+                let phase = frame as f32 / 100.0;
+                let point = Vec3::new(phase.sin() * 1.5, -1.1 + phase.cos() * 0.15, 0.0);
+                let head = place(point);
+                let forward =
+                    place(point + Vec3::new(phase.cos() * 1.5, -phase.sin() * 0.15, 0.0)) - head;
+                let previous_joints = chain.joints.clone();
+                let previous_headings = chain.headings.clone();
+                trail.advance(head);
+                chain.advance(head, forward, &trail, 1.0 / 60.0);
+                let mut parent = head;
+                for index in 0..=12 {
+                    let joint = chain.joint(index);
+                    assert!(
+                        (-7.2..=7.2).contains(&joint.x) && (-1.45..=3.65).contains(&joint.y),
+                        "wall {wall}, frame {frame}, joint {index}: {joint:?}"
+                    );
+                    let length = if index == 0 { 0.35 } else { 0.145 };
+                    assert!((parent.distance(joint) - length).abs() < 0.0001);
+                    if frame > 0 {
+                        assert!(
+                            joint.distance(previous_joints[index]) < 0.15,
+                            "wall {wall}, frame {frame}, joint {index} snapped"
+                        );
+                        assert!(
+                            angle_difference(chain.headings[index], previous_headings[index]).abs()
+                                < 0.2,
+                            "wall {wall}, frame {frame}, joint {index} flipped"
+                        );
+                    }
+                    parent = joint;
+                }
             }
         }
     }

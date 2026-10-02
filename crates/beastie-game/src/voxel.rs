@@ -342,7 +342,7 @@ impl Geometry {
         self.indices.extend([0, 1, 2, 0, 2, 3].map(|i| base + i));
     }
 
-    fn triangle(&mut self, positions: [Vec3; 3], color: [u8; 3]) {
+    pub(crate) fn triangle(&mut self, positions: [Vec3; 3], color: [u8; 3]) {
         let base = self.positions.len() as u32;
         let normal = (positions[1] - positions[0])
             .cross(positions[2] - positions[0])
@@ -421,7 +421,7 @@ mod tests {
             };
             let mut result = BTreeMap::<([u32; 3], u32, [u32; 4]), f64>::new();
             let indices: Vec<_> = mesh.indices().unwrap().iter().collect();
-            for tri in indices.chunks_exact(3) {
+            for tri in indices.as_chunks::<3>().0.iter() {
                 let [a, b, c] = [tri[0], tri[1], tri[2]].map(|i| Vec3::from(positions[i]));
                 let mut normal = Vec3::from(normals[tri[0]]);
                 if normal.to_array().iter().filter(|&&v| v != 0.0).count() == 1 {
@@ -509,7 +509,7 @@ mod tests {
             .as_float3()
             .unwrap();
         let indices: Vec<usize> = mesh.indices().unwrap().iter().collect();
-        for triangle in indices.chunks_exact(3) {
+        for triangle in indices.as_chunks::<3>().0.iter() {
             let [a, b, c] =
                 [triangle[0], triangle[1], triangle[2]].map(|i| Vec3::from(positions[i]));
             assert!((b - a).cross(c - a).dot(Vec3::from(normals[triangle[0]])) > 0.0);
@@ -529,7 +529,7 @@ mod tests {
         let mut edges = BTreeMap::<([u32; 3], [u32; 3]), usize>::new();
         let indices: Vec<_> = mesh.indices().unwrap().iter().collect();
         let mut volume = 0.0;
-        for triangle in indices.chunks_exact(3) {
+        for triangle in indices.as_chunks::<3>().0.iter() {
             let [a, b, c] =
                 [triangle[0], triangle[1], triangle[2]].map(|i| Vec3::from(positions[i]));
             let cross = (b - a).cross(c - a);

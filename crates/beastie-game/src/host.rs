@@ -1,25 +1,97 @@
 //! Native Bevy event adapter. Authoritative gameplay stays in `GameSession`.
 use crate::app::Game;
 use crate::error::GameResult;
+use crate::input::PasteOwner;
 use crate::renderer::{SceneFrame, TankCamera, Viewport};
 use bevy::app::AppExit;
+use bevy::clipboard::{Clipboard, ClipboardRead};
 use bevy::input::{
     ButtonState,
     gamepad::GamepadButtonStateChangedEvent,
     keyboard::{Key, KeyboardInput},
 };
 use bevy::prelude::*;
-use bevy::window::{
-    MonitorSelection, PrimaryWindow, WindowCloseRequested, WindowFocused, WindowMode,
-};
+use bevy::window::{MonitorSelection, PrimaryWindow, WindowCloseRequested, WindowMode};
+use bevy::winit::{RawWinitWindowEvent, WINIT_WINDOWS, converters::convert_keyboard_input};
 use std::time::{Duration, Instant};
+use winit::{event::WindowEvent as NativeWindowEvent, keyboard::ModifiersState};
 
+#[derive(Debug)]
 pub(crate) struct KeyStroke {
     pub key: Key,
     pub text: Option<String>,
     pub control: bool,
     pub super_key: bool,
     pub shift: bool,
+}
+
+#[derive(Resource, Default)]
+struct OrderedModifiers {
+    state: ModifiersState,
+    control_keys: u8,
+    super_keys: u8,
+    shift_keys: u8,
+}
+
+impl OrderedModifiers {
+    fn observe(&mut self, event: &NativeWindowEvent) {
+        match event {
+            NativeWindowEvent::ModifiersChanged(modifiers) => {
+                self.state = modifiers.state();
+                if !self.state.control_key() {
+                    self.control_keys = 0;
+                }
+                if !self.state.super_key() {
+                    self.super_keys = 0;
+                }
+                if !self.state.shift_key() {
+                    self.shift_keys = 0;
+                }
+            }
+            NativeWindowEvent::Focused(false) => *self = Self::default(),
+            _ => {}
+        }
+    }
+
+    fn stroke(&mut self, event: &KeyboardInput) -> KeyStroke {
+        let physical = match event.key_code {
+            KeyCode::ControlLeft => Some((&mut self.control_keys, ModifiersState::CONTROL, 1)),
+            KeyCode::ControlRight => Some((&mut self.control_keys, ModifiersState::CONTROL, 2)),
+            KeyCode::SuperLeft => Some((&mut self.super_keys, ModifiersState::SUPER, 1)),
+            KeyCode::SuperRight => Some((&mut self.super_keys, ModifiersState::SUPER, 2)),
+            KeyCode::ShiftLeft => Some((&mut self.shift_keys, ModifiersState::SHIFT, 1)),
+            KeyCode::ShiftRight => Some((&mut self.shift_keys, ModifiersState::SHIFT, 2)),
+            _ => None,
+        };
+        if let Some((held, flag, side)) = physical {
+            if event.state == ButtonState::Pressed {
+                *held |= side;
+            } else {
+                *held &= !side;
+            }
+            self.state.set(flag, *held != 0);
+        }
+        KeyStroke {
+            key: event.logical_key.clone(),
+            text: event.text.as_ref().map(ToString::to_string),
+            control: self.state.control_key(),
+            super_key: self.state.super_key(),
+            shift: self.state.shift_key(),
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+struct PendingPaste(Option<(PasteOwner, ClipboardRead)>);
+
+fn poll_paste(pending: &mut PendingPaste, game: &mut Game) {
+    let Some((owner, read)) = &mut pending.0 else {
+        return;
+    };
+    if let Some(text) = read.poll_result() {
+        game.apply_clipboard_text(*owner, text.map_err(|_| ()));
+        pending.0 = None;
+    }
 }
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -109,13 +181,21 @@ impl Plugin for HostPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FramePacing>()
             .init_resource::<HostInputPolicy>()
+            .init_resource::<OrderedModifiers>()
+            .init_resource::<PendingPaste>()
             .configure_sets(
                 Update,
                 (HostSet::Input, HostSet::Update, HostSet::Publish).chain(),
             )
             .add_systems(
                 Update,
-                (keyboard, pointer, controller, window_events)
+                (
+                    keyboard,
+                    pointer,
+                    controller,
+                    window_events,
+                    clipboard_results,
+                )
                     .chain()
                     .in_set(HostSet::Input),
             )
@@ -133,28 +213,71 @@ fn handle(result: GameResult, game: &mut Game) {
 }
 
 fn keyboard(
-    mut events: MessageReader<KeyboardInput>,
-    keys: Res<ButtonInput<KeyCode>>,
+    mut events: MessageReader<RawWinitWindowEvent>,
+    window: Query<Entity, With<PrimaryWindow>>,
+    mut modifiers: ResMut<OrderedModifiers>,
+    mut clipboard: ResMut<Clipboard>,
+    mut pending: ResMut<PendingPaste>,
     policy: Res<HostInputPolicy>,
     mut game: NonSendMut<Game>,
 ) {
     if policy.suppress_messages(&mut events) {
+        *modifiers = OrderedModifiers::default();
+        pending.0 = None;
         return;
     }
+    let Ok(primary) = window.single() else {
+        events.clear();
+        *modifiers = OrderedModifiers::default();
+        pending.0 = None;
+        return;
+    };
+    // This is the only game keyboard/focus dispatcher. Bevy's derived KeyboardInput and
+    // WindowFocused messages still serve its own systems but must not be replayed here.
     for event in events.read() {
-        let input = KeyStroke {
-            key: event.logical_key.clone(),
-            text: event.text.as_ref().map(ToString::to_string),
-            control: keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]),
-            super_key: keys.any_pressed([KeyCode::SuperLeft, KeyCode::SuperRight]),
-            shift: keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
-        };
-        let result = if event.state == ButtonState::Pressed {
-            game.key_down_event(input, event.repeat)
-        } else {
-            game.key_up_event(input)
-        };
-        handle(result, &mut game);
+        let source =
+            WINIT_WINDOWS.with_borrow(|windows| windows.get_window_entity(event.window_id));
+        if source != Some(primary) {
+            continue;
+        }
+        modifiers.observe(&event.event);
+        match &event.event {
+            NativeWindowEvent::KeyboardInput { event, .. } => {
+                let translated = convert_keyboard_input(event, primary);
+                let input = modifiers.stroke(&translated);
+                let result = if translated.state == ButtonState::Pressed {
+                    game.key_down_event(input, translated.repeat)
+                } else {
+                    game.key_up_event(input)
+                };
+                handle(result, &mut game);
+                if let Some(owner) = game.take_paste_request() {
+                    pending.0 = Some((owner, clipboard.fetch_text()));
+                    // Desktop reads are ready now, so paste precedes the next ordered key.
+                    poll_paste(&mut pending, &mut game);
+                }
+            }
+            NativeWindowEvent::Focused(focused) => {
+                if !focused {
+                    pending.0 = None;
+                }
+                let result = game.focus_event(*focused);
+                handle(result, &mut game);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn clipboard_results(
+    policy: Res<HostInputPolicy>,
+    mut pending: ResMut<PendingPaste>,
+    mut game: NonSendMut<Game>,
+) {
+    if policy.allows_native() {
+        poll_paste(&mut pending, &mut game);
+    } else {
+        pending.0 = None;
     }
 }
 
@@ -232,18 +355,12 @@ fn controller(
 }
 
 fn window_events(
-    mut focus: MessageReader<WindowFocused>,
     mut close: MessageReader<WindowCloseRequested>,
-    policy: Res<HostInputPolicy>,
+    window: Query<Entity, With<PrimaryWindow>>,
     mut game: NonSendMut<Game>,
 ) {
-    if !policy.suppress_messages(&mut focus) {
-        for event in focus.read() {
-            let result = game.focus_event(event.focused);
-            handle(result, &mut game);
-        }
-    }
-    if close.read().next().is_some() {
+    let primary = window.single().ok();
+    if close.read().any(|event| Some(event.window) == primary) {
         game.quit_requested = true;
     }
 }
@@ -301,6 +418,138 @@ fn update(
 
 fn publish(mut frame: ResMut<SceneFrame>, game: NonSend<Game>) {
     frame.plan = game.render_plan();
+}
+
+#[cfg(test)]
+mod ordered_keyboard_tests {
+    use super::*;
+
+    fn key(code: KeyCode, logical: Key, state: ButtonState) -> KeyboardInput {
+        KeyboardInput {
+            key_code: code,
+            logical_key: logical,
+            state,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        }
+    }
+
+    #[test]
+    fn fast_complete_chord_uses_modifiers_at_each_event_not_the_end_of_the_frame() {
+        let mut modifiers = OrderedModifiers::default();
+        let events = [
+            key(KeyCode::SuperLeft, Key::Super, ButtonState::Pressed),
+            key(
+                KeyCode::KeyA,
+                Key::Character("a".into()),
+                ButtonState::Pressed,
+            ),
+            key(
+                KeyCode::KeyA,
+                Key::Character("a".into()),
+                ButtonState::Released,
+            ),
+            key(KeyCode::SuperLeft, Key::Super, ButtonState::Released),
+        ];
+        let strokes = events
+            .iter()
+            .map(|event| modifiers.stroke(event))
+            .collect::<Vec<_>>();
+        assert!(strokes[1].super_key);
+        assert!(strokes[2].super_key);
+        assert!(!strokes[3].super_key);
+        assert!(!modifiers.state.super_key());
+    }
+
+    #[test]
+    fn held_modifiers_survive_frame_boundaries_and_preserve_both_sides() {
+        let mut modifiers = OrderedModifiers::default();
+        modifiers.stroke(&key(
+            KeyCode::ControlLeft,
+            Key::Control,
+            ButtonState::Pressed,
+        ));
+        modifiers.stroke(&key(
+            KeyCode::ControlRight,
+            Key::Control,
+            ButtonState::Pressed,
+        ));
+        // No per-frame ButtonInput state is consulted or reset.
+        assert!(
+            modifiers
+                .stroke(&key(
+                    KeyCode::KeyV,
+                    Key::Character("v".into()),
+                    ButtonState::Pressed
+                ))
+                .control
+        );
+        modifiers.stroke(&key(
+            KeyCode::ControlLeft,
+            Key::Control,
+            ButtonState::Released,
+        ));
+        assert!(
+            modifiers
+                .stroke(&key(
+                    KeyCode::KeyA,
+                    Key::Character("a".into()),
+                    ButtonState::Pressed
+                ))
+                .control
+        );
+        modifiers.stroke(&key(
+            KeyCode::ControlRight,
+            Key::Control,
+            ButtonState::Released,
+        ));
+        assert!(!modifiers.state.control_key());
+    }
+
+    #[test]
+    fn synthetic_modifiers_changed_without_modifier_keys_is_authoritative() {
+        let mut modifiers = OrderedModifiers::default();
+        modifiers.observe(&NativeWindowEvent::ModifiersChanged(
+            (ModifiersState::SUPER | ModifiersState::SHIFT).into(),
+        ));
+        let stroke = modifiers.stroke(&key(
+            KeyCode::KeyA,
+            Key::Character("a".into()),
+            ButtonState::Pressed,
+        ));
+        assert!(stroke.super_key && stroke.shift);
+        modifiers.observe(&NativeWindowEvent::ModifiersChanged(
+            ModifiersState::empty().into(),
+        ));
+        let stroke = modifiers.stroke(&key(
+            KeyCode::KeyA,
+            Key::Character("a".into()),
+            ButtonState::Released,
+        ));
+        assert!(!stroke.super_key && !stroke.shift);
+    }
+
+    #[test]
+    fn focus_loss_clears_physical_and_synthetic_modifier_state() {
+        let mut modifiers = OrderedModifiers::default();
+        modifiers.stroke(&key(
+            KeyCode::ControlLeft,
+            Key::Control,
+            ButtonState::Pressed,
+        ));
+        modifiers.observe(&NativeWindowEvent::ModifiersChanged(
+            (ModifiersState::SUPER | ModifiersState::CONTROL).into(),
+        ));
+        modifiers.observe(&NativeWindowEvent::Focused(false));
+        let stroke = modifiers.stroke(&key(
+            KeyCode::KeyA,
+            Key::Character("a".into()),
+            ButtonState::Pressed,
+        ));
+        assert!(!stroke.super_key && !stroke.control && !stroke.shift);
+        assert_eq!(modifiers.control_keys, 0);
+    }
 }
 
 #[cfg(test)]

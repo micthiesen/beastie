@@ -1,0 +1,17 @@
+{"version":1,"command":"drop_food","food":"berry","position":{"x":500,"y":500}}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":1000,"y":500}}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":1500,"y":500}}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":2000,"y":500}}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":2500,"y":500}}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":3000,"y":500}}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":3500,"y":500}}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":4000,"y":500}}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":4500,"y":500}}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":5000,"y":500}}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":5500,"y":500}}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":6000,"y":500}}
+{"version":1,"command":"wait","milliseconds":1000}
+{"version":1,"command":"drop_food","food":"mushroom","position":{"x":6500,"y":500}}
+{"version":1,"command":"capture","name":"normal-food-capacity"}
+{"version":1,"command":"ui_action","action":{"set_text_scale":2}}
+{"version":1,"command":"capture","name":"large-food-capacity"}

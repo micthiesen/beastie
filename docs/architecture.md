@@ -31,6 +31,37 @@ Accepted play mutates social history and relationship state once at physical con
 uses a refusal-stare owner and cannot resolve through idle arrival. Core save version 6 validates
 the interaction and travel owner in both directions and migrates ambiguous older toy travel
 conservatively without manufacturing another payoff.
+Toy locomotion resolves to a deterministic surface envelope around the authoritative object
+anchor. Gaze still targets the object itself. Contact holds through the act; a small bounded
+retreat and constrained idle drift retain separation afterward. Ball impulses follow contact
+direction. A released sock keeps its held anchor and falling velocity, with continuous depth
+projection from that same velocity. Mesh tests keep the envelope consistent with authored art.
+Contact selection retains the original surface when it clears other uncarried toys. A blocked
+surface uses a bounded integer direction search around the selected toy, with each candidate's
+asymmetric contact radius and neighboring quiet-rest clearance. Arrival rechecks the actual head
+position. If the search finds no clear in-tank contact, the approach interrupts once without a
+payoff or fabricated refusal, clears its matching activity/relationship and movement owners,
+and returns to ordinary idle scheduling. A blocked familiar-place beat cannot keep reinstating
+an impossible approach or hold the dialogue handoff indefinitely.
+This is deterministic contact selection, not continuous-space obstacle routing.
+Direct and autonomous play share the same physical response mutation, guarded by their own
+contact phases. `ToyInteractionResponded` carries a direct interaction ID; `ToyObjectResponded`
+retains private-life ownership. Their counters are separate namespaces. Direct recovery survives
+a deferred talk handoff, releases any held sock on the next fixed tick, and does not replay the
+response after saving or offline continuation. Presentation queues physical object effects
+separately from creature expression, so a bell strike and delight can coexist without duplicate
+audio or one effect delaying the other.
+The renderer transfers observed carry/release changes from the actual preceding object transform
+to the current target over 200 ms. This ephemeral interpolation changes no contact or reward time.
+Effects use the displayed transform, as do mesh picking and selection. Loaded carried objects and
+clock/title discontinuities start at their current pose without replaying a pickup; an early release
+continues from the visible partial transfer. Reduced motion retains this essential continuity.
+Timed affection releases only its own player-directed journey, never newer travel ownership.
+Bottom foraging selects the nearest deterministic clear column at the existing bottom height,
+using the same toy surface envelopes and quiet-rest clearance. Carried toys do not obstruct it.
+Bottom uses the precise arrival tolerance of toy destinations, so an activity cannot enter its
+stationary act while still short of the clear endpoint. Other destination rules, rewards and
+authored act/recovery durations are unchanged; this is not general collision avoidance.
 
 ## Session and harness boundary
 
@@ -110,22 +141,63 @@ intercept a click, and carried cloth or a swaying bell uses its actual silhouett
 are captured after propagation, matching the preceding
 presented frame. Input resolves before simulation and animation publish the next frame.
 
-The compact persistent control rail, frame-mounted identity plate, shallow contextual actions,
+The articulated body follows a distance-sampled trail with fixed joint lengths. Joint targets
+respect parent curvature while each achieved heading turns at a bounded rate. Tank-boundary
+projection chooses a feasible wall-circle intersection nearest the previous heading, avoiding
+an instantaneous switch between opposite floor or wall tangents. Settled hover preserves the
+achieved curve. This solver changes presentation only, including the matching body pick volumes.
+
+The compact persistent care dock, integrated identity summary, shallow contextual actions,
 food-drop mode, settings, input bindings,
 save recovery/reset confirmation, transcript controls, and naming remain declarative UI. Exact
 need, trust and resentment values remain absent from the player summary. Panels and icons use
 geometry, including shaped outline lettering. Speech identifies its speaker, occupies the opposite
 side of the creature and provides explicitly labeled reactions. Reduced motion and other accessibility settings remain part of presentation state.
-Text commands carry their resolved content bounds, semantic type role and disabled treatment;
-the outline tessellator shapes, fits and geometrically clips glyphs inside those bounds. Settings pages are ephemeral view
+Text commands carry their resolved content bounds, semantic type role and disabled treatment.
+The display-free `beastie-view::typography` module owns both bundled faces, fallback selection,
+shaping, exact wrapping and pagination. View layout and the outline renderer share those metrics;
+the renderer retains tessellation, clipping and outline caches. A 64-entry, 256 KiB layout cache
+avoids repeated shaping during planning without changing results. Settings pages are ephemeral view
 state, while their values retain the existing versioned settings persistence. Startup recovery
 notices are typed technical feedback and never gain creature speech or reaction controls.
 
-The sprite pipeline and image catalog are removed. Runtime assets contain only sounds, the Atkinson
-font and its license, validated by the versioned asset manifest. Generated geometry requires no
-asset credentials or network. The font is embedded at build time; missing optional sounds/workers degrade without stopping
+The sprite pipeline and image catalog are removed. Runtime assets contain sounds, Atkinson
+interface lettering and a monochrome Noto Emoji fallback with their licenses, validated by the
+versioned asset manifest. Both fonts are embedded. Complete emoji graphemes select a fallback
+face and adjacent same-face runs shape together; measurement and cached outlines use each face's
+own metrics. Unsupported scripts retain an explicit missing glyph. Generated geometry requires no
+asset credentials or network; missing optional sounds/workers degrade without stopping
 simulation. See [art-bible.md](art-bible.md), [audio-direction.md](audio-direction.md), and the
 [voxel migration contract](voxel-migration.md).
+
+The UI uses retained rounded vector faces/rims and utility contours alongside real voxel toy/food
+miniatures. A shared semantic depth stride bounds miniature depth and keeps higher panels above
+all lower primitive types. Disabled pointer blockers cover opaque panel backgrounds; covered
+controls are removed from navigation while each panel's own controls remain active. Speech sits
+below modal surfaces. Inspection is a live qualitative projection of the selected target, never
+a simulation mutation. Rename and controller entry have dedicated fields with canonical bounds.
+The dock names accepted food/toy attention only when current gaze and authoritative interaction
+ownership agree. This can acknowledge a new target while an earlier payoff recovers, without
+replacing its pose/effect or claiming movement, contact or enjoyment prematurely.
+Editable values preserve the current draft's end using measured, grapheme-safe single-line
+fitting; labels retain their normal wrapped layout. Native and controller deletion remove a
+complete grapheme while canonical name and message limits continue to count Unicode scalars.
+Focused native message/name fields support primary-modifier Select All and Paste. A retained
+selection highlight or steady end caret follows measured visible text. Ordered raw window events
+preserve modifier chords even when their keys arrive and release within one frame. Asynchronous
+clipboard results carry field/revision ownership and cannot modify a submitted or displaced draft.
+Long dialogue uses compact lossless continuation pages opposite the creature, with a separate
+navigation row and complete reaction controls. Settings reserves the clear left column; other
+obstructing modals hide the complete group and retain its reading deadline without pausing the
+simulation or audio. Panels size to the complete page, staying stable during reveal. Reveal advances
+by complete Unicode graphemes; unread pages remain available and the final page receives its own
+reading interval. Page boundaries use five exactly measured lines at Large size, so changing
+text size does not lose the reader's place. Pagination is presentation state and does not alter
+the accepted dialogue. Notices choose clear space around interaction panels; entering reset
+confirmation dismisses the prior transient receipt while preserving new error reporting.
+Scripted saves, settings and transcripts always use capture-local disposable storage, including
+explicit export paths. Reset preservation and recovery validate a full prior generation before
+promotion and retain failed recovery inputs for retry.
 
 ## Local mouth and voice
 
@@ -148,6 +220,10 @@ owner containing shell generation and dialogue request ID. Caption, reveal, turn
 queued TTS, active speech, and mouth animation retain that owner. Direct semantic actions
 supersede the owner before applying their own response, so late worker completions are drained
 without creating new presentation while already accepted canonical dialogue history remains true.
+Mouth phases sample the exact active audio player's consumed playback position, including the
+TTS request ID; they do not use the one-second simulation clock. Stopped, completed, missing or
+displaced audio closes the mouth. Reply arrival preserves another open page and its focus;
+without a visible caption, compose retains a usable text focus rather than hidden reactions.
 
 Durable save files, backups, settings, transcript export, wall-clock absence, worker lifecycle,
 windowing, input devices, and audio playback stay in `beastie-game`. Platform packages may differ,

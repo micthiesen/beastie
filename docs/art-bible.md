@@ -1,16 +1,17 @@
 # Beastie art bible
 
-## Gold visual baseline
+## Visual baseline
 
 Beastie is the game and title-logo name. Mop is the default creature name, used in creature
 labels and dialogue. The gold title image's Mop lettering guides the visual treatment,
 but the implemented logo must read Beastie.
 
-The three permanent [gold screenshots](style-reference/README.md) are the visual baseline for
-future UI and rendering work. Their composition, cool teal water, warm sand and ivory highlights,
-restrained controls and illuminated voxel forms supersede earlier visual-review screenshots.
-The [implementation comparison](style-reference/implementation.md) records current native captures
-and deliberate differences. Product semantics still come from the game-design philosophy.
+The three permanent [gold screenshots](style-reference/README.md) retain authority for aquarium
+composition, cool teal water, warm sand, ivory highlights and illuminated voxel forms. The
+[complete UI target set](style-reference/ui-20261001/README.md) supersedes their interface styling:
+smooth dark teal panels, fine brass rims, deliberate spacing and legible ivory typography around
+the voxel world. Every page and component maps to an ImageGen target, with illustrated values
+reconciled to actual game semantics. Product authority remains the game-design philosophy.
 
 ## Voxel aquarium
 
@@ -37,7 +38,7 @@ head and crown; the face and connected body remain in front of the rim during pe
 All world forms are solid geometry built from colored voxel shapes. The creature, scenery,
 food, toys, bubbles, and reaction effects use meshes. There are no sprites, sprite sheets,
 painted face textures, image planes, or raster background art. Small facial features may use
-finer geometry than the body. Text also uses real outline triangles in the unified ray-tracing path.
+finer geometry than the body. Text also uses real outline triangles in the unified visibility and lighting path.
 Bevy hosts the custom ordinary-compute renderer; simulation owns every authoritative fact.
 
 The fixed camera looks down twelve degrees, revealing the substrate and cave depth while retaining
@@ -81,18 +82,23 @@ Dialogue must remain readable without covering the face. Settings, food and toy 
 bindings, data management, and confirmation surfaces share the same material and spacing rules.
 Readability takes priority over making letters look like voxel blocks.
 
-The permanent care rail occupies the bottom 31 of 180 layout units. Identity and a short
+The permanent care dock sits within the bottom 30 of 180 layout units. Identity and a short
 simulation-derived mood/behavior summary sit left; actual toy miniatures and Feed sit beside a
-large text field; Send, Speak and Settings sit right. Quiet cream edges mark interaction.
+text field with integrated Send; microphone and Settings sit right. Utility icons use restrained
+vector contours and descriptive hover/focus hints. Quiet brass edges mark interaction; mint
+hover, warm focus and a brief pressed outline distinguish control states.
 Selected toys retain their real Play/Inspect actions in a nearby card with pale world-space
 corner brackets. Speech names its speaker and offers Laugh, Disapprove and Comfort reactions.
 Technical notices remain separate from creature language.
 
-Settings floats on the right over the living tank with Display, Sound and Controls categories.
-These preserve the existing comfort/display, sound/speech and controls/data options. Boolean
-switches use stepped blocks; cyclic values use inset plates. The main plate reveals a very faint
-view of actual world geometry; letters and controls stay opaque. Secondary data, binding and
-confirmation panels retain their real navigation and recovery behavior. Reset defaults to Cancel.
+Settings floats on the right over the living tank with horizontal Display, Sound and Controls
+tabs. Rows own their full click width. Boolean switches use rounded tracks and clear state labels;
+cyclic values use inset plates. Controls leads to bindings, Save & data, and the title screen.
+Secondary panels share restrained rounded surfaces, clear Back/Close controls and readable copy.
+Rename owns a local field, 24-character count, Cancel and Save. Controller entry has its own field
+above the keys. Reset defaults to Cancel; recovery actually restores the preserved generation.
+Technical notices wrap separately from creature speech and offer dismissal when appropriate.
+Opaque panels block pointer clicks and remove obscured controls from keyboard navigation.
 
 The title has an extruded voxel Beastie logo and only Continue, Settings and Quit. Its taller camera
 framing and portrait placement are presentation-only; Continue restores normal world presentation
@@ -101,9 +107,11 @@ The aquarium simulation continues in normal title operation. Scripted evidence s
 unless it explicitly selects Title, preserving existing scenarios.
 
 Text has authored title, identity, body, secondary, control, caption and dialogue roles. Large mode
-increases those sizes by 30 percent; panels make room for it. Every emitted text command has a
-resolved content box. Font outlines are shaped, tessellated and clipped geometrically within that box. Disabled controls
-dim their icon, label and surface together. Text truncation uses a Unicode ellipsis.
+increases those sizes by 30 percent; panels make room for it. Font sizes never silently shrink to
+fit. Every emitted text command has a resolved content box. Font outlines are shaped, wrapped,
+tessellated and clipped geometrically within that box. Disabled controls dim their icon, label
+and surface together. Text truncation uses a grapheme-safe Unicode ellipsis. Semantic depth bands
+keep faces, rims, miniature geometry and text beneath every later overlay.
 
 ## Art tuning
 
@@ -138,6 +146,16 @@ Open Font License 1.1, preserved in `assets/licenses/atkinson-hyperlegible-next-
 repository. The font SHA-256 is
 `dd50b08b3c560846097d23baaaf6a97ffa20dd077115d23c59df68083b9ea05e`; the license SHA-256 is
 `aca6a428580965d2297d1b718042dd427c2a9443ece3b0d02d758e161e0c4030`.
+
+Supported emoji use the bundled monochrome Noto Emoji outline face at the same authored size
+and ink color. The fallback handles complete graphemes, including supported joined sequences;
+ordinary text keeps Atkinson shaping. Font and full OFL provenance are pinned beside their paths
+in `assets/manifest.toml`. This adds neither host-font dependence nor a separate bitmap path.
+Unsupported writing systems still show an explicit missing glyph rather than invented text.
+
+Speech remains a compact side card with content-sized continuation pages. It preserves complete
+words and visible reaction controls while leaving the creature present in the water. The revised
+`speech-compact.png` target supersedes the original broad continuation panel after native review.
 
 ## File-backed asset contract
 

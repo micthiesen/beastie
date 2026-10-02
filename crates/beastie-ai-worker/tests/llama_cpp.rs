@@ -33,7 +33,13 @@ fn backend(mode: &str, extra: Vec<OsString>) -> LlamaCppBackend {
     LlamaCppBackend::new(LlamaCppConfig {
         executable: fixture_program(),
         model: PathBuf::from("ignored-test-model.gguf"),
-        timeout: Duration::from_millis(40),
+        // Success cases test the protocol, not the host's shell-startup latency.
+        // Keep the deliberately stalled fixture's short deadline as the timeout oracle.
+        timeout: if mode == "timeout" {
+            Duration::from_millis(40)
+        } else {
+            Duration::from_secs(2)
+        },
         max_output_bytes: 512,
         cpu_only: true,
         threads: 3,

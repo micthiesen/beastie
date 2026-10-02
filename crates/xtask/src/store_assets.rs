@@ -709,7 +709,7 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
         0x5be0cd19,
     ];
-    for chunk in data.chunks_exact(64) {
+    for chunk in data.as_chunks::<64>().0.iter() {
         let mut w = [0_u32; 64];
         for (index, word) in w.iter_mut().take(16).enumerate() {
             *word = u32::from_be_bytes(

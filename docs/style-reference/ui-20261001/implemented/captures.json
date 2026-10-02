@@ -1,0 +1,48 @@
+[
+  {
+    "file": "toy-card.png",
+    "source": "/tmp/beastie-ui-20261001-final3-surfaces/normal-sock-card.png",
+    "candidate": "C3",
+    "caption": "Normal toy selection and inspection actions.",
+    "sha256": "c6346ad4dbae11e37f7b0ca431acc86cdf2dbe0649a694e9ddd09257692883c9"
+  },
+  {
+    "file": "settings-large.png",
+    "source": "/tmp/beastie-ui-20261001-final3-settings/large-display-default.png",
+    "candidate": "C3",
+    "caption": "Large Display settings with a separate default-bindings receipt.",
+    "sha256": "cc9b12c63448a391e835c2bdde8ce0f0c25fdc224f00ddd1f4275fc250fed846"
+  },
+  {
+    "file": "name-editing.png",
+    "source": "/tmp/beastie-ui-20261001-final5-edge/normal-joined-emoji-name.png",
+    "candidate": "C5",
+    "caption": "Bounded name editing with a complete joined emoji and a maximum-width existing name.",
+    "sha256": "772bee181544e8b2ff711e5d3a6669690b558f39323bcd90684c46f583ced1e5"
+  },
+  {
+    "file": "food-capacity.png",
+    "source": "/tmp/beastie-ui-20261001-final6-capacity/normal-food-capacity.png",
+    "candidate": "C6",
+    "caption": "Actual twelve-item food limit with actionable, unobscured feedback.",
+    "sha256": "8ea278dbc9c7a4cb0e954de40e9256206e06d93546650498d7d4994aeeffe0b7"
+  },
+  {
+    "file": "quiet-forage.png",
+    "source": "/tmp/beastie-ui-20261001-quiet-final8-visual-frames/quiet-09306.png",
+    "candidate": "C8",
+    "caption": "Actual quiet foraging at 155.100 seconds, with a clear face beside the moved ball. Original frame extracted from the synchronized native recording.",
+    "sha256": "f5b2b98fbd0fad09363d9a6b1f58307da19e57bd56753a6496036ff0581fe3e3",
+    "binary_sha256": "98e2c7f948cc488a74b132ae5d0d732d9a5d8acefaf175b5f468793d03eba5a1",
+    "recorded_frame_index": 9306
+  },
+  {
+    "file": "clear-sock-contact.png",
+    "source": "/tmp/beastie-ui-20261001-first-final9-visual-frames/first-12375.png",
+    "candidate": "C9",
+    "caption": "Actual sock contact at 206.250 seconds, with the crown, brows and eyes clear of the neighboring bell. Original frame extracted from the synchronized native recording.",
+    "sha256": "ad450c2e696a6426773a6b362cdb9b038abb15cd0894ccc9ae185e9ed10ba164",
+    "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+    "recorded_frame_index": 12375
+  }
+]

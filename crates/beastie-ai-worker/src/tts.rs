@@ -553,7 +553,9 @@ fn read_pcm_wav(path: &Path) -> Result<SynthesizedAudio, TtsError> {
     let mut bytes = vec![0_u8; data_bytes];
     file.read_exact(&mut bytes)?;
     let samples = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|sample| f32::from(i16::from_le_bytes([sample[0], sample[1]])) / 32_768.0)
         .collect();
     Ok(SynthesizedAudio {

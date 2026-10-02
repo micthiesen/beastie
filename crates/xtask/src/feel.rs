@@ -23,6 +23,7 @@ const RUN_TIMEOUT_GRACE: Duration = Duration::from_secs(60);
 const FIRST_FRAME_HEARTBEAT: &str = "first-frame.json";
 const MIN_STARTUP_TIMEOUT: Duration = Duration::from_millis(250);
 const MAX_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
+const MAX_RUN_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 const MAX_STARTUP_RETRIES: u8 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize)]
@@ -37,6 +38,7 @@ pub enum FeelSuite {
     RelationshipOverTime,
     RelationshipBreadth,
     GoldReference,
+    UiPolish,
 }
 
 #[derive(Debug)]
@@ -46,7 +48,75 @@ pub struct FeelOptions<'a> {
     pub output: Option<&'a Path>,
     pub game: Option<&'a Path>,
     pub startup_timeout_ms: u64,
+    pub run_timeout_ms: Option<u64>,
     pub startup_retries: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CaptureTimeouts {
+    startup: Duration,
+    run_override: Option<Duration>,
+}
+
+impl CaptureTimeouts {
+    fn new(startup_ms: u64, run_ms: Option<u64>) -> Result<Self> {
+        let startup = Duration::from_millis(startup_ms);
+        ensure!(
+            (MIN_STARTUP_TIMEOUT..=MAX_STARTUP_TIMEOUT).contains(&startup),
+            "feel startup timeout must be between {} and {} milliseconds",
+            MIN_STARTUP_TIMEOUT.as_millis(),
+            MAX_STARTUP_TIMEOUT.as_millis()
+        );
+        let run_override = run_ms.map(Duration::from_millis);
+        if let Some(run) = run_override {
+            ensure!(
+                !run.is_zero() && run <= MAX_RUN_TIMEOUT,
+                "feel run timeout must be between 1 and {} milliseconds",
+                MAX_RUN_TIMEOUT.as_millis()
+            );
+            ensure!(
+                run >= startup,
+                "feel run timeout must be at least the startup timeout ({startup_ms} milliseconds)"
+            );
+        }
+        Ok(Self {
+            startup,
+            run_override,
+        })
+    }
+
+    fn run(self, authored_duration: Duration) -> Duration {
+        self.run_override
+            .unwrap_or_else(|| authored_duration.saturating_add(RUN_TIMEOUT_GRACE))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum GameBuild {
+    LocalDebug,
+    External,
+}
+
+impl GameBuild {
+    fn for_override(game: Option<&Path>) -> Self {
+        if game.is_some() {
+            Self::External
+        } else {
+            Self::LocalDebug
+        }
+    }
+
+    fn requires_build(self) -> bool {
+        matches!(self, Self::LocalDebug)
+    }
+
+    fn profile(self) -> &'static str {
+        match self {
+            Self::LocalDebug => "debug",
+            // Neither the filename nor its directory establishes how a copied binary was built.
+            Self::External => "external/unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -117,6 +187,22 @@ const DIALOGUE_RACES: Experience = Experience {
     fake_ai: true,
     tts_requested: true,
     fixture_dialogue_delay_ms: Some(800),
+};
+const DIRECT_TOY_CONTACT: Experience = Experience {
+    id: "direct-toy-contact",
+    scenario: "fixtures/scenarios/feel/direct-toy-contact.jsonl",
+    ..QUIET_OBSERVATION
+};
+const FOOD_REFUSAL: Experience = Experience {
+    id: "food-refusal",
+    scenario: "fixtures/scenarios/feel/food-refusal.jsonl",
+    fake_ai: false,
+    ..QUIET_OBSERVATION
+};
+const REDUCED_EFFECTS: Experience = Experience {
+    id: "reduced-effects",
+    scenario: "fixtures/scenarios/feel/reduced-effects.jsonl",
+    ..INTERACTION_CHAIN
 };
 const BAD_CONDITIONS: Experience = Experience {
     id: "bad-conditions",
@@ -295,6 +381,9 @@ struct AttemptsManifest<'a> {
     version: u32,
     experience: &'a str,
     startup_timeout_ms: u64,
+    /// Additive version-1 metadata; historical manifests omit this field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_timeout_ms: Option<u64>,
     startup_retries: u8,
     selected_attempt: Option<u8>,
     attempts: &'a [AttemptRecord],
@@ -335,31 +424,25 @@ struct AttemptFailure {
 }
 
 pub fn run(options: FeelOptions<'_>) -> Result<()> {
-    let startup_timeout = Duration::from_millis(options.startup_timeout_ms);
-    ensure!(
-        (MIN_STARTUP_TIMEOUT..=MAX_STARTUP_TIMEOUT).contains(&startup_timeout),
-        "feel startup timeout must be between {} and {} milliseconds",
-        MIN_STARTUP_TIMEOUT.as_millis(),
-        MAX_STARTUP_TIMEOUT.as_millis()
-    );
+    let timeouts = CaptureTimeouts::new(options.startup_timeout_ms, options.run_timeout_ms)?;
     ensure!(
         options.startup_retries <= MAX_STARTUP_RETRIES,
         "feel startup retries must be between 0 and {MAX_STARTUP_RETRIES}"
     );
     preflight_tool("ffmpeg")?;
     preflight_tool("ffprobe")?;
-    build_binaries()?;
-
+    if let Some(path) = options.game {
+        ensure!(
+            path.is_file(),
+            "feel game executable is missing: {}",
+            path.display()
+        );
+    }
+    let game_build = GameBuild::for_override(options.game);
+    build_binaries(game_build)?;
     let game = options.game.map_or_else(
         || binary_path("beastie-game"),
-        |path| {
-            ensure!(
-                path.is_file(),
-                "feel game executable is missing: {}",
-                path.display()
-            );
-            Ok(path.to_path_buf())
-        },
+        |path| Ok(path.to_path_buf()),
     )?;
 
     let output = match options.output {
@@ -388,8 +471,9 @@ pub fn run(options: FeelOptions<'_>) -> Result<()> {
             experience,
             options.suite,
             &game,
+            game_build,
             &output,
-            startup_timeout,
+            timeouts,
             options.startup_retries,
         )?;
     }
@@ -412,12 +496,13 @@ fn experiences(suite: FeelSuite) -> Vec<Experience> {
         FeelSuite::FirstFiveMinutes => vec![FIRST_FIVE_MINUTES],
         FeelSuite::QuietObservation => vec![QUIET_OBSERVATION],
         FeelSuite::GoldReference => vec![GOLD_REFERENCE],
+        FeelSuite::UiPolish => vec![FOOD_REFUSAL, REDUCED_EFFECTS],
         FeelSuite::PrivateLife => vec![
             QUIET_OBSERVATION,
             QUIET_OBSERVATION_SEED_4201,
             QUIET_OBSERVATION_SEED_4202,
         ],
-        FeelSuite::InteractionChain => vec![INTERACTION_CHAIN, DIALOGUE_RACES],
+        FeelSuite::InteractionChain => vec![INTERACTION_CHAIN, DIALOGUE_RACES, DIRECT_TOY_CONTACT],
         FeelSuite::BadConditions => vec![BAD_CONDITIONS],
         FeelSuite::RelationshipOverTime => {
             vec![
@@ -441,6 +526,10 @@ fn experience_seed(experience: Experience) -> u64 {
     match experience.id {
         "quiet-observation-seed-4201" => 4_201,
         "quiet-observation-seed-4202" => 4_202,
+        // This creature likes all three toys, covering positive direct contact rather than refusal.
+        "direct-toy-contact" | "reduced-effects" => 12,
+        // The first offered food (object 6) is disliked; the second (object 7) is liked.
+        "food-refusal" => 8,
         _ => 42,
     }
 }
@@ -449,8 +538,9 @@ fn run_experience(
     experience: Experience,
     suite: FeelSuite,
     game: &Path,
+    game_build: GameBuild,
     output: &Path,
-    startup_timeout: Duration,
+    timeouts: CaptureTimeouts,
     startup_retries: u8,
 ) -> Result<()> {
     let scenario = Path::new(experience.scenario);
@@ -475,6 +565,8 @@ fn run_experience(
     fs::create_dir_all(&attempts_directory)
         .with_context(|| format!("failed to create {}", directory.display()))?;
     let expected_duration = Duration::from_millis(authored_scenario_duration_ms(scenario)?);
+    let startup_timeout = timeouts.startup;
+    let run_timeout = timeouts.run(expected_duration);
     let mut records = Vec::new();
     let attempt_count = startup_retries.saturating_add(1);
 
@@ -489,11 +581,17 @@ fn run_experience(
             initial_save.as_ref().map(|(path, _)| *path),
             &attempt_directory,
             startup_timeout,
-            expected_duration.saturating_add(RUN_TIMEOUT_GRACE),
+            run_timeout,
         ) {
             Ok(elapsed) => {
-                let finalized =
-                    finalize_attempt(&attempt_directory, experience, suite, game, scenario);
+                let finalized = finalize_attempt(
+                    &attempt_directory,
+                    experience,
+                    suite,
+                    game,
+                    game_build,
+                    scenario,
+                );
                 if let Err(error) = finalized {
                     records.push(AttemptRecord {
                         attempt,
@@ -511,6 +609,7 @@ fn run_experience(
                         &directory,
                         experience,
                         startup_timeout,
+                        run_timeout,
                         startup_retries,
                         None,
                         &records,
@@ -538,6 +637,7 @@ fn run_experience(
                     &directory,
                     experience,
                     startup_timeout,
+                    run_timeout,
                     startup_retries,
                     Some(attempt),
                     &records,
@@ -552,6 +652,7 @@ fn run_experience(
                     &directory,
                     experience,
                     startup_timeout,
+                    run_timeout,
                     startup_retries,
                     None,
                     &records,
@@ -685,6 +786,7 @@ fn wait_for_attempt(
 ) -> std::result::Result<Duration, AttemptFailure> {
     let heartbeat = directory.join(FIRST_FRAME_HEARTBEAT);
     let startup_deadline = started + startup_timeout;
+    // The recording deadline includes startup; the first frame never resets it.
     let run_deadline = started + run_timeout;
     loop {
         #[cfg(unix)]
@@ -760,8 +862,8 @@ fn wait_for_attempt(
                 child_status: status.map(|value| value.to_string()),
                 first_frame_completed: true,
                 reason: format!(
-                    "{name} did not finish within {} seconds after starting normally",
-                    run_timeout.as_secs()
+                    "{name} did not finish within {} milliseconds of launch",
+                    run_timeout.as_millis()
                 ),
                 diagnostics: existing_attempt_diagnostics(directory),
             });
@@ -1001,6 +1103,7 @@ fn finalize_attempt(
     experience: Experience,
     suite: FeelSuite,
     game: &Path,
+    game_build: GameBuild,
     scenario: &Path,
 ) -> Result<()> {
     let runtime_stderr_path = directory.join("runtime-stderr.log");
@@ -1025,7 +1128,7 @@ fn finalize_attempt(
     validate_relationship_evidence(directory, experience, &markers)?;
     generate_filmstrips(directory, &markers)?;
     write_review(directory, experience, &markers)?;
-    write_manifest(directory, experience, suite, game)
+    write_manifest(directory, experience, suite, game, game_build)
 }
 
 /// Labels are not outcome evidence: require the named baseline beats to actually resolve.
@@ -1254,21 +1357,23 @@ fn authored_scenario_duration_ms(scenario: &Path) -> Result<u64> {
         })
 }
 
-fn build_binaries() -> Result<()> {
-    require_success(
-        "cargo build beastie-game",
-        Command::new("cargo")
-            .args([
-                "build",
-                "--locked",
-                "--package",
-                "beastie-game",
-                "--bin",
-                "beastie-game",
-            ])
-            .status()
-            .context("failed to build beastie-game")?,
-    )?;
+fn build_binaries(game_build: GameBuild) -> Result<()> {
+    if game_build.requires_build() {
+        require_success(
+            "cargo build beastie-game",
+            Command::new("cargo")
+                .args([
+                    "build",
+                    "--locked",
+                    "--package",
+                    "beastie-game",
+                    "--bin",
+                    "beastie-game",
+                ])
+                .status()
+                .context("failed to build beastie-game")?,
+        )?;
+    }
     require_success(
         "cargo build feel workers",
         Command::new("cargo")
@@ -1353,6 +1458,7 @@ fn write_attempts_manifest(
     directory: &Path,
     experience: Experience,
     startup_timeout: Duration,
+    run_timeout: Duration,
     startup_retries: u8,
     selected_attempt: Option<u8>,
     attempts: &[AttemptRecord],
@@ -1361,6 +1467,7 @@ fn write_attempts_manifest(
         version: 1,
         experience: experience.id,
         startup_timeout_ms: duration_millis(startup_timeout),
+        run_timeout_ms: Some(duration_millis(run_timeout)),
         startup_retries,
         selected_attempt,
         attempts,
@@ -2266,6 +2373,7 @@ fn write_manifest(
     experience: Experience,
     suite: FeelSuite,
     game: &Path,
+    game_build: GameBuild,
 ) -> Result<()> {
     let initial_save = experience
         .initial_save
@@ -2343,7 +2451,7 @@ fn write_manifest(
         working_tree_dirty: working_tree_dirty()?,
         game_binary_sha256: sha256_file(game)?,
         platform: std::env::consts::OS,
-        build_profile: "debug",
+        build_profile: game_build.profile(),
         fake_ai: experience.fake_ai,
         tts_requested: experience.tts_requested,
         fixture_dialogue_delay_ms: experience.fixture_dialogue_delay_ms,
@@ -2432,6 +2540,85 @@ mod tests {
     use beastie_session::{CommandEnvelope, SESSION_PROTOCOL_VERSION, SessionCommand};
 
     use super::*;
+
+    #[test]
+    fn capture_timeout_default_keeps_authored_duration_and_grace() {
+        let timeouts = CaptureTimeouts::new(10_000, None).unwrap();
+        assert_eq!(timeouts.startup, Duration::from_secs(10));
+        assert_eq!(timeouts.run(Duration::ZERO), Duration::from_secs(60));
+        assert_eq!(
+            timeouts.run(Duration::from_secs(300)),
+            Duration::from_secs(360)
+        );
+    }
+
+    #[test]
+    fn capture_timeout_override_is_a_total_budget_not_added_grace() {
+        let timeouts = CaptureTimeouts::new(60_000, Some(900_000)).unwrap();
+        assert_eq!(timeouts.startup, Duration::from_secs(60));
+        for authored in [Duration::ZERO, Duration::from_secs(300)] {
+            assert_eq!(timeouts.run(authored), Duration::from_secs(900));
+        }
+    }
+
+    #[test]
+    fn capture_timeout_override_is_positive_bounded_and_covers_startup() {
+        for invalid in [0, 249, 7_200_001, u64::MAX] {
+            assert!(CaptureTimeouts::new(250, Some(invalid)).is_err());
+        }
+        assert!(CaptureTimeouts::new(60_000, Some(59_999)).is_err());
+        assert!(CaptureTimeouts::new(250, Some(250)).is_ok());
+        assert!(CaptureTimeouts::new(60_000, Some(7_200_000)).is_ok());
+        for invalid_startup in [0, 249, 60_001] {
+            assert!(CaptureTimeouts::new(invalid_startup, Some(7_200_000)).is_err());
+        }
+    }
+
+    #[test]
+    fn attempts_metadata_records_the_resolved_wall_clock_budget() {
+        let timeouts = CaptureTimeouts::new(10_000, None).unwrap();
+        let manifest = AttemptsManifest {
+            version: 1,
+            experience: "first-five-minutes",
+            startup_timeout_ms: duration_millis(timeouts.startup),
+            run_timeout_ms: Some(duration_millis(timeouts.run(Duration::from_secs(300)))),
+            startup_retries: 2,
+            selected_attempt: None,
+            attempts: &[],
+        };
+        let value = serde_json::to_value(&manifest).unwrap();
+        assert_eq!(value["version"], 1);
+        assert_eq!(value["startup_timeout_ms"], 10_000);
+        assert_eq!(value["run_timeout_ms"], 360_000);
+        let legacy = AttemptsManifest {
+            run_timeout_ms: None,
+            ..manifest
+        };
+        assert!(
+            serde_json::to_value(legacy)
+                .unwrap()
+                .get("run_timeout_ms")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn game_override_skips_local_build_without_guessing_its_profile() {
+        let local = GameBuild::for_override(None);
+        assert!(local.requires_build());
+        assert_eq!(local.profile(), "debug");
+
+        for path in [
+            "copied-beastie-game",
+            "target/debug/beastie-game",
+            "target/dev-perf/beastie-game",
+            "target/release/beastie-game",
+        ] {
+            let external = GameBuild::for_override(Some(Path::new(path)));
+            assert!(!external.requires_build());
+            assert_eq!(external.profile(), "external/unknown");
+        }
+    }
 
     #[test]
     fn canonical_capture_rejects_live_input_and_unknown_records() {
@@ -2563,18 +2750,151 @@ mod tests {
     }
 
     #[test]
-    fn interaction_suite_includes_bounded_dialogue_race_capture() {
+    fn interaction_suite_includes_dialogue_races_and_each_direct_toy_response() {
         let experiences = experiences(FeelSuite::InteractionChain);
         assert_eq!(
             experiences
                 .iter()
                 .map(|experience| experience.id)
                 .collect::<Vec<_>>(),
-            ["interaction-chain", "dialogue-races"]
+            ["interaction-chain", "dialogue-races", "direct-toy-contact"]
         );
         assert_eq!(experiences[0].fixture_dialogue_delay_ms, None);
         assert_eq!(experiences[1].fixture_dialogue_delay_ms, Some(800));
         assert!(experiences[1].fake_ai && experiences[1].tts_requested);
+        assert_eq!(experience_seed(experiences[2]), 12);
+        assert!(!experiences[2].tts_requested);
+    }
+
+    #[test]
+    fn ui_polish_is_a_bounded_supplement_with_real_food_and_reduced_effects_routes() {
+        let experiences = experiences(FeelSuite::UiPolish);
+        assert_eq!(
+            experiences.iter().map(|case| case.id).collect::<Vec<_>>(),
+            ["food-refusal", "reduced-effects"]
+        );
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for (case, seed, duration) in [(experiences[0], 8, 48_000), (experiences[1], 12, 59_000)] {
+            assert_eq!(experience_seed(case), seed);
+            assert!(case.initial_save.is_none());
+            assert_eq!(
+                authored_scenario_duration_ms(&root.join(case.scenario)).unwrap(),
+                duration
+            );
+        }
+        assert!(!experiences[0].fake_ai && !experiences[0].tts_requested);
+        assert!(experiences[1].fake_ai && experiences[1].tts_requested);
+    }
+
+    #[test]
+    fn ui_polish_fixtures_reach_refusal_consumption_and_each_owned_toy_response() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for case in experiences(FeelSuite::UiPolish) {
+            let source = fs::read_to_string(root.join(case.scenario)).unwrap();
+            let mut session = beastie_session::GameSession::new(experience_seed(case), "Mop");
+            let mut events = Vec::new();
+            let mut toggles = Vec::new();
+            let mut saw_carried_sock = false;
+            for line in source.lines() {
+                let value: serde_json::Value = serde_json::from_str(line).unwrap();
+                match value["command"].as_str().unwrap() {
+                    "marker" | "capture" => {
+                        if value["name"] == "04-reduced-sock-released" {
+                            assert!(saw_carried_sock, "the sock must really have been carried");
+                            assert!(!session.world().aquarium.toy_states[&ToyId::Sock].carried);
+                        }
+                    }
+                    "ui_action" => {
+                        if let Some(action) = value["action"].as_str()
+                            && action.starts_with("toggle_")
+                        {
+                            toggles.push(action.to_owned());
+                        }
+                    }
+                    "wait" => {
+                        let mut remaining = value["milliseconds"].as_u64().unwrap();
+                        while remaining > 0 {
+                            let milliseconds = remaining.min(1_000);
+                            let observation = session
+                                .apply(CommandEnvelope {
+                                    version: SESSION_PROTOCOL_VERSION,
+                                    command: SessionCommand::Tick { milliseconds },
+                                })
+                                .unwrap();
+                            events.extend(observation.events);
+                            saw_carried_sock |=
+                                session.world().aquarium.toy_states[&ToyId::Sock].carried;
+                            remaining -= milliseconds;
+                        }
+                    }
+                    "ui_preview" => panic!("supplemental evidence must use real outcomes"),
+                    _ => {
+                        let envelope = serde_json::from_value::<CommandEnvelope>(value).unwrap();
+                        events.extend(session.apply(envelope).unwrap().events);
+                    }
+                }
+            }
+            if case.id == "food-refusal" {
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| matches!(event, GameEvent::FoodRejected(FoodId::Mushroom)))
+                        .count(),
+                    1
+                );
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| matches!(event, GameEvent::FoodConsumed(FoodId::Berry)))
+                        .count(),
+                    1
+                );
+                assert!(!events.iter().any(|event| matches!(
+                    event,
+                    GameEvent::FoodConsumed(FoodId::Mushroom)
+                        | GameEvent::FoodRejected(FoodId::Berry)
+                )));
+                assert!(toggles.is_empty());
+            } else {
+                assert_eq!(
+                    toggles,
+                    [
+                        "toggle_reduced_motion",
+                        "toggle_reduced_flashes",
+                        "toggle_reduced_shake"
+                    ]
+                );
+                for toy in [ToyId::Ball, ToyId::Bell, ToyId::Sock] {
+                    assert_eq!(
+                        events
+                            .iter()
+                            .filter(|event| matches!(
+                                event,
+                                GameEvent::ToyInteractionResponded { toy: actual, .. }
+                                    if *actual == toy
+                            ))
+                            .count(),
+                        1,
+                        "one direct physical response for {toy:?}"
+                    );
+                }
+                assert!(
+                    !events
+                        .iter()
+                        .any(|event| matches!(event, GameEvent::ToyRejected { .. }))
+                );
+                assert!(
+                    events
+                        .iter()
+                        .any(|event| matches!(event, GameEvent::TalkAccepted { .. }))
+                );
+                assert!(
+                    events
+                        .iter()
+                        .any(|event| matches!(event, GameEvent::Comforted))
+                );
+            }
+        }
     }
 
     #[test]

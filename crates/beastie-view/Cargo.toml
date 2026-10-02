@@ -8,6 +8,8 @@ rust-version.workspace = true
 [dependencies]
 beastie-core = { path = "../beastie-core" }
 serde.workspace = true
+rustybuzz = "0.20"
+unicode-segmentation = "1.12"
 
 [dev-dependencies]
 serde_json.workspace = true

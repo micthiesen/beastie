@@ -437,7 +437,11 @@ fn verify_traversal(@builtin(global_invocation_id) id:vec3<u32>) {
             .expect("result mapping");
         let bytes = readback.slice(..).get_mapped_range();
         let mut hit_count = 0;
-        for (index, (ray, result)) in rays.iter().zip(bytes.chunks_exact(64)).enumerate() {
+        for (index, (ray, result)) in rays
+            .iter()
+            .zip(bytes.as_chunks::<64>().0.iter())
+            .enumerate()
+        {
             let read_f32 =
                 |offset| f32::from_le_bytes(result[offset..offset + 4].try_into().unwrap());
             let read_vec3 =

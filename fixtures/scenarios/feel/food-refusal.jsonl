@@ -1,0 +1,15 @@
+{"version":1,"command":"marker","name":"00-food-refusal-start"}
+{"version":1,"command":"wait","milliseconds":1000}
+{"version":1,"command":"drop_food","food":"mushroom","position":{"x":5000,"y":3000}}
+{"version":1,"command":"marker","name":"01-disliked-mushroom-offered"}
+{"version":1,"command":"wait","milliseconds":18000}
+{"version":1,"command":"capture","name":"02-after-mushroom-refusal"}
+{"version":1,"command":"drop_food","food":"berry","position":{"x":6500,"y":3500}}
+{"version":1,"command":"marker","name":"03-liked-berry-offered"}
+{"version":1,"command":"wait","milliseconds":18000}
+{"version":1,"command":"capture","name":"04-after-berry-consumption"}
+{"version":1,"command":"comfort"}
+{"version":1,"command":"marker","name":"05-comfort-after-food"}
+{"version":1,"command":"wait","milliseconds":11000}
+{"version":1,"command":"capture","name":"06-food-refusal-return-to-life"}
+{"version":1,"command":"marker","name":"07-food-refusal-complete"}

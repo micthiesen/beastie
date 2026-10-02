@@ -93,8 +93,10 @@ pub fn reconstruct(directory: &Path, duration: f64) -> Result<()> {
         ensure!(output.stdout.len() % 4 == 0, "partial reference PCM sample");
         let samples: Vec<f32> = output
             .stdout
-            .chunks_exact(4)
-            .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("four-byte sample")))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| f32::from_le_bytes(*bytes))
             .collect();
         ensure!(
             !samples.is_empty() && samples.iter().all(|sample| sample.is_finite()),

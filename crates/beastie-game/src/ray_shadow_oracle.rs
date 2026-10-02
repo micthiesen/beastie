@@ -688,13 +688,20 @@ async fn run(cache_samples: u32, shadow_map_enabled: bool) {
             cached.clone()
         };
         let lod_different = cached
-            .chunks_exact(8)
-            .zip(full_geometry.chunks_exact(8))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .zip(full_geometry.as_chunks::<8>().0.iter())
             .filter(|(a, b)| a[..6] != b[..6])
             .count();
         let mut lod_max = 0.0f32;
         let mut lod_sum = 0.0f64;
-        for (a, b) in cached.chunks_exact(8).zip(full_geometry.chunks_exact(8)) {
+        for (a, b) in cached
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .zip(full_geometry.as_chunks::<8>().0.iter())
+        {
             for channel in 0..3 {
                 let at = channel * 2;
                 let delta = (positive_half(u16::from_le_bytes([a[at], a[at + 1]]))
@@ -743,7 +750,12 @@ async fn run(cache_samples: u32, shadow_map_enabled: bool) {
         }
         let mut max_difference = 0.0_f64;
         let mut sum_difference = 0.0_f64;
-        for (a, b) in cached.chunks_exact(8).zip(reference.chunks_exact(8)) {
+        for (a, b) in cached
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .zip(reference.as_chunks::<8>().0.iter())
+        {
             for channel in 0..3 {
                 let at = channel * 2;
                 let delta = f64::from(
@@ -756,8 +768,10 @@ async fn run(cache_samples: u32, shadow_map_enabled: bool) {
             }
         }
         let different = cached
-            .chunks_exact(8)
-            .zip(reference.chunks_exact(8))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .zip(reference.as_chunks::<8>().0.iter())
             .filter(|(a, b)| a[..6] != b[..6])
             .count();
         eprintln!(
@@ -1243,9 +1257,9 @@ fn verify_finite_shadow() {
             queue.submit([encoder.finish()]);
             let bytes = mapped_bytes(&device, &readback);
             let expected = u32::from(nearer_blocker || far_distance < 35.0);
-            for (i, word) in bytes.chunks_exact(4).enumerate() {
+            for (i, word) in bytes.as_chunks::<4>().0.iter().enumerate() {
                 assert_eq!(
-                    u32::from_le_bytes(word.try_into().unwrap()),
+                    u32::from_le_bytes(*word),
                     expected,
                     "finite shadow result{i}, far={far_distance}, nearer={nearer_blocker}"
                 );

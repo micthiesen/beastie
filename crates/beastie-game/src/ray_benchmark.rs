@@ -771,8 +771,10 @@ async fn benchmark(
     let mut maximum_linear_difference = 0.0f32;
     let mut sum_linear_difference = 0.0f64;
     for (cached, reference) in cached_pixels
-        .chunks_exact(8)
-        .zip(reference_pixels.chunks_exact(8))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .zip(reference_pixels.as_chunks::<8>().0.iter())
     {
         different_pixels += u64::from(cached[..6] != reference[..6]);
         for channel in 0..3 {
@@ -878,7 +880,7 @@ fn save_radiance_png(
 ) {
     let bytes = radiance_bytes(device, queue, texture);
     let mut image = image::RgbaImage::new(width(), height());
-    for (pixel, source) in image.pixels_mut().zip(bytes.chunks_exact(8)) {
+    for (pixel, source) in image.pixels_mut().zip(bytes.as_chunks::<8>().0.iter()) {
         for channel in 0..3 {
             let half = u16::from_le_bytes([source[channel * 2], source[channel * 2 + 1]]);
             let linear = positive_half(half).clamp(0.0, 1.0);
@@ -1030,7 +1032,9 @@ pub(super) fn measure_frames(
 
 fn decode_pairs(bytes: &[u8]) -> Vec<[u64; 2]> {
     bytes
-        .chunks_exact(16)
+        .as_chunks::<16>()
+        .0
+        .iter()
         .map(|pair| {
             [
                 u64::from_le_bytes(pair[..8].try_into().unwrap()),

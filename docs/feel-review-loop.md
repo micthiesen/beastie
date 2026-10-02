@@ -33,11 +33,24 @@ Focused suites use the same command with `first-five-minutes`, `quiet-observatio
 `relationship-breadth` provides the fixture-backed trusted-food, food-grudge, and familiar-place
 coverage. `interaction-chain` also includes a bounded `dialogue-races` experience that delays the
 fixture reply without blocking frames, proves pre-reply supersession, and exercises subtitles-off
-ownership. The runner gives frame zero a separate bounded deadline, retains diagnostics for a live
+ownership. Its `direct-toy-contact` experience uses seed 12, whose deterministic preferences
+accept ball, bell and sock. It records each direct contact, physical response, recovery and sock
+release without relying on a private-life activity or forcing preference state. Select it with
+`--suite interaction-chain --experience direct-toy-contact`; the seven baseline cases are unchanged.
+`--suite ui-polish` adds two bounded checks: `food-refusal` uses seed 8 for genuine mushroom
+refusal followed by berry consumption; `reduced-effects` uses seed 12, enables all three
+accessibility reductions through the real settings actions, then exercises each toy response,
+sock release and spoken expression. These use normal simulation outcomes, not preview states.
+The runner gives frame zero a separate bounded deadline, retains diagnostics for a live
 zero-frame process, recursively terminates its complete worker tree, and retries that class in a
 fresh process up to two times by default. `--startup-timeout-ms` and `--startup-retries` are
 diagnostic overrides. Early exit, scenario errors, recorder errors, and validation errors are not
 retried. Only the promoted successful attempt is validated and hashed.
+After checking host load, `--run-timeout-ms` can give a slower recorder additional bounded
+wall time (at most two hours, including startup). The default remains authored duration plus
+60 seconds. The chosen deadline is recorded in `attempts.json`; neither playback timing nor
+validation changes. This option cannot establish real-time performance, and an interrupted
+recording remains invalid evidence regardless of how many frames it produced.
 The command builds the game and fake workers, verifies FFmpeg and FFprobe, launches each visible
 experience, validates its video, generates filmstrips, and hashes the evidence.
 Controlled runs pass `--feel-script-only`, which suppresses live device input and focus changes
@@ -46,7 +59,12 @@ unexpected native inputs and any detected black video frames, retaining `video-v
 Codec, duration and hashes alone do not prove a usable visual recording. For manual native-input
 review, launch the game directly with a script and `--feel-dir`, omitting `--feel-script-only`.
 Pass `--game <executable>` to record an exact copied, packaged, or release executable while still
-using the normal evidence pipeline. This is also the reliable macOS fallback when Metal renders a
+using the normal evidence pipeline. This skips rebuilding the game, but still builds the workers.
+The manifest records `build_profile: "external/unknown"` for an explicit executable because its
+path does not establish its build profile. Keep its source revision and known build command with
+the review evidence; the manifest's commit and dirty state describe the review checkout. Without
+`--game`, the harness builds and records the normal `debug` game.
+This is also the reliable macOS fallback when Metal renders a
 copied executable but stalls for the identical build under `target/debug`.
 
 ## Evidence bundle
@@ -113,6 +131,27 @@ On macOS, a game created while yabai is managing the window can stall while Meta
 first drawable. If sampling shows `get_current_texture` or `acquire_texture` dominating, run
 `yabai --stop-service` once, restart that experience, and leave yabai stopped for the rest of the
 session. A stalled zero-frame run is invalid evidence.
+
+A different zero-frame case is an unexposed macOS window. In wgpu-hal 29, Metal returns
+`Occluded` before acquiring a drawable when `NSWindow` is not visible. Bevy skips that
+surface; the game's `force_render` setting cannot override it. When samples show running
+schedules rather than a drawable stall, expose the native window on the current Space
+before blaming compilation, shaders or GPU load. A disposable `.app` launch wrapper and
+native accessibility `Raise` produced valid captures during the October UI review. Keep
+the executable immutable, preserve its provenance, and use a fresh capture directory.
+Do not change production rendering merely to compensate for an automation launch state.
+
+Before a macOS CUA `getApp` lookup, freshly confirm that the exact game process is still running
+with the intended `--script` arguments. Attach early in the run. `getApp` can launch a stopped
+app, and a bare-binary wrapper then starts ordinary play against normal player storage. Never
+reattach near or after the scripted endpoint; wait for the capture command to exit and inspect
+the promoted recording instead. `/private/tmp` and `/tmp` can name the same executable.
+
+`--stay-open` retains the last scripted state after the scenario ends. It does not resume
+the ordinary simulation clock. This is useful for static layout inspection but cannot
+establish animation, press timing or live feel. For manual input review, omit
+`--feel-script-only` and append a bounded `wait` command to a disposable scenario, so native
+input is tested while the scenario clock is still advancing.
 
 ## Baseline suite
 

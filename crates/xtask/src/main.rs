@@ -78,6 +78,10 @@ enum Task {
         /// Deadline for the first completed framebuffer and state record.
         #[arg(long, default_value_t = 10_000)]
         startup_timeout_ms: u64,
+        /// Wall-clock deadline per attempt, including startup (up to 7,200,000 ms).
+        /// Defaults to the authored scenario duration plus 60 seconds.
+        #[arg(long)]
+        run_timeout_ms: Option<u64>,
         /// Fresh-process retries after a live process produces no first frame.
         #[arg(long, default_value_t = 2)]
         startup_retries: u8,
@@ -384,6 +388,7 @@ fn main() -> Result<()> {
             output,
             game,
             startup_timeout_ms,
+            run_timeout_ms,
             startup_retries,
         } => feel::run(feel::FeelOptions {
             suite,
@@ -391,6 +396,7 @@ fn main() -> Result<()> {
             output: output.as_deref(),
             game: game.as_deref(),
             startup_timeout_ms,
+            run_timeout_ms,
             startup_retries,
         }),
         Task::Dev {
@@ -1146,6 +1152,23 @@ fn verify_manifest(path: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn feel_cli_keeps_run_timeout_optional_and_accepts_an_override() {
+        for (arguments, expected) in [
+            (vec!["xtask", "feel"], None),
+            (
+                vec!["xtask", "feel", "--run-timeout-ms", "900000"],
+                Some(900_000),
+            ),
+        ] {
+            let cli = Cli::try_parse_from(arguments).unwrap();
+            let Task::Feel { run_timeout_ms, .. } = cli.command else {
+                panic!("expected feel command");
+            };
+            assert_eq!(run_timeout_ms, expected);
+        }
+    }
 
     #[test]
     fn malformed_commands_emit_errors_and_do_not_stop_the_stream() {

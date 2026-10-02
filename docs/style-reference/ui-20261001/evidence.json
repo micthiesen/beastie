@@ -1,0 +1,1978 @@
+{
+  "version": 1,
+  "date": "2026-10-02",
+  "scope": "UI and feel redesign; raw recordings retained in scratch, summarized findings in docs/feel-review-ui-20261001.md",
+  "host": {
+    "platform": "macOS 26.6.2",
+    "cpu": "Apple M2 Pro",
+    "logical_cpus": 12,
+    "memory_gib": 32,
+    "graphics_backend": "Metal",
+    "rust": "Homebrew rustc/Clippy 1.98.1",
+    "requested_rust": "1.97.1",
+    "recorded_fps": 60,
+    "viewport": [
+      1280,
+      720
+    ]
+  },
+  "limits": [
+    "Fixed-rate recordings are not real-time host performance measurements.",
+    "No continuous full-speed subjective playback or physical speaker audition is claimed.",
+    "Physical microphone/gamepad and Windows/Linux were not exercised.",
+    "Corrupt/unreadable startup route has headless tests and shared-notice native layout, not a native corrupt-save launch."
+  ],
+  "targets": {
+    "count": 21,
+    "prompts_sha256": "930b657cc4f3edc5fc71ddbe03e7df6a5c97deb20850d0fb79ca0587269f338a",
+    "images": [
+      {
+        "file": "targets/bindings.png",
+        "bytes": 1524442,
+        "sha256": "e825b4614f4d6ce2a0b6dafb08e36194194db633a87a04690ace99fd4ab16c63"
+      },
+      {
+        "file": "targets/components.png",
+        "bytes": 1646351,
+        "sha256": "f477895bd3eb63779427c0ac8f63e3b19dab8108eaa20962d5fd6328d3cf5972"
+      },
+      {
+        "file": "targets/context-inspect.png",
+        "bytes": 1734876,
+        "sha256": "45c91929ebf1e47fbdd9b6ec7f19bc661973bf1d34b6a880f81a5460211ab298"
+      },
+      {
+        "file": "targets/data.png",
+        "bytes": 1558076,
+        "sha256": "2a8350a1c393b53a6276cb567eb9c72cd1e02b9070e919b61c140de2209c53a1"
+      },
+      {
+        "file": "targets/embodied-feel.png",
+        "bytes": 1838676,
+        "sha256": "da8d7bb321b4bc3d87241926697b86b863c0d68c7b835a29a12b43eefbe5727c"
+      },
+      {
+        "file": "targets/food-choice.png",
+        "bytes": 1531511,
+        "sha256": "19087eed35604de0ec4acca3ba4241dde1b6b80071e16dd8d1d73b608367d659"
+      },
+      {
+        "file": "targets/gameplay.png",
+        "bytes": 1535737,
+        "sha256": "2b5b21d53619b2a24fe2e858fda6500fe94b801fb8c60a8d0dffdb91def905bd"
+      },
+      {
+        "file": "targets/keyboard.png",
+        "bytes": 1533093,
+        "sha256": "8276359630f77fb7d3ae840a068b9f0f783dfbf208d27669a100e35ce9f53440"
+      },
+      {
+        "file": "targets/notices-microphone.png",
+        "bytes": 1677266,
+        "sha256": "0693572ceeed2f2486917bc0b0729c6da925f85566d963594903aeb34bc34a59"
+      },
+      {
+        "file": "targets/rename.png",
+        "bytes": 1514240,
+        "sha256": "a48ecd6f68a25973d4479b8faa7c285101165fab70874764dfef1fd855503ef6"
+      },
+      {
+        "file": "targets/reset.png",
+        "bytes": 1644796,
+        "sha256": "57f6072237f683df2356861e0192203125e293ce685909757e03adaf82d9e121"
+      },
+      {
+        "file": "targets/settings-controls.png",
+        "bytes": 1509508,
+        "sha256": "3d83389c0aed91ca94f492fbbc48b5f035f3549abc3fe5b79276824e20ced6a4"
+      },
+      {
+        "file": "targets/settings-display.png",
+        "bytes": 1523997,
+        "sha256": "f864d8bc14bd204668ad51e6bc106dd1bfbd4a3798b0004ada2df861661d5b87"
+      },
+      {
+        "file": "targets/settings-sound.png",
+        "bytes": 1537145,
+        "sha256": "47108261b950cd68ebd19b2f7e99ac4b086a1f0d8790f865adfb142e0c81b777"
+      },
+      {
+        "file": "targets/speech-compact.png",
+        "bytes": 2141559,
+        "sha256": "7600954cca2439636d48cea96c6671324f20542b0242ba8ec056e339324bb2ff"
+      },
+      {
+        "file": "targets/speech-continuation.png",
+        "bytes": 1680712,
+        "sha256": "6f08d672d505c7f2cfc31c627c3068f045f0f68b36221b1dd492cda1ee9a0eb1"
+      },
+      {
+        "file": "targets/speech.png",
+        "bytes": 1681287,
+        "sha256": "a96cc52239545dcf53408403630cbcea8b952eac522ca2edb85c97ee5145e5bb"
+      },
+      {
+        "file": "targets/text-editing.png",
+        "bytes": 1480035,
+        "sha256": "fc7a05a48525c2dbe00377fb7028ddd428029b465a9540a9f80a7d902921251c"
+      },
+      {
+        "file": "targets/title.png",
+        "bytes": 1655826,
+        "sha256": "e43424f42844d5c228d9ab03393b18bf519966a9e0a5784305c2a82101def772"
+      },
+      {
+        "file": "targets/toy-choice.png",
+        "bytes": 1526263,
+        "sha256": "2fc3bf0f2d6b634f268c5d3940d1ebc00c313c4c93f59e2f29e115305160381a"
+      },
+      {
+        "file": "targets/toy-contact.png",
+        "bytes": 1844881,
+        "sha256": "9db05ce04c75d34e18b012684ba98ad543dca601a072146ac258db4a1cd22043"
+      }
+    ]
+  },
+  "native_runs": {
+    "baseline": [
+      {
+        "experience": "first-five-minutes",
+        "path": "/tmp/beastie-ui-20261001-before-feel-v2/first-five-minutes",
+        "frames": 18022,
+        "playback_ms": 300350,
+        "capture_ms": 677275,
+        "binary_sha256": "e0aee692acc06d12debf8284b03895d5169d9996138ff20929daa593696aed8a",
+        "scenario_sha256": "594ad0be97a90e1e6e0af07306b91b954436be115147a8018eea50c2caa090af",
+        "manifest_sha256": "e7d82ef277ff963a08b00a9698953e1961f27295d6d2eabec333a49c6fb14d47",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 12711027,
+            "sha256": "3a1dc38d3eb0b69d29e4b87ac128723432ec3290a3365739963818575303b206"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 1915917,
+            "sha256": "e050f0db359f9214a253169ef67d4af739d1f0b11676db8d937cbe1f172e94b4"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 26492386,
+            "sha256": "923a1d071854828b44dc15e3eec88084f299fa5124f356fdd4ca0d0782df46e8"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 28258894,
+            "sha256": "fa2439fda7f4f53032a4cd65b15709b12e7a999235ccec26d0775dac8b708dcb"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 25372981,
+            "sha256": "dc6d55eea92df20da40295a03a3c77d628f19be20b3715f835ec439bc80ba6fe"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 65572254,
+            "sha256": "a77e10b3668190847d5069cb9ae088718d2a17d2a25e4f65e3e260c1ddb774cd"
+          }
+        ]
+      },
+      {
+        "experience": "quiet-observation",
+        "path": "/tmp/beastie-ui-20261001-before-feel-quiet-v2/quiet-observation",
+        "frames": 10812,
+        "playback_ms": 180183,
+        "capture_ms": 313011,
+        "binary_sha256": "e0aee692acc06d12debf8284b03895d5169d9996138ff20929daa593696aed8a",
+        "scenario_sha256": "a531ef1b582c77f87104b1e0b40f911ef481495ebdf6320ea776a820865ae1be",
+        "manifest_sha256": "780d65c577440b99bb84f264659ef5790e865f1d829516b054bb73c9cb555455",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 7620363,
+            "sha256": "592dd3e73549ded1891ae7f329deb52a62b84b9d96fedbc80dcc0397e9f7be59"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 1138373,
+            "sha256": "f3678698f3bc9e69cb35690a93d0fa1b301e8166bcc3344af148c6a7f1c4a431"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 15893684,
+            "sha256": "d6a073b0eccf68c508c158e9614b9e4ea2948de03fa380b9f28ea27e7c9ae85e"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 17045599,
+            "sha256": "dc27882a9444f031984f5a6f4889c7e74484c3a36c2bd7b01a9e21ac6b75c40a"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 15314331,
+            "sha256": "0b288eb19b6378baacf1df020eab1b6365dd305ad1d77044b3323d3bc596c2d4"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 32029250,
+            "sha256": "ff8bc938d21c191a4e594dc6a5be7424f17e99cf1b62a0e5508654eaf583763b"
+          }
+        ]
+      },
+      {
+        "experience": "interaction-chain",
+        "path": "/tmp/beastie-ui-20261001-before-feel-chain-v3/interaction-chain",
+        "frames": 3997,
+        "playback_ms": 66600,
+        "capture_ms": 98303,
+        "binary_sha256": "e0aee692acc06d12debf8284b03895d5169d9996138ff20929daa593696aed8a",
+        "scenario_sha256": "1587c67c9c9c75d21d0b77b7ccda12c18fe606610746fb90aaba05f22ffbc215",
+        "manifest_sha256": "f6709abc418883997037d1456680083a60c8dd34c46becd0c4b78dc9840f359e",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 3023350,
+            "sha256": "39e29d1d3658f0cd6f12d7ccff472542fe15cc489e1ac4367fa8ca4786e86e07"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 417800,
+            "sha256": "c840c56c212f017a599fdfc7ad2402fb4b8afb84e51e354abc76a61c1f75d609"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 5875636,
+            "sha256": "cde6dd9b5f76405e30c19722b781bc5f5871a15edb1f2aa71e549ccaa02dba8c"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 6298197,
+            "sha256": "ac08b8f05ce395f9880ab108594252dcd6a7a82b85f6781cf235a0a2a379b544"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 5656528,
+            "sha256": "3e56e27a614009a756af56d7986655f4ecba7790c30d803547a0dd076aa44ab9"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 11116939,
+            "sha256": "f504eb9ed97eccece22563dabc96556815a7a010cf985dc7c84c661c05a39220"
+          }
+        ]
+      },
+      {
+        "experience": "dialogue-races",
+        "path": "/tmp/beastie-ui-20261001-before-feel-dialogue-v2/dialogue-races",
+        "frames": 2179,
+        "playback_ms": 36300,
+        "capture_ms": 61470,
+        "binary_sha256": "e0aee692acc06d12debf8284b03895d5169d9996138ff20929daa593696aed8a",
+        "scenario_sha256": "ee47f2cc4136bdae17367d1194ad8712c32b7ebe0d0ec5e8f5dc0f6adc06fd29",
+        "manifest_sha256": "b5bd443373d759645d5e98c639b5acaf57b054cec2df6a9b05de836a447616d8",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 1560704,
+            "sha256": "df50cd66daed72bef2d2d90663439f5c6c1959c25d1bfb56dbf5c41c1a2510b0"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 225031,
+            "sha256": "8b458f10d03f6f82afc3f92e55bdb2f619b612dd3a911b911b9dd2cb7b273208"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 3203176,
+            "sha256": "2f37419be932645f2f2f02179522d7af92c4420efec0c51a2859bd25521c4bc1"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 3473165,
+            "sha256": "4bb77971ceabaa5e9aca9de695631e4b617ecfffea4760930856058079df8a7c"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 3123368,
+            "sha256": "ac8c5914e92d30b80876904a7d7119d6a70bdebad9255a4c2f865ca78790a807"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 6205821,
+            "sha256": "72f2f459a4940f4be178c86ce19bed92dd686834ef444a1a2f96c1efa3fac7a1"
+          }
+        ]
+      },
+      {
+        "experience": "bad-conditions",
+        "path": "/tmp/beastie-ui-20261001-before-feel-bad-v2/bad-conditions",
+        "frames": 2603,
+        "playback_ms": 43366,
+        "capture_ms": 71328,
+        "binary_sha256": "e0aee692acc06d12debf8284b03895d5169d9996138ff20929daa593696aed8a",
+        "scenario_sha256": "01e8c7fa5f761d1b6854515bd391011dccc96441e63a8367643f12e639a0048a",
+        "manifest_sha256": "e284c13f931a7d37d688d0d045e07ec939840aecb4bf84ce1107875b9f9c54ec",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 1996844,
+            "sha256": "b060ca2af3e0b31376cf46b98c82d368d63ead24a0682b2e1260db001689e587"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 271307,
+            "sha256": "c49b26e081798f2a7e15116e6f29b78e5015e4df47dd8a5cdda1286bed8c68f9"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 3826454,
+            "sha256": "2e693ec156c1eede84f46c35a74208ac2f7ec0a355636666bea9f254f3cd053c"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 4229812,
+            "sha256": "ae7a2f5253260d01cb0ea378ac6930ff153d62b1fd81f57f4b860a6ad2e3c5ff"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 3810733,
+            "sha256": "f4c4aebc20416cefb9402397590a1850bf9f32ab275bfd81dff1715c3859e480"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 7375887,
+            "sha256": "a28dd1f96214ee7607023f84d4c9c8635ea46ac7b4e074d97b07964a234a84d2"
+          }
+        ]
+      },
+      {
+        "experience": "relationship-over-time",
+        "path": "/tmp/beastie-ui-20261001-before-feel-relationship-v2/relationship-over-time",
+        "frames": 5850,
+        "playback_ms": 97483,
+        "capture_ms": 136483,
+        "binary_sha256": "e0aee692acc06d12debf8284b03895d5169d9996138ff20929daa593696aed8a",
+        "scenario_sha256": "d298625369e1369fc30dfb61de5f400828149381dd4c2c23a3b7ee842ec176fe",
+        "manifest_sha256": "2f4863c62634b8acd52eba12e9846c7004bb257583ce0a5860a9f69fde85b82e",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 4474787,
+            "sha256": "7b69074137deda8ece8468b255a41d38098d39b45a1120575945dce059e06ffb"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 623185,
+            "sha256": "870ec51248f7b06327f99ed852bdd5220bf816f907067a74e2b5f82993cf4dbb"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 8599544,
+            "sha256": "df3aa53f9f10ecb1f36572bee4c34c4088343fcd416d10afa18b54da79f52ea4"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 9769432,
+            "sha256": "5af04d2ccd9789b7729048861ba9f41c44c8d47e72df563ac7c07e5ed19090ff"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 8829597,
+            "sha256": "15c6de53e04dbd931fb380ce3280a1c54a9a70108e9bcfe8a6af7c71717d9a35"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 21425997,
+            "sha256": "e2e61c074ca8ccc6593ed6de7763642c0f719a631871e285d922d1ebf0b3e713"
+          }
+        ]
+      },
+      {
+        "experience": "relationship-over-time-no-ai",
+        "path": "/tmp/beastie-ui-20261001-before-feel-relationship-no-ai-v2/relationship-over-time-no-ai",
+        "frames": 3255,
+        "playback_ms": 54233,
+        "capture_ms": 74983,
+        "binary_sha256": "e0aee692acc06d12debf8284b03895d5169d9996138ff20929daa593696aed8a",
+        "scenario_sha256": "52cf2ae2de23985f43a687fb99f341fe54ed7147cbdf3bb64af67199923b47ac",
+        "manifest_sha256": "f30388b8d18fcaa87fb86df76c41103b950be1d44a79c7c455c886710f0b01d4",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 2397298,
+            "sha256": "b7ca732f0fada8a03d597f3990495132646648a7f95a5dc613541ec7c4d4129d"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 342811,
+            "sha256": "770dc5e36ddc3ba8be69915c74c102984761582ab1fe48f84f7ae72464fa6170"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 4784894,
+            "sha256": "48df8d5d7407341e17aea648c83584d515485636cd231b9e5b1b4bbc38e8d582"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 5317861,
+            "sha256": "7f98e3b57de0b6165723e363a45ec140cd80b528c37370c521019dfbc3f72fbd"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 4795801,
+            "sha256": "70c220d4a5a95208faace4f21f07c53a4493d3d7ccf685b01b20cf896dd57feb"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 9957036,
+            "sha256": "3871ca81c3ad0999b5245d1d7640be1d1b8997e1041e0497c22b663eef583b89"
+          }
+        ]
+      }
+    ],
+    "C6": [
+      {
+        "label": "first",
+        "experience": "first-five-minutes",
+        "path": "/tmp/beastie-ui-20261001-after-feel-first-v6/first-five-minutes",
+        "frames": 18021,
+        "playback_ms": 300333,
+        "capture_ms": 511083,
+        "binary_sha256": "e2b19b4c02350b7b6acc30d6b4f3dce4ab3a68cac192a38908b2089ed1512b40",
+        "scenario_sha256": "594ad0be97a90e1e6e0af07306b91b954436be115147a8018eea50c2caa090af",
+        "artifact_count": 45,
+        "manifest_sha256": "03d94428897a1c0fce05a77b97e00928eb6dd9fe5b34e160fa9f4df1bba8a6f0",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 12728395,
+            "sha256": "2a0a20e585c94b52d7bb26122dbf3b3c3809efb21c3689767d50b13307e29c20"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 1916225,
+            "sha256": "d8e9345e935b696fc6c1099d1317c9114395e92cba6483e7797631b866acbe21"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 26490916,
+            "sha256": "baf667b41995643888238d1360d4361d79481002c1960e990aac62a2cb6ec6c8"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 28378606,
+            "sha256": "d2e3355ba1e3619c4c3b3035649ef4557acdfd27c4c2035cca177eaa3a5e2338"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 25493643,
+            "sha256": "96189b422e712afd09652ef0c033bc1956fb7bc9b5a9445019ef388c4b5899c1"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 65553923,
+            "sha256": "4b97c230a60efba1acbe8b6704cfa743a9abb4e7ddefaa00bd1b7718483c7ca7"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.2386297583580017,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "quiet",
+        "experience": "quiet-observation",
+        "path": "/tmp/beastie-ui-20261001-after-feel-quiet-v6/quiet-observation",
+        "frames": 10812,
+        "playback_ms": 180183,
+        "capture_ms": 311651,
+        "binary_sha256": "e2b19b4c02350b7b6acc30d6b4f3dce4ab3a68cac192a38908b2089ed1512b40",
+        "scenario_sha256": "a531ef1b582c77f87104b1e0b40f911ef481495ebdf6320ea776a820865ae1be",
+        "artifact_count": 35,
+        "manifest_sha256": "98bcfc27a21ef726475cc7f06c54a9cdf95c41543c6d055a7002a0261f9c0b97",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 7591973,
+            "sha256": "4652930e5dc96925329b865bf7dd6182e1f2d8500c88efd16593b1c59cf37004"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 1138373,
+            "sha256": "9c24e2e7719ab7f1ed37d7d8527d15eeeb1d872cfb47f6278dd67dac15ef70da"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 15893684,
+            "sha256": "0233a18c8a0239f223a8c809fd133ed846c183e363964db22b8f796c2fd3bddf"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 17281347,
+            "sha256": "3411f2c86c43d34408e12a829507f351a63d066b979357605d99e4c2c3d49d6c"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 15549847,
+            "sha256": "549a66b7d49038e5a3068a643d16b744818088bd47e65c5823a82f33fad04860"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 32138401,
+            "sha256": "1497a3f0f0d5ddcf297469ae055543015f2a4ae74827c3af6bdd4f933296785f"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.1727217137813568,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "chain",
+        "experience": "interaction-chain",
+        "path": "/tmp/beastie-ui-20261001-after-feel-chain-v6/interaction-chain",
+        "frames": 3998,
+        "playback_ms": 66616,
+        "capture_ms": 174029,
+        "binary_sha256": "e2b19b4c02350b7b6acc30d6b4f3dce4ab3a68cac192a38908b2089ed1512b40",
+        "scenario_sha256": "1587c67c9c9c75d21d0b77b7ccda12c18fe606610746fb90aaba05f22ffbc215",
+        "artifact_count": 42,
+        "manifest_sha256": "3d90e2733b42e1694786752902eec87163df1fa8152cceee652185f8c03621f7",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 2910967,
+            "sha256": "cf3f563b464e5d285ada8eb19482ee171878d0589191c1c7383f1a961b662fd4"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 417811,
+            "sha256": "663f793899d6dfb54f9ece5805fb25685fcf26d47a16df8ae3d260bc31d0493d"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 5877104,
+            "sha256": "f754a13814ff733df5787ec4e2a5c32a0dd2911e7d706a71bb5fb04d0b29ad0c"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 6374796,
+            "sha256": "1dd1036f277724c998e29a5516e67bd07a11707fe95fe127916b2441bcb8649a"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 5732249,
+            "sha256": "e0a5b3a0cbc6e2ebfc4c7856610387db62a86e4ce7c3e79f534132e0e5fd1564"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 11696112,
+            "sha256": "44202bb0a0c4a1f133fd704b2aad9b6a71ea9966f56aff3ce7fa224d39b0e527"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.43292295932769775,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "dialogue",
+        "experience": "dialogue-races",
+        "path": "/tmp/beastie-ui-20261001-after-feel-dialogue-v6/dialogue-races",
+        "frames": 2179,
+        "playback_ms": 36300,
+        "capture_ms": 63628,
+        "binary_sha256": "e2b19b4c02350b7b6acc30d6b4f3dce4ab3a68cac192a38908b2089ed1512b40",
+        "scenario_sha256": "ee47f2cc4136bdae17367d1194ad8712c32b7ebe0d0ec5e8f5dc0f6adc06fd29",
+        "artifact_count": 29,
+        "manifest_sha256": "7cc74924e78c26f3c1e4f10a5c811af74ab171e61d6d984fd4bbc9b2377cf284",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 1568836,
+            "sha256": "e86a9bd6e3e4e6a0ed2942ef4d5dae319dd57deff1c539d5eac711f4d4e8ba7b"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 225026,
+            "sha256": "a13c642daade594ba61a4a2503aa829f8e8f4dc7a2950e22a37f7a6beb362e3d"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 3203176,
+            "sha256": "39d9c003ea7c9babba5661b30768926d6cb8e56a964019a3e911a3e45c086f30"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 3461112,
+            "sha256": "eff86fa8b737b131924b1b1f6a37bd3a58aa817b496da876054d7e8a510ca7b8"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 3111533,
+            "sha256": "9d9c208ef610d330eeb6993a71b33b42cde0587e20257f651e0e67f066cedd0a"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 5893136,
+            "sha256": "cccb5472ccb39241e595b3eecf6cd842c17bec6e9ed93fa2834918446193db95"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.49941158294677734,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "bad",
+        "experience": "bad-conditions",
+        "path": "/tmp/beastie-ui-20261001-after-feel-bad-v6/bad-conditions",
+        "frames": 2603,
+        "playback_ms": 43366,
+        "capture_ms": 59662,
+        "binary_sha256": "e2b19b4c02350b7b6acc30d6b4f3dce4ab3a68cac192a38908b2089ed1512b40",
+        "scenario_sha256": "01e8c7fa5f761d1b6854515bd391011dccc96441e63a8367643f12e639a0048a",
+        "artifact_count": 33,
+        "manifest_sha256": "745e013706a71153706ac8b0c6bced3ca4416116a82eaf5a11665a585826dae1",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 2022615,
+            "sha256": "afaf2f8c3e425574d3bec43f6c715cfd5a54116878ffe8bc111878582c12295e"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 271411,
+            "sha256": "a260aaf0b3d97c7685393866d54356290eb710142e4e4ca70c3f44cbcae718ff"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 3826454,
+            "sha256": "6c1ee92e52e61e4e92d8ecd5e03be8e89796f097f70c27ab3e28dbeda624d33e"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 3828533,
+            "sha256": "5e54b80d669c33c7798936e23b83e1c93d8494a0f314ca5a39c209f39b02c910"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 3409837,
+            "sha256": "cb71c2d912f987c31b983e0e52dda0d16a330032ad027798d4eaff192ffadc8f"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 7381897,
+            "sha256": "64791eb7011d718a175fcb608bcc9d00011646ada183d8696467810bf235b5ad"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.49661287665367126,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "relationship",
+        "experience": "relationship-over-time",
+        "path": "/tmp/beastie-ui-20261001-after-feel-relationship-v6/relationship-over-time",
+        "frames": 5850,
+        "playback_ms": 97483,
+        "capture_ms": 234209,
+        "binary_sha256": "e2b19b4c02350b7b6acc30d6b4f3dce4ab3a68cac192a38908b2089ed1512b40",
+        "scenario_sha256": "d298625369e1369fc30dfb61de5f400828149381dd4c2c23a3b7ee842ec176fe",
+        "artifact_count": 41,
+        "manifest_sha256": "c404b5c29a6741efd1bdaa2775acca14fba4d59f78ce1f4fa402bf04f54261e3",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 4367889,
+            "sha256": "241d06091fb4e80cebe6de11092b881681b66298e046ff3edad922119f15839d"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 623174,
+            "sha256": "2fbf0388107a55ce33e37ea43dff73410cafd4cc961ce84f6ea92549aed5a0b6"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 8599544,
+            "sha256": "1242fa552c893f1fa0f72a2e9c7ddd30081ca5979e2bdfbf50dce4a0f63941fd"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 10016844,
+            "sha256": "0ca6bc934f53efbf194b0f971641dcd7fd8e640773039c0174d67f063e1d88a3"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 9077463,
+            "sha256": "3735164250a1390229f8718ae3caef4bcefca0f17cc4e7887176168b7587c061"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 21414191,
+            "sha256": "7ac6b796ae5fe825e6633571686d7808a36a93d9f8ec1045f3ccb5e5aa3a89ea"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.5124564170837402,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "relationship-no-ai",
+        "experience": "relationship-over-time-no-ai",
+        "path": "/tmp/beastie-ui-20261001-after-feel-relationship-no-ai-v6/relationship-over-time-no-ai",
+        "frames": 3255,
+        "playback_ms": 54233,
+        "capture_ms": 81863,
+        "binary_sha256": "e2b19b4c02350b7b6acc30d6b4f3dce4ab3a68cac192a38908b2089ed1512b40",
+        "scenario_sha256": "52cf2ae2de23985f43a687fb99f341fe54ed7147cbdf3bb64af67199923b47ac",
+        "artifact_count": 27,
+        "manifest_sha256": "3347918e348226a6cb3b9a3bc18946db8d2580ece0393d9d18ed66036dd9e3d7",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 2392127,
+            "sha256": "ee052e5a270967bfe36d0ba0bcfde406aa2bad96fe7a2055ca9a4328f2bf7456"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 343285,
+            "sha256": "ed856929863f656ff7780a62dd383c65333d16bd376274a0aa53091423d0d80d"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 4784894,
+            "sha256": "66b565283d498647ae2bc6956e517ee491e5f2752df2927a7823c31d8ba5d4c7"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 5352492,
+            "sha256": "3812ab9ba173a7c7c83cfc76cd63b7f6cd24fdeb6de42e2c2a33e35cfd343319"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 4830354,
+            "sha256": "5260e37503bbd89f542efe42c6b7fa79c367bf80957bd46f72c4045320fb671d"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 10084974,
+            "sha256": "697c59cc928afffdcf06abb2fd90a3dcbd927cde78422e48f460c210a173312b"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.21142204105854034,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "direct",
+        "experience": "direct-toy-contact",
+        "path": "/tmp/beastie-ui-20261001-after-feel-direct-v6/direct-toy-contact",
+        "frames": 2894,
+        "playback_ms": 48216,
+        "capture_ms": 70791,
+        "binary_sha256": "e2b19b4c02350b7b6acc30d6b4f3dce4ab3a68cac192a38908b2089ed1512b40",
+        "scenario_sha256": "b694a87401d14157d22d553f3256771c2dba784467ccdd63bd8191de61f44a0c",
+        "artifact_count": 29,
+        "manifest_sha256": "3e7d216f1ba26897060ca06b03276f6340938dfac1b8b195447e14a9cf282a30",
+        "seed": 12,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 2077058,
+            "sha256": "e8bc3570670d793591958cb90ca69c33447bcf8f6057183ca11c12e3c60895e9"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 301006,
+            "sha256": "74c944cd2fe3bde5d0dd9119c4c1ac6d055939ef54ae5787ecb2e3217a703d99"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 4254224,
+            "sha256": "97704302aca90027fbb9d37ae5a3a8bd85e62e0d4d267465c27e6eb70c0d6bf4"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 4634529,
+            "sha256": "edbf3ee413d44714f0582f835f57418a45c9d4af1d5efced180e506cd7c72c9c"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 4170311,
+            "sha256": "6785dba83d8348ddbcd7ac6927749e0725f1981cb9de4d6324a3df561df96237"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 7983567,
+            "sha256": "6229c6933640a9844d7587334c3f8a94342075ef4463159460f5bc66f1437dc0"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.1803954690694809,
+          "sample_rate": 44100
+        }
+      }
+    ],
+    "C7": [
+      {
+        "label": "first",
+        "experience": "first-five-minutes",
+        "path": "/tmp/beastie-ui-20261001-after-feel-first-v7/first-five-minutes",
+        "frames": 18021,
+        "playback_ms": 300333,
+        "capture_ms": 592053,
+        "binary_sha256": "3ae5fdf1ecd65d666068d7a27f4d11c3463c793d96ba5b8ba3b2f9a05c73caf7",
+        "scenario_sha256": "594ad0be97a90e1e6e0af07306b91b954436be115147a8018eea50c2caa090af",
+        "artifact_count": 45,
+        "manifest_sha256": "5ba4b9fd728174f2c99c6519010b6bcfee76ce2a772789552e2d210bf9cc70cc",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 12726002,
+            "sha256": "c6e4a7f5a1201392fba92bbe78bcfca5f173b6ae640c684d4a346d15a1a46a38"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 1916225,
+            "sha256": "d8e9345e935b696fc6c1099d1317c9114395e92cba6483e7797631b866acbe21"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 26490916,
+            "sha256": "721411fa36b69fd55f10ec0d6235224c4478a4adff09e7900419a0101400992f"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 28380755,
+            "sha256": "f16803cea4951f29235c784fcf8b776ed3eb452485e880672e8b42b7471facee"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 25494857,
+            "sha256": "6676514d2334aabb6790ed70fdf58a7a3c6d86a3e184cc0e597b27acceadb2f9"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 65553073,
+            "sha256": "fd094523ffb83b32cdb574d876065fa96b9a379b7360059902ed51cb152a6ddd"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.2386297583580017,
+          "sample_rate": 44100
+        }
+      }
+    ],
+    "C8": [
+      {
+        "label": "first",
+        "experience": "first-five-minutes",
+        "path": "/tmp/beastie-ui-20261001-after-feel-first-v8/first-five-minutes",
+        "frames": 18023,
+        "playback_ms": 300366,
+        "capture_ms": 500076,
+        "binary_sha256": "98e2c7f948cc488a74b132ae5d0d732d9a5d8acefaf175b5f468793d03eba5a1",
+        "scenario_sha256": "594ad0be97a90e1e6e0af07306b91b954436be115147a8018eea50c2caa090af",
+        "artifact_count": 45,
+        "manifest_sha256": "fdbe3184dcec3cc6864c58bd5fe0e149a1972a79a8e0e0c7abfc0385a789637f",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 12757635,
+            "sha256": "a05d9aa3e1e0378901aa7a3f899dd71c90066b54c7eabe7a163cf0287d4b402b"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 1916507,
+            "sha256": "b43c86a56acb3d29b18c7c063efaef5ce70a2fa92209dedb4143aa333a1d4a03"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 26493854,
+            "sha256": "90fcc49901ae4c02de40005652d9df13a4dd76c56bd4407094f8687c4d1f59c1"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 28618983,
+            "sha256": "adfd284b354ac8db3da86974526f857c2c9203af6b57cdff86568230abc0d5d5"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 25731669,
+            "sha256": "9f053120ca61029ecee7fe70619a0cf0b0668e78ae6830829baea2c9a38bd316"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 66021477,
+            "sha256": "7b33abb3aa08a6bebb6b0d7fd2511ec5d0c9ad1f43dcc31de0cecaf1bbfb78bc"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.24502989649772644,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "quiet",
+        "experience": "quiet-observation",
+        "path": "/tmp/beastie-ui-20261001-after-feel-quiet-v8/quiet-observation",
+        "frames": 10812,
+        "playback_ms": 180183,
+        "capture_ms": 278370,
+        "binary_sha256": "98e2c7f948cc488a74b132ae5d0d732d9a5d8acefaf175b5f468793d03eba5a1",
+        "scenario_sha256": "a531ef1b582c77f87104b1e0b40f911ef481495ebdf6320ea776a820865ae1be",
+        "artifact_count": 35,
+        "manifest_sha256": "80464d4fe08f95c0b63093efcecef3376d423ff79eddeb189c7499e22a5d109d",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 7613216,
+            "sha256": "d002ee9c2cd3ac5da766a56ecd7edbad9eed892446f7311f19eea7eab6a7dab2"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 1138373,
+            "sha256": "e97e6f01ce44cad1c59ad5a3ef7655ba055841a4edbd387a704c327ad124a729"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 15893684,
+            "sha256": "b3bc276aefe5c3868eb6749f7223ea6a5180757c99c603dd1fa059feca836365"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 17210255,
+            "sha256": "47d3ed2c03874a8b529c12df908b077f6d214771305101b1d6f1ea26ff3ca02e"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 15478703,
+            "sha256": "364fb20d77491538321fbc120c9318eaf98981fb97d729b45ae9e41b27a6aec6"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 32098059,
+            "sha256": "f61bcec5a6cb364cc06ce8bfa38ae52d8fe2072f88d37cd81ae1abef9ac19b47"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.1727217137813568,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "chain",
+        "experience": "interaction-chain",
+        "path": "/tmp/beastie-ui-20261001-after-feel-chain-v8/interaction-chain",
+        "frames": 3998,
+        "playback_ms": 66616,
+        "capture_ms": 113637,
+        "binary_sha256": "98e2c7f948cc488a74b132ae5d0d732d9a5d8acefaf175b5f468793d03eba5a1",
+        "scenario_sha256": "1587c67c9c9c75d21d0b77b7ccda12c18fe606610746fb90aaba05f22ffbc215",
+        "artifact_count": 42,
+        "manifest_sha256": "14395c2a44808d266ef897fe6d453668b0a8466c7329a80ae3ff656f6b27f38b",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 2922342,
+            "sha256": "0baa20532f0d3888a93205390f9cd246e53db5741961e9171ffd4e8eef2dee6e"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 417811,
+            "sha256": "663f793899d6dfb54f9ece5805fb25685fcf26d47a16df8ae3d260bc31d0493d"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 5877104,
+            "sha256": "b93af8d2bd2b7055f116000e46ecb96f8a82dc58c9fcad02a269b6d927bd4a5e"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 6364026,
+            "sha256": "0b69301658f1764d047664f751f4c14830ab0774a4a2c93cae3e30852f368e80"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 5721123,
+            "sha256": "728ba2d2655e541b01864be120f60e3a0c046b92d735ef17f22747d337e0e83a"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 11700334,
+            "sha256": "17924f66384e9c15ebd66465491c7d3eccb6d04c02abb7da4e6b3337af744aac"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.43292295932769775,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "dialogue",
+        "experience": "dialogue-races",
+        "path": "/tmp/beastie-ui-20261001-after-feel-dialogue-v8/dialogue-races",
+        "frames": 2179,
+        "playback_ms": 36300,
+        "capture_ms": 78938,
+        "binary_sha256": "98e2c7f948cc488a74b132ae5d0d732d9a5d8acefaf175b5f468793d03eba5a1",
+        "scenario_sha256": "ee47f2cc4136bdae17367d1194ad8712c32b7ebe0d0ec5e8f5dc0f6adc06fd29",
+        "artifact_count": 29,
+        "manifest_sha256": "9cf22e787b83a6077ee8d1597ba6fa1b707823cb4dd1c90c1e9ea5cd177418e2",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 1555564,
+            "sha256": "1cb2d2c1eac88fea48418253855be3c8b4512f23e03959394e61964dbbf59475"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 225026,
+            "sha256": "a13c642daade594ba61a4a2503aa829f8e8f4dc7a2950e22a37f7a6beb362e3d"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 3203176,
+            "sha256": "40ddcc5d4192e1b27a183de46318e7f62e1a1cfed72062b52657b7e017bfcdaa"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 3458834,
+            "sha256": "88564b83dc70ecc027ac01e49bfef5ce225ca5da6b35f71a567a8ff35b6cfb7d"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 3109511,
+            "sha256": "da3ad35ef27b021525de98d23435ceca59bdcc4e0575e5f72e1901e524d5f555"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 5891453,
+            "sha256": "db34a6520bfbef917fd05e6b5a0f0f57cd9573a674fa4b1c8058346a04c043f5"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.49141284823417664,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "bad",
+        "experience": "bad-conditions",
+        "path": "/tmp/beastie-ui-20261001-after-feel-bad-v8/bad-conditions",
+        "frames": 2603,
+        "playback_ms": 43366,
+        "capture_ms": 70941,
+        "binary_sha256": "98e2c7f948cc488a74b132ae5d0d732d9a5d8acefaf175b5f468793d03eba5a1",
+        "scenario_sha256": "01e8c7fa5f761d1b6854515bd391011dccc96441e63a8367643f12e639a0048a",
+        "artifact_count": 33,
+        "manifest_sha256": "a59c37921ff43589a371a02cf3f388d7c30620f55c22cccc5d87b5274120ab9a",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 1998757,
+            "sha256": "992e9b24a3dc6a7a508ab092b9dee000a60f9ac05634bbfce7e7a961eb442f00"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 271411,
+            "sha256": "a260aaf0b3d97c7685393866d54356290eb710142e4e4ca70c3f44cbcae718ff"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 3826454,
+            "sha256": "02a7e8fc03e1a2414d992432daccd1e5a2920bd27a82319ba38d50ec4e5652bf"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 3813991,
+            "sha256": "44cabfdbfbcc3f425299488d01eea8292b2ae3e57595ada39a4e16d742664226"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 3394830,
+            "sha256": "a1a20c5155dd72e7eae58c6490fb90d32e3a9655370fdcb8e3fa235e91870437"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 7380354,
+            "sha256": "4c3dc429734e8afa7f5ea96e8f6152a223978f15f1c904687431841523ad2016"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.4940733313560486,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "relationship",
+        "experience": "relationship-over-time",
+        "path": "/tmp/beastie-ui-20261001-after-feel-relationship-v8/relationship-over-time",
+        "frames": 5850,
+        "playback_ms": 97483,
+        "capture_ms": 196197,
+        "binary_sha256": "98e2c7f948cc488a74b132ae5d0d732d9a5d8acefaf175b5f468793d03eba5a1",
+        "scenario_sha256": "d298625369e1369fc30dfb61de5f400828149381dd4c2c23a3b7ee842ec176fe",
+        "artifact_count": 41,
+        "manifest_sha256": "f43abb918d1f20dfd53db4f1cab127c35d799f3dd7579c6e91de5106e5fa8d04",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 4396029,
+            "sha256": "bb925cedf6525148d99b7182a504ae7a5905813d8cc890500409b2ce889a569a"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 623174,
+            "sha256": "2fbf0388107a55ce33e37ea43dff73410cafd4cc961ce84f6ea92549aed5a0b6"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 8599544,
+            "sha256": "7bb3ae6686e3e3416c8a569b3db69c5cb6dcd00b7490c7b8e37382acd5cb684c"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 9950060,
+            "sha256": "c035f6bfde81d2442d7e795f1eeefbdaeb552077f6cb3895e9bfe2c46b9f0e69"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 9010283,
+            "sha256": "2040d57962395ec266a363fbcbb142d38fe3bbe3b5375d2aac86a665012df8be"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 21422263,
+            "sha256": "3fdca74e242214bd6e5440f5442d00d92a6921dfbf21cf02003d7409c80ae2ce"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.5147140622138977,
+          "sample_rate": 44100
+        }
+      }
+    ],
+    "C9": [
+      {
+        "label": "first",
+        "experience": "first-five-minutes",
+        "path": "/tmp/beastie-ui-20261001-after-feel-first-v9/first-five-minutes",
+        "frames": 18021,
+        "playback_ms": 300333,
+        "capture_ms": 469094,
+        "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+        "scenario_sha256": "594ad0be97a90e1e6e0af07306b91b954436be115147a8018eea50c2caa090af",
+        "artifact_count": 45,
+        "manifest_sha256": "afb7057148b839c4f2eb1af19300728d1c490b89a99de0576796c834ada43060",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 12771999,
+            "sha256": "163b9381b0c0b7a397a111174e59bf6ae32bd54b8130cb4fd4304836ab318f52"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 1916394,
+            "sha256": "0c4caea686c9def00206f6c68a3061c1fcac184b5cfd7b59f540ac5161f27cb0"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 26490916,
+            "sha256": "9abfb0ee60dfee88732a3f6ae6436751e9a45c3f9f133f599830058239de7afd"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 28596444,
+            "sha256": "1611676092660f62b97e95bb2df64a75c85f4b5dadd106f4456ebfb2ddc15a95"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 25710803,
+            "sha256": "d854cd576a43cce33c98e064bacc4d4d00f1f8a656b7ceec0aad1f58efb9834b"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 65991853,
+            "sha256": "9df10938728536e6cb94d3d761c2715054f2d12643fcd307e16958f541723bc7"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.24780379235744476,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "quiet",
+        "experience": "quiet-observation",
+        "path": "/tmp/beastie-ui-20261001-after-feel-quiet-v9/quiet-observation",
+        "frames": 10812,
+        "playback_ms": 180183,
+        "capture_ms": 289603,
+        "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+        "scenario_sha256": "a531ef1b582c77f87104b1e0b40f911ef481495ebdf6320ea776a820865ae1be",
+        "artifact_count": 35,
+        "manifest_sha256": "3b72e3ade735babf1ff620532903857024d24456d7bda6a7755f676810c238ca",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 7606086,
+            "sha256": "26cb907736ca73b336ad91a7161accc1cab85608cd220b83e1dac16ef9c13c01"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 1138373,
+            "sha256": "e97e6f01ce44cad1c59ad5a3ef7655ba055841a4edbd387a704c327ad124a729"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 15893684,
+            "sha256": "934b8220818205f0f84cd0d8802d68ef97f414336c86529c1f0e70505f11dc37"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 17210396,
+            "sha256": "5260aa8011eae068bfc730afd8506f420ea40f8ae8c31d6c582fb38ca0373cb7"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 15478703,
+            "sha256": "364fb20d77491538321fbc120c9318eaf98981fb97d729b45ae9e41b27a6aec6"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 32098059,
+            "sha256": "f61bcec5a6cb364cc06ce8bfa38ae52d8fe2072f88d37cd81ae1abef9ac19b47"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.1727217137813568,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "chain",
+        "experience": "interaction-chain",
+        "path": "/tmp/beastie-ui-20261001-after-feel-chain-v9/interaction-chain",
+        "frames": 3998,
+        "playback_ms": 66616,
+        "capture_ms": 109506,
+        "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+        "scenario_sha256": "1587c67c9c9c75d21d0b77b7ccda12c18fe606610746fb90aaba05f22ffbc215",
+        "artifact_count": 42,
+        "manifest_sha256": "b5a2d52d24e1e7e7beab2314e36778ccd7be5f219ea3d70410a9f1d7d7967524",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 2926941,
+            "sha256": "ed1a0ac10992416064b1a22aa4f700f6348166beaa988a1ef18b3e761e5dea46"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 417811,
+            "sha256": "663f793899d6dfb54f9ece5805fb25685fcf26d47a16df8ae3d260bc31d0493d"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 5877104,
+            "sha256": "d25a3fba1168f21002f34ab63726a56131c720ec56a869b9635aaa23f3210708"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 6362586,
+            "sha256": "cd10a9962ae292e19f222ccc6c3ea9ed86e8b1a413e57cf67668805dc0cbd6c2"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 5720299,
+            "sha256": "00f7b83ba089e71e37ceca90bb1aeba70a08ec3cc68d3e34be18d4e9082b1729"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 11700782,
+            "sha256": "c0700251aa7456468e4462f6069a75940f69ad9d40e5244fc506dcf23973b4df"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.4289853870868683,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "dialogue",
+        "experience": "dialogue-races",
+        "path": "/tmp/beastie-ui-20261001-after-feel-dialogue-v9/dialogue-races",
+        "frames": 2179,
+        "playback_ms": 36300,
+        "capture_ms": 65524,
+        "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+        "scenario_sha256": "ee47f2cc4136bdae17367d1194ad8712c32b7ebe0d0ec5e8f5dc0f6adc06fd29",
+        "artifact_count": 29,
+        "manifest_sha256": "9c5cc14e0ecbb4768b1d581a8c48600c645e39f96c4b7536c7122726145057db",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 1585804,
+            "sha256": "3e1c4e3d213624122d4af25daca84d8d5a5fd40429b6cea0edf5beb58af4c085"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 225026,
+            "sha256": "a13c642daade594ba61a4a2503aa829f8e8f4dc7a2950e22a37f7a6beb362e3d"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 3203176,
+            "sha256": "8108f2ab7cff8e54005a7a066dec7aab7378c24fd80e06998e1909b00b108280"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 3457718,
+            "sha256": "a0f52408204942e1cd7922410d9ceca86aa20c10b975e6f7cb07f4bc60094e14"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 3108023,
+            "sha256": "7798831900f82273ead4bacba579a17427ceabbc09588d57a861e142e07d3619"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 5895794,
+            "sha256": "5acb13a475ecced24c00d9df3f8058a5e700166ef44b681b98ac10abad8642b0"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.4904743731021881,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "bad",
+        "experience": "bad-conditions",
+        "path": "/tmp/beastie-ui-20261001-after-feel-bad-v9/bad-conditions",
+        "frames": 2603,
+        "playback_ms": 43366,
+        "capture_ms": 73955,
+        "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+        "scenario_sha256": "01e8c7fa5f761d1b6854515bd391011dccc96441e63a8367643f12e639a0048a",
+        "artifact_count": 33,
+        "manifest_sha256": "55111c5c1c8e935d78c2afe9adecdb2aee6dd3139fa028294072f7706ee32618",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 1984193,
+            "sha256": "bafe2331d156a934807f42b8e2750ed32d8f0af50d38d41dcabf68a70f9e60bd"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 271411,
+            "sha256": "1bd9ea005147de28dbcea1486e63c14455c0b9200d0a43ebe281f73fd7fdb45f"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 3826454,
+            "sha256": "42662e683d626bceb30665fcc32c0e4f9d2a219d0c8f7dbf5f86f740d8080541"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 3828182,
+            "sha256": "1a276bb66e9498fed91eee1d86007290e65ac0f352618b4c937221a7bbcd391f"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 3409760,
+            "sha256": "7a73eaf027965b2f7269eb309a40f28e0df9f4a77d6848eab5be397a3cae23bf"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 7371455,
+            "sha256": "eb70f0e56f7960e31eb1a72cdc4255e4d9b9fc92c463c7f57c5d01ba335db050"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.4983295202255249,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "relationship",
+        "experience": "relationship-over-time",
+        "path": "/tmp/beastie-ui-20261001-after-feel-relationship-v9/relationship-over-time",
+        "frames": 5850,
+        "playback_ms": 97483,
+        "capture_ms": 158521,
+        "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+        "scenario_sha256": "d298625369e1369fc30dfb61de5f400828149381dd4c2c23a3b7ee842ec176fe",
+        "artifact_count": 41,
+        "manifest_sha256": "6d2a5a66b4f800d0d8de1e4f148b757393c8319bd58dd64e8c04d744dd3a4314",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 4438908,
+            "sha256": "031dcc8f33e5fe27fb3e847a8cd5027cecb3d4d6ca2950cd497b5d18bf72fc18"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 623114,
+            "sha256": "e2952a7563f6d5295113eda2e646ec1f79b87c7178cd7564761b27f974ef63e8"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 8599544,
+            "sha256": "458299fe44f245c7b65a8bf72e0a2c6c89cca89058719f369aeea1d348f4a48d"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 9819317,
+            "sha256": "d81020d693ceae8fb8e9db7d577ebfdbeefd0ca05de7db81676635d2658bf08b"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 8879752,
+            "sha256": "6123a46e894faec8c5fc29997778fcc16d22b2d351ecae6365114860d4102250"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 21027321,
+            "sha256": "491e73ac791ba2ad33c1230447908224a308d5b5c1e9172b2d3c38eb13323fd3"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.5508241653442383,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "relationship-no-ai",
+        "experience": "relationship-over-time-no-ai",
+        "path": "/tmp/beastie-ui-20261001-after-feel-relationship-no-ai-v9/relationship-over-time-no-ai",
+        "frames": 3255,
+        "playback_ms": 54233,
+        "capture_ms": 96082,
+        "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+        "scenario_sha256": "52cf2ae2de23985f43a687fb99f341fe54ed7147cbdf3bb64af67199923b47ac",
+        "artifact_count": 27,
+        "manifest_sha256": "478b2e538a65d400a434a90cac10c960b8b814449d1fd6a0f93b858ffe1279fb",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 2365168,
+            "sha256": "05f5af0d544212d66abff6e0db0496dfd88506c3b583013193560f03cfe3378e"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 343285,
+            "sha256": "ed856929863f656ff7780a62dd383c65333d16bd376274a0aa53091423d0d80d"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 4784894,
+            "sha256": "9606b5200ce73c8dd00efb41a7241bcc6346417d3e9100dc0ad742619960a9d2"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 5346505,
+            "sha256": "53b5c366d7a9ef7fea309fe7b1a504556bcb839215c0cfd2e541257cfd5a5060"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 4824329,
+            "sha256": "412fb0fd583ad192fb2032d06252c54c2e62946f8762b2ad8432a5a270cac9c5"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 10084449,
+            "sha256": "0381ce5cf3375a1706452636e7bf71aaca3434cc29719eff90401f2a3d501b72"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.21142204105854034,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "direct",
+        "experience": "direct-toy-contact",
+        "path": "/tmp/beastie-ui-20261001-after-feel-direct-v9/direct-toy-contact",
+        "frames": 2894,
+        "playback_ms": 48216,
+        "capture_ms": 93775,
+        "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+        "scenario_sha256": "b694a87401d14157d22d553f3256771c2dba784467ccdd63bd8191de61f44a0c",
+        "artifact_count": 29,
+        "manifest_sha256": "55f18df71538db723176f9c931f1631405322ee18f7976940dbea4b7208a0b7d",
+        "seed": 12,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 2059891,
+            "sha256": "8e762497d5c8a3f63c4975f1ab782e6885bcb115f5a212af68441a4f22560890"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 301006,
+            "sha256": "74c944cd2fe3bde5d0dd9119c4c1ac6d055939ef54ae5787ecb2e3217a703d99"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 4254224,
+            "sha256": "c90ccc0e0b5b717eb47b15d3df0eeff6bf00b82c9e36f4a169ffbc80a3958baf"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 4623176,
+            "sha256": "1df6a9fdd83a5ebb2e6626d1f40a2f4a79a1d40acb30883bbe3c57172f9c1406"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 4159009,
+            "sha256": "6e1ee1c909aded19241ccc41dbf2bfb0306560c9b1ce617bd6892589b27f1dc4"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 7983737,
+            "sha256": "4e5fe1a0f5eb674c562f8ffe50bb8cfd698145c50722d8fff042814347421811"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.1803954690694809,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "food",
+        "experience": "food-refusal",
+        "path": "/tmp/beastie-ui-20261001-after-feel-food-v9/food-refusal",
+        "frames": 2894,
+        "playback_ms": 48216,
+        "capture_ms": 80221,
+        "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+        "scenario_sha256": "ebf51817a2227062f6115ce94b9b5166c598c1f10c34e20cdd96063b9ee6d753",
+        "artifact_count": 31,
+        "manifest_sha256": "8a0a0570eb94dbd2e5f9af971e702aacdc6637608e119a79a2121dfe24d2894a",
+        "seed": 8,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 2093628,
+            "sha256": "2581644787abd9dfd9e59f99fff6bf81ffe2be8444aa9a4605780b45291c9535"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 300901,
+            "sha256": "2c84b73986d3bc9f47bf1da0b7069fc4ebc53b3ed50c19ffe97ecc671c0a277a"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 4254224,
+            "sha256": "d6372347dea2db227fb98bb0185084c6717bae85ce6289ad4cf40589b854229e"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 4598612,
+            "sha256": "dc30df9a91a5406ff4072f21b7c44c9344b92751463a4bf337ba9ae8cfa10cb7"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 4133418,
+            "sha256": "0ea40ef23e4df850d6c7a0fbf88e25f922f47f23717348011d714b3f951efb24"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 7723633,
+            "sha256": "275bb806c97f2d3931eb070e6da03c5c2db6d8748ac3ec1f37c179d9cf6d2ed3"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.23438292741775513,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "reduced",
+        "experience": "reduced-effects",
+        "path": "/tmp/beastie-ui-20261001-after-feel-reduced-v9/reduced-effects",
+        "frames": 3568,
+        "playback_ms": 59450,
+        "capture_ms": 97470,
+        "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+        "scenario_sha256": "28f6d1ad4a271d2387395b8c62265376e96507c4332cef19e1765233907021c1",
+        "artifact_count": 37,
+        "manifest_sha256": "c85bc89a708c31d737c15e12b95dfcda8eba3b8600d2b0f29b5a03f9689201eb",
+        "seed": 12,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 2617580,
+            "sha256": "6afc8747e79f104a3466c81348a92c7509e4ab1e2547ae295f633a7f30f6586b"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 370718,
+            "sha256": "57e9e41de0ef7cdae2e9cc6091971da469228d579737ae9a27e1e5bbff306086"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 5245006,
+            "sha256": "f0c98021470530d81b9183229c5df1b54e3c509e5f9e1854a8b1b9512ea18bb2"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 2794777,
+            "sha256": "58233786b49326dc0d2ca1551b2d0d855bd721660cb4a85bd39a2e5723cb1b57"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 2222415,
+            "sha256": "ef23df16b6b22f52704709aa8eb14434bd48236dfc169599320151876f8e5280"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 9885971,
+            "sha256": "7e001ed90a14bcb03dabc1d999c1e734fad0b2458981b8d28f05259690fa40e4"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.44522184133529663,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "first-repeat",
+        "experience": "first-five-minutes",
+        "path": "/tmp/beastie-ui-20261001-after-feel-first-repeat-v9/first-five-minutes",
+        "frames": 18023,
+        "playback_ms": 300366,
+        "capture_ms": 517923,
+        "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+        "scenario_sha256": "594ad0be97a90e1e6e0af07306b91b954436be115147a8018eea50c2caa090af",
+        "artifact_count": 45,
+        "manifest_sha256": "55ab4c12591f549e4bc37dcb18b7198b956aab3b4d083eb4fdb4826276f10711",
+        "seed": 42,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 12752076,
+            "sha256": "c5e86fa036cad6f8ade326bb720c5c59eefc637917319c724296ad7d262c5e82"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 1916396,
+            "sha256": "0b5ae29fc0fb58032dc7f956001120796b9381dffed4fa898a7aca2bf8ee10be"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 26493854,
+            "sha256": "2f86e87fc1f28b8e59636aea9ba5cb6b8d9fb5c4ff00c6ae5c56c6d31795bee8"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 28586378,
+            "sha256": "696f2dccee35b47e5a3d1dc9ef32853d34a4d36891dbb1cb5356573735bbd49e"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 25698928,
+            "sha256": "9e6930a22621431027d73dadda97ede670517c709b1e5fb8103143b5b473b063"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 65996813,
+            "sha256": "cc8d104248b7af93308ce7610808879a09c2768488d0c143441aa00f64c262c1"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.24502989649772644,
+          "sample_rate": 44100
+        }
+      },
+      {
+        "label": "direct-repeat",
+        "experience": "direct-toy-contact",
+        "path": "/tmp/beastie-ui-20261001-after-feel-direct-repeat-v9/direct-toy-contact",
+        "frames": 2894,
+        "playback_ms": 48216,
+        "capture_ms": 85194,
+        "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+        "scenario_sha256": "b694a87401d14157d22d553f3256771c2dba784467ccdd63bd8191de61f44a0c",
+        "artifact_count": 29,
+        "manifest_sha256": "99e50661e8f1b67c66836c6b0226432be8d7438bb277255f4924caaaffb9d72f",
+        "seed": 12,
+        "input_mode": "script-only; live device input disabled",
+        "primary_artifacts": [
+          {
+            "path": "audio.jsonl",
+            "bytes": 2069865,
+            "sha256": "7b98f2f86fa787b612c3b2ce06a82a91022f98a0ba40e7d00df897f767777d6f"
+          },
+          {
+            "path": "events.jsonl",
+            "bytes": 301006,
+            "sha256": "74c944cd2fe3bde5d0dd9119c4c1ac6d055939ef54ae5787ecb2e3217a703d99"
+          },
+          {
+            "path": "reference-mix.wav",
+            "bytes": 4254224,
+            "sha256": "ddbd32e1c36fb64a14b3ffad6c622139e4e1c6c1d71074c0f946915b23f5696e"
+          },
+          {
+            "path": "session-audio-reference.mp4",
+            "bytes": 4623222,
+            "sha256": "57b9406421d05efa6481438e7e5e38d446c98616cca9a6b98ba44d3d8396c642"
+          },
+          {
+            "path": "session.mp4",
+            "bytes": 4159009,
+            "sha256": "6e1ee1c909aded19241ccc41dbf2bfb0306560c9b1ce617bd6892589b27f1dc4"
+          },
+          {
+            "path": "state.jsonl",
+            "bytes": 7983737,
+            "sha256": "4e5fe1a0f5eb674c562f8ffe50bb8cfd698145c50722d8fff042814347421811"
+          }
+        ],
+        "reference_audio": {
+          "clipping_samples": 0,
+          "host_output_captured": false,
+          "mode": "recorded_playback_reconstruction",
+          "pre_limiter_peak": 0.1803954690694809,
+          "sample_rate": 44100
+        }
+      }
+    ]
+  },
+  "verification": {
+    "passed": 735,
+    "failed": 0,
+    "ignored": 7,
+    "test_binaries": 21,
+    "dialogue": "27/27",
+    "stt": "11/11, WER0",
+    "gate_exit": 0,
+    "log": "/tmp/beastie-ui-20261001-verify-candidate9.log"
+  },
+  "final_source": {
+    "source_commit": "0f393d86f84b98485ce17cb5ff8d7a4f0a59a8e4",
+    "tracked_diff_sha256": "3e1f4f293aab0ed08ee30f5ea17ebf88fcca722ceaa75a8941df96c496ed5c7a",
+    "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+    "profile": "dev-perf",
+    "compiler": "rustc 1.98.1 (48a229cea 2026-09-01) (Homebrew)",
+    "build_command": "CARGO_BUILD_JOBS=2 cargo xtask dev --fake-ai --smoke --script /tmp/beastie-ui-20261001-smoke.jsonl --capture-dir /tmp/beastie-ui-20261001-candidate9-smoke-final",
+    "copied_at": "2026-10-02T14:27:49.639508+00:00",
+    "untracked_manifest": "untracked-sha256.json"
+  },
+  "source_audit": {
+    "tracked_non_document_files": 38,
+    "new_non_document_files": 13,
+    "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+    "matches": true
+  },
+  "native_examples": [
+    {
+      "file": "toy-card.png",
+      "source": "/tmp/beastie-ui-20261001-final3-surfaces/normal-sock-card.png",
+      "candidate": "C3",
+      "caption": "Normal toy selection and inspection actions.",
+      "sha256": "c6346ad4dbae11e37f7b0ca431acc86cdf2dbe0649a694e9ddd09257692883c9"
+    },
+    {
+      "file": "settings-large.png",
+      "source": "/tmp/beastie-ui-20261001-final3-settings/large-display-default.png",
+      "candidate": "C3",
+      "caption": "Large Display settings with a separate default-bindings receipt.",
+      "sha256": "cc9b12c63448a391e835c2bdde8ce0f0c25fdc224f00ddd1f4275fc250fed846"
+    },
+    {
+      "file": "name-editing.png",
+      "source": "/tmp/beastie-ui-20261001-final5-edge/normal-joined-emoji-name.png",
+      "candidate": "C5",
+      "caption": "Bounded name editing with a complete joined emoji and a maximum-width existing name.",
+      "sha256": "772bee181544e8b2ff711e5d3a6669690b558f39323bcd90684c46f583ced1e5"
+    },
+    {
+      "file": "food-capacity.png",
+      "source": "/tmp/beastie-ui-20261001-final6-capacity/normal-food-capacity.png",
+      "candidate": "C6",
+      "caption": "Actual twelve-item food limit with actionable, unobscured feedback.",
+      "sha256": "8ea278dbc9c7a4cb0e954de40e9256206e06d93546650498d7d4994aeeffe0b7"
+    },
+    {
+      "file": "quiet-forage.png",
+      "source": "/tmp/beastie-ui-20261001-quiet-final8-visual-frames/quiet-09306.png",
+      "candidate": "C8",
+      "caption": "Actual quiet foraging at 155.100 seconds, with a clear face beside the moved ball. Original frame extracted from the synchronized native recording.",
+      "sha256": "f5b2b98fbd0fad09363d9a6b1f58307da19e57bd56753a6496036ff0581fe3e3",
+      "binary_sha256": "98e2c7f948cc488a74b132ae5d0d732d9a5d8acefaf175b5f468793d03eba5a1",
+      "recorded_frame_index": 9306
+    },
+    {
+      "file": "clear-sock-contact.png",
+      "source": "/tmp/beastie-ui-20261001-first-final9-visual-frames/first-12375.png",
+      "candidate": "C9",
+      "caption": "Actual sock contact at 206.250 seconds, with the crown, brows and eyes clear of the neighboring bell. Original frame extracted from the synchronized native recording.",
+      "sha256": "ad450c2e696a6426773a6b362cdb9b038abb15cd0894ccc9ae185e9ed10ba164",
+      "binary_sha256": "afe07e9de28f4507c37b1fe5395a03726a6c66f74f360b2524bad418bf79793e",
+      "recorded_frame_index": 12375
+    }
+  ],
+  "review_completion": {
+    "visual": {
+      "report": "/tmp/beastie-ui-20261001-visual-completion-final9.md",
+      "sha256": "9c61daa04b5b3256a4fb17b60b197d34f8f57262aa828ad04094142ec5e0af95",
+      "disposition": "All ten primary routes and both fresh repeats accepted within documented evidence limits; no known material finding remains."
+    },
+    "causality": {
+      "report": "/tmp/beastie-ui-20261001-causality-repeats-final9.md",
+      "sha256": "68873d03d19285a12e8785fe69270e3f8dd27e724249de06c23c24b357a00ffb",
+      "disposition": "All ten primary routes and both fresh repeats accepted within documented evidence limits; no known material finding remains."
+    },
+    "audio": {
+      "report": "/tmp/beastie-ui-20261001-audio-final9-summary.md",
+      "sha256": "331e1cc69f53569cb99e8f4ce679d05cb1c85b94e90ee91830970970f27e37b8",
+      "disposition": "All ten primary routes and both fresh repeats accepted within documented evidence limits; no known material finding remains."
+    }
+  }
+}

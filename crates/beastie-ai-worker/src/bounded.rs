@@ -21,7 +21,7 @@ pub(crate) fn read_bounded_line(
         }
         let newline = available.iter().position(|byte| *byte == b'\n');
         let consumed = newline.map_or(available.len(), |index| index + 1);
-        let content = newline.map_or(consumed, |index| index);
+        let content = newline.unwrap_or(consumed);
         if !overflow {
             if bytes.len().saturating_add(content) > maximum {
                 overflow = true;

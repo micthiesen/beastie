@@ -13,6 +13,31 @@ pub enum LoadedSave {
     Backup(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackupSource {
+    BeforeReset,
+    LastGoodBeforeReset,
+    LastGood,
+}
+
+impl BackupSource {
+    const fn extension(self) -> &'static str {
+        match self {
+            Self::BeforeReset => "json.reset",
+            Self::LastGoodBeforeReset => "json.reset.bak",
+            Self::LastGood => "json.bak",
+        }
+    }
+
+    const fn recovered_extension(self) -> Option<&'static str> {
+        match self {
+            Self::BeforeReset => Some("json.reset-recovered"),
+            Self::LastGoodBeforeReset => Some("json.reset-good-recovered"),
+            Self::LastGood => None,
+        }
+    }
+}
+
 impl SaveStore {
     #[must_use]
     pub fn new(path: PathBuf) -> Self {
@@ -35,7 +60,11 @@ impl SaveStore {
     }
 
     pub fn load_backup(&self) -> io::Result<Option<String>> {
-        match fs::read_to_string(self.path.with_extension("json.bak")) {
+        self.load_backup_source(BackupSource::LastGood)
+    }
+
+    pub fn load_backup_source(&self, source: BackupSource) -> io::Result<Option<String>> {
+        match fs::read_to_string(self.path.with_extension(source.extension())) {
             Ok(save) => Ok(Some(save)),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
@@ -45,13 +74,25 @@ impl SaveStore {
     /// Promotes the last-good backup while preserving the displaced primary as
     /// a visible `.corrupt` generation for support or manual recovery.
     pub fn promote_backup(&self) -> io::Result<bool> {
-        let backup = self.path.with_extension("json.bak");
+        self.promote_backup_source(BackupSource::LastGood)
+    }
+
+    /// Caller validates the selected bytes before promotion. A reset restore point is consumed
+    /// only after the primary is installed, while its bytes remain in a recovered generation.
+    pub fn promote_backup_source(&self, source: BackupSource) -> io::Result<bool> {
+        let backup = self.path.with_extension(source.extension());
         if !backup.is_file() {
             return Ok(false);
         }
         let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
         let displaced = self.path.with_extension("json.corrupt");
         let temporary = self.path.with_extension("json.recovery.tmp");
+        let recovered = source
+            .recovered_extension()
+            .map(|extension| self.path.with_extension(extension));
+        if let Some(recovered) = &recovered {
+            remove_if_present(recovered)?;
+        }
         remove_if_present(&displaced)?;
         remove_if_present(&temporary)?;
         let had_primary = self.path.exists();
@@ -68,27 +109,47 @@ impl SaveStore {
             }
             return Err(error);
         }
-        sync_directory(parent)?;
+        if let Err(error) = sync_directory(parent).and_then(|()| {
+            if let Some(recovered) = &recovered {
+                fs::rename(&backup, recovered)?;
+                if let Err(error) = sync_directory(parent) {
+                    let _ = fs::rename(recovered, &backup);
+                    return Err(error);
+                }
+            }
+            Ok(())
+        }) {
+            // Recovery failure leaves the pending source available for another attempt.
+            let _ = fs::remove_file(&self.path);
+            if had_primary {
+                let _ = fs::rename(&displaced, &self.path);
+            }
+            return Err(error);
+        }
         Ok(true)
     }
 
-    /// Moves all save generations aside rather than deleting them. The reset
-    /// can therefore be undone manually until a later reset replaces it.
+    /// Keeps both current and last-good generations as a pending UI restore point.
+    /// Resetting again before a replacement save exists preserves that restore point.
     pub fn reset(&self) -> io::Result<bool> {
         let reset = self.path.with_extension("json.reset");
+        let reset_good = self.path.with_extension("json.reset.bak");
+        let last_good = self.path.with_extension("json.bak");
+        if !self.path.exists() && !last_good.exists() {
+            remove_if_present(&self.path.with_extension("json.tmp"))?;
+            return Ok(reset.is_file());
+        }
         remove_if_present(&reset)?;
+        remove_if_present(&reset_good)?;
         let mut moved = false;
         if self.path.exists() {
             fs::rename(&self.path, &reset)?;
             moved = true;
         }
         remove_if_present(&self.path.with_extension("json.tmp"))?;
-        if self.path.with_extension("json.bak").exists() {
-            if !moved {
-                fs::rename(self.path.with_extension("json.bak"), reset)?;
-            } else {
-                remove_if_present(&self.path.with_extension("json.bak"))?;
-            }
+        if last_good.exists() {
+            // The primary may be corrupt. Retain the independent last-good generation too.
+            fs::rename(last_good, if moved { reset_good } else { reset })?;
             moved = true;
         }
         Ok(moved)
@@ -219,6 +280,14 @@ mod tests {
         assert_eq!(
             fs::read_to_string(path.with_extension("json.reset")).expect("reset generation"),
             "current"
+        );
+        assert!(store.reset().expect("reset without a replacement save"));
+        assert_eq!(
+            store
+                .load_backup_source(BackupSource::BeforeReset)
+                .unwrap()
+                .as_deref(),
+            Some("current")
         );
         fs::remove_dir_all(directory).expect("cleanup");
     }

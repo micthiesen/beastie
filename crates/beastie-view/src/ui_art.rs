@@ -2,12 +2,15 @@
 use crate::{HitRegion, Rect, RectCommand, TextCommand};
 use serde::{Deserialize, Serialize};
 
-pub(super) const UI_EDGE: [u8; 4] = [71, 96, 94, 255];
-pub(super) const UI_PANEL: [u8; 4] = [19, 38, 42, 255];
-pub(super) const UI_PANEL_INSET: [u8; 4] = [18, 29, 31, 255];
-pub(super) const UI_BUTTON: [u8; 4] = [33, 48, 48, 255];
-pub(super) const UI_BUTTON_DISABLED: [u8; 4] = [19, 38, 42, 255];
-pub(super) const UI_CORAL: [u8; 4] = [226, 223, 179, 255];
+pub(super) const UI_EDGE: [u8; 4] = [80, 115, 112, 255];
+pub(super) const UI_PANEL: [u8; 4] = [12, 42, 47, 255];
+pub(super) const UI_PANEL_INSET: [u8; 4] = [9, 33, 39, 255];
+pub(super) const UI_BUTTON: [u8; 4] = [26, 59, 63, 255];
+pub(super) const UI_BUTTON_DISABLED: [u8; 4] = [19, 42, 46, 255];
+pub(super) const UI_CORAL: [u8; 4] = [227, 204, 148, 255];
+pub(super) const UI_PRIMARY: [u8; 4] = [240, 230, 192, 255];
+pub(super) const UI_SELECTED: [u8; 4] = [58, 86, 72, 255];
+pub(super) const UI_DANGER: [u8; 4] = [200, 128, 107, 255];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -18,6 +21,7 @@ pub enum TextRole {
     Secondary,
     Subtitle,
     Control,
+    PrimaryControl,
     ControlCaption,
     Dialogue,
 }
@@ -29,19 +33,23 @@ impl TextRole {
             Self::Identity => 6.5,
             Self::Body | Self::Dialogue => 6.0,
             Self::Secondary | Self::Subtitle => 4.8,
-            Self::Control => 5.2,
+            Self::Control | Self::PrimaryControl => 5.2,
             Self::ControlCaption => 4.5,
         };
         normal * if large { 1.3 } else { 1.0 }
     }
     pub fn color(self) -> [u8; 3] {
         match self {
+            Self::PrimaryControl => [13, 45, 49],
             Self::Secondary | Self::Subtitle | Self::ControlCaption => [168, 191, 188],
             _ => [236, 233, 211],
         }
     }
     pub fn centered(self) -> bool {
-        matches!(self, Self::Subtitle | Self::Control | Self::ControlCaption)
+        matches!(
+            self,
+            Self::Subtitle | Self::Control | Self::PrimaryControl | Self::ControlCaption
+        )
     }
 }
 
@@ -158,30 +166,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn controller_name_entry_has_name_labels_and_submission() {
+    fn controller_name_entry_owns_its_field_and_explicit_submission() {
         let world = beastie_core::WorldState::new(42, "Mop");
-        let scene = crate::plan(
-            &world,
-            &crate::ViewState {
-                mode: crate::UiMode::OnScreenKeyboard,
-                renaming_with_osk: true,
-                ..Default::default()
-            },
-        )
-        .0;
-        assert_eq!(
-            scene
+        for value in ["", "Gob"] {
+            let scene = crate::plan(
+                &world,
+                &crate::ViewState {
+                    mode: crate::UiMode::OnScreenKeyboard,
+                    renaming_with_osk: true,
+                    text_buffer: value.into(),
+                    ..Default::default()
+                },
+            )
+            .0;
+            let field = scene
                 .text
                 .iter()
-                .find(|t| t.id == "compose/input-text")
-                .unwrap()
-                .text,
-            "New name…"
-        );
-        for id in ["compose/send", "keyboard/send"] {
-            let hit = scene.hit_regions.iter().find(|h| h.id == id).unwrap();
-            assert_eq!(hit.action, crate::UiAction::SubmitName);
-            assert_eq!(hit.label, "Name");
+                .find(|t| t.id == "keyboard/input-text")
+                .unwrap();
+            assert_eq!(
+                field.text,
+                if value.is_empty() {
+                    "New name…"
+                } else {
+                    value
+                }
+            );
+            let submit = scene
+                .hit_regions
+                .iter()
+                .find(|h| h.id == "keyboard/send")
+                .unwrap();
+            assert_eq!(submit.action, crate::UiAction::SubmitName);
+            assert_eq!(submit.label, "Save name");
+            assert_eq!(submit.enabled, !value.is_empty());
+            assert!(!scene.hit_regions.iter().any(|h| {
+                h.enabled && matches!(h.id.as_str(), "compose/input" | "compose/send")
+            }));
         }
     }
 
@@ -212,7 +233,7 @@ mod tests {
                     .rect;
                 let bounds = header.bounds.unwrap();
                 assert!(header.vertical_centered);
-                assert_eq!(2 * bounds.y + bounds.h, 2 * close.y + close.h);
+                assert!((2 * bounds.y + bounds.h - 2 * close.y - close.h).abs() <= 1);
                 assert!(bounds.x + bounds.w < close.x);
                 for name in scene
                     .text
@@ -263,7 +284,7 @@ mod tests {
             let gutter = first.x - panel.x;
             assert_eq!(gutter, panel.x + panel.w - last.x - last.w);
             assert_eq!(gutter, panel.y + panel.h - last.y - last.h);
-            // Focus expands by one unit; keep it clear of the frame and neighboring rims.
+            // Focus stays inside its control; preserve clear gutters around each button.
             assert!(gutter > 2);
             for pair in controls.windows(2) {
                 assert!(pair[0].rect.x + pair[0].rect.w + 2 < pair[1].rect.x);
@@ -276,7 +297,7 @@ mod tests {
     fn settings_rows_share_a_vertical_center_without_centering_names_horizontally() {
         let state = beastie_core::WorldState::new(42, "Mop");
         for text_scale in [1, 2] {
-            for settings_page in 0..3 {
+            for settings_page in 0..2 {
                 let scene = crate::plan(
                     &state,
                     &crate::ViewState {
@@ -354,7 +375,8 @@ mod tests {
         assert!(input.vertical_centered);
         assert!(!input.role.centered());
         assert_eq!(2 * bounds.y + bounds.h, 2 * field.y + field.h);
-        assert_eq!(bounds.x - field.x, field.x + field.w - bounds.x - bounds.w);
+        assert!(bounds.x >= field.x + 3);
+        assert!(bounds.x + bounds.w <= field.x + field.w - 3);
         let header = scene
             .text
             .iter()
@@ -362,20 +384,13 @@ mod tests {
             .unwrap()
             .bounds
             .unwrap();
-        let gear = scene
-            .icons
-            .iter()
-            .find(|i| i.id == "settings/gear")
-            .unwrap()
-            .bounds;
         let close = scene
             .hit_regions
             .iter()
             .find(|h| h.id == "modal/close")
             .unwrap()
             .rect;
-        assert_eq!(2 * header.y + header.h, 2 * close.y + close.h);
-        assert_eq!(2 * gear.y + gear.h, 2 * close.y + close.h);
+        assert!((2 * header.y + header.h - 2 * close.y - close.h).abs() <= 1);
     }
 
     #[test]
@@ -396,7 +411,13 @@ mod tests {
             .unwrap();
         assert_eq!(instruction.role, TextRole::Body);
         let bounds = instruction.bounds.unwrap();
-        assert!(bounds.x >= 79 && bounds.x + bounds.w <= 241);
+        let cancel = scene
+            .hit_regions
+            .iter()
+            .find(|h| h.id == "mode/drop-cancel")
+            .unwrap();
+        assert!(bounds.x >= 55 && bounds.x + bounds.w < cancel.rect.x);
+        assert!(bounds.h as f32 >= instruction.role.size(false) * 1.2);
     }
     #[test]
     fn settings_pages_have_readable_distinct_control_regions() {

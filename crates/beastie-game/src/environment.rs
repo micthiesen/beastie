@@ -792,7 +792,7 @@ mod tests {
             .unwrap();
         let indices: Vec<usize> = mesh.indices().unwrap().iter().collect();
         let mut top_area = 0.0_f64;
-        for triangle in indices.chunks_exact(3) {
+        for triangle in indices.as_chunks::<3>().0.iter() {
             let [a, b, c] =
                 [triangle[0], triangle[1], triangle[2]].map(|index| Vec3::from(positions[index]));
             let normal = Vec3::from(normals[triangle[0]]);

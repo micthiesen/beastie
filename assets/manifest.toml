@@ -5,6 +5,17 @@ version = 2
 path = "generated/ui/atkinson-hyperlegible-next-medium.ttf"
 license = "licenses/atkinson-hyperlegible-next-OFL.txt"
 
+[[font]]
+path = "generated/ui/noto-emoji-variable.ttf"
+license = "licenses/noto-emoji-OFL.txt"
+# Offline monochrome emoji fallback, unmodified default-weight variable font.
+# Upstream revision: 8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5
+# Source: https://raw.githubusercontent.com/google/fonts/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notoemoji/NotoEmoji%5Bwght%5D.ttf
+# Font bytes: 1982596
+# Font SHA-256: de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551
+# License source: https://raw.githubusercontent.com/google/fonts/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notoemoji/OFL.txt
+# License SHA-256: 500bb1ccf43df7bbb522112f9133a52b16e1c35e809632f5d8609b179152de5b
+
 [[audio]]
 id = "audio/ui/select"
 sample_rate = 44100

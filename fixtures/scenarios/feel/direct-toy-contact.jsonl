@@ -1,0 +1,15 @@
+{"version":1,"command":"marker","name":"00-direct-toys-start"}
+{"version":1,"command":"wait","milliseconds":1000}
+{"version":1,"command":"play","toy":"ball"}
+{"version":1,"command":"marker","name":"01-ball-offered"}
+{"version":1,"command":"wait","milliseconds":15000}
+{"version":1,"command":"capture","name":"02-ball-recovered"}
+{"version":1,"command":"play","toy":"bell"}
+{"version":1,"command":"marker","name":"03-bell-offered"}
+{"version":1,"command":"wait","milliseconds":16000}
+{"version":1,"command":"capture","name":"04-bell-recovered"}
+{"version":1,"command":"play","toy":"sock"}
+{"version":1,"command":"marker","name":"05-sock-offered"}
+{"version":1,"command":"wait","milliseconds":16000}
+{"version":1,"command":"capture","name":"06-sock-released"}
+{"version":1,"command":"marker","name":"07-direct-toys-complete"}

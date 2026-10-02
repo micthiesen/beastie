@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use beastie_session::{CommandEnvelope, GameSession};
-use beastie_view::UiAction;
+use beastie_view::{MicrophoneState, UiAction, ViewState};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -12,6 +12,9 @@ pub enum ScenarioStep {
     Session(CommandEnvelope),
     Ui(UiAction),
     ControllerUi(UiAction),
+    TextInput(String),
+    /// Static presentation coverage only, never evidence of perception or canonical state.
+    UiPreview(UiPreview),
     /// Shell-only result of attempting to acquire a bounded microphone capture.
     ///
     /// This is intentionally separate from `SpeechStarted`: an unavailable device never reaches
@@ -24,6 +27,95 @@ pub enum ScenarioStep {
     WaitTick {
         milliseconds: u64,
     },
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiPreview {
+    #[serde(default)]
+    pub clear: bool,
+    pub focus: Option<String>,
+    pub hover: Option<String>,
+    pub pressed: Option<String>,
+    pub selected: Option<bool>,
+    pub microphone: Option<MicrophoneState>,
+    pub pending: Option<bool>,
+    pub caption: Option<String>,
+    pub status: Option<String>,
+}
+
+impl UiPreview {
+    fn validate(&self) -> Result<(), ScenarioError> {
+        for id in [&self.focus, &self.hover, &self.pressed]
+            .into_iter()
+            .flatten()
+        {
+            if id.is_empty()
+                || id.len() > 96
+                || !id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_'))
+            {
+                return Err(ScenarioError::Command(
+                    "invalid UI preview region".to_owned(),
+                ));
+            }
+        }
+        for text in [&self.caption, &self.status].into_iter().flatten() {
+            validate_text(text)?;
+        }
+        Ok(())
+    }
+
+    pub fn apply(self, view: &mut ViewState, now_ms: u64) {
+        if self.clear {
+            view.hovered_region = None;
+            view.focused_region = None;
+            view.pressed_region = None;
+            view.pressed_until_ms = 0;
+            view.text_selected = false;
+            view.clear_status();
+            view.clear_speech();
+            view.pending = false;
+        }
+        if let Some(region) = self.focus {
+            view.focused_region = Some(region);
+        }
+        if let Some(region) = self.hover {
+            view.hovered_region = Some(region);
+        }
+        if let Some(region) = self.pressed {
+            view.pressed_region = Some(region);
+            view.pressed_until_ms = now_ms.saturating_add(100);
+        }
+        if let Some(selected) = self.selected {
+            view.text_selected = selected && !view.text_buffer.is_empty();
+        }
+        if let Some(state) = self.microphone {
+            view.microphone_state = state;
+            view.microphone_enabled = state != MicrophoneState::Disabled;
+        }
+        if let Some(pending) = self.pending {
+            view.pending = pending;
+        }
+        if let Some(caption) = self.caption {
+            view.show_speech(caption, now_ms);
+        }
+        if let Some(status) = self.status {
+            view.show_status(status, now_ms, 12_000);
+        }
+    }
+}
+
+fn validate_text(text: &str) -> Result<(), ScenarioError> {
+    if text.chars().count() > crate::input::MAX_TALK_CHARACTERS
+        || text.chars().any(char::is_control)
+    {
+        return Err(ScenarioError::Command(
+            "UI text must contain at most 512 printable characters".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +303,50 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
     }
 
     let kind: CommandKind = serde_json::from_str(line).map_err(ScenarioError::Json)?;
+    if kind.command == "ui_action" {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct ActionControl {
+            version: u32,
+            command: String,
+            action: UiAction,
+            #[serde(default)]
+            controller: bool,
+        }
+        let control: ActionControl = serde_json::from_str(line).map_err(ScenarioError::Json)?;
+        validate_control(control.version, &control.command, "ui_action")?;
+        return Ok(if control.controller {
+            ScenarioStep::ControllerUi(control.action)
+        } else {
+            ScenarioStep::Ui(control.action)
+        });
+    }
+    if kind.command == "text_input" {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct TextControl {
+            version: u32,
+            command: String,
+            text: String,
+        }
+        let control: TextControl = serde_json::from_str(line).map_err(ScenarioError::Json)?;
+        validate_control(control.version, &control.command, "text_input")?;
+        validate_text(&control.text)?;
+        return Ok(ScenarioStep::TextInput(control.text));
+    }
+    if kind.command == "ui_preview" {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PreviewControl {
+            version: u32,
+            command: String,
+            preview: UiPreview,
+        }
+        let control: PreviewControl = serde_json::from_str(line).map_err(ScenarioError::Json)?;
+        validate_control(control.version, &control.command, "ui_preview")?;
+        control.preview.validate()?;
+        return Ok(ScenarioStep::UiPreview(control.preview));
+    }
     if kind.command == "ui" {
         let control: UiControl = serde_json::from_str(line).map_err(ScenarioError::Json)?;
         if control.version != beastie_session::SESSION_PROTOCOL_VERSION || control.command != "ui" {
@@ -339,6 +475,15 @@ fn parse_step(line: &str) -> Result<ScenarioStep, ScenarioError> {
     Ok(ScenarioStep::Capture(capture.name))
 }
 
+fn validate_control(version: u32, command: &str, expected: &str) -> Result<(), ScenarioError> {
+    if version != beastie_session::SESSION_PROTOCOL_VERSION || command != expected {
+        return Err(ScenarioError::Command(format!(
+            "unsupported {expected} control version"
+        )));
+    }
+    Ok(())
+}
+
 fn safe_stem(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
@@ -378,6 +523,109 @@ mod tests {
     use beastie_session::{CommandEnvelope, SessionCommand};
 
     use super::*;
+
+    #[test]
+    fn typed_ui_controls_cover_targets_settings_rebinding_and_safe_data_actions() {
+        for action in [
+            UiAction::OpenContext(beastie_view::UiTarget::Toy(ToyId::Sock)),
+            UiAction::OpenContext(beastie_view::UiTarget::Plant(1)),
+            UiAction::Inspect,
+            UiAction::SelectFood(FoodId::Mushroom),
+            UiAction::BeginRebind(beastie_view::BindableAction::Cancel),
+            UiAction::ToggleTranscript,
+            UiAction::RecoverBackup,
+            UiAction::ConfirmReset,
+            UiAction::CycleEffectsVolume,
+            UiAction::ToggleSubtitles,
+            UiAction::TypeCharacter('水'),
+        ] {
+            let source = serde_json::json!({"version":1, "command":"ui_action", "action":action})
+                .to_string();
+            assert!(
+                matches!(parse_step(&source), Ok(ScenarioStep::Ui(parsed)) if parsed == action)
+            );
+        }
+        assert!(matches!(
+            parse_step(
+                r#"{"version":1,"command":"ui_action","action":"rename","controller":true}"#
+            ),
+            Ok(ScenarioStep::ControllerUi(UiAction::Rename))
+        ));
+        assert!(
+            matches!(parse_step(r#"{"version":1,"command":"text_input","text":"é水"}"#), Ok(ScenarioStep::TextInput(text)) if text == "é水")
+        );
+    }
+
+    #[test]
+    fn ui_capture_vocabulary_rejects_unbounded_and_unknown_inputs() {
+        for source in [
+            r#"{"version":2,"command":"ui_action","action":"inspect"}"#,
+            r#"{"version":1,"command":"ui_action","action":"inspect","unexpected":true}"#,
+            r#"{"version":1,"command":"text_input","text":"bad\ninput"}"#,
+            r#"{"version":1,"command":"ui_preview","preview":{"focus":"../player-file"}}"#,
+            r#"{"version":1,"command":"ui_preview","preview":{"world":{"name":"fake"}}}"#,
+        ] {
+            assert!(parse_step(source).is_err(), "{source}");
+        }
+        let source =
+            serde_json::json!({"version":1, "command":"text_input", "text":"a".repeat(513)})
+                .to_string();
+        assert!(parse_step(&source).is_err());
+    }
+
+    #[test]
+    fn presentation_preview_changes_only_ephemeral_view_state() {
+        let source = r#"{"version":1,"command":"ui_preview","preview":{"microphone":"unavailable","status":"Text still works.","focus":"compose/settings"}}"#;
+        let ScenarioStep::UiPreview(preview) = parse_step(source).unwrap() else {
+            panic!("preview");
+        };
+        let mut view = ViewState::default();
+        preview.apply(&mut view, 20);
+        assert_eq!(view.microphone_state, MicrophoneState::Unavailable);
+        assert_eq!(view.focused_region.as_deref(), Some("compose/settings"));
+        assert_eq!(view.status_expires_at_ms, Some(12_020));
+        assert!(view.speech.is_none());
+        assert!(view.cue_queue.is_empty());
+    }
+
+    #[test]
+    fn redesign_fixtures_parse_and_keep_synthetic_previews_separate_from_data_flows() {
+        for source in [
+            include_str!("../../../fixtures/scenarios/ui-redesign-surfaces.jsonl"),
+            include_str!("../../../fixtures/scenarios/ui-redesign-settings.jsonl"),
+            include_str!("../../../fixtures/scenarios/ui-redesign-data-flow.jsonl"),
+            include_str!("../../../fixtures/scenarios/ui-redesign-capacity.jsonl"),
+        ] {
+            let steps = source
+                .lines()
+                .map(parse_step)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert!(
+                steps
+                    .iter()
+                    .any(|step| matches!(step, ScenarioStep::Capture(_)))
+            );
+            assert!(
+                !steps
+                    .iter()
+                    .any(|step| matches!(step, ScenarioStep::UiPreview(_)))
+            );
+        }
+        let steps = include_str!("../../../fixtures/scenarios/ui-redesign-presentation.jsonl")
+            .lines()
+            .map(parse_step)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            steps
+                .iter()
+                .any(|step| matches!(step, ScenarioStep::UiPreview(_)))
+        );
+        assert!(
+            matches!(&steps[0], ScenarioStep::Marker(name) if name == "presentation-only-previews")
+        );
+    }
 
     #[test]
     fn parses_session_and_capture_steps() {

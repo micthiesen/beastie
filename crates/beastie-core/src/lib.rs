@@ -40,9 +40,10 @@ pub use relationship::{
 pub use save::{SaveError, SaveGame, migrate_world};
 pub use simulation::{
     DialogueActionOwner, DialogueHandoff, DialogueHandoffState, GameEvent, MAX_OFFLINE_MS,
-    OfflineProgress, PlayerEvent, SIMULATION_TICK_MS, SpeechAttention, TALK_COOLDOWN_MS,
-    advance_offline, apply_grounded_utterance, destination_position, dialogue_handoff,
-    speech_attention, step, trigger_relationship_beat,
+    OfflineProgress, PlayerEvent, SIMULATION_TICK_MS, SOCK_RELEASE_SPEED, SpeechAttention,
+    TALK_COOLDOWN_MS, advance_offline, apply_grounded_utterance, approach_position,
+    destination_position, dialogue_handoff, held_toy_position, movement_target, speech_attention,
+    step, trigger_relationship_beat,
 };
 
 pub const SAVE_VERSION: u32 = 7;
@@ -743,6 +744,128 @@ mod tests {
             world.creature.aquarium.destination.is_some()
                 || world.creature.private_life.active.is_some()
         );
+    }
+
+    #[test]
+    fn affection_expiry_preserves_new_private_travel_and_saved_completion() {
+        let mut world = WorldState::new(42, "Continuing");
+        let mut rng = SeededRandom::new(42);
+        // The native dialogue-races sequence: a first private notice, Talk, then Comfort.
+        step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        step(&mut world, &[PlayerEvent::Talk], 0, &mut rng);
+        step(&mut world, &[PlayerEvent::Comfort], 0, &mut rng);
+        step(&mut world, &[], SIMULATION_TICK_MS * 6, &mut rng);
+        let activity = world.creature.private_life.active.as_ref().unwrap().clone();
+        assert_eq!(activity.kind, PrivateLifeKind::PlantInspect);
+        assert_eq!(activity.phase, ActivityPhase::Approach);
+        assert_eq!(world.creature.current_intention, Intention::ShowAffection);
+        let owner = Some(TravelPurpose::PrivateLife {
+            activity_id: activity.id,
+        });
+        assert_eq!(world.creature.aquarium.travel_purpose, owner);
+        let json = SaveGame::capture(&world, &rng).to_json().unwrap();
+        let (mut resumed, mut resumed_rng) = SaveGame::from_json(&json).unwrap().resume();
+
+        let expiry = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        assert_eq!(
+            expiry,
+            step(&mut resumed, &[], SIMULATION_TICK_MS, &mut resumed_rng)
+        );
+        assert_eq!(world, resumed);
+        assert_eq!(world.creature.current_intention, Intention::Idle);
+        assert_eq!(
+            world.creature.aquarium.destination,
+            Some(SemanticDestination::Plant)
+        );
+        assert_eq!(world.creature.aquarium.travel_purpose, owner);
+        assert_eq!(world.creature.aquarium.steering, SteeringMode::Approach);
+        assert_eq!(
+            dialogue_handoff(&world),
+            DialogueHandoff {
+                owner: Some(DialogueActionOwner::PrivateLife(activity.id)),
+                state: DialogueHandoffState::WaitingForContact,
+            }
+        );
+
+        let mut continuation = Vec::new();
+        for _ in 0..20 {
+            continuation.extend(step(&mut world, &[], SIMULATION_TICK_MS, &mut rng));
+        }
+        assert_eq!(
+            continuation,
+            step(&mut resumed, &[], SIMULATION_TICK_MS * 20, &mut resumed_rng)
+        );
+        assert_eq!(world, resumed);
+        assert_eq!(continuation.iter().filter(|event| matches!(event,
+            GameEvent::PrivateLifeCompleted { activity_id, .. } if *activity_id == activity.id
+        )).count(), 1);
+        assert!(!continuation.iter().any(|event| matches!(event,
+            GameEvent::PrivateLifeInterrupted { activity_id, .. } if *activity_id == activity.id
+        )));
+        assert_ne!(
+            dialogue_handoff(&world).owner,
+            Some(DialogueActionOwner::PrivateLife(activity.id))
+        );
+    }
+
+    #[test]
+    fn affection_expiry_still_releases_its_own_unfinished_journey() {
+        let mut world = WorldState::new(42, "EnoughAffection");
+        let mut rng = SeededRandom::new(42);
+        world.creature.aquarium.position = NormalizedPosition::new(0, 10_000);
+        step(
+            &mut world,
+            &[PlayerEvent::Cursor(Some(NormalizedPosition::new(
+                10_000, 0,
+            )))],
+            0,
+            &mut rng,
+        );
+        step(&mut world, &[PlayerEvent::Comfort], 0, &mut rng);
+        step(&mut world, &[], SIMULATION_TICK_MS * 6, &mut rng);
+        assert_eq!(
+            world.creature.aquarium.destination,
+            Some(SemanticDestination::Player)
+        );
+        assert_eq!(world.creature.current_intention, Intention::ShowAffection);
+
+        let expiry = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        assert!(expiry.contains(&GameEvent::IntentionChanged {
+            from: Intention::ShowAffection,
+            to: Intention::Idle,
+        }));
+        assert_eq!(world.creature.aquarium.destination, None);
+        assert_eq!(world.creature.aquarium.travel_purpose, None);
+        assert_eq!(world.creature.aquarium.steering, SteeringMode::Hover);
+    }
+
+    #[test]
+    fn affection_expiry_cannot_clear_a_new_cursor_journey() {
+        let mut world = WorldState::new(42, "Following");
+        let mut rng = SeededRandom::new(42);
+        world.creature.relationship.trust = 0.8;
+        world.creature.traits.sociability = 0.8;
+        step(&mut world, &[PlayerEvent::Comfort], 0, &mut rng);
+        step(&mut world, &[], SIMULATION_TICK_MS * 6, &mut rng);
+        let cursor = NormalizedPosition::new(10_000, 10_000);
+        step(
+            &mut world,
+            &[PlayerEvent::Cursor(Some(cursor))],
+            0,
+            &mut rng,
+        );
+        let owner = world.creature.aquarium.travel_purpose;
+        assert!(matches!(owner, Some(TravelPurpose::CursorSocial { .. })));
+        assert_eq!(world.creature.current_intention, Intention::ShowAffection);
+
+        step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        assert_ne!(world.creature.current_intention, Intention::ShowAffection);
+        assert_eq!(
+            world.creature.aquarium.destination,
+            Some(SemanticDestination::Position(cursor))
+        );
+        assert_eq!(world.creature.aquarium.travel_purpose, owner);
+        assert_eq!(world.creature.aquarium.steering, SteeringMode::Approach);
     }
 
     #[test]
@@ -2620,11 +2743,897 @@ mod tests {
     }
 
     #[test]
+    fn bottom_destination_clears_the_observed_nudged_ball() {
+        let mut world = WorldState::new(42, "Forage");
+        // C6 relationship footage: the previous fixed (5_000, 9_200) endpoint
+        // placed the head inside this nudged ball throughout the forage.
+        world
+            .aquarium
+            .toy_states
+            .get_mut(&ToyId::Ball)
+            .unwrap()
+            .position = NormalizedPosition::new(4_785, 8_085);
+        let bottom = destination_position(&world, SemanticDestination::Bottom).unwrap();
+        assert_eq!(bottom, NormalizedPosition::new(3_665, 9_200));
+        world.creature.aquarium.position = NormalizedPosition::new(5_000, 9_200);
+        assert!(
+            movement_target(&world).is_some(),
+            "the old endpoint overlaps"
+        );
+        world.creature.aquarium.position = bottom;
+        assert_eq!(movement_target(&world), None, "the new endpoint is clear");
+        assert_eq!(
+            destination_position(&world, SemanticDestination::Toy(ToyId::Ball)),
+            Some(NormalizedPosition::new(4_785, 8_085))
+        );
+    }
+
+    #[test]
+    fn bottom_destination_checks_all_toys_and_excludes_carried_objects() {
+        let mut world = WorldState::new(42, "Crowded");
+        for (toy, x) in [
+            (ToyId::Ball, 3_880),
+            (ToyId::Bell, 5_000),
+            (ToyId::Sock, 6_120),
+        ] {
+            world.aquarium.toy_states.get_mut(&toy).unwrap().position =
+                NormalizedPosition::new(x, 9_200);
+        }
+        let bottom = destination_position(&world, SemanticDestination::Bottom).unwrap();
+        // The nearest side of the center toy is still inside one of its neighbors.
+        // The two clear outer sides tie, so select the left one deterministically.
+        assert_eq!(bottom, NormalizedPosition::new(2_760, 9_200));
+        world.creature.aquarium.position = bottom;
+        assert_eq!(movement_target(&world), None);
+
+        world
+            .aquarium
+            .toy_states
+            .get_mut(&ToyId::Ball)
+            .unwrap()
+            .carried = true;
+        assert_eq!(
+            destination_position(&world, SemanticDestination::Bottom),
+            Some(NormalizedPosition::new(3_880, 9_200))
+        );
+        for object in world.aquarium.toy_states.values_mut() {
+            object.carried = true;
+        }
+        assert_eq!(
+            destination_position(&world, SemanticDestination::Bottom),
+            Some(NormalizedPosition::new(5_000, 9_200))
+        );
+    }
+
+    #[test]
+    fn bottom_destination_is_bounded_clear_and_independent_of_approach() {
+        let columns = [0, 500, 2_500, 5_000, 7_500, 9_500, 10_000];
+        for ball_x in columns {
+            for bell_x in columns {
+                for sock_x in columns {
+                    let mut world = WorldState::new(42, "Columns");
+                    for (toy, x, y) in [
+                        (ToyId::Ball, ball_x, 8_085),
+                        (ToyId::Bell, bell_x, 9_200),
+                        (ToyId::Sock, sock_x, 10_000),
+                    ] {
+                        world.aquarium.toy_states.get_mut(&toy).unwrap().position =
+                            NormalizedPosition::new(x, y);
+                    }
+                    let bottom = destination_position(&world, SemanticDestination::Bottom).unwrap();
+                    assert_eq!(bottom.y, 9_200);
+                    assert_eq!(bottom, bottom.clamped());
+                    world.creature.aquarium.position = bottom;
+                    assert_eq!(movement_target(&world), None, "blocked column {bottom:?}");
+                    for start in [
+                        NormalizedPosition::new(0, 0),
+                        NormalizedPosition::new(10_000, 10_000),
+                    ] {
+                        world.creature.aquarium.position = start;
+                        world.creature.aquarium.facing = Facing::Left;
+                        assert_eq!(
+                            destination_position(&world, SemanticDestination::Bottom),
+                            Some(bottom)
+                        );
+                        world.creature.aquarium.facing = Facing::Right;
+                        assert_eq!(
+                            destination_position(&world, SemanticDestination::Bottom),
+                            Some(bottom)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bottom_forage_does_not_arrive_early_inside_a_nearby_toy() {
+        let mut world = WorldState::new(42, "PreciseForage");
+        let mut rng = SeededRandom::new(42);
+        world.creature.needs.hunger = 0.9;
+        world
+            .aquarium
+            .toy_states
+            .retain(|toy, _| *toy == ToyId::Ball);
+        world
+            .aquarium
+            .toy_states
+            .get_mut(&ToyId::Ball)
+            .unwrap()
+            .position = NormalizedPosition::new(5_000, 9_200);
+        step(&mut world, &[], SIMULATION_TICK_MS * 2, &mut rng);
+        let activity = world.creature.private_life.active.as_ref().unwrap();
+        assert_eq!(activity.kind, PrivateLifeKind::BottomForage);
+        assert_eq!(activity.phase, ActivityPhase::Approach);
+        let activity_id = activity.id;
+
+        let endpoint = NormalizedPosition::new(3_880, 9_200);
+        assert_eq!(
+            destination_position(&world, SemanticDestination::Bottom),
+            Some(endpoint)
+        );
+        // Only 170 from the destination, but 950 from the ball's center. The old
+        // 220-unit arrival threshold entered Act while still inside its contact radius.
+        world.creature.aquarium.position = NormalizedPosition::new(4_050, 9_200);
+        let approach = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        assert_eq!(world.creature.aquarium.position, endpoint);
+        assert_eq!(
+            world.creature.private_life.active.as_ref().unwrap().phase,
+            ActivityPhase::Approach
+        );
+        assert!(!approach.iter().any(|event| matches!(
+            event,
+            GameEvent::PrivateLifePhaseChanged {
+                to: ActivityPhase::Act,
+                ..
+            }
+        )));
+
+        let arrived = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        let activity = world.creature.private_life.active.as_ref().unwrap();
+        assert_eq!(activity.phase, ActivityPhase::Act);
+        assert_eq!(activity.phase_started_at_ms, world.elapsed_ms);
+        assert!(!activity.payoff_reached);
+        assert_eq!(
+            movement_target(&world),
+            None,
+            "arrival must retain quiet-rest clearance"
+        );
+        assert_eq!(arrived.iter().filter(|event| matches!(event,
+            GameEvent::PrivateLifePhaseChanged { activity_id: id, from: ActivityPhase::Approach, to: ActivityPhase::Act }
+                if *id == activity_id
+        )).count(), 1);
+    }
+
+    #[test]
+    fn bottom_forage_completes_beside_the_nudged_ball_without_toy_contact() {
+        let mut world = WorldState::new(42, "Forage");
+        let mut rng = SeededRandom::new(42);
+        world.creature.needs.hunger = 0.9;
+        world
+            .aquarium
+            .toy_states
+            .get_mut(&ToyId::Ball)
+            .unwrap()
+            .position = NormalizedPosition::new(4_785, 8_085);
+        let toys_before = world.aquarium.toy_states.clone();
+        let mut saw_act = false;
+        let mut saw_recover = false;
+        let mut completed = false;
+        for _ in 0..40 {
+            let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                GameEvent::ToyContacted { .. }
+                    | GameEvent::ToyObjectResponded { .. }
+                    | GameEvent::ToyInteractionResponded { .. }
+                    | GameEvent::FoodConsumed(_)
+            )));
+            if let Some(activity) = world.creature.private_life.active.as_ref() {
+                assert_eq!(activity.kind, PrivateLifeKind::BottomForage);
+                saw_act |= activity.phase == ActivityPhase::Act;
+                saw_recover |= activity.phase == ActivityPhase::Recover;
+                if matches!(activity.phase, ActivityPhase::Act | ActivityPhase::Recover) {
+                    assert_eq!(world.creature.aquarium.destination, None);
+                    assert_eq!(
+                        movement_target(&world),
+                        None,
+                        "foraging must rest clear of every toy"
+                    );
+                }
+            }
+            if events.iter().any(|event| {
+                matches!(
+                    event,
+                    GameEvent::PrivateLifeCompleted {
+                        kind: PrivateLifeKind::BottomForage,
+                        ..
+                    }
+                )
+            }) {
+                completed = true;
+                break;
+            }
+        }
+        assert!(saw_act && saw_recover && completed);
+        assert_eq!(world.aquarium.toy_states, toys_before);
+        assert_eq!(
+            world
+                .creature
+                .private_life
+                .recent
+                .iter()
+                .filter(|activity| activity.kind == PrivateLifeKind::BottomForage)
+                .count(),
+            1
+        );
+    }
+
+    fn begin_private_toy(world: &mut WorldState, toy: ToyId, rng: &mut SeededRandom) {
+        world.creature.needs.curiosity = 0.9;
+        world.creature.traits.fussiness = 0.1;
+        step(world, &[], SIMULATION_TICK_MS, rng);
+        let activity = world.creature.private_life.active.as_mut().unwrap();
+        activity.kind = PrivateLifeKind::ToyPlay(toy);
+        activity.subject = Some(ActivitySubject::Toy(toy));
+        activity.recipe = match toy {
+            ToyId::Ball => ActivityRecipe::BallNudge,
+            ToyId::Bell => ActivityRecipe::BellStrike,
+            ToyId::Sock => ActivityRecipe::SockTug,
+        };
+    }
+
+    fn toy_head_distance(world: &WorldState, toy: ToyId) -> f32 {
+        let head = world.creature.aquarium.position;
+        let object = world.aquarium.toy_states[&toy].position;
+        let x = (head.x - object.x) as f32 * 0.00132;
+        let y = (head.y - object.y) as f32 * 0.000455;
+        x.hypot(y)
+    }
+
+    fn assert_contact_clear_of_neighbors(
+        world: &WorldState,
+        toy: ToyId,
+        position: NormalizedPosition,
+    ) {
+        let mut neighbors = world.clone();
+        neighbors.aquarium.toy_states.remove(&toy);
+        neighbors.creature.aquarium.position = position;
+        neighbors.creature.aquarium.destination = None;
+        neighbors.creature.aquarium.action = None;
+        neighbors.creature.private_life.active = None;
+        assert_eq!(
+            movement_target(&neighbors),
+            None,
+            "{toy:?} contact {position:?} overlaps a neighbor"
+        );
+    }
+
+    #[test]
+    fn toy_contact_keeps_unobstructed_targets_and_ignores_carried_neighbors() {
+        for toy in [ToyId::Ball, ToyId::Bell, ToyId::Sock] {
+            let mut world = WorldState::new(42, "Unchanged");
+            world.aquarium.toy_states.get_mut(&toy).unwrap().position =
+                NormalizedPosition::new(5_000, 5_000);
+            let mut isolated = world.clone();
+            isolated
+                .aquarium
+                .toy_states
+                .retain(|candidate, _| *candidate == toy);
+            for position in [
+                NormalizedPosition::new(0, 5_000),
+                NormalizedPosition::new(10_000, 5_000),
+                NormalizedPosition::new(5_000, 0),
+                NormalizedPosition::new(5_000, 10_000),
+                NormalizedPosition::new(1_000, 1_000),
+            ] {
+                isolated.creature.aquarium.position = position;
+                for carried in [false, true] {
+                    for (neighbor, object) in &mut world.aquarium.toy_states {
+                        if *neighbor != toy {
+                            object.carried = carried;
+                            object.position = if carried {
+                                NormalizedPosition::new(5_000, 5_000)
+                            } else {
+                                NormalizedPosition::new(0, 0)
+                            };
+                        }
+                    }
+                    world.creature.aquarium.position = position;
+                    assert_eq!(
+                        approach_position(&world, SemanticDestination::Toy(toy)),
+                        approach_position(&isolated, SemanticDestination::Toy(toy))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn neighbor_aware_toy_contacts_are_bounded_deterministic_and_on_the_intended_surface() {
+        for toy in [ToyId::Ball, ToyId::Bell, ToyId::Sock] {
+            for anchor in [
+                NormalizedPosition::new(5_000, 5_000),
+                NormalizedPosition::new(0, 0),
+                NormalizedPosition::new(10_000, 10_000),
+            ] {
+                let mut world = WorldState::new(42, "Neighbors");
+                for (candidate, object) in &mut world.aquarium.toy_states {
+                    object.position = if *candidate == toy {
+                        anchor
+                    } else {
+                        NormalizedPosition::new(anchor.x - 1_000, anchor.y).clamped()
+                    };
+                }
+                for start in [
+                    NormalizedPosition::new(0, 0),
+                    NormalizedPosition::new(10_000, 0),
+                    NormalizedPosition::new(0, 10_000),
+                    NormalizedPosition::new(10_000, 10_000),
+                    anchor,
+                ] {
+                    world.creature.aquarium.position = start;
+                    let target = approach_position(&world, SemanticDestination::Toy(toy));
+                    assert_eq!(
+                        target,
+                        approach_position(&world, SemanticDestination::Toy(toy))
+                    );
+                    if anchor == NormalizedPosition::new(5_000, 5_000) {
+                        assert!(target.is_some(), "the right surface is clear");
+                    }
+                    if let Some(target) = target {
+                        assert_eq!(target, target.clamped());
+                        assert_contact_clear_of_neighbors(&world, toy, target);
+                        let mut isolated = world.clone();
+                        isolated
+                            .aquarium
+                            .toy_states
+                            .retain(|candidate, _| *candidate == toy);
+                        isolated.creature.aquarium.position = target;
+                        let surface =
+                            approach_position(&isolated, SemanticDestination::Toy(toy)).unwrap();
+                        assert!(
+                            (target.x - surface.x).abs() + (target.y - surface.y).abs() <= 6,
+                            "candidate must remain on its own side's {toy:?} surface"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn observed_sock_approach_converges_without_holding_contact_inside_the_bell() {
+        let mut contact_positions = Vec::new();
+        for private in [false, true] {
+            let mut world = WorldState::new(42, "ClearSock");
+            let mut rng = SeededRandom::new(42);
+            // Reconstruct the authoritative layout at C8 first-five-minutes 194.283 s.
+            for (toy, position) in [
+                (ToyId::Ball, NormalizedPosition::new(4_753, 8_085)),
+                (ToyId::Bell, NormalizedPosition::new(6_650, 8_700)),
+                (ToyId::Sock, NormalizedPosition::new(7_794, 10_000)),
+            ] {
+                world.aquarium.toy_states.get_mut(&toy).unwrap().position = position;
+            }
+            world.creature.toy_preferences.insert(ToyId::Sock, 0.8);
+            if private {
+                begin_private_toy(&mut world, ToyId::Sock, &mut rng);
+            } else {
+                step(&mut world, &[PlayerEvent::Play(ToyId::Sock)], 0, &mut rng);
+            }
+            let owner = if private {
+                world.creature.private_life.active.as_ref().unwrap().id
+            } else {
+                world
+                    .creature
+                    .interaction_state
+                    .toy_interaction
+                    .as_ref()
+                    .unwrap()
+                    .id
+            };
+            world.creature.aquarium.position = NormalizedPosition::new(1_740, 8_531);
+            let initial_target =
+                approach_position(&world, SemanticDestination::Toy(ToyId::Sock)).unwrap();
+            assert_ne!(initial_target, NormalizedPosition::new(6_794, 10_000));
+            assert_contact_clear_of_neighbors(&world, ToyId::Sock, initial_target);
+            let mut act_started = None;
+            let mut payoff_at = None;
+            let mut responses = 0;
+            let mut finished = false;
+            for _ in 0..30 {
+                let before = world.creature.aquarium.position;
+                if payoff_at.is_none() {
+                    let target =
+                        approach_position(&world, SemanticDestination::Toy(ToyId::Sock)).unwrap();
+                    assert_contact_clear_of_neighbors(&world, ToyId::Sock, target);
+                }
+                let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+                if let Some(activity) = world.creature.private_life.active.as_ref()
+                    && private
+                    && activity.phase == ActivityPhase::Act
+                {
+                    if act_started.is_none() {
+                        contact_positions.push(world.creature.aquarium.position);
+                    }
+                    act_started.get_or_insert(world.elapsed_ms);
+                    assert_contact_clear_of_neighbors(
+                        &world,
+                        ToyId::Sock,
+                        world.creature.aquarium.position,
+                    );
+                }
+                for event in &events {
+                    let matched = match event {
+                        GameEvent::ToyObjectResponded {
+                            toy: ToyId::Sock,
+                            activity_id,
+                            response: ToyResponse::SockTugged,
+                        } => private && *activity_id == owner,
+                        GameEvent::ToyInteractionResponded {
+                            toy: ToyId::Sock,
+                            interaction_id,
+                            response: ToyResponse::SockTugged,
+                        } => !private && *interaction_id == owner,
+                        _ => false,
+                    };
+                    if matched {
+                        if !private {
+                            contact_positions.push(before);
+                        }
+                        responses += 1;
+                        payoff_at = Some(world.elapsed_ms);
+                        assert!(world.aquarium.toy_states[&ToyId::Sock].carried);
+                        assert_contact_clear_of_neighbors(
+                            &world,
+                            ToyId::Sock,
+                            world.creature.aquarium.position,
+                        );
+                    }
+                }
+                if payoff_at.is_none() {
+                    assert!(
+                        world.creature.aquarium.position.x >= before.x,
+                        "approach must not oscillate horizontally"
+                    );
+                    assert!(
+                        world.creature.aquarium.position.y <= before.y,
+                        "approach must converge to the clear upper surface"
+                    );
+                }
+                let completed = if private {
+                    events.iter().any(|event| matches!(event, GameEvent::PrivateLifeCompleted { activity_id, .. } if *activity_id == owner))
+                } else {
+                    payoff_at.is_some()
+                        && world.creature.interaction_state.toy_interaction.is_none()
+                };
+                if completed {
+                    if private {
+                        assert_eq!(payoff_at.unwrap() - act_started.unwrap(), 2_000);
+                        assert_eq!(world.elapsed_ms - payoff_at.unwrap(), 2_000);
+                    }
+                    assert!(!world.aquarium.toy_states[&ToyId::Sock].carried);
+                    finished = true;
+                    break;
+                }
+            }
+            assert!(
+                finished,
+                "{private}: contact must converge in bounded ticks"
+            );
+            assert_eq!(responses, 1);
+            assert_eq!(
+                world.aquarium.toy_states[&ToyId::Bell].position,
+                NormalizedPosition::new(6_650, 8_700)
+            );
+        }
+        assert_eq!(contact_positions.len(), 2);
+        assert_eq!(
+            contact_positions[0], contact_positions[1],
+            "direct and private approaches use the same physical surface"
+        );
+    }
+
+    #[test]
+    fn fully_obstructed_toy_approaches_interrupt_once_without_rewards_and_allow_later_input() {
+        for private in [false, true] {
+            let mut world = WorldState::new(42, "Blocked");
+            let mut rng = SeededRandom::new(42);
+            world
+                .aquarium
+                .toy_states
+                .retain(|toy, _| *toy != ToyId::Sock);
+            for object in world.aquarium.toy_states.values_mut() {
+                object.position = NormalizedPosition::new(5_000, 10_000);
+            }
+            world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+            if private {
+                begin_private_toy(&mut world, ToyId::Ball, &mut rng);
+            } else {
+                step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+            }
+            assert_eq!(
+                approach_position(&world, SemanticDestination::Toy(ToyId::Ball)),
+                None
+            );
+            let relationship = world.creature.relationship;
+            let mut events = Vec::new();
+            for _ in 0..4 {
+                events.extend(step(&mut world, &[], SIMULATION_TICK_MS, &mut rng));
+            }
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        GameEvent::ToyInteractionInterrupted { .. }
+                            | GameEvent::PrivateLifeInterrupted { .. }
+                    ))
+                    .count(),
+                1
+            );
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                GameEvent::ToyContacted { .. }
+                    | GameEvent::ToyPlayed { .. }
+                    | GameEvent::ToyRejected { .. }
+                    | GameEvent::ToyObjectResponded { .. }
+                    | GameEvent::ToyInteractionResponded { .. }
+            )));
+            assert_eq!(world.creature.relationship, relationship);
+            assert!(world.creature.interaction_state.toy_interaction.is_none());
+            assert!(world.creature.private_life.active.is_none());
+            assert!(world.creature.aquarium.destination.is_none());
+            assert!(world.creature.aquarium.travel_purpose.is_none());
+            assert!(
+                world
+                    .aquarium
+                    .toy_states
+                    .values()
+                    .all(|object| !object.carried && object.last_response == ToyResponse::None)
+            );
+            assert_eq!(dialogue_handoff(&world).state, DialogueHandoffState::Ready);
+
+            world
+                .aquarium
+                .toy_states
+                .get_mut(&ToyId::Bell)
+                .unwrap()
+                .position = NormalizedPosition::new(0, 0);
+            let accepted = step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+            assert!(accepted.iter().any(|event| matches!(
+                event,
+                GameEvent::ToyPlayAccepted {
+                    toy: ToyId::Ball,
+                    ..
+                }
+            )));
+            let mut payoffs = 0;
+            for _ in 0..20 {
+                let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+                payoffs += events
+                    .iter()
+                    .filter(|event| {
+                        matches!(
+                            event,
+                            GameEvent::ToyInteractionResponded {
+                                toy: ToyId::Ball,
+                                ..
+                            }
+                        )
+                    })
+                    .count();
+                if payoffs > 0 {
+                    break;
+                }
+            }
+            assert_eq!(payoffs, 1, "the later valid play remains usable");
+        }
+    }
+
+    #[test]
+    fn obstructed_relationship_toy_travel_interrupts_its_owner_once_and_allows_later_input() {
+        for familiar_place in [true, false] {
+            let mut world = WorldState::new(42, "BlockedRelationship");
+            let mut rng = SeededRandom::new(42);
+            let destination = SemanticDestination::Toy(ToyId::Ball);
+            world
+                .aquarium
+                .toy_states
+                .retain(|toy, _| *toy != ToyId::Sock);
+            for object in world.aquarium.toy_states.values_mut() {
+                object.position = NormalizedPosition::new(5_000, 10_000);
+            }
+            world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+            let (motif, trigger) = if familiar_place {
+                world.creature.idle_life.visit_evidence.push(VisitEvidence {
+                    hour_start: 0,
+                    destination,
+                    visits: 2,
+                    last_active_day: 1,
+                });
+                world.set_routine(Routine {
+                    hour_start: 0,
+                    destination,
+                    strength: 2,
+                });
+                (
+                    RelationshipMotifKey::FamiliarPlace(destination),
+                    RelationshipTrigger::RoutineWindow {
+                        hour_start: 0,
+                        destination,
+                    },
+                )
+            } else {
+                world.remember(
+                    MemoryKind::PlayedWith { toy: ToyId::Ball },
+                    &[Concept::Toy],
+                    0.6,
+                    0.7,
+                );
+                // Quiet callbacks require aged memory evidence. The routine-triggered
+                // FamiliarPlace case above already has its required visit/routine evidence.
+                world.elapsed_ms = relationship::RELATIONSHIP_EVIDENCE_MATURITY_MS;
+                (
+                    RelationshipMotifKey::SharedToy(ToyId::Ball),
+                    RelationshipTrigger::QuietMoment,
+                )
+            };
+            assert_eq!(
+                select_relationship_beat(&world, trigger).map(|beat| beat.motif),
+                Some(motif),
+                "fixture must make {motif:?} eligible through {trigger:?}"
+            );
+            let started = trigger_relationship_beat(&mut world, trigger);
+            assert!(started.iter().any(|event| matches!(event, GameEvent::RelationshipBeatStarted { motif: started_motif, .. } if *started_motif == motif)), "{motif:?} must start through the public trigger: {started:?}");
+            assert_eq!(approach_position(&world, destination), None);
+            let relationship_before = world.creature.relationship;
+            let mut events = Vec::new();
+            let mut interrupted = false;
+            for _ in 0..6 {
+                let tick = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+                interrupted |= tick.iter().any(|event| matches!(event, GameEvent::RelationshipBeatInterrupted(interrupted_motif) if *interrupted_motif == motif));
+                if interrupted {
+                    assert!(world.creature.relationship_expression.active.is_none());
+                    assert!(world.creature.aquarium.destination.is_none());
+                    assert!(world.creature.aquarium.travel_purpose.is_none());
+                    assert_eq!(dialogue_handoff(&world).state, DialogueHandoffState::Ready);
+                }
+                events.extend(tick);
+            }
+            assert_eq!(events.iter().filter(|event| matches!(event, GameEvent::RelationshipBeatInterrupted(interrupted_motif) if *interrupted_motif == motif)).count(), 1);
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                GameEvent::ToyContacted { .. }
+                    | GameEvent::ToyPlayed { .. }
+                    | GameEvent::ToyRejected { .. }
+                    | GameEvent::ToyObjectResponded { .. }
+                    | GameEvent::ToyInteractionResponded { .. }
+                    | GameEvent::RelationshipBeatCompleted(_)
+                    | GameEvent::RelationshipBeatPhaseChanged {
+                        to: RelationshipBeatPhase::Act,
+                        ..
+                    }
+            )));
+            assert_eq!(world.creature.relationship, relationship_before);
+            assert!(world.creature.private_life.active.is_none());
+            assert!(world.creature.interaction_state.toy_interaction.is_none());
+            assert!(
+                world
+                    .aquarium
+                    .toy_states
+                    .values()
+                    .all(|object| !object.carried && object.last_response == ToyResponse::None)
+            );
+
+            world
+                .aquarium
+                .toy_states
+                .get_mut(&ToyId::Bell)
+                .unwrap()
+                .position = NormalizedPosition::new(0, 0);
+            let accepted = step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+            assert!(accepted.iter().any(|event| matches!(
+                event,
+                GameEvent::ToyPlayAccepted {
+                    toy: ToyId::Ball,
+                    ..
+                }
+            )));
+            let mut payoffs = 0;
+            for _ in 0..20 {
+                let tick = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+                payoffs += tick
+                    .iter()
+                    .filter(|event| {
+                        matches!(
+                            event,
+                            GameEvent::ToyInteractionResponded {
+                                toy: ToyId::Ball,
+                                ..
+                            }
+                        )
+                    })
+                    .count();
+                if payoffs > 0 {
+                    break;
+                }
+            }
+            assert_eq!(
+                payoffs, 1,
+                "an obstructed relationship must not suppress later play"
+            );
+        }
+    }
+
+    #[test]
+    fn toy_surface_contact_handles_all_approach_sides_and_tank_edges() {
+        for (anchor, start) in [
+            ((5_000, 5_000), (1_000, 5_000)),
+            ((5_000, 5_000), (9_000, 5_000)),
+            ((5_000, 5_000), (5_000, 0)),
+            ((5_000, 5_000), (5_000, 10_000)),
+            ((5_000, 5_000), (5_000, 5_000)),
+            ((0, 0), (0, 0)),
+            ((10_000, 10_000), (10_000, 10_000)),
+        ] {
+            let mut world = WorldState::new(201, "Surface");
+            let mut rng = SeededRandom::new(201);
+            let anchor = NormalizedPosition::new(anchor.0, anchor.1);
+            world
+                .aquarium
+                .toy_states
+                .retain(|toy, _| *toy == ToyId::Ball);
+            world
+                .aquarium
+                .toy_states
+                .get_mut(&ToyId::Ball)
+                .unwrap()
+                .position = anchor;
+            world.creature.aquarium.position = NormalizedPosition::new(start.0, start.1);
+            world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+            let receipt = step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+            assert!(
+                !receipt
+                    .iter()
+                    .any(|event| matches!(event, GameEvent::ToyContacted { .. }))
+            );
+            let mut contacts = 0;
+            // The closest vertical ball contact is 2_200 * 0.000455 = 1.001
+            // world units. Actual rendered surface bounds are checked in beastie-game.
+            let minimum_clearance = 0.98;
+            let started_clear = toy_head_distance(&world, ToyId::Ball) > minimum_clearance;
+            for tick in 0..20 {
+                let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+                assert_eq!(world.aquarium.toy_states[&ToyId::Ball].position, anchor);
+                if started_clear {
+                    assert!(toy_head_distance(&world, ToyId::Ball) > minimum_clearance);
+                }
+                contacts += events
+                    .iter()
+                    .filter(|event| matches!(event, GameEvent::ToyContacted { .. }))
+                    .count();
+                if contacts > 0 {
+                    assert!(toy_head_distance(&world, ToyId::Ball) > minimum_clearance);
+                    break;
+                }
+                assert!(tick < 19, "surface contact must finish from {start:?}");
+            }
+            assert_eq!(contacts, 1);
+            assert_eq!(
+                world.creature.aquarium.position,
+                world.creature.aquarium.position.clamped()
+            );
+        }
+    }
+
+    #[test]
+    fn private_toy_contact_and_quiet_rest_keep_separation_and_nudge_away() {
+        for toy in [ToyId::Ball, ToyId::Bell] {
+            for side in [-1, 1] {
+                let mut world = WorldState::new(212, "Space");
+                let mut rng = SeededRandom::new(212);
+                world
+                    .aquarium
+                    .toy_states
+                    .retain(|candidate, _| *candidate == toy);
+                world.aquarium.toy_states.get_mut(&toy).unwrap().position =
+                    NormalizedPosition::new(5_000, 6_500);
+                world.creature.aquarium.position =
+                    NormalizedPosition::new(5_000 + side * 3_000, 6_500);
+                begin_private_toy(&mut world, toy, &mut rng);
+                let mut responses = 0;
+                let mut completed = false;
+                for _ in 0..50 {
+                    let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+                    assert!(
+                        toy_head_distance(&world, toy) > 1.1,
+                        "{toy:?} must not occupy the head"
+                    );
+                    if events
+                        .iter()
+                        .any(|event| matches!(event, GameEvent::ToyObjectResponded { .. }))
+                    {
+                        responses += 1;
+                        if toy == ToyId::Ball {
+                            assert_eq!(world.aquarium.toy_states[&toy].velocity.x.signum(), -side);
+                        }
+                    }
+                    if events
+                        .iter()
+                        .any(|event| matches!(event, GameEvent::PrivateLifeCompleted { .. }))
+                    {
+                        completed = true;
+                        world.creature.idle_life.settled_until_ms = world.elapsed_ms + 60_000;
+                    }
+                }
+                assert!(completed);
+                assert_eq!(responses, 1);
+                assert!(!world.aquarium.toy_states[&toy].carried);
+            }
+        }
+    }
+
+    #[test]
+    fn sock_release_starts_at_held_anchor_and_falls_with_exact_saved_continuation() {
+        let mut world = WorldState::new(212, "Drop");
+        let mut rng = SeededRandom::new(212);
+        world
+            .aquarium
+            .toy_states
+            .retain(|toy, _| *toy == ToyId::Sock);
+        world
+            .aquarium
+            .toy_states
+            .get_mut(&ToyId::Sock)
+            .unwrap()
+            .position = NormalizedPosition::new(5_000, 9_000);
+        world.creature.aquarium.position = NormalizedPosition::new(5_000, 3_000);
+        begin_private_toy(&mut world, ToyId::Sock, &mut rng);
+        let mut release = None;
+        for _ in 0..30 {
+            let before = world.aquarium.toy_states[&ToyId::Sock].clone();
+            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+            let sock = &world.aquarium.toy_states[&ToyId::Sock];
+            if before.carried && !sock.carried {
+                assert_eq!(
+                    sock.position, before.position,
+                    "release cannot teleport the held sock"
+                );
+                assert_eq!(
+                    sock.velocity,
+                    NormalizedVelocity {
+                        x: 0,
+                        y: SOCK_RELEASE_SPEED
+                    }
+                );
+                release = Some(sock.position);
+                break;
+            }
+        }
+        let release = release.expect("the completed tug releases its sock");
+        let encoded = SaveGame::capture(&world, &rng).to_json().unwrap();
+        let (mut resumed, mut resumed_rng) = SaveGame::from_json(&encoded).unwrap().resume();
+        let mut individual = Vec::new();
+        for _ in 0..8 {
+            individual.extend(step(&mut world, &[], SIMULATION_TICK_MS, &mut rng));
+        }
+        let batched = step(&mut resumed, &[], SIMULATION_TICK_MS * 8, &mut resumed_rng);
+        assert_eq!(batched, individual);
+        assert_eq!(resumed, world);
+        assert!(!world.aquarium.toy_states[&ToyId::Sock].carried);
+        assert!(world.aquarium.toy_states[&ToyId::Sock].position.y > release.y);
+        assert!(toy_head_distance(&world, ToyId::Sock) > 0.9);
+    }
+
+    #[test]
     fn accepted_toy_mutates_only_once_at_physical_contact() {
         let mut world = WorldState::new(201, "Contact");
         let mut rng = SeededRandom::new(201);
         world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
-        world.creature.aquarium.position = toy_position(&world, ToyId::Ball);
+        world.creature.aquarium.position =
+            approach_position(&world, SemanticDestination::Toy(ToyId::Ball)).unwrap();
         let curiosity = world.creature.needs.curiosity;
         let relationship = world.creature.relationship;
 
@@ -2638,7 +3647,9 @@ mod tests {
             .expect("accepted receipt");
         assert!(!receipt.iter().any(|event| matches!(
             event,
-            GameEvent::ToyContacted { .. } | GameEvent::ToyPlayed { .. }
+            GameEvent::ToyContacted { .. }
+                | GameEvent::ToyPlayed { .. }
+                | GameEvent::ToyInteractionResponded { .. }
         )));
         assert_eq!(world.creature.needs.curiosity, curiosity);
         assert_eq!(world.creature.relationship, relationship);
@@ -2675,8 +3686,215 @@ mod tests {
             event,
             GameEvent::ToyContacted { interaction_id: candidate, .. }
                 | GameEvent::ToyPlayed { interaction_id: candidate, .. }
+                | GameEvent::ToyInteractionResponded { interaction_id: candidate, .. }
                 if *candidate == interaction_id
         )));
+    }
+
+    #[test]
+    fn direct_toy_contact_commits_each_physical_response_once_with_exact_identity() {
+        for (toy, start) in [
+            (ToyId::Ball, (1_000, 5_000)),
+            (ToyId::Ball, (9_000, 5_000)),
+            (ToyId::Ball, (5_000, 1_000)),
+            (ToyId::Ball, (5_000, 9_000)),
+            (ToyId::Bell, (1_000, 5_000)),
+            (ToyId::Sock, (1_000, 5_000)),
+        ] {
+            let mut world = WorldState::new(201, "Contact");
+            let mut rng = SeededRandom::new(201);
+            let anchor = NormalizedPosition::new(5_000, 5_000);
+            world
+                .aquarium
+                .toy_states
+                .retain(|candidate, _| *candidate == toy);
+            let object = world.aquarium.toy_states.get_mut(&toy).unwrap();
+            object.position = anchor;
+            // A prior private activity may have the same numeric ID. It must
+            // neither suppress this direct contact nor be reported as its owner.
+            object.last_contact_activity = std::num::NonZeroU64::new(1);
+            let before = object.clone();
+            world.creature.aquarium.position = NormalizedPosition::new(start.0, start.1);
+            world.creature.toy_preferences.insert(toy, 0.8);
+            world.creature.idle_life.settled_until_ms = 60_000;
+            let receipt = step(&mut world, &[PlayerEvent::Play(toy)], 0, &mut rng);
+            let interaction_id = receipt
+                .iter()
+                .find_map(|event| match event {
+                    GameEvent::ToyPlayAccepted { interaction_id, .. } => Some(*interaction_id),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(world.aquarium.toy_states[&toy], before);
+            assert!(!receipt.iter().any(|event| matches!(
+                event,
+                GameEvent::ToyInteractionResponded { .. } | GameEvent::ToyObjectResponded { .. }
+            )));
+            let response = match toy {
+                ToyId::Ball => ToyResponse::BallNudged,
+                ToyId::Bell => ToyResponse::BellStruck,
+                ToyId::Sock => ToyResponse::SockTugged,
+            };
+            let expected = GameEvent::ToyInteractionResponded {
+                toy,
+                interaction_id,
+                response,
+            };
+            let mut contacted = false;
+            for _ in 0..20 {
+                let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+                if events.contains(&GameEvent::ToyContacted {
+                    toy,
+                    interaction_id,
+                    origin: ToyOrigin::Player,
+                }) {
+                    assert_eq!(events.iter().filter(|event| **event == expected).count(), 1);
+                    assert!(
+                        !events
+                            .iter()
+                            .any(|event| matches!(event, GameEvent::ToyObjectResponded { .. }))
+                    );
+                    contacted = true;
+                    break;
+                }
+                assert!(!events.contains(&expected));
+                assert_eq!(
+                    world.aquarium.toy_states[&toy], before,
+                    "{toy:?} changed before contact"
+                );
+            }
+            assert!(contacted, "{toy:?} must reach contact");
+            let object = &world.aquarium.toy_states[&toy];
+            assert_eq!(object.last_contact_activity, Some(interaction_id));
+            assert_eq!(object.last_response, response);
+            match toy {
+                ToyId::Ball => {
+                    assert_eq!(
+                        object.position, anchor,
+                        "new impulse begins on the following tick"
+                    );
+                    assert_eq!(object.velocity.x.signum(), (anchor.x - start.0).signum());
+                    assert_eq!(object.velocity.y.signum(), (anchor.y - start.1).signum());
+                    assert_ne!(object.velocity, NormalizedVelocity::default());
+                }
+                ToyId::Bell => {
+                    assert_eq!(object.position, anchor);
+                    assert_eq!(object.velocity, NormalizedVelocity::default());
+                }
+                ToyId::Sock => {
+                    assert!(object.carried);
+                    assert_eq!(
+                        object.position,
+                        held_toy_position(world.creature.aquarium.position)
+                    );
+                }
+            }
+            let encoded = SaveGame::capture(&world, &rng).to_json().unwrap();
+            let (mut resumed, mut resumed_rng) = SaveGame::from_json(&encoded).unwrap().resume();
+            assert_eq!(resumed, world);
+            let mut individual = Vec::new();
+            for _ in 0..5 {
+                individual.extend(step(&mut world, &[], SIMULATION_TICK_MS, &mut rng));
+            }
+            let batched = step(&mut resumed, &[], SIMULATION_TICK_MS * 5, &mut resumed_rng);
+            assert_eq!(batched, individual);
+            assert_eq!(resumed, world);
+            assert!(
+                !batched.contains(&expected),
+                "saved contact cannot respond twice"
+            );
+            assert!(!world.aquarium.toy_states[&toy].carried);
+        }
+    }
+
+    #[test]
+    fn direct_sock_recovery_survives_talk_and_releases_after_save_without_a_jump() {
+        let mut world = WorldState::new(201, "Hold");
+        let mut rng = SeededRandom::new(201);
+        world.creature.toy_preferences.insert(ToyId::Sock, 0.8);
+        world.creature.aquarium.position =
+            approach_position(&world, SemanticDestination::Toy(ToyId::Sock)).unwrap();
+        step(
+            &mut world,
+            &[PlayerEvent::Play(ToyId::Sock)],
+            SIMULATION_TICK_MS,
+            &mut rng,
+        );
+        let held = world.aquarium.toy_states[&ToyId::Sock].clone();
+        assert!(held.carried);
+        let owner = world.creature.interaction_state.toy_interaction.clone();
+        let talk = step(&mut world, &[PlayerEvent::Talk], 0, &mut rng);
+        assert_eq!(world.aquarium.toy_states[&ToyId::Sock], held);
+        assert_eq!(world.creature.interaction_state.toy_interaction, owner);
+        assert!(!talk.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyInteractionInterrupted { .. } | GameEvent::ToyInteractionResponded { .. }
+        )));
+        let encoded = SaveGame::capture(&world, &rng).to_json().unwrap();
+        let (mut resumed, mut resumed_rng) = SaveGame::from_json(&encoded).unwrap().resume();
+        let next = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        assert_eq!(
+            step(&mut resumed, &[], SIMULATION_TICK_MS, &mut resumed_rng),
+            next
+        );
+        assert_eq!(resumed, world);
+        let released = &world.aquarium.toy_states[&ToyId::Sock];
+        assert!(!released.carried);
+        assert_eq!(released.position, held.position);
+        assert_eq!(
+            released.velocity,
+            NormalizedVelocity {
+                x: 0,
+                y: SOCK_RELEASE_SPEED
+            }
+        );
+        assert!(
+            !next
+                .iter()
+                .any(|event| matches!(event, GameEvent::ToyInteractionResponded { .. }))
+        );
+        step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        assert_eq!(
+            world.aquarium.toy_states[&ToyId::Sock].position.y,
+            (held.position.y + SOCK_RELEASE_SPEED).min(10_000)
+        );
+    }
+
+    #[test]
+    fn direct_sock_replacement_and_offline_recovery_never_strand_or_replay_the_hold() {
+        let mut world = WorldState::new(201, "Release");
+        let mut rng = SeededRandom::new(201);
+        world.creature.toy_preferences.insert(ToyId::Sock, 0.8);
+        world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        world.creature.aquarium.position =
+            approach_position(&world, SemanticDestination::Toy(ToyId::Sock)).unwrap();
+        step(
+            &mut world,
+            &[PlayerEvent::Play(ToyId::Sock)],
+            SIMULATION_TICK_MS,
+            &mut rng,
+        );
+        assert!(world.aquarium.toy_states[&ToyId::Sock].carried);
+        let held = world.aquarium.toy_states[&ToyId::Sock].clone();
+        let mut offline = world.clone();
+        let mut offline_rng = rng;
+        step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        let released = &world.aquarium.toy_states[&ToyId::Sock];
+        assert!(!released.carried);
+        assert_eq!(released.position, held.position);
+        assert_eq!(released.last_contact_activity, held.last_contact_activity);
+        let progress = advance_offline(&mut offline, SIMULATION_TICK_MS, &mut offline_rng);
+        assert!(!offline.aquarium.toy_states[&ToyId::Sock].carried);
+        assert_eq!(offline.aquarium.toy_states[&ToyId::Sock], *released);
+        assert!(!progress.events.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyInteractionResponded { .. }
+                | GameEvent::ToyContacted { .. }
+                | GameEvent::ToyPlayed { .. }
+        )));
+        let after = offline.aquarium.toy_states[&ToyId::Sock].clone();
+        advance_offline(&mut offline, SIMULATION_TICK_MS, &mut offline_rng);
+        assert_eq!(offline.aquarium.toy_states[&ToyId::Sock], after);
     }
 
     #[test]
@@ -2684,7 +3902,8 @@ mod tests {
         let mut world = WorldState::new(202, "Refusal");
         let mut rng = SeededRandom::new(202);
         world.creature.toy_preferences.insert(ToyId::Sock, -1.0);
-        world.creature.aquarium.position = toy_position(&world, ToyId::Sock);
+        world.creature.aquarium.position =
+            approach_position(&world, SemanticDestination::Toy(ToyId::Sock)).unwrap();
         let relationship = world.creature.relationship;
 
         let first = step(
@@ -2702,7 +3921,9 @@ mod tests {
         )));
         assert!(!first.iter().any(|event| matches!(
             event,
-            GameEvent::ToyContacted { .. } | GameEvent::ToyPlayed { .. }
+            GameEvent::ToyContacted { .. }
+                | GameEvent::ToyPlayed { .. }
+                | GameEvent::ToyInteractionResponded { .. }
         )));
         assert_eq!(world.creature.relationship, relationship);
         assert!(
@@ -2773,7 +3994,9 @@ mod tests {
         }));
         assert!(!interrupted.iter().any(|event| matches!(
             event,
-            GameEvent::ToyPlayed { interaction_id: candidate, .. } if *candidate == interaction_id
+            GameEvent::ToyPlayed { interaction_id: candidate, .. }
+                | GameEvent::ToyInteractionResponded { interaction_id: candidate, .. }
+                if *candidate == interaction_id
         )));
         assert!(
             !world
@@ -2798,7 +4021,8 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        world.creature.aquarium.position = toy_position(&world, ToyId::Bell);
+        world.creature.aquarium.position =
+            approach_position(&world, SemanticDestination::Toy(ToyId::Bell)).unwrap();
         let replacement = step(
             &mut world,
             &[PlayerEvent::Play(ToyId::Bell)],
@@ -2830,7 +4054,8 @@ mod tests {
     fn autonomous_toy_arrival_has_no_player_social_reward() {
         let mut world = WorldState::new(205, "Autonomous");
         let mut rng = SeededRandom::new(205);
-        world.creature.aquarium.position = toy_position(&world, ToyId::Bell);
+        world.creature.aquarium.position =
+            approach_position(&world, SemanticDestination::Toy(ToyId::Bell)).unwrap();
         world.creature.aquarium.destination = Some(SemanticDestination::Toy(ToyId::Bell));
         let interaction_id = std::num::NonZeroU64::new(1).unwrap();
         world.creature.aquarium.travel_purpose =
@@ -2880,6 +4105,13 @@ mod tests {
         let mut rng = SeededRandom::new(206);
         world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
         step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        let interaction_id = world
+            .creature
+            .interaction_state
+            .toy_interaction
+            .as_ref()
+            .unwrap()
+            .id;
         let json = SaveGame::capture(&world, &rng).to_json().unwrap();
 
         let (zero_world, _) = SaveGame::from_json(&json).unwrap().resume();
@@ -2905,7 +4137,17 @@ mod tests {
             GameEvent::ToyPlayAccepted { .. }
                 | GameEvent::ToyContacted { .. }
                 | GameEvent::ToyPlayed { .. }
+                | GameEvent::ToyInteractionResponded { .. }
         )));
+        assert_eq!(
+            resumed.aquarium.toy_states[&ToyId::Ball].last_response,
+            ToyResponse::BallNudged
+        );
+        assert_eq!(
+            resumed.aquarium.toy_states[&ToyId::Ball].last_contact_activity,
+            Some(interaction_id)
+        );
+        let responded = resumed.aquarium.toy_states[&ToyId::Ball].clone();
         assert_eq!(
             resumed
                 .creature
@@ -2918,8 +4160,66 @@ mod tests {
         let resumed_json = SaveGame::capture(&resumed, &resumed_rng).to_json().unwrap();
         let (mut again, mut again_rng) = SaveGame::from_json(&resumed_json).unwrap().resume();
         advance_offline(&mut again, SIMULATION_TICK_MS, &mut again_rng);
+        assert_eq!(again.aquarium.toy_states[&ToyId::Ball], responded);
         assert_eq!(
             again
+                .creature
+                .memories
+                .iter()
+                .filter(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Ball }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn offline_pending_toy_finishes_recovery_before_the_player_return_greeting() {
+        let mut world = WorldState::new(206, "Welcome");
+        let mut rng = SeededRandom::new(206);
+        world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        assert_eq!(
+            world
+                .creature
+                .interaction_state
+                .toy_interaction
+                .as_ref()
+                .unwrap()
+                .phase,
+            ToyInteractionPhase::Approach
+        );
+
+        let progress = advance_offline(&mut world, SIMULATION_TICK_MS, &mut rng);
+        assert!(world.creature.interaction_state.toy_interaction.is_none());
+        assert!(progress.events.iter().any(|event| matches!(
+            event,
+            GameEvent::RelationshipBeatStarted {
+                motif: RelationshipMotifKey::PlayerReturns,
+                ..
+            }
+        )));
+        assert_eq!(
+            world
+                .creature
+                .relationship_expression
+                .active
+                .as_ref()
+                .unwrap()
+                .motif,
+            RelationshipMotifKey::PlayerReturns
+        );
+        assert!(!progress.events.iter().any(|event| matches!(
+            event,
+            GameEvent::ToyContacted { .. }
+                | GameEvent::ToyPlayed { .. }
+                | GameEvent::ToyInteractionResponded { .. }
+        )));
+        let responded = world.aquarium.toy_states[&ToyId::Ball].clone();
+        assert_eq!(responded.last_response, ToyResponse::BallNudged);
+        advance_offline(&mut world, SIMULATION_TICK_MS, &mut rng);
+        assert_eq!(world.aquarium.toy_states[&ToyId::Ball], responded);
+        assert_eq!(
+            world
                 .creature
                 .memories
                 .iter()
@@ -3513,7 +4813,8 @@ mod tests {
         );
         assert_ne!(newly_selected.evidence, stored_context.evidence);
 
-        world.creature.aquarium.position = toy_position(&world, ToyId::Ball);
+        world.creature.aquarium.position =
+            approach_position(&world, SemanticDestination::Toy(ToyId::Ball)).unwrap();
         let json = SaveGame::capture(&world, &rng).to_json().unwrap();
         let (mut resumed, mut resumed_rng) = SaveGame::from_json(&json).unwrap().resume();
         assert_eq!(

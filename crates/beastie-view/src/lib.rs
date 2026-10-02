@@ -12,6 +12,7 @@ use beastie_core::{
 };
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
+use unicode_segmentation::UnicodeSegmentation;
 
 pub const LOGICAL_WIDTH: i32 = 320;
 pub const LOGICAL_HEIGHT: i32 = 180;
@@ -22,8 +23,13 @@ pub const CREATURE_HIT_HEIGHT: i32 = 40;
 pub const SPEECH_LIFETIME_MS: u64 = 8_000;
 pub const SPEECH_RELEASE_MS: u64 = 500;
 pub const CUE_QUEUE_LIMIT: usize = 8;
+const SPEECH_PANEL_WIDTH: i32 = 140;
+const SPEECH_TEXT_WIDTH: i32 = SPEECH_PANEL_WIDTH - 18;
+const SPEECH_MAX_LINES: usize = 5;
 
+pub mod typography;
 mod ui_art;
+use typography::{line_height, typography};
 pub use ui_art::TextRole;
 use ui_art::*;
 
@@ -93,6 +99,7 @@ pub enum UiAction {
     CycleSpeechVolume,
     ToggleVoice,
     ToggleSubtitles,
+    ChangeSpeechPage(i8),
     ToggleMicrophone,
     /// Starts push-to-talk on press. The shell ends capture on release or focus loss.
     PushToTalk,
@@ -108,6 +115,7 @@ pub enum UiAction {
     ConfirmReset,
     ToggleTranscript,
     ExportTranscript,
+    DismissStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +149,8 @@ pub enum UiMode {
     #[default]
     Compose,
     Context(UiTarget),
+    /// A live, qualitative reading of an actual aquarium inhabitant or object.
+    Inspect(UiTarget),
     FoodChoice,
     FoodDrop(FoodId),
     ToyChoice,
@@ -195,6 +205,7 @@ pub enum SemanticOwner {
     StandaloneRelationship(RelationshipMotifKey),
     ActionRelationship(u64),
     PrivateLife(NonZeroU64),
+    ToyInteraction(NonZeroU64),
     DirectOutcome,
 }
 
@@ -205,7 +216,7 @@ impl SemanticOwner {
             Self::StandaloneRelationship(_) => 1,
             Self::ActionRelationship(_) => 2,
             Self::PrivateLife(_) => 2,
-            Self::DirectOutcome => 3,
+            Self::ToyInteraction(_) | Self::DirectOutcome => 3,
         }
     }
 }
@@ -246,7 +257,14 @@ pub struct ViewState {
     pub focused_region: Option<String>,
     /// Stable [`HitRegion::id`] beneath the pointer.
     pub hovered_region: Option<String>,
+    #[serde(default)]
+    pub pressed_region: Option<String>,
+    #[serde(default)]
+    pub pressed_until_ms: u64,
     pub text_buffer: String,
+    /// Session-only select-all state for the active editable value.
+    #[serde(default)]
+    pub text_selected: bool,
     /// Explicit editing engagement, separate from the default keyboard input destination.
     #[serde(default)]
     pub compose_engaged: bool,
@@ -261,6 +279,9 @@ pub struct ViewState {
     /// Full utterance keeps the caption bounds steady during progressive text reveal.
     #[serde(default)]
     pub speech_layout_text: Option<String>,
+    /// Page of the current utterance only; a replacement caption starts at zero.
+    #[serde(default)]
+    pub speech_page: usize,
     pub speech_expires_at_ms: Option<u64>,
     #[serde(default)]
     pub cue_queue: Vec<PresentationCue>,
@@ -308,6 +329,8 @@ pub struct ViewState {
     pub status_expires_at_ms: Option<u64>,
     #[serde(default)]
     pub transcript_status: Option<String>,
+    #[serde(default)]
+    pub dismissed_microphone_notice: Option<MicrophoneState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -343,13 +366,17 @@ impl Default for ViewState {
             settings_page: 0,
             focused_region: Some("compose/input".to_owned()),
             hovered_region: None,
+            pressed_region: None,
+            pressed_until_ms: 0,
             text_buffer: String::new(),
+            text_selected: false,
             compose_engaged: false,
             renaming_with_osk: false,
             care_guidance_dismissed: false,
             pending: false,
             speech: None,
             speech_layout_text: None,
+            speech_page: 0,
             speech_expires_at_ms: None,
             cue_queue: Vec::new(),
             text_scale: default_text_scale(),
@@ -373,6 +400,7 @@ impl Default for ViewState {
             status_message: None,
             status_expires_at_ms: None,
             transcript_status: None,
+            dismissed_microphone_notice: None,
         }
     }
 }
@@ -381,23 +409,57 @@ impl ViewState {
     pub fn show_speech(&mut self, speech: String, now_ms: u64) {
         self.speech_layout_text = Some(speech.clone());
         self.speech = Some(speech);
+        self.speech_page = 0;
         self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_LIFETIME_MS));
+    }
+
+    #[must_use]
+    pub fn has_speech_pages(&self) -> bool {
+        self.speech_layout_text
+            .as_deref()
+            .or(self.speech.as_deref())
+            .is_some_and(|speech| speech_pages(speech).len() > 1)
+    }
+
+    pub fn change_speech_page(&mut self, delta: i8, now_ms: u64) {
+        let Some(speech) = self.speech.as_deref() else {
+            return;
+        };
+        let layout = self.speech_layout_text.as_deref().unwrap_or(speech);
+        let pages = speech_pages(layout);
+        let revealed = speech_revealed_bytes(layout, speech);
+        let available = speech_available_page(&pages, revealed);
+        let next = self
+            .speech_page
+            .saturating_add_signed(isize::from(delta))
+            .min(available);
+        if next != self.speech_page {
+            self.speech_page = next;
+            self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_LIFETIME_MS));
+            if self.focused_region.as_deref() == Some("speech/next") && next == available {
+                self.focused_region = Some("speech/back".to_owned());
+            } else if self.focused_region.as_deref() == Some("speech/back") && next == 0 {
+                self.focused_region = Some("speech/next".to_owned());
+            }
+        }
     }
 
     pub fn clear_speech(&mut self) {
         self.speech = None;
         self.speech_layout_text = None;
+        self.speech_page = 0;
         self.speech_expires_at_ms = None;
         if self
             .focused_region
             .as_deref()
-            .is_some_and(|region| region.starts_with("reaction/"))
+            .is_some_and(|region| region.starts_with("reaction/") || region.starts_with("speech/"))
         {
             self.focused_region = Some("compose/input".to_owned());
         }
     }
 
     pub fn show_status(&mut self, status: impl Into<String>, now_ms: u64, duration_ms: u64) {
+        self.dismissed_microphone_notice = None;
         self.status_message = Some(status.into());
         self.status_expires_at_ms = Some(now_ms.saturating_add(duration_ms.max(1)));
     }
@@ -405,6 +467,16 @@ impl ViewState {
     pub fn clear_status(&mut self) {
         self.status_message = None;
         self.status_expires_at_ms = None;
+    }
+
+    pub fn dismiss_status(&mut self) {
+        self.clear_status();
+        self.transcript_status = None;
+        self.dismissed_microphone_notice = matches!(
+            self.microphone_state,
+            MicrophoneState::Unavailable | MicrophoneState::Error
+        )
+        .then_some(self.microphone_state);
     }
 
     /// Projects an authoritative event batch and returns its owned audio commands.
@@ -444,6 +516,25 @@ impl ViewState {
                 | GameEvent::PrivateLifeInterrupted { activity_id, .. } => {
                     self.cancel_owner(SemanticOwner::PrivateLife(*activity_id));
                 }
+                GameEvent::ToyInteractionResponded {
+                    interaction_id,
+                    response,
+                    ..
+                } if *response != ToyResponse::None => {
+                    let owner = SemanticOwner::ToyInteraction(*interaction_id);
+                    self.cue_queue.retain(|cue| cue.owner != owner);
+                    if self.cue_queue.len() < CUE_QUEUE_LIMIT {
+                        self.cue_queue.push(PresentationCue {
+                            owner,
+                            channel: PresentationChannel::Physical,
+                            kind: toy_response_cue(*response),
+                            starts_at_ms: now_ms,
+                            expires_at_ms: now_ms.saturating_add(
+                                private_life_phase_duration_for_response(*response),
+                            ),
+                        });
+                    }
+                }
                 _ => {}
             }
             let cue = cue_for_event(event);
@@ -455,6 +546,23 @@ impl ViewState {
     }
 
     pub fn expire(&mut self, now_ms: u64) {
+        if self.dismissed_microphone_notice != Some(self.microphone_state) {
+            self.dismissed_microphone_notice = None;
+        }
+        if self.speech.is_some() && speech_obstructed(self.mode) {
+            // Only caption reading time pauses. The simulation, audio and owned
+            // progressive reveal continue while the water is occupied by a modal.
+            self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_LIFETIME_MS));
+        }
+        if let (Some(speech), Some(layout)) = (&self.speech, &self.speech_layout_text) {
+            // Reading time starts after reveal completes and the final page is reached.
+            // Earlier pages remain available without becoming a conversation history.
+            if speech_revealed_bytes(layout, speech) < layout.len()
+                || self.speech_page.saturating_add(1) < speech_pages(layout).len()
+            {
+                self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_LIFETIME_MS));
+            }
+        }
         if self
             .speech_expires_at_ms
             .is_some_and(|expires| now_ms >= expires)
@@ -511,7 +619,9 @@ impl ViewState {
         }
         let starts_at_ms = self
             .cue_queue
-            .last()
+            .iter()
+            .rev()
+            .find(|cue| cue.channel == PresentationChannel::CreatureExpression)
             .map_or(now_ms, |cue| cue.expires_at_ms.max(now_ms));
         self.cue_queue.push(PresentationCue {
             owner,
@@ -534,7 +644,11 @@ impl ViewState {
     fn active_cue_timing(&self, now_ms: u64) -> Option<(PresentationCueKind, u64)> {
         self.cue_queue
             .iter()
-            .find(|cue| now_ms >= cue.starts_at_ms && now_ms < cue.expires_at_ms)
+            .find(|cue| {
+                cue.channel == PresentationChannel::CreatureExpression
+                    && now_ms >= cue.starts_at_ms
+                    && now_ms < cue.expires_at_ms
+            })
             .map(|cue| (cue.kind, now_ms.saturating_sub(cue.starts_at_ms)))
     }
 }
@@ -569,6 +683,9 @@ pub struct RectCommand {
     /// Outlines are one UI layout unit wide.
     #[serde(default)]
     pub outline: bool,
+    /// Radius in logical layout units. Picking keeps the full comfortable rectangle.
+    #[serde(default)]
+    pub corner_radius: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -578,6 +695,12 @@ pub struct TextCommand {
     /// Vertically center a left-aligned label within its bounds.
     #[serde(default)]
     pub vertical_centered: bool,
+    /// Editable single-line values retain their newest graphemes using renderer font metrics.
+    #[serde(default)]
+    pub keep_tail: bool,
+    /// Steady input decoration. `keep_tail == false` places a caret before placeholder copy.
+    #[serde(default)]
+    pub input_state: Option<TextInputState>,
     pub muted: bool,
     pub role: TextRole,
     pub id: String,
@@ -586,6 +709,13 @@ pub struct TextCommand {
     pub y: i32,
     pub layer: i16,
     pub scale: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextInputState {
+    Caret,
+    Selected,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -609,6 +739,8 @@ pub enum HitShape {
     #[default]
     Rect,
     World(UiTarget),
+    /// Opaque panel area: catches the pointer but is never an activatable or focusable control.
+    Blocker,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -633,10 +765,17 @@ pub enum Highlight {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IconKind {
     Toy(ToyId),
+    FoodItem(FoodId),
     Microphone,
     Food,
     Settings,
     Send,
+    Close,
+    ChevronRight,
+    Inspect,
+    Heart,
+    Rename,
+    Play,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -866,12 +1005,36 @@ pub fn audio_plan_for_events(events: &[GameEvent]) -> AudioPlan {
                 AudioCue::Bubble,
                 700,
             )),
+            GameEvent::ToyPlayed { interaction_id, .. }
+                if events.iter().any(|event| {
+                    matches!(
+                        event,
+                        GameEvent::ToyInteractionResponded { interaction_id: owner, .. }
+                            if owner == interaction_id
+                    )
+                }) =>
+            {
+                None
+            }
             GameEvent::ToyPlayed { .. } => Some((
                 SemanticOwner::DirectOutcome,
                 physical,
                 AudioCue::ToyImpact,
                 700,
             )),
+            GameEvent::ToyInteractionResponded {
+                interaction_id,
+                response,
+                ..
+            } => {
+                let owner = SemanticOwner::ToyInteraction(*interaction_id);
+                match response {
+                    ToyResponse::None => None,
+                    ToyResponse::BallNudged => Some((owner, physical, AudioCue::BallNudge, 680)),
+                    ToyResponse::BellStruck => Some((owner, physical, AudioCue::BellRing, 650)),
+                    ToyResponse::SockTugged => Some((owner, physical, AudioCue::SockRustle, 620)),
+                }
+            }
             GameEvent::ToyObjectResponded {
                 activity_id,
                 response,
@@ -1098,7 +1261,7 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (ScenePlan, AudioPlan) {
     let mut text = Vec::new();
     let creature = creature_scene(state, view);
     let objects = object_scenes(state, view);
-    let effects = effect_scenes(state, &creature);
+    let effects = effect_scenes(state, &creature, view);
     let mut hit_regions = world_hit_regions(state, view);
     if !matches!(view.mode, UiMode::Title) {
         add_speech(state, view, &mut rects, &mut text, &mut hit_regions);
@@ -1111,47 +1274,41 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (ScenePlan, AudioPlan) {
             &mut hit_regions,
         );
     }
-    add_temporary_mode(state, view, &mut rects, &mut text, &mut hit_regions);
-    if matches!(view.mode, UiMode::Settings) {
-        icons.push(IconCommand {
-            id: "settings/gear".to_owned(),
-            kind: IconKind::Settings,
-            bounds: Rect {
-                x: 167,
-                y: 26,
-                w: 10,
-                h: 10,
-            },
-            layer: 29,
-        });
-    }
+    add_temporary_mode(
+        state,
+        view,
+        &mut icons,
+        &mut rects,
+        &mut text,
+        &mut hit_regions,
+    );
     let close = match view.mode {
         UiMode::Settings => Some((
             Rect {
-                x: 288,
-                y: 24,
-                w: 17,
-                h: 14,
+                x: 277,
+                y: 14,
+                w: 27,
+                h: 15,
             },
             UiAction::CancelMode,
             "Close",
         )),
         UiMode::Bindings => Some((
             Rect {
-                x: 243,
-                y: 11,
+                x: 274,
+                y: 12,
                 w: 30,
-                h: 14,
+                h: 16,
             },
             UiAction::OpenSettings,
             "Back",
         )),
         UiMode::DataManagement => Some((
             Rect {
-                x: 238,
-                y: 20,
+                x: 273,
+                y: 13,
                 w: 30,
-                h: 14,
+                h: 16,
             },
             UiAction::OpenSettings,
             "Back",
@@ -1159,17 +1316,26 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (ScenePlan, AudioPlan) {
         _ => None,
     };
     if let Some((area, action, title)) = close {
-        add_button_chrome("modal/close", area, true, false, 25, &mut rects);
-        hit_regions.push(hit("modal/close", None, action, area, true, title));
-        text.push(label(
-            "modal/close-label",
+        add_control(
+            "modal/close",
             title,
-            area.x + 3,
-            area.y + 3,
-            29,
-        ));
+            action,
+            area,
+            true,
+            false,
+            25,
+            &mut rects,
+            &mut text,
+            &mut hit_regions,
+        );
     }
-    add_status(view, state.elapsed_ms, &mut rects, &mut text);
+    add_status(
+        view,
+        state.elapsed_ms,
+        &mut rects,
+        &mut text,
+        &mut hit_regions,
+    );
     add_hover_and_focus(view, state.elapsed_ms, &hit_regions, &mut rects, &mut text);
     for command in &mut text {
         command.scale = view.text_scale.clamp(1, 2);
@@ -1250,7 +1416,11 @@ fn creature_scene(state: &WorldState, view: &ViewState) -> CreatureScene {
     let queued = view
         .cue_queue
         .iter()
-        .filter(|cue| state.elapsed_ms >= cue.starts_at_ms && state.elapsed_ms < cue.expires_at_ms)
+        .filter(|cue| {
+            cue.channel == PresentationChannel::CreatureExpression
+                && state.elapsed_ms >= cue.starts_at_ms
+                && state.elapsed_ms < cue.expires_at_ms
+        })
         .map(|cue| ExpressionScene {
             owner: cue.owner,
             cue: cue.kind,
@@ -1289,12 +1459,7 @@ fn creature_scene(state: &WorldState, view: &ViewState) -> CreatureScene {
         facing: aquarium.facing,
         gaze: aquarium.gaze,
         gaze_position: gaze_position(state),
-        movement_target: aquarium
-            .action
-            .as_ref()
-            .map(|action| action.destination)
-            .or(aquarium.destination)
-            .and_then(|destination| beastie_core::destination_position(state, destination)),
+        movement_target: beastie_core::movement_target(state),
         mood: state.mood(),
         pose,
         action: aquarium.action.clone(),
@@ -1402,8 +1567,35 @@ fn object_scenes(state: &WorldState, view: &ViewState) -> Vec<ObjectScene> {
         .collect()
 }
 
-fn effect_scenes(state: &WorldState, creature: &CreatureScene) -> Vec<EffectScene> {
+fn effect_scenes(
+    state: &WorldState,
+    creature: &CreatureScene,
+    view: &ViewState,
+) -> Vec<EffectScene> {
     let mut effects = Vec::new();
+    for cue in &view.cue_queue {
+        if cue.channel != PresentationChannel::Physical
+            || state.elapsed_ms < cue.starts_at_ms
+            || state.elapsed_ms >= cue.expires_at_ms
+        {
+            continue;
+        }
+        let toy = match cue.kind {
+            PresentationCueKind::BallNudge => ToyId::Ball,
+            PresentationCueKind::BellStrike => ToyId::Bell,
+            PresentationCueKind::SockTug => ToyId::Sock,
+            _ => continue,
+        };
+        if let Some(object) = state.aquarium.toy_states.get(&toy) {
+            effects.push(EffectScene {
+                owner: cue.owner,
+                cue: cue.kind,
+                position: object.position,
+                target: UiTarget::Toy(toy),
+                elapsed_ms: state.elapsed_ms.saturating_sub(cue.starts_at_ms),
+            });
+        }
+    }
     if let Some(expression) = &creature.expression {
         effects.push(EffectScene {
             owner: expression.owner,
@@ -1597,59 +1789,44 @@ fn add_persistent_bar(
     hits: &mut Vec<HitRegion>,
 ) {
     let summary = creature_summary(state);
-    let text_scale = view.text_scale.clamp(1, 2);
-    rects.push(rect(
-        "compose/bar-edge",
-        Rect {
-            x: 0,
-            y: 149,
-            w: 320,
-            h: 31,
-        },
-        UI_EDGE,
-        30,
-    ));
-    rects.push(rect(
+    let large = view.text_scale >= 2;
+    add_interactive_panel(
         "compose/bar",
         Rect {
-            x: 0,
+            x: 2,
             y: 150,
-            w: 320,
-            h: 30,
+            w: 316,
+            h: 28,
         },
-        UI_PANEL,
-        31,
-    ));
-    let mut identity = label(
+        30,
+        rects,
+        hits,
+    );
+    text.push(bounded_label(
         "compose/summary-name",
-        &head_fit(&summary.name, 18),
-        8,
-        156,
-        34,
-    );
-    identity.role = TextRole::Identity;
-    identity.bounds = Some(Rect {
-        x: 8,
-        y: 154,
-        w: 66,
-        h: 11,
-    });
-    text.push(identity);
-    let mut status = label(
+        &summary.name,
+        Rect {
+            x: 9,
+            y: 151,
+            w: 62,
+            h: 11,
+        },
+        TextRole::Identity,
+        35,
+    ));
+    let status = format!("{} · {}", summary.mood_label, summary.behavior);
+    text.push(bounded_label(
         "compose/summary-behavior",
-        &format!("{} · {}", summary.mood_label, summary.behavior),
-        8,
-        168,
-        34,
-    );
-    status.role = TextRole::Secondary;
-    status.bounds = Some(Rect {
-        x: 8,
-        y: 167,
-        w: 67,
-        h: 10,
-    });
-    text.push(status);
+        &status,
+        Rect {
+            x: 9,
+            y: 162,
+            w: 65,
+            h: 15,
+        },
+        TextRole::Secondary,
+        35,
+    ));
     for (index, (toy, name)) in [
         (ToyId::Ball, "Ball"),
         (ToyId::Bell, "Bell"),
@@ -1659,14 +1836,13 @@ fn add_persistent_bar(
     .enumerate()
     {
         let area = Rect {
-            x: 80 + index as i32 * 20,
-            y: 156,
-            w: 17,
-            h: 18,
+            x: 76 + index as i32 * 21,
+            y: 154,
+            w: 18,
+            h: 20,
         };
         let id = format!("compose/toy-{index}");
-        let active =
-            matches!(view.mode, UiMode::Context(UiTarget::Toy(selected)) if selected == toy);
+        let active = matches!(view.mode, UiMode::Context(UiTarget::Toy(selected)) | UiMode::Inspect(UiTarget::Toy(selected)) if selected == toy);
         add_button_chrome(&id, area, true, active, 31, rects);
         hits.push(hit(
             &id,
@@ -1679,83 +1855,191 @@ fn add_persistent_bar(
         icons.push(IconCommand {
             id,
             kind: IconKind::Toy(toy),
-            bounds: area,
+            bounds: Rect {
+                x: area.x + 3,
+                y: area.y + 4,
+                w: 12,
+                h: 12,
+            },
             layer: 35,
         });
     }
-    let input_rect = Rect {
-        x: 162,
-        y: 157,
-        w: 106,
+    let food = Rect {
+        x: 139,
+        y: 154,
+        w: 21,
+        h: 20,
+    };
+    add_button_chrome(
+        "compose/food",
+        food,
+        true,
+        matches!(view.mode, UiMode::FoodChoice | UiMode::FoodDrop(_)),
+        31,
+        rects,
+    );
+    hits.push(hit(
+        "compose/food",
+        Some(UiTarget::Actions),
+        UiAction::OpenFoodChoice,
+        food,
+        true,
+        "Feed",
+    ));
+    icons.push(IconCommand {
+        id: "ui/button-food".into(),
+        kind: IconKind::Food,
+        bounds: Rect {
+            x: 145,
+            y: 156,
+            w: 9,
+            h: 9,
+        },
+        layer: 35,
+    });
+    text.push(bounded_label(
+        "compose/control-feed",
+        "Feed",
+        Rect {
+            x: 141,
+            y: 165,
+            w: 17,
+            h: 8,
+        },
+        TextRole::ControlCaption,
+        35,
+    ));
+
+    let input = Rect {
+        x: 164,
+        y: 155,
+        w: 112,
+        h: 18,
+    };
+    let send = Rect {
+        x: 259,
+        y: 156,
+        w: 16,
         h: 16,
     };
-    let microphone_rect = Rect {
-        x: 286,
-        y: 156,
-        w: 13,
-        h: 18,
-    };
-    let food_rect = Rect {
-        x: 140,
-        y: 156,
-        w: 17,
-        h: 18,
-    };
-    let settings_rect = Rect {
-        x: 302,
-        y: 156,
-        w: 13,
-        h: 18,
-    };
-    let send_rect = Rect {
-        x: 270,
-        y: 157,
-        w: 13,
-        h: 16,
-    };
-    let editing = view.compose_engaged
-        || !view.text_buffer.is_empty()
-        || view.pending
-        || matches!(view.mode, UiMode::Rename | UiMode::OnScreenKeyboard)
-        || (view.controller_active && view.focused_region.as_deref() == Some("compose/input"));
-    add_inset("compose/input", input_rect, 31, rects);
-    let input_capacity = ((input_rect.w - 17) as f32
-        / (TextRole::Body.size(text_scale >= 2) * 0.56))
-        .floor() as usize;
-    let naming = matches!(view.mode, UiMode::Rename)
-        || (matches!(view.mode, UiMode::OnScreenKeyboard) && view.renaming_with_osk);
-    let input_value = if view.text_buffer.is_empty() {
-        if naming {
-            "New name…".to_owned()
-        } else {
-            head_fit(&format!("Talk to {}...", summary.name), input_capacity)
-        }
+    let naming = matches!(view.mode, UiMode::OnScreenKeyboard) && view.renaming_with_osk;
+    let dedicated_input = matches!(view.mode, UiMode::Rename | UiMode::OnScreenKeyboard);
+    if dedicated_input {
+        rects.push(rounded_rect(
+            "compose/input-background",
+            input,
+            UI_BUTTON_DISABLED,
+            33,
+            3,
+            false,
+        ));
+        rects.push(rounded_rect(
+            "compose/input-rim",
+            input,
+            [45, 66, 68, 255],
+            34,
+            3,
+            true,
+        ));
     } else {
-        tail_fit(&view.text_buffer, input_capacity)
-    };
-    let mut input_text = label("compose/input-text", &input_value, 166, 161, 34);
-    input_text.vertical_centered = true;
-    input_text.role = if editing {
+        add_inset("compose/input", input, 31, rects);
+    }
+    let editing = !dedicated_input && (view.compose_engaged || !view.text_buffer.is_empty());
+    let field_role = if editing {
         TextRole::Body
     } else {
         TextRole::Secondary
     };
-    input_text.bounds = Some(Rect {
-        x: 166,
-        y: 157,
-        w: 98,
-        h: 16,
-    });
-    text.push(input_text);
+    let capacity = (87.0 / (field_role.size(large) * 0.56)).floor() as usize;
+    let value = if dedicated_input {
+        if view.mode == UiMode::Rename || naming {
+            "Naming your creature…"
+        } else {
+            "Keyboard open"
+        }
+        .to_owned()
+    } else if view.pending && view.text_buffer.is_empty() {
+        "Finding words…".to_owned()
+    } else if view.text_buffer.is_empty() {
+        format!("Talk to {}…", summary.name)
+    } else {
+        view.text_buffer.clone()
+    };
+    let keep_tail = !dedicated_input && !view.text_buffer.is_empty();
+    let mut field_label = bounded_label(
+        "compose/input-text",
+        &if keep_tail {
+            value
+        } else {
+            head_fit(&value, capacity)
+        },
+        Rect {
+            x: 168,
+            y: 155,
+            w: 87,
+            h: 18,
+        },
+        field_role,
+        35,
+    );
+    field_label.muted = dedicated_input;
+    field_label.keep_tail = keep_tail;
+    if view.mode == UiMode::Compose
+        && view.focused_region.as_deref() == Some("compose/input")
+        && (view.compose_engaged || !view.text_buffer.is_empty())
+    {
+        field_label.input_state = Some(input_visual_state(view));
+    }
+    text.push(field_label);
     hits.push(hit(
         "compose/input",
         Some(UiTarget::ComposeField),
         UiAction::FocusCompose,
-        input_rect,
-        true,
+        Rect { w: 94, ..input },
+        !dedicated_input,
         "Message",
     ));
-    let microphone_available = view.microphone_enabled
+    let enabled = !dedicated_input && !view.pending && !view.text_buffer.trim().is_empty();
+    hits.push(hit(
+        "compose/send",
+        None,
+        if naming {
+            UiAction::SubmitName
+        } else {
+            UiAction::SubmitText
+        },
+        send,
+        enabled,
+        if naming { "Name" } else { "Send" },
+    ));
+    if enabled {
+        rects.push(rounded_rect(
+            "compose/send-background",
+            send,
+            UI_SELECTED,
+            34,
+            3,
+            false,
+        ));
+    }
+    icons.push(IconCommand {
+        id: "ui/button-send".into(),
+        kind: IconKind::Send,
+        bounds: Rect {
+            x: 264,
+            y: 160,
+            w: 8,
+            h: 8,
+        },
+        layer: 35,
+    });
+    let microphone = Rect {
+        x: 280,
+        y: 155,
+        w: 17,
+        h: 18,
+    };
+    let available = view.microphone_enabled
         && !matches!(
             view.microphone_state,
             MicrophoneState::Disabled | MicrophoneState::Unavailable | MicrophoneState::Error
@@ -1764,14 +2048,14 @@ fn add_persistent_bar(
         "compose/microphone",
         Some(UiTarget::Actions),
         UiAction::PushToTalk,
-        microphone_rect,
-        microphone_available,
+        microphone,
+        available,
         microphone_label(view.microphone_state),
     ));
     add_button_chrome(
         "compose/microphone",
-        microphone_rect,
-        microphone_available,
+        microphone,
+        available,
         matches!(
             view.microphone_state,
             MicrophoneState::Listening | MicrophoneState::Recognizing
@@ -1779,114 +2063,69 @@ fn add_persistent_bar(
         31,
         rects,
     );
-    hits.push(hit(
-        "compose/food",
-        Some(UiTarget::Actions),
-        UiAction::OpenFoodChoice,
-        food_rect,
-        true,
-        "Food",
-    ));
-    add_button_chrome("compose/food", food_rect, true, false, 31, rects);
-    if matches!(view.mode, UiMode::Compose) {
-        hits.push(hit(
-            "compose/settings",
-            Some(UiTarget::Actions),
-            UiAction::OpenSettings,
-            settings_rect,
-            true,
-            "Settings",
-        ));
-        add_button_chrome("compose/settings", settings_rect, true, false, 31, rects);
-    } else {
-        hits.push(hit(
-            "compose/close",
-            Some(UiTarget::Actions),
-            UiAction::CancelMode,
-            settings_rect,
-            true,
-            "Close",
-        ));
-        add_button_chrome("compose/close", settings_rect, true, false, 31, rects);
-    }
-    let send_action = if naming {
-        UiAction::SubmitName
-    } else {
-        UiAction::SubmitText
-    };
-    let send_label = if naming { "Name" } else { "Send" };
-    let send_enabled = !view.pending && !view.text_buffer.trim().is_empty();
-    hits.push(hit(
-        "compose/send",
-        None,
-        send_action,
-        send_rect,
-        send_enabled,
-        send_label,
-    ));
-    add_button_chrome(
-        "compose/send",
-        send_rect,
-        send_enabled,
-        send_enabled,
-        31,
-        rects,
-    );
-    for (kind, area, id) in [
-        (IconKind::Food, food_rect, "food"),
-        (IconKind::Microphone, microphone_rect, "microphone"),
-        (IconKind::Settings, settings_rect, "settings"),
-        (IconKind::Send, send_rect, "send"),
-    ] {
-        icons.push(IconCommand {
-            id: format!("ui/button-{id}"),
-            kind,
-            bounds: Rect {
-                h: if id == "food" { 12 } else { area.h },
-                ..area
-            },
-            layer: 35,
-        });
-    }
-    let mut feed_caption = label(
-        "compose/control-feed",
-        "Feed",
-        food_rect.x + 2,
-        food_rect.y + 3,
-        35,
-    );
-    feed_caption.bounds = Some(Rect {
-        x: food_rect.x + 2,
-        y: food_rect.y + 12,
-        w: food_rect.w - 4,
-        h: 5,
+    icons.push(IconCommand {
+        id: "ui/button-microphone".into(),
+        kind: IconKind::Microphone,
+        bounds: Rect {
+            x: 284,
+            y: 159,
+            w: 9,
+            h: 10,
+        },
+        layer: 35,
     });
-    feed_caption.role = TextRole::ControlCaption;
-    text.push(feed_caption);
+    let utility = Rect {
+        x: 300,
+        y: 155,
+        w: 16,
+        h: 18,
+    };
+    let compose = matches!(view.mode, UiMode::Compose);
+    let id = if compose {
+        "compose/settings"
+    } else {
+        "compose/close"
+    };
+    add_button_chrome(id, utility, true, false, 31, rects);
+    hits.push(hit(
+        id,
+        Some(UiTarget::Actions),
+        if compose {
+            UiAction::OpenSettings
+        } else {
+            UiAction::CancelMode
+        },
+        utility,
+        true,
+        if compose { "Settings" } else { "Close" },
+    ));
+    icons.push(IconCommand {
+        id: "ui/button-settings".into(),
+        kind: if compose {
+            IconKind::Settings
+        } else {
+            IconKind::Close
+        },
+        bounds: Rect {
+            x: 304,
+            y: 160,
+            w: 8,
+            h: 8,
+        },
+        layer: 35,
+    });
 }
 
 fn head_fit(value: &str, capacity: usize) -> String {
-    if value.chars().count() <= capacity {
-        return value.to_owned();
-    }
-    match capacity {
-        0 => String::new(),
-        1 => "…".to_owned(),
-        _ => format!("{}…", value.chars().take(capacity - 1).collect::<String>()),
-    }
-}
-
-fn tail_fit(value: &str, capacity: usize) -> String {
-    let count = value.chars().count();
-    if count <= capacity {
+    if value.graphemes(true).count() <= capacity {
         return value.to_owned();
     }
     match capacity {
         0 => String::new(),
         1 => "…".to_owned(),
         _ => format!(
-            "…{}",
-            value.chars().skip(count - capacity + 1).collect::<String>()
+            "{}…",
+            value.graphemes(true).take(capacity - 1).collect::<String>()
         ),
     }
 }
@@ -1894,6 +2133,7 @@ fn tail_fit(value: &str, capacity: usize) -> String {
 fn add_temporary_mode(
     state: &WorldState,
     view: &ViewState,
+    icons: &mut Vec<IconCommand>,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
@@ -1901,14 +2141,15 @@ fn add_temporary_mode(
     match view.mode {
         UiMode::Title => add_title(view, rects, text, hits),
         UiMode::Compose => {}
+        UiMode::Inspect(target) => add_inspection(state, view, target, rects, text, hits),
         UiMode::Context(UiTarget::Toy(toy)) => add_toy_context(state, view, toy, rects, text, hits),
         UiMode::Context(target) => {
             let actions = contextual_actions(target);
             let (_, head_y) = world_to_logical(state.creature.aquarium.position);
             // Avoid the head when opened; thereafter the control positions stay stable.
-            let above = view.context_above.unwrap_or(head_y > 68);
-            let row_y = if above { 21 } else { 105 };
-            add_action_strip("context", &actions, row_y, rects, text, hits);
+            let above = view.context_above.unwrap_or(head_y > 74);
+            let row_y = if above { 21 } else { 113 };
+            add_action_strip("context", &actions, row_y, icons, rects, text, hits);
         }
         UiMode::FoodChoice => add_action_strip(
             "food",
@@ -1918,29 +2159,53 @@ fn add_temporary_mode(
                 UiAction::SelectFood(FoodId::Pellet),
             ],
             100,
+            icons,
             rects,
             text,
             hits,
         ),
         UiMode::FoodDrop(food) => {
-            add_panel_chrome(
+            add_interactive_panel(
                 "mode/drop-food-background",
                 Rect {
-                    x: 79,
+                    x: 55,
                     y: 4,
-                    w: 162,
-                    h: 18,
+                    w: 210,
+                    h: 24,
                 },
                 28,
                 rects,
+                hits,
             );
-            text.push(label(
+            text.push(bounded_label(
                 "mode/drop-food-label",
-                &format!("Drop {} into open water  [Esc]", food_name(food)),
-                84,
-                9,
-                29,
+                &format!("Drop {} into the water", food_name(food)),
+                Rect {
+                    x: 62,
+                    y: 8,
+                    w: 155,
+                    h: 16,
+                },
+                TextRole::Body,
+                32,
             ));
+            add_control(
+                "mode/drop-cancel",
+                "Cancel",
+                UiAction::CancelMode,
+                Rect {
+                    x: 222,
+                    y: 8,
+                    w: 37,
+                    h: 16,
+                },
+                true,
+                false,
+                28,
+                rects,
+                text,
+                hits,
+            );
         }
         UiMode::ToyChoice => add_action_strip(
             "toy",
@@ -1950,6 +2215,7 @@ fn add_temporary_mode(
                 UiAction::Play(ToyId::Sock),
             ],
             100,
+            icons,
             rects,
             text,
             hits,
@@ -1957,34 +2223,31 @@ fn add_temporary_mode(
         UiMode::OnScreenKeyboard => add_keyboard(view, rects, text, hits),
         UiMode::Settings => add_settings(view, rects, text, hits),
         UiMode::Bindings => add_bindings(view, rects, text, hits),
-        UiMode::Rebinding(action) => add_rebinding(action, rects, text),
-        UiMode::Rename => add_rename(state, view, rects, text),
+        UiMode::Rebinding(action) => add_rebinding(action, rects, text, hits),
+        UiMode::Rename => add_rename(state, view, rects, text, hits),
         UiMode::DataManagement => add_data_management(view, rects, text, hits),
         UiMode::ConfirmReset => add_reset_confirmation(rects, text, hits),
     }
 }
 
 fn add_title(
-    view: &ViewState,
+    _view: &ViewState,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    let mut subtitle = label(
+    text.push(bounded_label(
         "title/subtitle",
         "A little friend, a big world.",
-        119,
-        64,
+        Rect {
+            x: 88,
+            y: 61,
+            w: 144,
+            h: 12,
+        },
+        TextRole::Subtitle,
         29,
-    );
-    subtitle.role = TextRole::Subtitle;
-    subtitle.bounds = Some(Rect {
-        x: 119,
-        y: 61,
-        w: 82,
-        h: 10,
-    });
-    text.push(subtitle);
+    ));
     for (index, (id, name, action)) in [
         ("continue", "Continue", UiAction::Continue),
         ("settings", "Settings", UiAction::OpenSettings),
@@ -1993,61 +2256,43 @@ fn add_title(
     .into_iter()
     .enumerate()
     {
-        let area = Rect {
-            x: 132,
-            y: 80 + index as i32 * 19,
-            w: 56,
-            h: 14,
-        };
-        let id = format!("title/{id}");
-        rects.push(rect(&id, area, UI_PANEL, 25));
-        let selected = view
-            .hovered_region
-            .as_deref()
-            .filter(|id| id.starts_with("title/"))
-            .or(view
-                .focused_region
-                .as_deref()
-                .filter(|id| id.starts_with("title/")))
-            .unwrap_or("title/continue")
-            == id;
-        rects.push(RectCommand {
-            id: format!("{id}-rim"),
-            rect: area,
-            color: if selected {
-                [228, 230, 192, 255]
-            } else {
-                UI_EDGE
-            },
-            layer: 27,
-            outline: true,
-        });
-        hits.push(hit(&id, None, action, area, true, name));
-        text.push(label(
-            &format!("{id}-label"),
+        add_control(
+            &format!("title/{id}"),
             name,
-            area.x + 6,
-            area.y + 3,
-            29,
-        ));
+            action,
+            Rect {
+                x: 124,
+                y: 79 + index as i32 * 20,
+                w: 72,
+                h: 16,
+            },
+            true,
+            index == 0,
+            25,
+            rects,
+            text,
+            hits,
+        );
     }
-    let mut version = label("title/version", env!("CARGO_PKG_VERSION"), 6, 173, 29);
-    version.role = TextRole::Secondary;
-    version.bounds = Some(Rect {
-        x: 6,
-        y: 173,
-        w: 35,
-        h: 6,
-    });
-    text.push(version);
+    text.push(bounded_label(
+        "title/version",
+        env!("CARGO_PKG_VERSION"),
+        Rect {
+            x: 8,
+            y: 169,
+            w: 35,
+            h: 10,
+        },
+        TextRole::Secondary,
+        29,
+    ));
 }
 
-/// Choose nearby clear water for a toy card. The shell stores this result when
-/// opening the context so later creature/object motion cannot displace controls.
+/// Choose clear water once, keeping the target still beneath the player's pointer.
 #[must_use]
 pub fn toy_context_anchor(state: &WorldState, toy: ToyId, text_scale: u8) -> (i32, i32) {
-    let width = if text_scale >= 2 { 69 } else { 59 };
-    let height = if text_scale >= 2 { 32 } else { 27 };
+    let width = if text_scale >= 2 { 105 } else { 94 };
+    let height = if text_scale >= 2 { 54 } else { 48 };
     let objects = object_scenes(state, &ViewState::default());
     let position = objects
         .iter()
@@ -2124,14 +2369,14 @@ fn add_toy_context(
     hits: &mut Vec<HitRegion>,
 ) {
     let large = view.text_scale >= 2;
-    let width = if large { 69 } else { 59 };
-    let height = if large { 32 } else { 27 };
+    let width = if large { 105 } else { 94 };
+    let height = if large { 54 } else { 48 };
     let (x, y) = view
         .context_card_anchor
         .unwrap_or_else(|| toy_context_anchor(state, toy, view.text_scale));
     let x = x.clamp(4, 316 - width);
     let y = y.clamp(5, 132 - height);
-    add_panel_chrome(
+    add_interactive_panel(
         "mode/context-panel",
         Rect {
             x,
@@ -2141,53 +2386,219 @@ fn add_toy_context(
         },
         25,
         rects,
+        hits,
     );
     let (name, detail) = match toy {
-        ToyId::Ball => ("Beach ball", "For nudges and play."),
-        ToyId::Bell => ("Bell", "A warm little ring."),
+        ToyId::Ball => ("Beach ball", "A buoyant toy for nudging."),
+        ToyId::Bell => ("Bell", "A little brass chime."),
         ToyId::Sock => ("Sock", "Something soft to tug."),
     };
-    let mut title = label("mode/context/title", name, x + 4, y + 4, 29);
-    title.bounds = Some(Rect {
-        x: x + 4,
-        y: y + 2,
-        w: width - 8,
-        h: 7,
-    });
-    text.push(title);
-    let mut description = label("mode/context/detail", detail, x + 4, y + 10, 29);
-    description.role = TextRole::Secondary;
-    description.bounds = Some(Rect {
-        x: x + 4,
-        y: y + 9,
-        w: width - 8,
-        h: 7,
-    });
-    text.push(description);
-    for (index, action) in [UiAction::Play(toy), UiAction::Inspect]
-        .into_iter()
-        .enumerate()
+    text.push(bounded_label(
+        "mode/context/title",
+        name,
+        Rect {
+            x: x + 6,
+            y: y + 3,
+            w: width - 12,
+            h: 12,
+        },
+        TextRole::Body,
+        29,
+    ));
+    text.push(bounded_label(
+        "mode/context/detail",
+        detail,
+        Rect {
+            x: x + 6,
+            y: y + 15,
+            w: width - 12,
+            h: height - 38,
+        },
+        TextRole::Secondary,
+        29,
+    ));
+    for (index, (action, name)) in [
+        (UiAction::Play(toy), "Play"),
+        (UiAction::Inspect, "Inspect"),
+    ]
+    .into_iter()
+    .enumerate()
     {
-        let area = Rect {
-            x: x + 4 + index as i32 * ((width - 7) / 2),
-            y: y + height - 10,
-            w: (width - 10) / 2,
-            h: 8,
-        };
-        let id = format!("action/{}", action_id(action));
-        let name = action_label(action);
-        hits.push(hit(&id, None, action, area, true, &name));
-        add_button_chrome(&id, area, true, false, 25, rects);
-        let mut caption = label(&format!("{id}-label"), &name, area.x + 2, area.y + 1, 29);
-        caption.role = TextRole::ControlCaption;
-        caption.bounds = Some(Rect {
-            x: area.x + 2,
-            y: area.y + 1,
-            w: area.w - 4,
-            h: area.h - 2,
-        });
-        text.push(caption);
+        let button_width = (width - 18) / 2;
+        add_control(
+            &format!("action/{}", action_id(action)),
+            name,
+            action,
+            Rect {
+                x: x + 6 + index as i32 * (button_width + 6),
+                y: y + height - 21,
+                w: button_width,
+                h: 15,
+            },
+            true,
+            index == 0,
+            25,
+            rects,
+            text,
+            hits,
+        );
     }
+}
+
+fn add_inspection(
+    state: &WorldState,
+    view: &ViewState,
+    target: UiTarget,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    let summary = creature_summary(state);
+    let (title, detail) = match target {
+        UiTarget::Creature => (
+            summary.name.clone(),
+            format!(
+                "{} · {}\nDay {} together{}",
+                summary.mood_label,
+                summary.behavior,
+                state.active_day(),
+                summary
+                    .discovered_fact
+                    .map_or(String::new(), |fact| format!("\n{} {fact}.", summary.name))
+            ),
+        ),
+        UiTarget::Toy(toy) => {
+            let detail = if state
+                .aquarium
+                .toy_states
+                .get(&toy)
+                .is_some_and(|value| value.carried)
+            {
+                format!("{} is carrying this toy.", state.creature.name)
+            } else {
+                match toy {
+                    ToyId::Ball => "A buoyant ball for nudges and play.",
+                    ToyId::Bell => "A brass bell suspended beneath its float.",
+                    ToyId::Sock => "A soft, bent sock for tugging.",
+                }
+                .to_owned()
+            };
+            (toy_name(toy).to_owned(), detail)
+        }
+        UiTarget::Cave => (
+            "Shelter".into(),
+            "A quiet hollow for resting and peeking out.".into(),
+        ),
+        UiTarget::Plant(id) => (
+            "Aquarium plant".into(),
+            if matches!(
+                state.aquarium.objects.get(&id),
+                Some(WorldObject::Plant { .. })
+            ) {
+                "Leaves to swim around and explore."
+            } else {
+                "This plant is no longer here."
+            }
+            .into(),
+        ),
+        UiTarget::FoodObject(id) => match state.aquarium.objects.get(&id) {
+            Some(WorldObject::Food(food)) => (
+                food_name(food.food).to_owned(),
+                match food.disposition {
+                    FoodDisposition::Falling => "Falling through the water.",
+                    FoodDisposition::Floating => "Floating in the water.",
+                    FoodDisposition::Settled => "Resting on the sand.",
+                    FoodDisposition::Consumed => "Already eaten.",
+                    FoodDisposition::Rejected => "Offered and rejected.",
+                }
+                .into(),
+            ),
+            _ => (
+                "Food".into(),
+                "This piece of food is no longer here.".into(),
+            ),
+        },
+        _ => (
+            "The aquarium".into(),
+            format!(
+                "{} is {}.\nA little room to live, explore and play.",
+                state.creature.name, summary.behavior
+            ),
+        ),
+    };
+    let (head_x, _) = world_to_logical(state.creature.aquarium.position);
+    let x = view
+        .context_card_anchor
+        .map_or(if head_x >= 160 { 7 } else { 173 }, |(x, _)| x)
+        .clamp(4, 176);
+    // Card height uses the same bundled faces and wrapping as glyph rendering.
+    // Round the complete block once, keeping only the authored inter-part gaps.
+    let text_height = |value: &str, role: TextRole| {
+        let size = role.size(view.text_scale >= 2);
+        typography().height(value, 124.0, size).ceil() as i32
+    };
+    let title_height = text_height(&title, TextRole::Identity).clamp(10, 33);
+    let detail_height = text_height(&detail, TextRole::Body).max(8);
+    let height = title_height
+        .saturating_add(detail_height)
+        .saturating_add(38)
+        .min(143);
+    let y = (AQUARIUM_BOTTOM - height - 2).clamp(4, 31);
+    add_interactive_panel(
+        "inspect/panel",
+        Rect {
+            x,
+            y,
+            w: 140,
+            h: height,
+        },
+        25,
+        rects,
+        hits,
+    );
+    text.push(bounded_label(
+        "inspect/title",
+        &title,
+        Rect {
+            x: x + 8,
+            y: y + 6,
+            w: 124,
+            h: title_height,
+        },
+        TextRole::Identity,
+        29,
+    ));
+    let mut description = bounded_label(
+        "inspect/detail",
+        &detail,
+        Rect {
+            x: x + 8,
+            y: y + 6 + title_height + 3,
+            w: 124,
+            h: height - title_height - 38,
+        },
+        TextRole::Body,
+        29,
+    );
+    description.vertical_centered = false;
+    text.push(description);
+    add_control(
+        "inspect/close",
+        "Close",
+        UiAction::CancelMode,
+        Rect {
+            x: x + 80,
+            y: y + height - 22,
+            w: 52,
+            h: 16,
+        },
+        true,
+        false,
+        25,
+        rects,
+        text,
+        hits,
+    );
 }
 
 fn add_settings(
@@ -2196,35 +2607,40 @@ fn add_settings(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    add_panel_chrome(
+    add_interactive_panel(
         "settings/panel",
         Rect {
-            x: 163,
-            y: 20,
-            w: 146,
-            h: 118,
+            x: 171,
+            y: 9,
+            w: 140,
+            h: 129,
         },
         25,
         rects,
+        hits,
     );
-    let mut header = label("settings/title", "Settings", 181, 26, 29);
-    header.role = TextRole::Body;
-    header.vertical_centered = true;
-    header.bounds = Some(Rect {
-        x: 181,
-        y: 26,
-        w: 66,
-        h: 10,
-    });
-    text.push(header);
+    text.push(bounded_label(
+        "settings/title",
+        "Settings",
+        Rect {
+            x: 179,
+            y: 14,
+            w: 91,
+            h: 15,
+        },
+        TextRole::Title,
+        29,
+    ));
     for (index, title) in ["Display", "Sound", "Controls"].into_iter().enumerate() {
         let area = Rect {
-            x: 168,
-            y: 45 + index as i32 * 21,
-            w: 36,
-            h: 17,
+            x: 178 + index as i32 * 43,
+            y: 33,
+            w: 41,
+            h: 15,
         };
         let id = format!("settings/page-{index}");
+        let active = usize::from(view.settings_page.min(2)) == index;
+        add_button_chrome(&id, area, true, active, 25, rects);
         hits.push(hit(
             &id,
             None,
@@ -2233,34 +2649,87 @@ fn add_settings(
             true,
             title,
         ));
-        if usize::from(view.settings_page.min(2)) == index {
-            rects.push(rect(&format!("{id}-background"), area, UI_BUTTON, 27));
-        }
-        if usize::from(view.settings_page.min(2)) == index {
-            rects.push(rect(
-                &format!("{id}-selected"),
+        text.push(bounded_label(
+            &format!("{id}-label"),
+            title,
+            Rect {
+                x: area.x + 2,
+                y: area.y + 2,
+                w: area.w - 4,
+                h: 11,
+            },
+            TextRole::Control,
+            29,
+        ));
+    }
+    if view.settings_page >= 2 {
+        for (index, (id, title, detail, action)) in [
+            (
+                "bindings",
+                "Input bindings",
+                "Keyboard & controller",
+                UiAction::OpenBindings,
+            ),
+            (
+                "data",
+                "Save & data",
+                "Backup, transcript and reset",
+                UiAction::OpenDataManagement,
+            ),
+            (
+                "title",
+                "Title screen",
+                "Return to the main menu",
+                UiAction::OpenTitle,
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let y = 54 + index as i32 * 25;
+            let area = Rect {
+                x: 178,
+                y,
+                w: 126,
+                h: 22,
+            };
+            add_button_chrome(&format!("settings/{id}"), area, true, false, 25, rects);
+            hits.push(hit(
+                &format!("settings/{id}"),
+                None,
+                action,
+                area,
+                true,
+                title,
+            ));
+            text.push(bounded_label(
+                &format!("settings/{id}-name"),
+                title,
                 Rect {
-                    x: area.x,
-                    y: area.y + 1,
-                    w: 1,
-                    h: area.h - 2,
+                    x: 183,
+                    y: y + 1,
+                    w: 115,
+                    h: 11,
                 },
-                UI_CORAL,
-                28,
+                TextRole::Body,
+                29,
+            ));
+            text.push(bounded_label(
+                &format!("settings/{id}-detail"),
+                detail,
+                Rect {
+                    x: 183,
+                    y: y + 12,
+                    w: 115,
+                    h: 9,
+                },
+                TextRole::Secondary,
+                29,
             ));
         }
-        let mut category = label(&format!("{id}-label"), title, area.x + 4, area.y + 4, 29);
-        category.role = TextRole::Secondary;
-        category.vertical_centered = true;
-        category.bounds = Some(Rect {
-            x: area.x + 4,
-            y: area.y + 3,
-            w: area.w - 6,
-            h: 11,
-        });
-        text.push(category);
+        return;
     }
-    let settings = [
+    let display = [
         (
             "text-scale",
             "Text size",
@@ -2301,6 +2770,8 @@ fn add_settings(
             on_off(view.fullscreen),
             UiAction::ToggleFullscreen,
         ),
+    ];
+    let sound = [
         (
             "effects-volume",
             "Effects",
@@ -2309,7 +2780,7 @@ fn add_settings(
         ),
         (
             "speech-volume",
-            "Speech volume",
+            "Speech",
             volume_label(view.speech_volume),
             UiAction::CycleSpeechVolume,
         ),
@@ -2337,112 +2808,124 @@ fn add_settings(
             text_speed_label(view.text_speed),
             UiAction::CycleTextSpeed,
         ),
-        ("bindings", "Bindings", "Open", UiAction::OpenBindings),
-        (
-            "reset-bindings",
-            "Reset keys",
-            "Reset",
-            UiAction::ResetBindings,
-        ),
-        ("data", "Save & data", "Open", UiAction::OpenDataManagement),
     ];
-    let range = match view.settings_page.min(2) {
-        0 => 0..6,
-        1 => 6..12,
-        _ => 12..15,
+    let settings = if view.settings_page == 0 {
+        &display
+    } else {
+        &sound
     };
-    for (index, (id, setting, value, action)) in settings[range].iter().copied().enumerate() {
-        let y = 43 + index as i32 * 15;
-        let mut name = label(&format!("settings/{id}-name"), setting, 211, y + 3, 29);
-        name.role = TextRole::Secondary;
-        name.vertical_centered = true;
-        name.bounds = Some(Rect {
-            x: 211,
+    for (index, (id, name, value, action)) in settings.iter().copied().enumerate() {
+        let y = 52 + index as i32 * 14;
+        let area = Rect {
+            x: 178,
             y,
-            w: 59,
-            h: 13,
-        });
-        text.push(name);
-        let button = Rect {
-            x: 274,
-            y,
-            w: 29,
-            h: 13,
+            w: 126,
+            h: 14,
+        };
+        let control = Rect {
+            x: 271,
+            y: y + 1,
+            w: 33,
+            h: 12,
         };
         hits.push(hit(
             &format!("settings/{id}"),
             None,
             action,
-            button,
+            area,
             true,
-            setting,
+            name,
+        ));
+        text.push(bounded_label(
+            &format!("settings/{id}-name"),
+            name,
+            Rect {
+                x: 180,
+                y: y + 1,
+                w: 89,
+                h: 12,
+            },
+            TextRole::Secondary,
+            29,
         ));
         if matches!(value, "On" | "Off") {
-            let on = value == "On";
-            let track = Rect {
-                x: button.x + 10,
-                y: y + 3,
-                w: 18,
-                h: 7,
-            };
-            rects.push(rect(
-                &format!("settings/{id}-track"),
-                track,
-                if on {
-                    [104, 135, 115, 255]
-                } else {
-                    [49, 74, 75, 255]
-                },
-                27,
-            ));
-            rects.push(rect(
-                &format!("settings/{id}-thumb"),
-                Rect {
-                    x: track.x + if on { 12 } else { 1 },
-                    y: y + 4,
-                    w: 5,
-                    h: 5,
-                },
-                [224, 229, 201, 255],
-                28,
-            ));
-            let mut value_text = label(&format!("settings/{id}-value"), value, button.x, y + 3, 29);
-            value_text.role = TextRole::ControlCaption;
-            value_text.bounds = Some(Rect {
-                x: button.x,
-                y: y + 2,
-                w: 10,
-                h: 9,
-            });
-            text.push(value_text);
-        } else {
-            add_inset(
+            add_toggle(
                 &format!("settings/{id}"),
-                Rect {
-                    y: y + 2,
-                    h: 9,
-                    ..button
-                },
-                25,
+                control,
+                value == "On",
+                27,
                 rects,
+                text,
             );
-            let mut value_text = label(
+        } else {
+            add_inset(&format!("settings/{id}"), control, 25, rects);
+            text.push(bounded_label(
                 &format!("settings/{id}-value"),
-                value,
-                button.x + 2,
-                y + 3,
+                &format!("{value} ›"),
+                Rect {
+                    x: control.x + 2,
+                    y: control.y + 1,
+                    w: control.w - 4,
+                    h: 10,
+                },
+                TextRole::ControlCaption,
                 29,
-            );
-            value_text.role = TextRole::ControlCaption;
-            value_text.bounds = Some(Rect {
-                x: button.x + 2,
-                y: y + 2,
-                w: button.w - 4,
-                h: 9,
-            });
-            text.push(value_text);
+            ));
         }
     }
+}
+
+fn add_toggle(
+    id: &str,
+    area: Rect,
+    on: bool,
+    layer: i16,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+) {
+    let track = Rect {
+        x: area.x + area.w - 17,
+        y: area.y + (area.h - 8) / 2,
+        w: 17,
+        h: 8,
+    };
+    rects.push(rounded_rect(
+        &format!("{id}-track"),
+        track,
+        if on {
+            [71, 128, 110, 255]
+        } else {
+            [39, 65, 70, 255]
+        },
+        layer,
+        4,
+        false,
+    ));
+    rects.push(rounded_rect(
+        &format!("{id}-thumb"),
+        Rect {
+            x: track.x + if on { 10 } else { 1 },
+            y: track.y + 1,
+            w: 6,
+            h: 6,
+        },
+        UI_PRIMARY,
+        layer + 1,
+        3,
+        false,
+    ));
+    text.push(bounded_label(
+        &format!("{id}-value"),
+        on_off(on),
+        Rect {
+            x: area.x,
+            y: area.y,
+            w: area.w - 19,
+            h: area.h,
+        },
+        TextRole::ControlCaption,
+        layer + 2,
+    ));
 }
 
 fn add_rename(
@@ -2450,24 +2933,139 @@ fn add_rename(
     view: &ViewState,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
 ) {
-    add_panel_chrome(
+    add_interactive_panel(
         "rename/prompt-background",
         Rect {
-            x: 74,
-            y: 16,
-            w: 172,
-            h: 27,
+            x: 71,
+            y: 39,
+            w: 178,
+            h: 92,
         },
         25,
         rects,
+        hits,
     );
-    let prompt = if view.text_buffer.trim().is_empty() {
-        format!("Choose a name for {}", head_fit(&state.creature.name, 16))
-    } else {
-        "Enter confirms, Escape cancels".to_owned()
+    text.push(bounded_label(
+        "rename/title",
+        "Name your creature",
+        Rect {
+            x: 79,
+            y: 43,
+            w: 162,
+            h: 15,
+        },
+        TextRole::Title,
+        29,
+    ));
+    text.push(bounded_label(
+        "rename/prompt",
+        &format!("Currently {}", state.creature.name),
+        Rect {
+            x: 79,
+            y: 59,
+            w: 162,
+            h: 11,
+        },
+        TextRole::Secondary,
+        29,
+    ));
+    let field = Rect {
+        x: 79,
+        y: 73,
+        w: 162,
+        h: 20,
     };
-    text.push(label("rename/prompt", &prompt, 82, 25, 29));
+    add_inset("rename/input", field, 25, rects);
+    hits.push(hit(
+        "rename/input",
+        Some(UiTarget::ComposeField),
+        UiAction::FocusCompose,
+        field,
+        true,
+        "Creature name",
+    ));
+    let name = if view.text_buffer.is_empty() {
+        "New name…"
+    } else {
+        &view.text_buffer
+    };
+    let mut name_label = bounded_label(
+        "rename/value",
+        name,
+        Rect {
+            x: 84,
+            y: 74,
+            w: 118,
+            h: 18,
+        },
+        TextRole::Body,
+        29,
+    );
+    name_label.keep_tail = !view.text_buffer.is_empty();
+    if view.focused_region.as_deref() == Some("rename/input") {
+        name_label.input_state = Some(input_visual_state(view));
+    }
+    text.push(name_label);
+    text.push(bounded_label(
+        "rename/count",
+        &format!("{} / 24", view.text_buffer.chars().count()),
+        Rect {
+            x: 205,
+            y: 75,
+            w: 32,
+            h: 16,
+        },
+        TextRole::ControlCaption,
+        29,
+    ));
+    text.push(bounded_label(
+        "rename/hint",
+        "Enter to save · Esc to cancel",
+        Rect {
+            x: 79,
+            y: 95,
+            w: 162,
+            h: 11,
+        },
+        TextRole::Secondary,
+        29,
+    ));
+    add_control(
+        "rename/cancel",
+        "Cancel",
+        UiAction::CancelMode,
+        Rect {
+            x: 79,
+            y: 110,
+            w: 77,
+            h: 16,
+        },
+        true,
+        false,
+        25,
+        rects,
+        text,
+        hits,
+    );
+    add_control(
+        "rename/submit",
+        "Save name",
+        UiAction::SubmitName,
+        Rect {
+            x: 164,
+            y: 110,
+            w: 77,
+            h: 16,
+        },
+        !view.text_buffer.trim().is_empty() && view.text_buffer.chars().count() <= 24,
+        true,
+        25,
+        rects,
+        text,
+        hits,
+    );
 }
 
 fn add_data_management(
@@ -2476,70 +3074,146 @@ fn add_data_management(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    add_panel_chrome(
+    add_interactive_panel(
         "data/panel",
         Rect {
-            x: 43,
-            y: 16,
-            w: 234,
-            h: 108,
+            x: 119,
+            y: 8,
+            w: 192,
+            h: 133,
         },
         25,
         rects,
+        hits,
     );
-    let mut header = label("data/title", "Save & local data", 51, 23, 29);
-    header.role = TextRole::Title;
-    header.vertical_centered = true;
-    header.bounds = Some(Rect {
-        x: 51,
-        y: 20,
-        w: 180,
-        h: 14,
-    });
-    text.push(header);
-    let actions = [
-        ("recover", "Recover backup", UiAction::RecoverBackup, true),
-        ("reset", "Reset creature", UiAction::RequestReset, true),
+    text.push(bounded_label(
+        "data/title",
+        "Save & data",
+        Rect {
+            x: 127,
+            y: 13,
+            w: 128,
+            h: 16,
+        },
+        TextRole::Title,
+        29,
+    ));
+    for (index, (id, title, detail, value, action, enabled)) in [
+        (
+            "recover",
+            "Recover backup",
+            "Previous saved state",
+            "Recover",
+            UiAction::RecoverBackup,
+            true,
+        ),
         (
             "transcript",
-            if view.transcript_enabled {
-                "Transcript: On"
-            } else {
-                "Transcript: Off"
-            },
+            "Transcript",
+            "Save conversations locally",
+            on_off(view.transcript_enabled),
             UiAction::ToggleTranscript,
             true,
         ),
         (
             "export",
             "Export transcript",
+            "Copy the local transcript",
+            "Export",
             UiAction::ExportTranscript,
             view.transcript_enabled,
         ),
-    ];
-    for (index, (id, name, action, enabled)) in actions.into_iter().enumerate() {
-        let button = Rect {
-            x: 53,
-            y: 39 + i32::try_from(index).unwrap_or_default() * 20,
-            w: 214,
-            h: 17,
+        (
+            "reset",
+            "Reset creature",
+            "Keep a recoverable backup",
+            "Reset",
+            UiAction::RequestReset,
+            true,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let y = 35 + index as i32 * 25;
+        let area = Rect {
+            x: 127,
+            y,
+            w: 176,
+            h: 23,
         };
-        hits.push(hit(
-            &format!("data/{id}"),
-            None,
-            action,
-            button,
-            enabled,
-            name,
+        rects.push(rounded_rect(
+            &format!("data/{id}-row"),
+            area,
+            UI_BUTTON,
+            26,
+            3,
+            false,
         ));
-        add_button_chrome(&format!("data/{id}"), button, enabled, false, 25, rects);
-        text.push(label(
-            &format!("data/{id}-label"),
-            name,
-            button.x + 6,
-            button.y + 5,
+        text.push(bounded_label(
+            &format!("data/{id}-title"),
+            title,
+            Rect {
+                x: 131,
+                y: y + 1,
+                w: 126,
+                h: 11,
+            },
+            TextRole::Body,
             29,
         ));
+        text.push(bounded_label(
+            &format!("data/{id}-detail"),
+            detail,
+            Rect {
+                x: 131,
+                y: y + 12,
+                w: 126,
+                h: 10,
+            },
+            TextRole::Secondary,
+            29,
+        ));
+        let control = Rect {
+            x: 262,
+            y: y + 4,
+            w: 37,
+            h: 16,
+        };
+        if id == "transcript" {
+            hits.push(hit("data/transcript", None, action, control, true, title));
+            add_toggle(
+                "data/transcript",
+                control,
+                view.transcript_enabled,
+                27,
+                rects,
+                text,
+            );
+        } else {
+            add_control(
+                &format!("data/{id}"),
+                value,
+                action,
+                control,
+                enabled,
+                false,
+                25,
+                rects,
+                text,
+                hits,
+            );
+            if id == "reset" {
+                rects.push(rounded_rect(
+                    "data/reset-danger",
+                    control,
+                    UI_DANGER,
+                    29,
+                    3,
+                    true,
+                ));
+            }
+        }
     }
 }
 
@@ -2548,59 +3222,85 @@ fn add_reset_confirmation(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    add_panel_chrome(
+    add_interactive_panel(
         "reset/panel",
         Rect {
-            x: 49,
-            y: 39,
-            w: 222,
-            h: 59,
+            x: 58,
+            y: 40,
+            w: 204,
+            h: 77,
         },
         29,
         rects,
+        hits,
     );
-    text.push(label("reset/warning", "Reset this creature?", 57, 48, 32));
-    text.push(label(
-        "reset/detail",
-        "Backup stays recoverable.",
-        57,
-        61,
+    text.push(bounded_label(
+        "reset/warning",
+        "Start again?",
+        Rect {
+            x: 68,
+            y: 47,
+            w: 184,
+            h: 15,
+        },
+        TextRole::Title,
         33,
     ));
-    for (id, name, action, x) in [
-        ("cancel", "Cancel", UiAction::CancelMode, 57),
-        ("confirm", "Reset", UiAction::ConfirmReset, 165),
-    ] {
-        let button = Rect {
-            x,
-            y: 72,
-            w: 98,
-            h: 19,
-        };
-        hits.push(hit(
-            &format!("reset/{id}"),
-            None,
-            action,
-            button,
-            true,
-            name,
-        ));
-        add_button_chrome(
-            &format!("reset/{id}"),
-            button,
-            true,
-            id == "confirm",
-            29,
-            rects,
-        );
-        text.push(label(
-            &format!("reset/{id}-label"),
-            name,
-            button.x + 8,
-            button.y + 5,
-            33,
-        ));
-    }
+    text.push(bounded_label(
+        "reset/detail",
+        "Your current creature will be replaced.\nYour backup stays recoverable.",
+        Rect {
+            x: 68,
+            y: 64,
+            w: 184,
+            h: 25,
+        },
+        TextRole::Secondary,
+        33,
+    ));
+    add_control(
+        "reset/cancel",
+        "Cancel",
+        UiAction::CancelMode,
+        Rect {
+            x: 68,
+            y: 94,
+            w: 88,
+            h: 17,
+        },
+        true,
+        true,
+        29,
+        rects,
+        text,
+        hits,
+    );
+    let reset = Rect {
+        x: 164,
+        y: 94,
+        w: 88,
+        h: 17,
+    };
+    add_control(
+        "reset/confirm",
+        "Reset creature",
+        UiAction::ConfirmReset,
+        reset,
+        true,
+        false,
+        29,
+        rects,
+        text,
+        hits,
+    );
+    rects.push(rounded_rect(
+        "reset/confirm-danger",
+        reset,
+        UI_DANGER,
+        33,
+        3,
+        true,
+    ));
 }
 
 fn add_bindings(
@@ -2609,28 +3309,31 @@ fn add_bindings(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    add_panel_chrome(
+    add_interactive_panel(
         "bindings/panel",
         Rect {
-            x: 38,
-            y: 8,
-            w: 244,
-            h: 123,
+            x: 126,
+            y: 6,
+            w: 186,
+            h: 139,
         },
         25,
         rects,
+        hits,
     );
-    let mut header = label("bindings/title", "Input bindings", 46, 14, 29);
-    header.role = TextRole::Title;
-    header.vertical_centered = true;
-    header.bounds = Some(Rect {
-        x: 46,
-        y: 11,
-        w: 190,
-        h: 14,
-    });
-    text.push(header);
-    let rows = [
+    text.push(bounded_label(
+        "bindings/title",
+        "Input bindings",
+        Rect {
+            x: 134,
+            y: 12,
+            w: 133,
+            h: 16,
+        },
+        TextRole::Title,
+        29,
+    ));
+    for (index, (action, name, binding)) in [
         (
             BindableAction::PushToTalk,
             "Push to talk",
@@ -2661,87 +3364,155 @@ fn add_bindings(
             "Cancel",
             view.binding_labels.cancel.as_str(),
         ),
-    ];
-    for (index, (action, name, binding)) in rows.into_iter().enumerate() {
-        // Three units between faces leave one clear unit between their focus outlines.
-        let y = 29 + i32::try_from(index).unwrap_or_default() * 17;
-        let mut row_label = label(
-            &format!("bindings/{}-name", bindable_id(action)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let y = 33 + index as i32 * 15;
+        let id = format!("bindings/{}", bindable_id(action));
+        text.push(bounded_label(
+            &format!("{id}-name"),
             name,
-            48,
-            y + 4,
+            Rect {
+                x: 135,
+                y,
+                w: 75,
+                h: 14,
+            },
+            TextRole::Secondary,
             29,
-        );
-        row_label.vertical_centered = true;
-        row_label.bounds = Some(Rect {
-            x: 48,
-            y,
-            w: 127,
-            h: 14,
-        });
-        text.push(row_label);
-        let button = Rect {
-            x: 181,
-            y,
-            w: 91,
-            h: 14,
-        };
-        hits.push(hit(
-            &format!("bindings/{}", bindable_id(action)),
-            None,
-            UiAction::BeginRebind(action),
-            button,
-            true,
-            &format!("Rebind {name}"),
         ));
-        add_button_chrome(
-            &format!("bindings/{}", bindable_id(action)),
-            button,
+        add_control(
+            &id,
+            binding,
+            UiAction::BeginRebind(action),
+            Rect {
+                x: 215,
+                y,
+                w: 88,
+                h: 14,
+            },
             true,
             false,
             25,
             rects,
+            text,
+            hits,
         );
-        text.push(label(
-            &format!("bindings/{}-value", bindable_id(action)),
-            binding,
-            button.x + 5,
-            button.y + 3,
-            29,
-        ));
     }
+    add_control(
+        "settings/reset-bindings",
+        "Reset keys",
+        UiAction::ResetBindings,
+        Rect {
+            x: 235,
+            y: 126,
+            w: 68,
+            h: 14,
+        },
+        true,
+        false,
+        25,
+        rects,
+        text,
+        hits,
+    );
+    text.push(bounded_label(
+        "bindings/hint",
+        "Select a key to change it.",
+        Rect {
+            x: 135,
+            y: 125,
+            w: 96,
+            h: 16,
+        },
+        TextRole::Secondary,
+        29,
+    ));
 }
 
 fn add_rebinding(
     action: BindableAction,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
 ) {
-    add_panel_chrome(
+    add_interactive_panel(
         "bindings/capture/panel",
         Rect {
-            x: 53,
-            y: 46,
-            w: 214,
-            h: 42,
+            x: 77,
+            y: 39,
+            w: 166,
+            h: 80,
+        },
+        29,
+        rects,
+        hits,
+    );
+    text.push(bounded_label(
+        "bindings/capture-prompt",
+        &format!("Press a key for {}", bindable_name(action)),
+        Rect {
+            x: 85,
+            y: 44,
+            w: 150,
+            h: 22,
+        },
+        TextRole::Body,
+        33,
+    ));
+    add_inset(
+        "bindings/waiting",
+        Rect {
+            x: 138,
+            y: 69,
+            w: 44,
+            h: 20,
         },
         29,
         rects,
     );
-    text.push(label(
-        "bindings/capture-prompt",
-        &format!("Press a key for {}", bindable_name(action)),
-        64,
-        57,
-        32,
+    text.push(bounded_label(
+        "bindings/waiting-label",
+        "…",
+        Rect {
+            x: 141,
+            y: 71,
+            w: 38,
+            h: 16,
+        },
+        TextRole::Control,
+        33,
     ));
-    text.push(label(
+    text.push(bounded_label(
         "bindings/capture-cancel",
-        "Escape cancels",
-        64,
-        72,
-        32,
+        "Esc cancels",
+        Rect {
+            x: 85,
+            y: 96,
+            w: 75,
+            h: 15,
+        },
+        TextRole::Secondary,
+        33,
     ));
+    add_control(
+        "bindings/cancel",
+        "Cancel",
+        UiAction::CancelMode,
+        Rect {
+            x: 177,
+            y: 96,
+            w: 58,
+            h: 16,
+        },
+        true,
+        false,
+        29,
+        rects,
+        text,
+        hits,
+    );
 }
 
 fn on_off(value: bool) -> &'static str {
@@ -2779,7 +3550,7 @@ fn text_speed_label(speed: u8) -> &'static str {
 
 fn microphone_label(state: MicrophoneState) -> &'static str {
     match state {
-        MicrophoneState::Disabled => "Mic off. Enable: Settings > Sound & speech.",
+        MicrophoneState::Disabled => "Mic off. Enable in Settings › Sound.",
         MicrophoneState::Idle => "Hold to talk; release to send.",
         MicrophoneState::Listening => "Listening; release to send",
         MicrophoneState::Recognizing => "Recognizing speech",
@@ -2814,63 +3585,123 @@ fn bindable_name(action: BindableAction) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_action_strip(
     id: &str,
     actions: &[UiAction],
     y: i32,
+    icons: &mut Vec<IconCommand>,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    let item_width = 72;
-    // Equal seven-unit outer padding and four-unit gutters leave focus rims clear.
-    let width = item_width * i32::try_from(actions.len()).unwrap_or_default() + 10;
+    let context = id == "context";
+    let card_height = if context { 26 } else { 34 };
+    let item_width = if actions.len() >= 4 { 60 } else { 54 };
+    let width = (item_width + 6) * actions.len() as i32 + 6;
     let start = (LOGICAL_WIDTH - width) / 2;
-    add_panel_chrome(
+    add_interactive_panel(
         &format!("mode/{id}-panel"),
         Rect {
             x: start,
-            y: y - 17,
+            y: y - 18,
             w: width,
-            h: 44,
+            h: card_height + 24,
         },
         25,
         rects,
+        hits,
     );
-    text.push(label(
+    text.push(bounded_label(
         &format!("mode/{id}/title"),
         match id {
             "food" => "Choose food",
             "toy" => "Choose a toy",
-            _ => "Spend a moment",
+            _ => "Look closer",
         },
-        start + 7,
-        y - 13,
+        Rect {
+            x: start + 6,
+            y: y - 16,
+            w: width - 12,
+            h: 14,
+        },
+        TextRole::Body,
         29,
     ));
     for (index, action) in actions.iter().copied().enumerate() {
-        let button_rect = Rect {
-            x: start + 7 + i32::try_from(index).unwrap_or_default() * item_width,
-            y: y + 3,
-            w: item_width - 4,
-            h: 17,
+        let area = Rect {
+            x: start + 6 + index as i32 * (item_width + 6),
+            y,
+            w: item_width,
+            h: card_height,
         };
-        let label_text = action_label(action);
-        let region_id = format!("action/{}", action_id(action));
-        hits.push(hit(
-            &region_id,
-            None,
-            action,
-            button_rect,
-            true,
-            &label_text,
-        ));
-        add_button_chrome(&region_id, button_rect, true, false, 25, rects);
-        text.push(label(
-            &format!("{region_id}-label"),
-            &label_text,
-            button_rect.x + 5,
-            button_rect.y + 6,
+        let region = format!("action/{}", action_id(action));
+        let (kind, name) = match action {
+            UiAction::SelectFood(food) => (
+                IconKind::FoodItem(food),
+                match food {
+                    FoodId::Berry => "Berry",
+                    FoodId::Mushroom => "Mushroom",
+                    FoodId::Pellet => "Pellet",
+                }
+                .to_owned(),
+            ),
+            UiAction::Play(toy) => (
+                IconKind::Toy(toy),
+                match toy {
+                    ToyId::Ball => "Ball",
+                    ToyId::Bell => "Bell",
+                    ToyId::Sock => "Sock",
+                }
+                .to_owned(),
+            ),
+            UiAction::Comfort => (IconKind::Heart, "Comfort".to_owned()),
+            UiAction::OpenToyChoice => (IconKind::Play, "Play".to_owned()),
+            UiAction::Rename => (IconKind::Rename, "Rename".to_owned()),
+            UiAction::Inspect => (IconKind::Inspect, "Inspect".to_owned()),
+            _ => (IconKind::Inspect, action_label(action)),
+        };
+        add_button_chrome(&region, area, true, false, 25, rects);
+        hits.push(hit(&region, None, action, area, true, &name));
+        icons.push(IconCommand {
+            id: region.clone(),
+            kind,
+            bounds: if context {
+                Rect {
+                    x: area.x + 6,
+                    y: area.y + 8,
+                    w: 10,
+                    h: 10,
+                }
+            } else {
+                Rect {
+                    x: area.x + (area.w - 14) / 2,
+                    y: area.y + 4,
+                    w: 14,
+                    h: 14,
+                }
+            },
+            layer: 29,
+        });
+        text.push(bounded_label(
+            &format!("{region}-label"),
+            &name,
+            if context {
+                Rect {
+                    x: area.x + 20,
+                    y: area.y + 3,
+                    w: area.w - 24,
+                    h: 20,
+                }
+            } else {
+                Rect {
+                    x: area.x + 3,
+                    y: area.y + 20,
+                    w: area.w - 6,
+                    h: 12,
+                }
+            },
+            TextRole::Control,
             29,
         ));
     }
@@ -2882,56 +3713,135 @@ fn add_keyboard(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    const KEYS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ .,?!";
-    add_panel_chrome(
+    add_interactive_panel(
         "keyboard/panel",
         Rect {
-            x: 6,
-            y: 3,
-            w: 308,
-            h: 124,
+            x: 5,
+            y: 80,
+            w: 310,
+            h: 67,
+        },
+        25,
+        rects,
+        hits,
+    );
+    text.push(bounded_label(
+        "keyboard/title",
+        if view.renaming_with_osk {
+            "Name your creature"
+        } else {
+            "Talk to your creature"
+        },
+        Rect {
+            x: 12,
+            y: 82,
+            w: 235,
+            h: 10,
+        },
+        TextRole::Body,
+        29,
+    ));
+    if view.renaming_with_osk {
+        text.push(bounded_label(
+            "keyboard/count",
+            &format!("{} / 24", view.text_buffer.chars().count()),
+            Rect {
+                x: 266,
+                y: 82,
+                w: 40,
+                h: 10,
+            },
+            TextRole::ControlCaption,
+            29,
+        ));
+    }
+    add_inset(
+        "keyboard/input",
+        Rect {
+            x: 12,
+            y: 93,
+            w: 296,
+            h: 14,
         },
         25,
         rects,
     );
-    for (index, character) in KEYS.chars().enumerate() {
-        let column = i32::try_from(index % 11).unwrap_or_default();
-        let row = i32::try_from(index / 11).unwrap_or_default();
-        let key = Rect {
-            x: 12 + column * 27,
-            y: 9 + row * 27,
-            w: 25,
-            h: 23,
-        };
-        let key_name = match character {
-            ' ' => "space".to_owned(),
-            '?' => "question".to_owned(),
-            '!' => "exclamation".to_owned(),
-            _ => character.to_ascii_lowercase().to_string(),
-        };
-        let shown = if character == ' ' {
-            "SP".to_owned()
+    let value = if view.text_buffer.is_empty() {
+        if view.renaming_with_osk {
+            "New name…"
         } else {
-            character.to_string()
+            "A thought for your creature…"
+        }
+        .to_owned()
+    } else {
+        view.text_buffer.clone()
+    };
+    let mut input_label = bounded_label(
+        "keyboard/input-text",
+        &value,
+        Rect {
+            x: 17,
+            y: 93,
+            w: 286,
+            h: 14,
+        },
+        TextRole::Body,
+        29,
+    );
+    input_label.keep_tail = !view.text_buffer.is_empty();
+    input_label.input_state = Some(input_visual_state(view));
+    text.push(input_label);
+    for (index, character) in "ABCDEFGHIJKLMNOPQRSTUVWXYZ".chars().enumerate() {
+        let area = Rect {
+            x: 12 + (index % 13) as i32 * 23,
+            y: 108 + (index / 13) as i32 * 13,
+            w: 20,
+            h: 12,
         };
         add_key(
-            &format!("keyboard/{key_name}"),
-            &shown,
+            &format!("keyboard/{}", character.to_ascii_lowercase()),
+            &character.to_string(),
             UiAction::TypeCharacter(character.to_ascii_lowercase()),
-            key,
+            area,
             true,
             rects,
             text,
             hits,
         );
     }
-    for (id, shown, action, x, enabled) in [
-        ("keyboard/delete", "Delete", UiAction::Backspace, 12, true),
-        ("keyboard/cancel", "Close", UiAction::CancelMode, 112, true),
+    for (index, (id, character)) in [
+        (".", '.'),
+        (",", ','),
+        ("question", '?'),
+        ("exclamation", '!'),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        add_key(
+            &format!("keyboard/{id}"),
+            &character.to_string(),
+            UiAction::TypeCharacter(character),
+            Rect {
+                x: 12 + index as i32 * 18,
+                y: 134,
+                w: 15,
+                h: 12,
+            },
+            true,
+            rects,
+            text,
+            hits,
+        );
+    }
+    for (id, name, action, x, w, enabled) in [
+        ("space", "Space", UiAction::TypeCharacter(' '), 84, 67, true),
+        ("delete", "Delete", UiAction::Backspace, 154, 48, true),
+        ("cancel", "Close", UiAction::CancelMode, 205, 43, true),
         (
-            "keyboard/send",
+            "send",
             if view.renaming_with_osk {
-                "Name"
+                "Save name"
             } else {
                 "Send"
             },
@@ -2940,21 +3850,24 @@ fn add_keyboard(
             } else {
                 UiAction::SubmitText
             },
-            212,
-            !view.text_buffer.trim().is_empty(),
+            251,
+            57,
+            !view.text_buffer.trim().is_empty() && !view.pending,
         ),
     ] {
-        add_key(
-            id,
-            shown,
+        add_control(
+            &format!("keyboard/{id}"),
+            name,
             action,
             Rect {
                 x,
-                y: 101,
-                w: 96,
-                h: 23,
+                y: 134,
+                w,
+                h: 12,
             },
             enabled,
+            id == "send",
+            25,
             rects,
             text,
             hits,
@@ -2973,15 +3886,9 @@ fn add_key(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
-    add_button_chrome(id, key, enabled, false, 25, rects);
-    text.push(label(
-        &format!("{id}-label"),
-        shown,
-        key.x + 5,
-        key.y + 6,
-        29,
-    ));
-    hits.push(hit(id, None, action, key, enabled, shown));
+    add_control(
+        id, shown, action, key, enabled, false, 25, rects, text, hits,
+    );
 }
 
 fn add_speech(
@@ -2991,6 +3898,9 @@ fn add_speech(
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
 ) {
+    if speech_obstructed(view.mode) {
+        return;
+    }
     let Some(speech) = view
         .speech
         .as_deref()
@@ -3000,25 +3910,33 @@ fn add_speech(
     };
     let (creature_x, _) = world_to_logical(state.creature.aquarium.position);
     let layout_text = view.speech_layout_text.as_deref().unwrap_or(speech);
+    let pages = speech_pages(layout_text);
+    let revealed = speech_revealed_bytes(layout_text, speech);
+    let available_page = speech_available_page(&pages, revealed);
+    let page_index = view.speech_page.min(available_page);
+    let paginated = pages.len() > 1;
+    let page_start = pages
+        .iter()
+        .take(page_index)
+        .map(|page| page.len())
+        .sum::<usize>();
+    let page = pages[page_index];
+    let page_speech = &page[..revealed.saturating_sub(page_start).min(page.len())];
     let font_size = TextRole::Dialogue.size(view.text_scale >= 2);
-    let glyph_width = (font_size * 0.56).ceil() as i32;
-    let natural_width =
-        i32::try_from(layout_text.chars().count()).unwrap_or(300) * glyph_width + 18;
-    let mut width = natural_width.clamp(if view.text_scale >= 2 { 150 } else { 120 }, 160);
-    let line_height = (font_size * 1.2).ceil() as i32;
-    let mut lines = speech_line_count(layout_text, ((width - 18) / glyph_width) as usize);
-    // Long captions at the large accessibility size may use the full tank width.
-    if lines * line_height > 78 {
-        width = 300;
-        lines = speech_line_count(layout_text, ((width - 18) / glyph_width) as usize);
-    }
-    let height = (lines * line_height + 25).clamp(36, 103);
-    let panel_x = if creature_x >= LOGICAL_WIDTH / 2 {
+    let width = SPEECH_PANEL_WIDTH;
+    let caption_y = if paginated { 38 } else { 22 };
+    // The complete owned page fixes the card during reveal. Explicit navigation
+    // can size the next page to its content, including a short final sentence.
+    let body_height = typography()
+        .height(page, SPEECH_TEXT_WIDTH as f32, font_size)
+        .ceil() as i32;
+    let height = (caption_y - 5 + body_height + 5).max(36);
+    let panel_x = if view.mode == UiMode::Settings || creature_x >= LOGICAL_WIDTH / 2 {
         5
     } else {
         LOGICAL_WIDTH - 5 - width
     };
-    add_panel_chrome(
+    add_interactive_panel(
         "speech/panel",
         Rect {
             x: panel_x,
@@ -3026,8 +3944,9 @@ fn add_speech(
             w: width,
             h: height,
         },
-        22,
+        12,
         rects,
+        hits,
     );
     let reactions_y = 5 + height;
     let mut speaker = label(
@@ -3035,7 +3954,7 @@ fn add_speech(
         &format!("{} says", head_fit(&state.creature.name, 16)),
         panel_x + 9,
         10,
-        27,
+        16,
     );
     speaker.role = TextRole::Secondary;
     speaker.bounds = Some(Rect {
@@ -3045,13 +3964,55 @@ fn add_speech(
         h: 10,
     });
     text.push(speaker);
-    let mut caption = label("speech/text", speech, panel_x + 9, 22, 27);
+    if paginated {
+        text.push(bounded_label(
+            "speech/page-count",
+            &format!("{} / {}", page_index + 1, pages.len()),
+            Rect {
+                x: panel_x + 54,
+                y: 20,
+                w: 32,
+                h: 14,
+            },
+            TextRole::ControlCaption,
+            16,
+        ));
+        for (id, shown, delta, x, enabled) in [
+            ("speech/back", "Back", -1, panel_x + 9, page_index > 0),
+            (
+                "speech/next",
+                "Next",
+                1,
+                panel_x + 95,
+                page_index < available_page,
+            ),
+        ] {
+            add_control(
+                id,
+                shown,
+                UiAction::ChangeSpeechPage(delta),
+                Rect {
+                    x,
+                    y: 20,
+                    w: 36,
+                    h: 14,
+                },
+                enabled,
+                false,
+                12,
+                rects,
+                text,
+                hits,
+            );
+        }
+    }
+    let mut caption = label("speech/text", page_speech, panel_x + 9, caption_y, 16);
     caption.role = TextRole::Dialogue;
     caption.bounds = Some(Rect {
         x: panel_x + 9,
-        y: 22,
+        y: caption_y,
         w: width - 18,
-        h: height - 20,
+        h: body_height,
     });
     text.push(caption);
     let reaction_width = (width - 16) / 3;
@@ -3065,57 +4026,74 @@ fn add_speech(
             w: reaction_width,
             h: 18,
         };
-        hits.push(hit(
-            &format!("reaction/{}", reaction_name(reaction)),
-            Some(UiTarget::Reaction(reaction)),
-            UiAction::React(reaction),
-            reaction_rect,
-            true,
-            reaction_name(reaction),
-        ));
-        add_button_chrome(
-            &format!("reaction/{}", reaction_name(reaction)),
-            reaction_rect,
-            true,
-            false,
-            26,
-            rects,
-        );
         let shown = match reaction {
             Reaction::Laugh => "Laugh",
             Reaction::Disapprove => "Disapprove",
             Reaction::Comfort => "Comfort",
         };
-        text.push(label(
-            &format!("reaction/{}-label", reaction_name(reaction)),
+        let id = format!("reaction/{}", reaction_name(reaction));
+        add_control(
+            &id,
             shown,
-            reaction_rect.x + 3,
-            reaction_rect.y + 3,
-            30,
-        ));
+            UiAction::React(reaction),
+            reaction_rect,
+            true,
+            false,
+            12,
+            rects,
+            text,
+            hits,
+        );
+        if let Some(region) = hits.last_mut() {
+            region.target = Some(UiTarget::Reaction(reaction));
+        }
     }
 }
 
-/// Conservative word wrapping estimate in layout units; native text owns glyph shaping.
-fn speech_line_count(text: &str, capacity: usize) -> i32 {
-    let capacity = capacity.max(1);
-    let mut lines = 0usize;
-    for paragraph in text.split('\n') {
-        let mut used = 0usize;
-        lines += 1;
-        for word in paragraph.split_whitespace() {
-            let count = word.chars().count();
-            if used > 0 && used + 1 + count > capacity {
-                lines += 1;
-                used = 0;
-            } else if used > 0 {
-                used += 1;
-            }
-            lines += count.saturating_sub(1) / capacity;
-            used += count.saturating_sub(1) % capacity + 1;
-        }
+/// Temporary care and editing surfaces own the water while open. Settings leaves
+/// a complete caption column beside it; other modes cannot guarantee that space.
+fn speech_obstructed(mode: UiMode) -> bool {
+    !matches!(mode, UiMode::Compose | UiMode::Settings)
+}
+
+/// Stable, lossless pages bounded for five lines at the large dialogue size.
+/// Whitespace belongs to a page so joining the pages reconstructs the exact utterance.
+fn speech_pages(speech: &str) -> Vec<&str> {
+    typography()
+        .pages(
+            speech,
+            SPEECH_TEXT_WIDTH as f32,
+            TextRole::Dialogue.size(true),
+            SPEECH_MAX_LINES,
+        )
+        .iter()
+        .map(|range| &speech[range.clone()])
+        .collect()
+}
+
+/// Reveal is a prefix of the owned utterance, rounded down to whole graphemes.
+fn speech_revealed_bytes(layout: &str, speech: &str) -> usize {
+    if !layout.starts_with(speech) {
+        return 0;
     }
-    i32::try_from(lines).unwrap_or(i32::MAX)
+    layout
+        .grapheme_indices(true)
+        .take_while(|(start, grapheme)| start + grapheme.len() <= speech.len())
+        .last()
+        .map_or(0, |(start, grapheme)| start + grapheme.len())
+}
+
+fn speech_available_page(pages: &[&str], revealed: usize) -> usize {
+    let mut start = 0;
+    let mut available = 0;
+    for (index, page) in pages.iter().enumerate() {
+        let visible = revealed.saturating_sub(start).min(page.len());
+        if visible > 0 {
+            available = index;
+        }
+        start += page.len();
+    }
+    available
 }
 
 fn add_status(
@@ -3123,56 +4101,159 @@ fn add_status(
     now_ms: u64,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
 ) {
     let Some(message) = visible_status(view, now_ms) else {
         return;
     };
-    let text_scale = view.text_scale.clamp(1, 2);
-    let capacity = (286.0 / (TextRole::Secondary.size(text_scale >= 2) * 0.6)) as usize;
-    let fitted = head_fit(message, capacity);
-    add_panel_chrome(
+    let dismissible = view.status_message.is_some()
+        || view.transcript_status.is_some()
+        || matches!(
+            view.microphone_state,
+            MicrophoneState::Unavailable | MicrophoneState::Error
+        );
+    let side_width = match view.mode {
+        UiMode::Settings => Some(156),
+        UiMode::Bindings => Some(111),
+        UiMode::DataManagement => Some(104),
+        _ => None,
+    };
+    let panel_width = side_width.unwrap_or(296);
+    let x = if side_width.is_some() { 7 } else { 12 };
+    let width = panel_width
+        - if dismissible && side_width.is_none() {
+            49
+        } else {
+            14
+        };
+    let size = TextRole::Secondary.size(view.text_scale >= 2);
+    let lines = typography()
+        .lines(message, width as f32, size)
+        .len()
+        .clamp(1, 8);
+    let footer = if dismissible && side_width.is_some() {
+        19
+    } else {
+        0
+    };
+    let h = ((lines as f32 * line_height(size)).ceil() as i32 + 10).max(20) + footer;
+    let y = if side_width.is_some()
+        || matches!(
+            view.mode,
+            UiMode::FoodChoice | UiMode::ToyChoice | UiMode::OnScreenKeyboard
+        ) {
+        5
+    } else {
+        [148 - h, 5]
+            .into_iter()
+            .enumerate()
+            .min_by_key(|(preference, y)| {
+                (
+                    panel_overlap(
+                        Rect {
+                            x,
+                            y: *y,
+                            w: panel_width,
+                            h,
+                        },
+                        rects,
+                    ),
+                    *preference,
+                )
+            })
+            .map_or(148 - h, |(_, y)| y)
+    };
+    add_interactive_panel(
         "status/background",
         Rect {
-            x: 12,
-            y: 139,
-            w: 296,
-            h: 10,
+            x,
+            y,
+            w: panel_width,
+            h,
         },
-        35,
+        36,
         rects,
+        hits,
     );
-    let mut message = label("status/message", &fitted, 17, 140, 39);
-    message.role = TextRole::Secondary;
-    message.bounds = Some(Rect {
-        x: 17,
-        y: 140,
-        w: 286,
-        h: 8,
-    });
-    text.push(message);
+    text.push(bounded_label(
+        "status/message",
+        message,
+        Rect {
+            x: x + 7,
+            y: y + 5,
+            w: width,
+            h: h - 10 - footer,
+        },
+        TextRole::Secondary,
+        40,
+    ));
+    if dismissible {
+        add_control(
+            "status/dismiss",
+            "Close",
+            UiAction::DismissStatus,
+            Rect {
+                x: x + panel_width - 37,
+                y: if footer > 0 { y + h - 19 } else { y + 3 },
+                w: 31,
+                h: 14,
+            },
+            true,
+            false,
+            36,
+            rects,
+            text,
+            hits,
+        );
+    }
+}
+
+fn panel_overlap(area: Rect, rects: &[RectCommand]) -> i32 {
+    rects
+        .iter()
+        .filter(|part| {
+            !part.outline
+                && (part.id.contains("/panel")
+                    || part.id.ends_with("-panel")
+                    || part.id.ends_with("-background"))
+        })
+        .map(|part| {
+            let w =
+                ((area.x + area.w).min(part.rect.x + part.rect.w) - area.x.max(part.rect.x)).max(0);
+            let h =
+                ((area.y + area.h).min(part.rect.y + part.rect.h) - area.y.max(part.rect.y)).max(0);
+            w * h
+        })
+        .sum()
 }
 
 fn visible_status(view: &ViewState, now_ms: u64) -> Option<&str> {
     view.status_message
         .as_deref()
-        .or(match view.microphone_state {
-            MicrophoneState::Listening => Some("Listening... release to send."),
-            MicrophoneState::Recognizing => Some("Working out what you said..."),
-            MicrophoneState::Unavailable => {
-                Some("Microphone unavailable. Check input device. Text still works.")
-            }
-            MicrophoneState::Error => {
-                Some("Speech input failed. Check input device and retry. Text still works.")
-            }
-            MicrophoneState::Disabled | MicrophoneState::Idle => None,
-        })
+        .or(
+            if view.dismissed_microphone_notice == Some(view.microphone_state) {
+                None
+            } else {
+                match view.microphone_state {
+                    MicrophoneState::Listening => Some("Listening... release to send."),
+                    MicrophoneState::Recognizing => Some("Working out what you said..."),
+                    MicrophoneState::Unavailable => {
+                        Some("Microphone unavailable. Check input device. Text still works.")
+                    }
+                    MicrophoneState::Error => {
+                        Some("Speech input failed. Check input device and retry. Text still works.")
+                    }
+                    MicrophoneState::Disabled | MicrophoneState::Idle => None,
+                }
+            },
+        )
         .or(view.transcript_status.as_deref())
         .or_else(|| {
             matches!(
                 view.active_cue(now_ms),
                 Some(PresentationCueKind::AquariumFull)
             )
-            .then_some("Aquarium full. Clean up old food first.")
+            .then_some("Tank is full. Wait for old food to clear.")
         })
 }
 
@@ -3188,126 +4269,149 @@ fn add_hover_and_focus(
             view.hovered_region
                 .as_deref()
                 .filter(|hovered| Some(*hovered) != view.focused_region.as_deref()),
-            [142, 231, 202, 255],
+            [138, 206, 186, 255],
             "ui/hover",
         ),
         (
             view.focused_region.as_deref(),
-            [255, 225, 133, 255],
+            [250, 233, 178, 255],
             "ui/focus",
         ),
+        (
+            view.pressed_region
+                .as_deref()
+                .filter(|_| now_ms < view.pressed_until_ms),
+            [189, 237, 214, 255],
+            "ui/pressed",
+        ),
     ] {
-        let Some(id) = id else { continue };
-        let Some(hit_region) = hits
-            .iter()
-            .find(|hit_region| hit_region.id == id && hit_region.enabled)
+        let Some(region) = id.and_then(|id| hits.iter().find(|hit| hit.id == id && hit.enabled))
         else {
             continue;
         };
-        if hit_region.id.starts_with("title/")
-            || (hit_region.id.starts_with("settings/page-") && !view.controller_active)
+        if matches!(region.shape, HitShape::World(_)) {
+            continue;
+        }
+        if region.id == "compose/input"
+            && !view.compose_engaged
+            && view.text_buffer.is_empty()
+            && !view.controller_active
         {
             continue;
         }
-        if matches!(hit_region.shape, HitShape::World(_)) {
-            continue;
-        }
-        if hit_region.id == "compose/input" {
-            if !view.compose_engaged && view.text_buffer.is_empty() && !view.controller_active {
-                continue;
-            }
-            rects.push(rect(
-                command_id,
-                Rect {
-                    y: hit_region.rect.y + hit_region.rect.h - 1,
-                    h: 1,
-                    ..hit_region.rect
-                },
-                color,
-                34,
-            ));
-            continue;
-        }
-        rects.push(RectCommand {
-            id: command_id.to_owned(),
-            rect: grow(hit_region.rect, 1),
+        let radius = if matches!(
+            region.id.as_str(),
+            "compose/microphone" | "compose/settings" | "compose/close"
+        ) {
+            9
+        } else {
+            3
+        };
+        let layer = if region.id.starts_with("status/") {
+            41
+        } else {
+            34
+        };
+        rects.push(rounded_rect(
+            command_id,
+            region.rect,
             color,
-            layer: 34,
-            outline: true,
-        });
+            layer,
+            radius,
+            true,
+        ));
     }
-
     let described = view
         .hovered_region
         .as_deref()
         .or(view.focused_region.as_deref());
-    let Some(hit_region) =
-        described.and_then(|id| hits.iter().find(|hit_region| hit_region.id == id))
-    else {
+    let Some(region) = described.and_then(|id| hits.iter().find(|hit| hit.id == id)) else {
         return;
     };
-    let microphone_help = hit_region.id == "compose/microphone"
-        || (hit_region.id == "compose/settings"
-            && matches!(
-                view.microphone_state,
-                MicrophoneState::Disabled | MicrophoneState::Unavailable | MicrophoneState::Error
-            ));
-    if microphone_help {
-        // Actual receipt, recognition uncertainty and technical feedback own this strip.
-        if visible_status(view, now_ms).is_some() {
-            return;
-        }
-        // A stateful gesture needs more than its short title. Settings is a reachable
-        // companion when focus navigation correctly skips the disabled microphone.
-        add_panel_chrome(
-            "ui/microphone-help-background",
+    let microphone_help = region.id == "compose/microphone";
+    let utility = region.id.starts_with("compose/toy-")
+        || matches!(
+            region.id.as_str(),
+            "compose/settings" | "compose/close" | "compose/send"
+        );
+    if !microphone_help && !utility && !matches!(region.shape, HitShape::World(_)) {
+        return;
+    }
+    if visible_status(view, now_ms).is_some() {
+        return;
+    }
+    let value = if microphone_help {
+        microphone_label(view.microphone_state)
+    } else {
+        &region.label
+    };
+    let size = TextRole::Secondary.size(view.text_scale >= 2);
+    let maximum_width = match view.mode {
+        UiMode::Settings => 156,
+        UiMode::Bindings => 111,
+        UiMode::DataManagement => 104,
+        _ => 220,
+    };
+    let width = (typography().width(value, size).ceil() as i32 + 12).clamp(32, maximum_width);
+    let height = typography().height(value, (width - 12) as f32, size).ceil() as i32 + 8;
+    let x = (region.rect.x + region.rect.w / 2 - width / 2).clamp(4, 316 - width);
+    let y = (region.rect.y - height - 4).clamp(4, 148 - height);
+    let overlap = |x: i32, y: i32| {
+        panel_overlap(
             Rect {
-                x: 12,
-                y: 139,
-                w: 296,
-                h: 10,
+                x,
+                y,
+                w: width,
+                h: height,
             },
-            36,
             rects,
-        );
-        let mut help = label(
-            "ui/microphone-help",
-            microphone_label(view.microphone_state),
-            17,
-            140,
-            38,
-        );
-        help.role = TextRole::Secondary;
-        help.bounds = Some(Rect {
-            x: 17,
-            y: 140,
-            w: 286,
-            h: 8,
-        });
-        text.push(help);
+        )
+    };
+    // Close is already named inside the open panel. If its local dock hint would
+    // cover that panel, moving the same word to a distant corner adds no guidance.
+    if region.id == "compose/close" && overlap(x, y) > 0 {
         return;
     }
-    // Text-labeled controls already explain themselves. Repeating their label in a tooltip
-    // obscures neighboring settings and fields while the player is using them.
-    if !hit_region.enabled || !matches!(hit_region.shape, HitShape::World(_)) {
-        return;
-    }
-    let label_width =
-        (i32::try_from(hit_region.label.chars().count()).unwrap_or(12) * 6 + 10).clamp(28, 140);
-    let x = hit_region.rect.x.clamp(2, LOGICAL_WIDTH - label_width - 2);
-    let y = (hit_region.rect.y - 16).clamp(2, AQUARIUM_BOTTOM - 16);
+    let (x, y) = [
+        (x, y),
+        (4, 5),
+        (316 - width, 5),
+        (4, 148 - height),
+        (316 - width, 148 - height),
+    ]
+    .into_iter()
+    .enumerate()
+    .min_by_key(|(index, (x, y))| (overlap(*x, *y), *index))
+    .map(|(_, position)| position)
+    .unwrap_or((x, y));
+    let id = if microphone_help {
+        "ui/microphone-help"
+    } else {
+        "ui/hover-label"
+    };
     add_panel_chrome(
-        "ui/hover-label-background",
+        &format!("{id}-background"),
         Rect {
             x,
             y,
-            w: label_width,
-            h: 14,
+            w: width,
+            h: height,
         },
-        34,
+        36,
         rects,
     );
-    text.push(label("ui/hover-label", &hit_region.label, x + 5, y + 4, 38));
+    text.push(bounded_label(
+        id,
+        value,
+        Rect {
+            x: x + 6,
+            y: y + 4,
+            w: width - 12,
+            h: height - 8,
+        },
+        TextRole::Secondary,
+        40,
+    ));
 }
 
 #[must_use]
@@ -3397,6 +4501,9 @@ const fn private_life_pose(
 }
 
 fn behavior_name(state: &WorldState) -> &'static str {
+    if let Some(attention) = accepted_attention_name(state) {
+        return attention;
+    }
     if let Some(activity) = state.creature.private_life.active.as_ref() {
         return private_life_behavior_name(activity.kind, activity.recipe, activity.phase);
     }
@@ -3454,6 +4561,60 @@ fn behavior_name(state: &WorldState) -> &'static str {
             SteeringMode::Settle => "settling",
             _ => "hovering",
         },
+    }
+}
+
+/// An accepted target can own attention while a previous action still owns the
+/// recovery pose and payoff cue. Describe only the current gaze, never an early
+/// movement, contact or enjoyment result.
+fn accepted_attention_name(state: &WorldState) -> Option<&'static str> {
+    if state.creature.current_intention == Intention::Sleep {
+        return None;
+    }
+    let aquarium = &state.creature.aquarium;
+    match aquarium.gaze {
+        GazeTarget::Food(id) => {
+            let action = aquarium.action.as_ref()?;
+            if action.food_id != Some(id)
+                || action.destination != SemanticDestination::Food(id)
+                || action.food_outcome.is_some()
+                || matches!(action.phase, ActionPhase::Act | ActionPhase::Recover)
+            {
+                return None;
+            }
+            let WorldObject::Food(food) = state.aquarium.objects.get(&id)? else {
+                return None;
+            };
+            if matches!(
+                food.disposition,
+                FoodDisposition::Consumed | FoodDisposition::Rejected
+            ) {
+                return None;
+            }
+            Some(match food.food {
+                FoodId::Berry => "watching the berry",
+                FoodId::Mushroom => "watching the mushroom",
+                FoodId::Pellet => "watching the pellet",
+            })
+        }
+        GazeTarget::Toy(toy) => {
+            let interaction = state.creature.interaction_state.toy_interaction.as_ref()?;
+            if interaction.toy != toy
+                || interaction.origin != beastie_core::ToyOrigin::Player
+                || interaction.outcome != beastie_core::ToyInteractionOutcome::Accepted
+                || interaction.phase != beastie_core::ToyInteractionPhase::Approach
+                || state.creature.current_intention != Intention::Play
+                || aquarium.destination != Some(SemanticDestination::Toy(toy))
+            {
+                return None;
+            }
+            Some(match toy {
+                ToyId::Ball => "watching the ball",
+                ToyId::Bell => "watching the bell",
+                ToyId::Sock => "watching the sock",
+            })
+        }
+        _ => None,
     }
 }
 
@@ -3778,78 +4939,72 @@ fn rect(id: &str, dimensions: Rect, color: [u8; 4], layer: i16) -> RectCommand {
         color,
         layer,
         outline: false,
+        corner_radius: 0,
     }
 }
 
+fn add_interactive_panel(
+    id: &str,
+    dimensions: Rect,
+    layer: i16,
+    rects: &mut Vec<RectCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    add_panel_chrome(id, dimensions, layer, rects);
+    hits.retain(|hit| {
+        hit.shape != HitShape::Rect
+            || hit.id.starts_with("world/")
+            || !rectangles_overlap(hit.rect, dimensions)
+    });
+    let mut blocker = hit(
+        &format!("{id}/pointer-blocker"),
+        None,
+        UiAction::FocusCompose,
+        dimensions,
+        false,
+        "",
+    );
+    blocker.shape = HitShape::Blocker;
+    blocker.cursor = CursorKind::Default;
+    hits.push(blocker);
+}
+
+fn rectangles_overlap(left: Rect, right: Rect) -> bool {
+    left.x < right.x + right.w
+        && left.x + left.w > right.x
+        && left.y < right.y + right.h
+        && left.y + left.h > right.y
+}
+
 fn add_panel_chrome(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<RectCommand>) {
-    if matches!(
-        id,
-        "settings/panel"
-            | "mode/drop-food-background"
-            | "rename/prompt-background"
-            | "data/panel"
-            | "reset/panel"
-            | "bindings/panel"
-            | "bindings/capture/panel"
-            | "keyboard/panel"
-    ) || (id.starts_with("mode/") && id.ends_with("-panel"))
-    {
-        rects.push(rect(id, dimensions, UI_PANEL, layer));
-        rects.push(RectCommand {
-            id: format!("{id}-edge"),
-            rect: dimensions,
-            color: UI_EDGE,
-            layer: layer + 1,
-            outline: true,
-        });
-        return;
-    }
-    rects.push(rect(&format!("{id}-edge"), dimensions, UI_EDGE, layer - 1));
-    rects.push(rect(
-        id,
-        Rect {
-            x: dimensions.x + 1,
-            y: dimensions.y + 1,
-            w: dimensions.w - 2,
-            h: dimensions.h - 2,
-        },
-        UI_PANEL,
-        layer,
+    let radius = if dimensions.h >= 24 { 4 } else { 3 };
+    rects.push(rounded_rect(id, dimensions, UI_PANEL, layer, radius, false));
+    rects.push(rounded_rect(
+        &format!("{id}-edge"),
+        dimensions,
+        UI_CORAL,
+        layer + 1,
+        radius,
+        true,
     ));
 }
 
 fn add_inset(id: &str, dimensions: Rect, layer: i16, rects: &mut Vec<RectCommand>) {
-    if id.starts_with("settings/") {
-        rects.push(rect(
-            &format!("{id}-background"),
-            dimensions,
-            UI_PANEL_INSET,
-            layer + 2,
-        ));
-        rects.push(RectCommand {
-            id: format!("{id}-rim"),
-            rect: dimensions,
-            color: UI_EDGE,
-            layer: layer + 3,
-            outline: true,
-        });
-        return;
-    }
-    rects.push(rect(
+    rects.push(rounded_rect(
         &format!("{id}-background"),
         dimensions,
         UI_PANEL_INSET,
         layer + 2,
+        3,
+        false,
     ));
-    rects.push(rect(
-        &format!("{id}-baseline"),
-        Rect {
-            y: dimensions.y + dimensions.h - 1,
-            h: 1,
-            ..dimensions
-        },
+    rects.push(rounded_rect(
+        &format!("{id}-rim"),
+        dimensions,
         UI_EDGE,
         layer + 3,
+        3,
+        true,
     ));
 }
 
@@ -3861,7 +5016,15 @@ fn add_button_chrome(
     layer: i16,
     rects: &mut Vec<RectCommand>,
 ) {
-    rects.push(rect(
+    let radius = if matches!(
+        id,
+        "compose/microphone" | "compose/settings" | "compose/close"
+    ) {
+        (dimensions.w.min(dimensions.h) / 2) as u8
+    } else {
+        3
+    };
+    rects.push(rounded_rect(
         &format!("{id}-background"),
         dimensions,
         if !enabled {
@@ -3869,31 +5032,106 @@ fn add_button_chrome(
         } else {
             match id {
                 // Care has a distinct enamel face; utility navigation rests on the rail.
-                "compose/food" => [66, 82, 64, 255],
+                "compose/food" => UI_SELECTED,
                 "compose/settings" | "compose/close" => UI_PANEL,
+                _ if active => UI_SELECTED,
                 _ => UI_BUTTON,
             }
         },
         layer + 2,
+        radius,
+        false,
     ));
-    if active {
-        rects.push(rect(
-            &format!("{id}-accent"),
-            Rect {
-                y: dimensions.y + dimensions.h - 1,
-                h: 1,
-                ..dimensions
-            },
-            UI_CORAL,
+    rects.push(rounded_rect(
+        &format!("{id}-rim"),
+        dimensions,
+        if active || id == "compose/food" {
+            UI_CORAL
+        } else {
+            UI_EDGE
+        },
+        layer + 3,
+        radius,
+        true,
+    ));
+}
+
+fn rounded_rect(
+    id: &str,
+    area: Rect,
+    color: [u8; 4],
+    layer: i16,
+    radius: u8,
+    outline: bool,
+) -> RectCommand {
+    RectCommand {
+        corner_radius: radius,
+        outline,
+        ..rect(id, area, color, layer)
+    }
+}
+
+fn bounded_label(id: &str, value: &str, area: Rect, role: TextRole, layer: i16) -> TextCommand {
+    TextCommand {
+        bounds: Some(area),
+        role,
+        vertical_centered: true,
+        ..label(id, value, area.x, area.y, layer)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_control(
+    id: &str,
+    value: &str,
+    action: UiAction,
+    area: Rect,
+    enabled: bool,
+    primary: bool,
+    layer: i16,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+    hits: &mut Vec<HitRegion>,
+) {
+    add_button_chrome(id, area, enabled, false, layer, rects);
+    if primary && enabled {
+        rects.push(rounded_rect(
+            &format!("{id}-primary"),
+            area,
+            UI_PRIMARY,
             layer + 3,
+            3,
+            false,
         ));
     }
+    hits.push(hit(id, None, action, area, enabled, value));
+    let vertical_inset = if area.h <= 12 { 1 } else { 2 };
+    let mut caption = bounded_label(
+        &format!("{id}-label"),
+        value,
+        Rect {
+            x: area.x + 3,
+            y: area.y + vertical_inset,
+            w: area.w - 6,
+            h: area.h - vertical_inset * 2,
+        },
+        if primary && enabled {
+            TextRole::PrimaryControl
+        } else {
+            TextRole::Control
+        },
+        layer + 4,
+    );
+    caption.muted = !enabled;
+    text.push(caption);
 }
 
 fn label(id: &str, value: &str, x: i32, y: i32, layer: i16) -> TextCommand {
     TextCommand {
         bounds: None,
         vertical_centered: false,
+        keep_tail: false,
+        input_state: None,
         muted: false,
         role: TextRole::Body,
         id: id.to_owned(),
@@ -3902,6 +5140,14 @@ fn label(id: &str, value: &str, x: i32, y: i32, layer: i16) -> TextCommand {
         y,
         layer,
         scale: 1,
+    }
+}
+
+fn input_visual_state(view: &ViewState) -> TextInputState {
+    if view.text_selected && !view.text_buffer.is_empty() {
+        TextInputState::Selected
+    } else {
+        TextInputState::Caret
     }
 }
 
@@ -3922,15 +5168,6 @@ fn hit(
         label: label.to_owned(),
         cursor: CursorKind::Pointer,
         shape: HitShape::Rect,
-    }
-}
-
-fn grow(rect: Rect, amount: i32) -> Rect {
-    Rect {
-        x: rect.x - amount,
-        y: rect.y - amount,
-        w: rect.w + amount * 2,
-        h: rect.h + amount * 2,
     }
 }
 
@@ -4134,7 +5371,7 @@ mod tests {
     }
 
     #[test]
-    fn toy_context_keeps_real_actions_in_a_small_nearby_card() {
+    fn toy_context_keeps_real_actions_in_a_readable_nearby_card() {
         let state = WorldState::new(7, "Mop");
         let scene = plan(
             &state,
@@ -4154,12 +5391,398 @@ mod tests {
         for action in [UiAction::Play(ToyId::Ball), UiAction::Inspect] {
             assert!(scene.hit_regions.iter().any(|hit| hit.action == action));
         }
-        assert!(
-            scene
+        let panel = scene
+            .rects
+            .iter()
+            .find(|r| r.id == "mode/context-panel")
+            .unwrap();
+        assert!(panel.rect.w <= LOGICAL_WIDTH / 3);
+        for command in scene
+            .text
+            .iter()
+            .filter(|text| text.id.starts_with("mode/context/") || text.id.starts_with("action/"))
+        {
+            assert!(
+                rect_contains(panel.rect, command.bounds.unwrap()),
+                "{}",
+                command.id
+            );
+            assert!(command.bounds.unwrap().h >= command.role.size(false).ceil() as i32 + 2);
+        }
+    }
+
+    #[test]
+    fn inspection_projects_live_facts_and_keeps_its_opening_anchor() {
+        let mut state = WorldState::new(42, "Mop");
+        let mut view = ViewState {
+            mode: UiMode::Inspect(UiTarget::Creature),
+            context_card_anchor: Some((173, 31)),
+            ..ViewState::default()
+        };
+        let first = plan(&state, &view).0;
+        let panel = first
+            .rects
+            .iter()
+            .find(|rect| rect.id == "inspect/panel")
+            .unwrap()
+            .rect;
+        state.creature.name = "Gob".to_owned();
+        state.creature.current_intention = Intention::Play;
+        state.creature.aquarium.steering = SteeringMode::Approach;
+        state.creature.aquarium.position = NormalizedPosition::new(10_000, 10_000);
+        let before_projection = state.clone();
+        let moved = plan(&state, &view).0;
+        assert_eq!(
+            moved
                 .rects
                 .iter()
-                .any(|r| r.id == "mode/context-panel" && r.rect.w < 90)
+                .find(|rect| rect.id == "inspect/panel")
+                .unwrap()
+                .rect
+                .x,
+            panel.x
         );
+        assert!(
+            moved
+                .text
+                .iter()
+                .any(|text| text.id == "inspect/title" && text.text == "Gob")
+        );
+        assert!(
+            moved
+                .text
+                .iter()
+                .any(|text| text.id == "inspect/detail" && text.text.contains("swimming to a toy"))
+        );
+        assert_eq!(state, before_projection);
+
+        view.mode = UiMode::Inspect(UiTarget::Toy(ToyId::Sock));
+        let resting = plan(&state, &view).0;
+        assert!(
+            resting
+                .text
+                .iter()
+                .any(|text| text.id == "inspect/detail" && text.text.contains("tugging"))
+        );
+        state
+            .aquarium
+            .toy_states
+            .get_mut(&ToyId::Sock)
+            .unwrap()
+            .carried = true;
+        let carried = plan(&state, &view).0;
+        assert!(carried.text.iter().any(|text| text.id == "inspect/detail" && text.text == "Gob is carrying this toy."));
+        assert_eq!(
+            carried
+                .rects
+                .iter()
+                .find(|rect| rect.id == "inspect/panel")
+                .unwrap()
+                .rect
+                .x,
+            panel.x
+        );
+    }
+
+    #[test]
+    fn inspection_tracks_food_disposition_and_missing_objects() {
+        let mut state = WorldState::new(42, "Mop");
+        let view = ViewState {
+            mode: UiMode::Inspect(UiTarget::FoodObject(900)),
+            context_card_anchor: Some((7, 31)),
+            text_scale: 2,
+            ..ViewState::default()
+        };
+        for (disposition, description) in [
+            (FoodDisposition::Falling, "Falling through the water."),
+            (FoodDisposition::Floating, "Floating in the water."),
+            (FoodDisposition::Settled, "Resting on the sand."),
+            (FoodDisposition::Consumed, "Already eaten."),
+            (FoodDisposition::Rejected, "Offered and rejected."),
+        ] {
+            state.aquarium.objects.insert(
+                900,
+                WorldObject::Food(beastie_core::FoodObject {
+                    id: 900,
+                    food: FoodId::Berry,
+                    position: NormalizedPosition::new(5000, 5000),
+                    velocity: beastie_core::NormalizedVelocity::default(),
+                    buoyancy: beastie_core::FoodBuoyancy::Drift,
+                    disposition,
+                    age_ms: 0,
+                    lifetime_ms: 10_000,
+                }),
+            );
+            let scene = plan(&state, &view).0;
+            assert!(scene.text.iter().any(|text| text.id == "inspect/title" && text.text == food_name(FoodId::Berry)));
+            assert!(
+                scene
+                    .text
+                    .iter()
+                    .any(|text| text.id == "inspect/detail" && text.text == description)
+            );
+        }
+        state.aquarium.objects.remove(&900);
+        let missing = plan(&state, &view).0;
+        assert!(missing.text.iter().any(|text| text.id == "inspect/detail"
+            && text.text == "This piece of food is no longer here."));
+
+        let plant_id = state
+            .aquarium
+            .objects
+            .iter()
+            .find_map(|(id, object)| matches!(object, WorldObject::Plant { .. }).then_some(*id))
+            .expect("initial plant");
+        let plant_view = ViewState {
+            mode: UiMode::Inspect(UiTarget::Plant(plant_id)),
+            ..view
+        };
+        assert!(
+            plan(&state, &plant_view)
+                .0
+                .text
+                .iter()
+                .any(|text| text.id == "inspect/detail"
+                    && text.text == "Leaves to swim around and explore.")
+        );
+        state.aquarium.objects.remove(&plant_id);
+        assert!(plan(&state, &plant_view).0.text.iter().any(
+            |text| text.id == "inspect/detail" && text.text == "This plant is no longer here."
+        ));
+    }
+
+    #[test]
+    fn panel_blockers_remove_covered_controls_from_pointer_and_focus_targets() {
+        let state = WorldState::new(7, "Mop");
+        for (mode, panel_id) in [
+            (UiMode::Settings, "settings/panel"),
+            (UiMode::Bindings, "bindings/panel"),
+            (UiMode::DataManagement, "data/panel"),
+            (UiMode::Rename, "rename/prompt-background"),
+            (UiMode::Inspect(UiTarget::Creature), "inspect/panel"),
+            (UiMode::FoodDrop(FoodId::Berry), "mode/drop-food-background"),
+            (UiMode::OnScreenKeyboard, "keyboard/panel"),
+        ] {
+            for text_scale in [1, 2] {
+                let scene = plan(
+                    &state,
+                    &ViewState {
+                        mode,
+                        text_scale,
+                        speech: Some("Hello".to_owned()),
+                        ..ViewState::default()
+                    },
+                )
+                .0;
+                let blocker_id = format!("{panel_id}/pointer-blocker");
+                let blocker_index = scene
+                    .hit_regions
+                    .iter()
+                    .position(|hit| hit.id == blocker_id)
+                    .unwrap();
+                let blocker = &scene.hit_regions[blocker_index];
+                assert_eq!(blocker.shape, HitShape::Blocker);
+                assert!(!blocker.enabled, "a panel must never enter keyboard focus");
+                assert!(
+                    scene.hit_regions[..blocker_index].iter().all(|hit| {
+                        hit.shape != HitShape::Rect
+                            || hit.id.starts_with("world/")
+                            || !rects_overlap(hit.rect, blocker.rect)
+                    }),
+                    "{mode:?} left a covered lower control available to focus"
+                );
+                let corner = (blocker.rect.x + 1, blocker.rect.y + 1);
+                let pointer = scene
+                    .hit_regions
+                    .iter()
+                    .rev()
+                    .find(|hit| {
+                        (hit.enabled || hit.shape == HitShape::Blocker)
+                            && hit.rect.contains(corner.0, corner.1)
+                    })
+                    .unwrap();
+                assert_eq!(
+                    pointer.id, blocker_id,
+                    "{mode:?} panel padding leaks pointer input"
+                );
+                let panel_layer = scene
+                    .rects
+                    .iter()
+                    .find(|rect| rect.id == panel_id)
+                    .unwrap()
+                    .layer;
+                assert!(
+                    scene
+                        .text
+                        .iter()
+                        .filter(|text| text.id.starts_with("speech/")
+                            || text.id.starts_with("reaction/"))
+                        .all(|text| text.layer < panel_layer)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rename_validation_counts_unicode_characters_and_keeps_save_explicit() {
+        let state = WorldState::new(7, "Mop");
+        for (buffer, enabled) in [
+            (String::new(), false),
+            ("   ".to_owned(), false),
+            ("雪".repeat(24), true),
+            ("雪".repeat(25), false),
+        ] {
+            let scene = plan(
+                &state,
+                &ViewState {
+                    mode: UiMode::Rename,
+                    text_buffer: buffer.clone(),
+                    ..ViewState::default()
+                },
+            )
+            .0;
+            let save = scene
+                .hit_regions
+                .iter()
+                .find(|hit| hit.action == UiAction::SubmitName)
+                .unwrap();
+            assert_eq!(save.enabled, enabled, "{buffer:?}");
+            assert!(scene.text.iter().any(|text| text.id == "rename/count"
+                && text.text == format!("{} / 24", buffer.chars().count())));
+            assert!(
+                scene
+                    .hit_regions
+                    .iter()
+                    .any(|hit| hit.id == "rename/cancel" && hit.enabled)
+            );
+        }
+    }
+
+    #[test]
+    fn on_screen_keyboard_owns_its_message_or_name_field() {
+        let state = WorldState::new(7, "Mop");
+        for renaming_with_osk in [false, true] {
+            let scene = plan(
+                &state,
+                &ViewState {
+                    mode: UiMode::OnScreenKeyboard,
+                    renaming_with_osk,
+                    text_buffer: "雪".to_owned(),
+                    text_scale: 2,
+                    ..ViewState::default()
+                },
+            )
+            .0;
+            assert!(
+                scene
+                    .text
+                    .iter()
+                    .any(|text| text.id == "keyboard/input-text" && text.text == "雪")
+            );
+            let submit = scene
+                .hit_regions
+                .iter()
+                .find(|hit| hit.id == "keyboard/send")
+                .unwrap();
+            assert!(submit.enabled);
+            assert_eq!(
+                submit.action,
+                if renaming_with_osk {
+                    UiAction::SubmitName
+                } else {
+                    UiAction::SubmitText
+                }
+            );
+            assert_eq!(
+                scene
+                    .text
+                    .iter()
+                    .any(|text| text.id == "keyboard/count" && text.text == "1 / 24"),
+                renaming_with_osk
+            );
+            for id in ["compose/input", "compose/send"] {
+                assert!(
+                    !scene
+                        .hit_regions
+                        .iter()
+                        .find(|hit| hit.id == id)
+                        .unwrap()
+                        .enabled
+                );
+            }
+            for character in 'a'..='z' {
+                assert!(
+                    scene
+                        .hit_regions
+                        .iter()
+                        .any(|hit| hit.enabled && hit.action == UiAction::TypeCharacter(character))
+                );
+            }
+            for action in [
+                UiAction::Backspace,
+                UiAction::TypeCharacter(' '),
+                UiAction::CancelMode,
+            ] {
+                assert!(
+                    scene
+                        .hit_regions
+                        .iter()
+                        .any(|hit| hit.id.starts_with("keyboard/")
+                            && hit.enabled
+                            && hit.action == action)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dismissing_a_microphone_failure_preserves_state_and_new_failures_reappear() {
+        let state = WorldState::new(7, "Mop");
+        for failure in [MicrophoneState::Unavailable, MicrophoneState::Error] {
+            let mut view = ViewState {
+                microphone_enabled: true,
+                microphone_state: failure,
+                ..ViewState::default()
+            };
+            let failed = plan(&state, &view).0;
+            assert!(
+                failed
+                    .hit_regions
+                    .iter()
+                    .any(|hit| hit.action == UiAction::DismissStatus && hit.enabled)
+            );
+            view.dismiss_status();
+            assert_eq!(view.microphone_state, failure);
+            let dismissed = plan(&state, &view).0;
+            assert!(
+                !dismissed
+                    .text
+                    .iter()
+                    .any(|text| text.id == "status/message")
+            );
+            assert!(
+                !dismissed
+                    .hit_regions
+                    .iter()
+                    .find(|hit| hit.id == "compose/microphone")
+                    .unwrap()
+                    .enabled
+            );
+            view.expire(100);
+            assert!(visible_status(&view, 100).is_none());
+            view.microphone_state = MicrophoneState::Idle;
+            view.expire(200);
+            view.microphone_state = failure;
+            assert!(visible_status(&view, 200).is_some());
+            view.dismiss_status();
+            view.show_status("A new input attempt failed", 300, 100);
+            assert_eq!(
+                visible_status(&view, 300),
+                Some("A new input attempt failed")
+            );
+            view.expire(400);
+            assert!(visible_status(&view, 400).is_some());
+        }
     }
 
     #[test]
@@ -4179,7 +5802,26 @@ mod tests {
             panel.rect.h <= 40,
             "short speech should not reserve several empty rows"
         );
-        assert!(panel.rect.w <= 150);
+        let caption = scene
+            .text
+            .iter()
+            .find(|text| text.id == "speech/text")
+            .unwrap();
+        let bounds = caption.bounds.unwrap();
+        assert!(rect_contains(panel.rect, bounds));
+        assert!(bounds.h >= caption.role.size(true).ceil() as i32 + 2);
+        assert!(panel.rect.w <= LOGICAL_WIDTH / 2);
+        let reactions: Vec<_> = scene
+            .text
+            .iter()
+            .filter(|text| text.id.starts_with("reaction/"))
+            .collect();
+        assert_eq!(reactions.len(), 3);
+        assert!(
+            reactions
+                .iter()
+                .all(|text| text.bounds.unwrap().h >= text.role.size(true).ceil() as i32 + 2)
+        );
     }
 
     #[test]
@@ -4356,8 +5998,8 @@ mod tests {
                     .find(|r| r.id == "mode/context-panel-edge")
                     .unwrap();
                 assert!(
-                    panel.rect.y + panel.rect.h <= 132,
-                    "reserve technical feedback row"
+                    panel.rect.y + panel.rect.h < COMPOSE_BAR_TOP,
+                    "context card must leave the care dock available"
                 );
             }
         }
@@ -4425,13 +6067,19 @@ mod tests {
             rename
                 .text
                 .iter()
-                .any(|t| t.id == "rename/prompt" && t.text == "Choose a name for Mop")
+                .any(|t| t.id == "rename/prompt" && t.text == "Currently Mop")
         );
         assert!(
             rename
                 .text
                 .iter()
-                .any(|t| t.id == "compose/input-text" && t.text == "New name…")
+                .any(|t| t.id == "rename/value" && t.text == "New name…")
+        );
+        assert!(
+            rename
+                .text
+                .iter()
+                .any(|t| t.id == "rename/count" && t.text == "0 / 24")
         );
         for text_scale in [1, 2] {
             let speech = plan(
@@ -4476,7 +6124,7 @@ mod tests {
             .iter()
             .find(|r| r.id == "speech/panel-edge")
             .expect("caption panel");
-        assert!(panel.rect.w < 160);
+        assert_eq!(panel.rect.w, 140);
         assert_eq!(panel.rect.h, 36);
         let reactions: Vec<_> = full
             .hit_regions
@@ -4528,8 +6176,477 @@ mod tests {
                 .find(|t| t.id == "speech/text")
                 .expect("caption")
                 .text,
-            view.speech.as_deref().unwrap()
+            speech_pages(view.speech.as_deref().unwrap())[0]
         );
+    }
+
+    #[test]
+    fn speech_pages_preserve_exact_text_and_bound_long_unbroken_replies() {
+        for speech in [
+            "W".repeat(512),
+            "A quiet thought.  Another thought.\n\n雪と海 🐟 e\u{301}  ".repeat(12),
+            "👩‍👩‍👧‍👦 ".repeat(150),
+            "one\n".repeat(80),
+        ] {
+            let pages = speech_pages(&speech);
+            assert!(pages.len() > 1);
+            assert_eq!(pages.concat(), speech);
+            assert!(pages.iter().all(|page| !page.is_empty()));
+            assert!(pages.iter().all(|page| {
+                typography()
+                    .lines(
+                        page,
+                        SPEECH_TEXT_WIDTH as f32,
+                        TextRole::Dialogue.size(true),
+                    )
+                    .len()
+                    <= SPEECH_MAX_LINES
+            }));
+            assert_eq!(
+                pages
+                    .iter()
+                    .flat_map(|page| page.graphemes(true))
+                    .collect::<Vec<_>>(),
+                speech.graphemes(true).collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(speech_pages(""), vec![""]);
+    }
+
+    #[test]
+    fn short_speech_and_final_pages_reserve_only_their_exact_line_boxes() {
+        let state = WorldState::new(7, "Mop");
+        let wide = "W".repeat(512);
+        let first_page_chars = speech_pages(&wide)[0].len();
+        let paged = format!("{} W", "W".repeat(first_page_chars));
+        assert_eq!(*speech_pages(&paged).last().unwrap(), "W");
+        for text_scale in [1, 2] {
+            for speech in ["A little quiet place.".to_owned(), paged.clone()] {
+                let mut view = ViewState {
+                    text_scale,
+                    ..ViewState::default()
+                };
+                view.show_speech(speech.clone(), 0);
+                let pages = speech_pages(&speech);
+                view.speech_page = pages.len() - 1;
+                let scene = plan(&state, &view).0;
+                let caption = scene
+                    .text
+                    .iter()
+                    .find(|text| text.id == "speech/text")
+                    .unwrap();
+                let panel = scene
+                    .rects
+                    .iter()
+                    .find(|rect| rect.id == "speech/panel")
+                    .unwrap()
+                    .rect;
+                let bounds = caption.bounds.unwrap();
+                let size = caption.role.size(text_scale >= 2);
+                assert_eq!(
+                    typography()
+                        .lines(&caption.text, bounds.w as f32, size)
+                        .len(),
+                    1
+                );
+                assert_eq!(bounds.h, line_height(size).ceil() as i32);
+                assert_eq!(
+                    typography().layout_lines(
+                        &caption.text,
+                        bounds.w as f32,
+                        bounds.h as f32,
+                        size
+                    ),
+                    std::slice::from_ref(&caption.text)
+                );
+                assert!(panel.h <= if pages.len() > 1 { 48 } else { 36 });
+                let normal_page = caption.text.clone();
+                view.text_scale = if text_scale == 1 { 2 } else { 1 };
+                assert_eq!(
+                    plan(&state, &view)
+                        .0
+                        .text
+                        .iter()
+                        .find(|text| text.id == "speech/text")
+                        .unwrap()
+                        .text,
+                    normal_page
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn complete_measured_page_bounds_stay_fixed_through_unicode_reveal() {
+        let state = WorldState::new(7, "Mop");
+        let full = "Quiet water 🌿, a scientist 👩‍🔬, and cafe\u{301}. ".repeat(8);
+        let first_page_end = speech_pages(&full)[0].len();
+        for text_scale in [1, 2] {
+            let mut view = ViewState {
+                text_scale,
+                ..ViewState::default()
+            };
+            view.show_speech(full.clone(), 0);
+            let initial = plan(&state, &view).0;
+            let panel = initial
+                .rects
+                .iter()
+                .find(|rect| rect.id == "speech/panel")
+                .unwrap()
+                .rect;
+            let body = initial
+                .text
+                .iter()
+                .find(|text| text.id == "speech/text")
+                .unwrap()
+                .bounds;
+            for (start, grapheme) in full[..first_page_end].grapheme_indices(true) {
+                let end = start + grapheme.len();
+                view.speech = Some(full[..end].to_owned());
+                let revealed = plan(&state, &view).0;
+                assert_eq!(
+                    revealed
+                        .rects
+                        .iter()
+                        .find(|rect| rect.id == "speech/panel")
+                        .unwrap()
+                        .rect,
+                    panel
+                );
+                let caption = revealed
+                    .text
+                    .iter()
+                    .find(|text| text.id == "speech/text")
+                    .unwrap();
+                assert_eq!(caption.bounds, body);
+                assert_eq!(caption.text, full[..end]);
+            }
+        }
+    }
+
+    #[test]
+    fn maximum_wide_reply_keeps_every_page_readable_at_large_text_size() {
+        let state = WorldState::new(7, "Mop");
+        let speech = "W".repeat(512);
+        let pages = speech_pages(&speech);
+        let mut view = ViewState {
+            text_scale: 2,
+            ..ViewState::default()
+        };
+        view.show_speech(speech.clone(), 0);
+        let mut opening: Option<Rect> = None;
+        for (index, expected) in pages.iter().enumerate() {
+            let scene = plan(&state, &view).0;
+            let panel = scene
+                .rects
+                .iter()
+                .find(|rect| rect.id == "speech/panel")
+                .unwrap()
+                .rect;
+            if let Some(first) = opening {
+                assert_eq!((panel.x, panel.y, panel.w), (first.x, first.y, first.w));
+                assert!(
+                    panel.h <= first.h,
+                    "short final pages should fit their content"
+                );
+            } else {
+                opening = Some(panel);
+            }
+            let caption = scene
+                .text
+                .iter()
+                .find(|text| text.id == "speech/text")
+                .unwrap();
+            assert_eq!(caption.text, *expected);
+            assert_eq!(caption.role, TextRole::Dialogue);
+            assert_eq!(caption.scale, 2);
+            let bounds = caption.bounds.unwrap();
+            assert!(rect_contains(panel, bounds));
+            let font_size = caption.role.size(true);
+            let needed_height = typography()
+                .height(&caption.text, bounds.w as f32, font_size)
+                .ceil() as i32;
+            assert_eq!(
+                needed_height, bounds.h,
+                "page {index} reserves exactly its measured lines"
+            );
+            assert!(
+                scene
+                    .hit_regions
+                    .iter()
+                    .filter(|hit| hit.id.starts_with("reaction/"))
+                    .all(|hit| hit.rect.y + hit.rect.h < COMPOSE_BAR_TOP)
+            );
+            view.change_speech_page(1, index as u64 + 1);
+        }
+    }
+
+    #[test]
+    fn speech_page_navigation_clamps_to_reveal_and_only_resizes_on_navigation() {
+        let state = WorldState::new(7, "Mop");
+        let speech = "A shared quiet moment beside the plant. ".repeat(14);
+        let mut view = ViewState {
+            text_scale: 2,
+            ..ViewState::default()
+        };
+        view.show_speech(speech.clone(), 0);
+        let page_count = speech_pages(&speech).len();
+        assert!(view.has_speech_pages());
+        view.speech = Some(speech.chars().take(5).collect());
+        let opening = plan(&state, &view).0;
+        let panel = opening
+            .rects
+            .iter()
+            .find(|rect| rect.id == "speech/panel")
+            .unwrap()
+            .rect;
+        for id in ["speech/back", "speech/next"] {
+            assert!(
+                !opening
+                    .hit_regions
+                    .iter()
+                    .find(|hit| hit.id == id)
+                    .unwrap()
+                    .enabled
+            );
+        }
+        view.change_speech_page(i8::MAX, 100);
+        assert_eq!(
+            view.speech_page, 0,
+            "unrevealed words cannot be paged into view"
+        );
+        view.speech = Some(speech.clone());
+        let revealed = plan(&state, &view).0;
+        assert_eq!(
+            revealed
+                .rects
+                .iter()
+                .find(|rect| rect.id == "speech/panel")
+                .unwrap()
+                .rect,
+            panel,
+            "revealing the same owned page does not move its geometry"
+        );
+        view.change_speech_page(i8::MAX, 200);
+        assert_eq!(view.speech_page, page_count - 1);
+        let last = plan(&state, &view).0;
+        assert!(last.hit_regions.iter().any(|hit| hit.id == "speech/back"
+            && hit.enabled
+            && hit.action == UiAction::ChangeSpeechPage(-1)));
+        assert!(last.hit_regions.iter().any(|hit| hit.id == "speech/next"
+            && !hit.enabled
+            && hit.action == UiAction::ChangeSpeechPage(1)));
+        let last_panel = last
+            .rects
+            .iter()
+            .find(|rect| rect.id == "speech/panel")
+            .unwrap()
+            .rect;
+        assert_eq!(
+            (last_panel.x, last_panel.y, last_panel.w),
+            (panel.x, panel.y, panel.w)
+        );
+        assert!(last_panel.h <= panel.h);
+        assert_eq!(
+            last.text
+                .iter()
+                .find(|text| text.id == "speech/text")
+                .unwrap()
+                .text,
+            *speech_pages(&speech).last().unwrap()
+        );
+        view.change_speech_page(i8::MIN, 300);
+        assert_eq!(view.speech_page, 0);
+        view.change_speech_page(-1, 400);
+        assert_eq!(view.speech_page, 0);
+    }
+
+    #[test]
+    fn settings_leaves_the_entire_caption_and_reaction_column_clear() {
+        for text_scale in [1, 2] {
+            for creature_x in [0, 10_000] {
+                let mut state = WorldState::new(7, "Mop");
+                state.creature.aquarium.position.x = creature_x;
+                let mut view = ViewState {
+                    mode: UiMode::Settings,
+                    text_scale,
+                    ..ViewState::default()
+                };
+                view.show_speech("W".repeat(512), 0);
+                for page in [0, usize::MAX] {
+                    view.speech_page = page;
+                    let scene = plan(&state, &view).0;
+                    let settings = scene
+                        .rects
+                        .iter()
+                        .find(|rect| rect.id == "settings/panel")
+                        .unwrap()
+                        .rect;
+                    let speech = scene
+                        .rects
+                        .iter()
+                        .find(|rect| rect.id == "speech/panel")
+                        .unwrap()
+                        .rect;
+                    assert_eq!(
+                        speech.x, 5,
+                        "Settings reserves the left caption column regardless of creature motion"
+                    );
+                    assert_eq!(speech.w, 140);
+                    assert!(speech.h <= 88);
+                    for text in scene.text.iter().filter(|text| {
+                        text.id.starts_with("speech/") || text.id.starts_with("reaction/")
+                    }) {
+                        assert!(
+                            !rectangles_overlap(text.bounds.unwrap(), settings),
+                            "{}",
+                            text.id
+                        );
+                        if text.id.starts_with("speech/") {
+                            assert!(rect_contains(speech, text.bounds.unwrap()), "{}", text.id);
+                        }
+                    }
+                    for hit in scene.hit_regions.iter().filter(|hit| {
+                        hit.id.starts_with("speech/") || hit.id.starts_with("reaction/")
+                    }) {
+                        assert!(!rectangles_overlap(hit.rect, settings), "{}", hit.id);
+                        assert!(hit.rect.y + hit.rect.h <= 111);
+                        if hit.id.starts_with("speech/") {
+                            assert!(rect_contains(speech, hit.rect), "{}", hit.id);
+                        }
+                    }
+                    assert_eq!(
+                        scene
+                            .hit_regions
+                            .iter()
+                            .filter(|hit| hit.id.starts_with("reaction/"))
+                            .count(),
+                        3
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn obstructing_modals_hide_whole_speech_and_pause_only_its_reading_deadline() {
+        let state = WorldState::new(7, "Mop");
+        for mode in [
+            UiMode::Rename,
+            UiMode::OnScreenKeyboard,
+            UiMode::Bindings,
+            UiMode::Rebinding(BindableAction::PushToTalk),
+            UiMode::DataManagement,
+            UiMode::ConfirmReset,
+            UiMode::FoodChoice,
+            UiMode::FoodDrop(FoodId::Berry),
+            UiMode::Context(UiTarget::Creature),
+            UiMode::Inspect(UiTarget::Creature),
+        ] {
+            let mut view = ViewState {
+                mode,
+                ..ViewState::default()
+            };
+            view.show_speech("A complete little thought.".into(), 0);
+            let owned = view.speech_layout_text.clone();
+            let visible = view.speech.clone();
+            view.show_status("Saved", 0, 1);
+            view.expire(4 * SPEECH_LIFETIME_MS);
+            assert_eq!(view.speech, visible);
+            assert_eq!(view.speech_layout_text, owned);
+            assert_eq!(view.speech_page, 0);
+            assert!(!view.speaking);
+            assert!(
+                view.status_message.is_none(),
+                "unrelated deadlines still expire"
+            );
+            let scene = plan(&state, &view).0;
+            assert!(
+                scene.text.iter().all(
+                    |text| !text.id.starts_with("speech/") && !text.id.starts_with("reaction/")
+                )
+            );
+            assert!(
+                scene
+                    .hit_regions
+                    .iter()
+                    .all(|hit| !hit.id.starts_with("speech/") && !hit.id.starts_with("reaction/"))
+            );
+            let deadline = view.speech_expires_at_ms.unwrap();
+            view.mode = UiMode::Compose;
+            view.expire(deadline - 1);
+            assert!(view.speech.is_some());
+            view.expire(deadline);
+            assert!(view.speech.is_none());
+        }
+        let mut visible = ViewState {
+            mode: UiMode::Settings,
+            ..ViewState::default()
+        };
+        visible.show_speech("Still readable beside Settings.".into(), 0);
+        visible.expire(SPEECH_LIFETIME_MS);
+        assert!(
+            visible.speech.is_none(),
+            "visible Settings captions retain ordinary reading expiry"
+        );
+    }
+
+    #[test]
+    fn progressive_speech_reveal_never_splits_a_grapheme() {
+        let state = WorldState::new(7, "Mop");
+        let mut view = ViewState::default();
+        view.show_speech("e\u{301} beside the water".to_owned(), 0);
+        view.speech = Some("e".to_owned());
+        let partial = plan(&state, &view).0;
+        assert!(
+            partial
+                .text
+                .iter()
+                .find(|text| text.id == "speech/text")
+                .unwrap()
+                .text
+                .is_empty()
+        );
+        view.speech = Some("e\u{301}".to_owned());
+        let complete = plan(&state, &view).0;
+        assert_eq!(
+            complete
+                .text
+                .iter()
+                .find(|text| text.id == "speech/text")
+                .unwrap()
+                .text,
+            "e\u{301}"
+        );
+    }
+
+    #[test]
+    fn long_speech_waits_for_reveal_and_final_page_before_expiring() {
+        let speech = "W".repeat(512);
+        let mut view = ViewState::default();
+        view.show_speech(speech.clone(), 0);
+        view.speech = Some("W".to_owned());
+        view.expire(SPEECH_LIFETIME_MS + 1);
+        assert_eq!(view.speech.as_deref(), Some("W"));
+        view.speech = Some(speech);
+        view.expire(2 * SPEECH_LIFETIME_MS + 2);
+        assert!(
+            view.speech.is_some(),
+            "an unread later page must not expire"
+        );
+        view.change_speech_page(i8::MAX, 2 * SPEECH_LIFETIME_MS + 3);
+        let expiry = view.speech_expires_at_ms.unwrap();
+        view.expire(expiry - 1);
+        assert!(view.speech.is_some());
+        view.focused_region = Some("speech/next".to_owned());
+        view.expire(expiry);
+        assert!(view.speech.is_none());
+        assert!(view.speech_layout_text.is_none());
+        assert_eq!(view.speech_page, 0);
+        assert_eq!(view.focused_region.as_deref(), Some("compose/input"));
+        view.show_speech("A fresh thought".to_owned(), expiry + 1);
+        assert!(!view.has_speech_pages());
+        assert_eq!(view.speech_page, 0);
     }
 
     #[test]
@@ -4615,6 +6732,236 @@ mod tests {
     }
 
     #[test]
+    fn accepted_food_attention_names_each_target_during_private_recovery_and_anticipation() {
+        for (food, expected) in [
+            (FoodId::Berry, "watching the berry"),
+            (FoodId::Mushroom, "watching the mushroom"),
+            (FoodId::Pellet, "watching the pellet"),
+        ] {
+            let mut state = WorldState::new(42, "Mop");
+            let mut rng = beastie_core::SeededRandom::new(42);
+            state.creature.private_life.active = Some(private_activity(
+                NonZeroU64::new(1).unwrap(),
+                PrivateLifeKind::BottomForage,
+                ActivityRecipe::BottomForage,
+                ActivityPhase::Recover,
+            ));
+            let events = beastie_core::step(
+                &mut state,
+                &[beastie_core::PlayerEvent::DropFood {
+                    food,
+                    position: NormalizedPosition::new(7_000, 3_000),
+                }],
+                0,
+                &mut rng,
+            );
+            assert!(events.iter().any(|event| matches!(event, GameEvent::FoodDropped { food: actual, .. } if *actual == food)));
+            assert_eq!(
+                state.creature.private_life.active.as_ref().unwrap().phase,
+                ActivityPhase::Recover
+            );
+            assert_eq!(
+                state.creature.aquarium.velocity,
+                beastie_core::NormalizedVelocity::default()
+            );
+            for phase in [
+                ActionPhase::Notice,
+                ActionPhase::Brake,
+                ActionPhase::Gaze,
+                ActionPhase::Turn,
+                ActionPhase::Approach,
+                ActionPhase::Inspect,
+            ] {
+                state.creature.aquarium.action.as_mut().unwrap().phase = phase;
+                let before = state.clone();
+                for text_scale in [1, 2] {
+                    let scene = plan(
+                        &state,
+                        &ViewState {
+                            text_scale,
+                            ..ViewState::default()
+                        },
+                    )
+                    .0;
+                    assert_eq!(scene.summary.behavior, expected);
+                    assert_eq!(
+                        scene.creature.pose,
+                        CreaturePose::Recover,
+                        "attention must not replace the private recovery pose"
+                    );
+                    let label = scene
+                        .text
+                        .iter()
+                        .find(|text| text.id == "compose/summary-behavior")
+                        .unwrap();
+                    assert_eq!(
+                        label.text,
+                        format!("{} · {expected}", scene.summary.mood_label)
+                    );
+                    assert_eq!(label.scale, text_scale);
+                    assert!(
+                        label.bounds.unwrap().h as f32
+                            >= TextRole::Secondary.size(text_scale >= 2) * 2.4
+                    );
+                }
+                assert_eq!(state, before, "projection never advances food or recovery");
+            }
+            let accepted = state.clone();
+            for phase in [ActionPhase::Act, ActionPhase::Recover] {
+                state.creature.aquarium.action.as_mut().unwrap().phase = phase;
+                assert_eq!(
+                    accepted_attention_name(&state),
+                    None,
+                    "payoff phases keep their existing reading"
+                );
+            }
+            state = accepted.clone();
+            state.creature.aquarium.gaze = GazeTarget::Player;
+            assert_eq!(accepted_attention_name(&state), None);
+            state = accepted.clone();
+            let food_id = state
+                .creature
+                .aquarium
+                .action
+                .as_ref()
+                .unwrap()
+                .food_id
+                .unwrap();
+            state.aquarium.objects.remove(&food_id);
+            assert_eq!(
+                accepted_attention_name(&state),
+                None,
+                "missing food is not current attention"
+            );
+            state = accepted.clone();
+            state
+                .creature
+                .aquarium
+                .action
+                .as_mut()
+                .unwrap()
+                .food_outcome = Some(beastie_core::FoodOutcome::Rejected);
+            assert_eq!(accepted_attention_name(&state), None);
+            state = accepted;
+            state.creature.current_intention = Intention::Sleep;
+            assert_eq!(accepted_attention_name(&state), None);
+        }
+    }
+
+    #[test]
+    fn accepted_toy_attention_survives_food_recovery_without_inventing_a_toy_payoff() {
+        for (toy, expected) in [
+            (ToyId::Ball, "watching the ball"),
+            (ToyId::Bell, "watching the bell"),
+            (ToyId::Sock, "watching the sock"),
+        ] {
+            let mut state = WorldState::new(42, "Mop");
+            let mut rng = beastie_core::SeededRandom::new(42);
+            let mut view = ViewState::default();
+            state.creature.preferences.insert(FoodId::Berry, 0.9);
+            state.creature.toy_preferences.insert(toy, 0.9);
+            let position = state.creature.aquarium.position;
+            beastie_core::step(
+                &mut state,
+                &[beastie_core::PlayerEvent::DropFood {
+                    food: FoodId::Berry,
+                    position,
+                }],
+                0,
+                &mut rng,
+            );
+            let mut consumed = false;
+            for _ in 0..120 {
+                let events = beastie_core::step(&mut state, &[], 1_000, &mut rng);
+                if events.contains(&GameEvent::FoodConsumed(FoodId::Berry)) {
+                    view.observe_events(&events, state.elapsed_ms);
+                    consumed = true;
+                    break;
+                }
+            }
+            assert!(consumed, "real feeding must reach its physical payoff");
+            let recovery = state.creature.aquarium.action.clone();
+            assert_eq!(recovery.as_ref().unwrap().phase, ActionPhase::Recover);
+            beastie_core::step(&mut state, &[], 33, &mut rng);
+            let events = beastie_core::step(
+                &mut state,
+                &[beastie_core::PlayerEvent::Play(toy)],
+                0,
+                &mut rng,
+            );
+            assert!(events.iter().any(|event| matches!(event, GameEvent::ToyPlayAccepted { toy: actual, origin: beastie_core::ToyOrigin::Player, .. } if *actual == toy)));
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                GameEvent::ToyContacted { .. } | GameEvent::ToyPlayed { .. }
+            )));
+            view.observe_events(&events, state.elapsed_ms);
+            let before = state.clone();
+            let scene = plan(&state, &view).0;
+            assert_eq!(scene.summary.behavior, expected);
+            assert_eq!(scene.creature.pose, CreaturePose::Recover);
+            assert_eq!(
+                scene.creature.expression.as_ref().unwrap().cue,
+                PresentationCueKind::Crumbs
+            );
+            assert_eq!(state.creature.aquarium.action, recovery);
+            assert_eq!(state, before);
+
+            for phase in [
+                beastie_core::ToyInteractionPhase::Contact,
+                beastie_core::ToyInteractionPhase::Resolved,
+                beastie_core::ToyInteractionPhase::Recovery,
+                beastie_core::ToyInteractionPhase::Interrupted,
+            ] {
+                let mut changed = state.clone();
+                changed
+                    .creature
+                    .interaction_state
+                    .toy_interaction
+                    .as_mut()
+                    .unwrap()
+                    .phase = phase;
+                assert_eq!(accepted_attention_name(&changed), None);
+            }
+            for outcome in [
+                beastie_core::ToyInteractionOutcome::Rejected,
+                beastie_core::ToyInteractionOutcome::Interrupted,
+            ] {
+                let mut changed = state.clone();
+                changed
+                    .creature
+                    .interaction_state
+                    .toy_interaction
+                    .as_mut()
+                    .unwrap()
+                    .outcome = outcome;
+                assert_eq!(accepted_attention_name(&changed), None);
+            }
+            let mut changed = state.clone();
+            changed
+                .creature
+                .interaction_state
+                .toy_interaction
+                .as_mut()
+                .unwrap()
+                .origin = beastie_core::ToyOrigin::Autonomous;
+            assert_eq!(
+                accepted_attention_name(&changed),
+                None,
+                "private routines keep their recipe labels"
+            );
+            let mut changed = state.clone();
+            changed.creature.aquarium.gaze = GazeTarget::Player;
+            assert_eq!(accepted_attention_name(&changed), None);
+            let mut changed = state.clone();
+            changed.creature.aquarium.destination = Some(SemanticDestination::Cave);
+            assert_eq!(accepted_attention_name(&changed), None);
+            let mut changed = state.clone();
+            changed.creature.current_intention = Intention::Sleep;
+            assert_eq!(accepted_attention_name(&changed), None);
+        }
+    }
+
+    #[test]
     fn autonomous_travel_and_play_have_matching_behavior_labels() {
         let mut state = WorldState::new(7, "Mop");
         state.creature.current_intention = Intention::Play;
@@ -4675,8 +7022,8 @@ mod tests {
             "settings/subtitles",
             "settings/text-speed",
             "settings/bindings",
-            "settings/reset-bindings",
             "settings/data",
+            "settings/microphone",
         ] {
             assert!(plan.hit_regions.iter().any(|hit| hit.id == id), "{id}");
         }
@@ -4703,6 +7050,7 @@ mod tests {
         )
         .0;
         for action in [
+            BindableAction::PushToTalk,
             BindableAction::Food,
             BindableAction::Play,
             BindableAction::Comfort,
@@ -4714,6 +7062,12 @@ mod tests {
                     && hit.id == format!("bindings/{}", bindable_id(action))
             }));
         }
+        assert!(
+            bindings
+                .hit_regions
+                .iter()
+                .any(|hit| { hit.action == UiAction::ResetBindings && hit.enabled })
+        );
         let capture = plan(
             &state,
             &ViewState {
@@ -4791,7 +7145,7 @@ mod tests {
             render
                 .text
                 .iter()
-                .any(|text| { text.id == "status/message" && text.text.contains("Aquarium full") })
+                .any(|text| { text.id == "status/message" && text.text.contains("Tank is full") })
         );
     }
 
@@ -5012,6 +7366,83 @@ mod tests {
     }
 
     #[test]
+    fn direct_toy_response_keeps_physical_identity_and_delight_without_double_audio() {
+        for (toy, response, cue, sound) in [
+            (
+                ToyId::Ball,
+                ToyResponse::BallNudged,
+                PresentationCueKind::BallNudge,
+                AudioCue::BallNudge,
+            ),
+            (
+                ToyId::Bell,
+                ToyResponse::BellStruck,
+                PresentationCueKind::BellStrike,
+                AudioCue::BellRing,
+            ),
+            (
+                ToyId::Sock,
+                ToyResponse::SockTugged,
+                PresentationCueKind::SockTug,
+                AudioCue::SockRustle,
+            ),
+        ] {
+            let interaction_id = NonZeroU64::MIN;
+            let events = [
+                GameEvent::ToyInteractionResponded {
+                    toy,
+                    interaction_id,
+                    response,
+                },
+                GameEvent::ToyPlayed {
+                    toy,
+                    interaction_id,
+                    origin: beastie_core::ToyOrigin::Player,
+                },
+            ];
+            let world = WorldState::new(7, "Contact");
+            let mut view = ViewState::default();
+            let audio = view.observe_events(&events, world.elapsed_ms);
+            assert_eq!(played_cues(audio.clone()), vec![sound]);
+            assert!(audio.events.iter().any(|command| matches!(command,
+                AudioCommand::Play { owner: SemanticOwner::ToyInteraction(id), cue: actual, .. }
+                    if *id == interaction_id && *actual == sound
+            )));
+            assert_eq!(
+                view.active_cue(world.elapsed_ms),
+                Some(PresentationCueKind::Delight)
+            );
+            let scene = plan(&world, &view).0;
+            assert_eq!(
+                scene.creature.expression.unwrap().cue,
+                PresentationCueKind::Delight
+            );
+            assert!(scene.effects.iter().any(|effect| {
+                effect.owner == SemanticOwner::ToyInteraction(interaction_id)
+                    && effect.target == UiTarget::Toy(toy)
+                    && effect.cue == cue
+                    && effect.elapsed_ms == 0
+            }));
+            // Independent private-life counters may carry the same number.
+            view.observe_events(
+                &[GameEvent::PrivateLifeInterrupted {
+                    activity_id: interaction_id,
+                    phase: ActivityPhase::Act,
+                    by: beastie_core::ActivityInterruptionOwner::Player,
+                }],
+                world.elapsed_ms,
+            );
+            assert!(
+                plan(&world, &view).0.effects.iter().any(|effect| {
+                    effect.owner == SemanticOwner::ToyInteraction(interaction_id)
+                })
+            );
+            view.expire(world.elapsed_ms + 2_000);
+            assert!(view.cue_queue.is_empty());
+        }
+    }
+
+    #[test]
     fn private_toy_responses_select_exact_owned_audio_and_cancel_at_the_boundary() {
         let activity_id = NonZeroU64::MIN;
         let events = [
@@ -5206,7 +7637,7 @@ mod tests {
     }
 
     #[test]
-    fn creature_rename_uses_compose_buffer_and_explicit_submit() {
+    fn creature_rename_uses_a_dedicated_field_and_explicit_submit() {
         assert!(contextual_actions(UiTarget::Creature).contains(&UiAction::Rename));
         let state = WorldState::new(7, "Mop");
         let rename = plan(
@@ -5222,15 +7653,39 @@ mod tests {
             rename
                 .hit_regions
                 .iter()
-                .any(|hit| hit.id == "compose/send" && hit.action == UiAction::SubmitName)
+                .any(|hit| hit.id == "rename/submit"
+                    && hit.action == UiAction::SubmitName
+                    && hit.enabled)
         );
         assert!(
             rename
                 .text
                 .iter()
-                .any(|text| text.id == "compose/input-text" && text.text == "Gob")
+                .any(|text| text.id == "rename/value" && text.text == "Gob")
         );
         assert!(rename.text.iter().any(|text| text.id == "rename/prompt"));
+        let field = rename
+            .hit_regions
+            .iter()
+            .find(|hit| hit.id == "rename/input")
+            .unwrap();
+        assert!(field.enabled && field.action == UiAction::FocusCompose);
+        let value = rename
+            .text
+            .iter()
+            .find(|text| text.id == "rename/value")
+            .unwrap();
+        assert!(rect_contains(field.rect, value.bounds.unwrap()));
+        for id in ["compose/input", "compose/send"] {
+            assert!(
+                !rename
+                    .hit_regions
+                    .iter()
+                    .find(|hit| hit.id == id)
+                    .unwrap()
+                    .enabled
+            );
+        }
     }
     #[test]
     fn persistent_bar_keeps_long_summary_input_and_icon_actions_disjoint() {
@@ -5267,9 +7722,27 @@ mod tests {
                     .find(|command| command.id == "compose/input-background")
                     .expect("input background")
                     .rect;
+                let editable = render
+                    .hit_regions
+                    .iter()
+                    .find(|hit| hit.id == "compose/input")
+                    .unwrap()
+                    .rect;
+                let send = render
+                    .hit_regions
+                    .iter()
+                    .find(|hit| hit.id == "compose/send")
+                    .unwrap()
+                    .rect;
+                assert!(rect_contains(input_box, editable));
+                assert!(rect_contains(input_box, send));
+                assert!(!rects_overlap(editable, send));
                 assert!(!rects_overlap(summary_name.bounds.unwrap(), input_box));
-                assert!(text_right(input) <= input_box.x + input_box.w - 3);
-                for action in ["food", "settings", "send"] {
+                assert!(rect_contains(editable, input.bounds.unwrap()));
+                assert!(input.keep_tail);
+                assert_eq!(input.text, view.text_buffer);
+                assert!(input.bounds.unwrap().x + input.bounds.unwrap().w < send.x);
+                for action in ["food", "settings"] {
                     let caption_id = if action == "food" { "feed" } else { action };
                     let caption = render
                         .text
@@ -5288,6 +7761,297 @@ mod tests {
                     assert!(!rects_overlap(input_box, background));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn only_nonempty_editable_values_request_measured_tail_retention() {
+        let state = WorldState::new(7, "Mop");
+        let draft = format!("{}a\u{301}👩‍🔬Z", "WMi ".repeat(80));
+        for (mode, expected) in [
+            (UiMode::Compose, "compose/input-text"),
+            (UiMode::Rename, "rename/value"),
+            (UiMode::OnScreenKeyboard, "keyboard/input-text"),
+        ] {
+            for value in ["", draft.as_str()] {
+                let scene = plan(
+                    &state,
+                    &ViewState {
+                        mode,
+                        text_buffer: value.to_owned(),
+                        ..ViewState::default()
+                    },
+                )
+                .0;
+                let editable = scene.text.iter().find(|text| text.id == expected).unwrap();
+                assert_eq!(editable.keep_tail, !value.is_empty());
+                if !value.is_empty() {
+                    assert_eq!(editable.text, value);
+                }
+                assert!(
+                    scene
+                        .text
+                        .iter()
+                        .all(|text| !text.keep_tail || text.id == expected)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn head_fit_preserves_combining_and_joined_emoji_graphemes() {
+        let value = "a\u{301}👩‍🔬XZ";
+        assert_eq!(head_fit(value, 4), value);
+        assert_eq!(head_fit(value, 3), "a\u{301}👩‍🔬…");
+        assert_eq!(head_fit(value, 2), "a\u{301}…");
+        assert_eq!(head_fit(value, 1), "…");
+        assert_eq!(head_fit(value, 0), "");
+    }
+
+    #[test]
+    fn older_text_commands_default_to_head_layout() {
+        let command = label("legacy", "A label", 1, 2, 3);
+        let mut serialized = serde_json::to_value(&command).unwrap();
+        serialized.as_object_mut().unwrap().remove("keep_tail");
+        serialized.as_object_mut().unwrap().remove("input_state");
+        let decoded: TextCommand = serde_json::from_value(serialized).unwrap();
+        assert!(!decoded.keep_tail);
+        assert_eq!(decoded.input_state, None);
+        assert_eq!(decoded, command);
+    }
+
+    #[test]
+    fn older_view_state_defaults_to_unselected_text() {
+        let mut serialized = serde_json::to_value(ViewState::default()).unwrap();
+        serialized.as_object_mut().unwrap().remove("text_selected");
+        let decoded: ViewState = serde_json::from_value(serialized).unwrap();
+        assert!(!decoded.text_selected);
+    }
+
+    #[test]
+    fn input_decorations_follow_editing_focus_and_never_select_placeholders() {
+        let state = WorldState::new(7, "Mop");
+        for (mode, focused, engaged, expected_id) in [
+            (
+                UiMode::Compose,
+                "compose/input",
+                true,
+                Some("compose/input-text"),
+            ),
+            (UiMode::Compose, "compose/settings", true, None),
+            (UiMode::Rename, "rename/input", false, Some("rename/value")),
+            (UiMode::Rename, "rename/save", false, None),
+            (
+                UiMode::OnScreenKeyboard,
+                "keyboard/a",
+                false,
+                Some("keyboard/input-text"),
+            ),
+            (UiMode::Settings, "compose/input", true, None),
+        ] {
+            for (value, selected) in [("", false), ("", true), ("Mop", false), ("Mop", true)] {
+                let scene = plan(
+                    &state,
+                    &ViewState {
+                        mode,
+                        focused_region: Some(focused.into()),
+                        compose_engaged: engaged,
+                        text_buffer: value.into(),
+                        text_selected: selected,
+                        ..ViewState::default()
+                    },
+                )
+                .0;
+                let decorated: Vec<_> = scene
+                    .text
+                    .iter()
+                    .filter(|text| text.input_state.is_some())
+                    .collect();
+                if let Some(id) = expected_id {
+                    assert_eq!(decorated.len(), 1, "{mode:?} {focused}");
+                    assert_eq!(decorated[0].id, id);
+                    assert_eq!(
+                        decorated[0].input_state,
+                        Some(if selected && !value.is_empty() {
+                            TextInputState::Selected
+                        } else {
+                            TextInputState::Caret
+                        })
+                    );
+                } else {
+                    assert!(decorated.is_empty(), "{mode:?} {focused}");
+                }
+            }
+        }
+        assert!(
+            plan(&state, &ViewState::default())
+                .0
+                .text
+                .iter()
+                .all(|text| text.input_state.is_none())
+        );
+    }
+
+    #[test]
+    fn keyboard_keeps_full_sized_keys_in_the_lower_band() {
+        let state = WorldState::new(7, "Mop");
+        for text_scale in [1, 2] {
+            let scene = plan(
+                &state,
+                &ViewState {
+                    mode: UiMode::OnScreenKeyboard,
+                    text_scale,
+                    renaming_with_osk: true,
+                    ..ViewState::default()
+                },
+            )
+            .0;
+            let panel = scene
+                .rects
+                .iter()
+                .find(|rect| rect.id == "keyboard/panel")
+                .unwrap()
+                .rect;
+            assert!(panel.y >= 80 && panel.y + panel.h <= 147);
+            let keys: Vec<_> = scene
+                .hit_regions
+                .iter()
+                .filter(|hit| hit.id.starts_with("keyboard/") && hit.shape == HitShape::Rect)
+                .collect();
+            assert_eq!(keys.len(), 34);
+            for key in keys {
+                assert!(key.rect.h >= 12, "{}", key.id);
+                assert!(key.rect.x >= panel.x && key.rect.x + key.rect.w <= panel.x + panel.w);
+                assert!(key.rect.y >= panel.y && key.rect.y + key.rect.h <= panel.y + panel.h);
+            }
+            for character in 'a'..='z' {
+                assert!(
+                    scene
+                        .hit_regions
+                        .iter()
+                        .any(|hit| hit.id == format!("keyboard/{character}")
+                            && hit.action == UiAction::TypeCharacter(character))
+                );
+            }
+            for label in scene
+                .text
+                .iter()
+                .filter(|text| text.id.starts_with("keyboard/"))
+            {
+                let bounds = label.bounds.unwrap();
+                assert!(
+                    bounds.h as f32 >= label.role.size(text_scale >= 2) * 1.2,
+                    "{}",
+                    label.id
+                );
+                assert!(bounds.y >= panel.y && bounds.y + bounds.h <= panel.y + panel.h);
+            }
+        }
+    }
+
+    #[test]
+    fn inspection_uses_content_height_with_clear_title_body_and_close_gaps() {
+        for text_scale in [1, 2] {
+            for name in ["Mop".to_owned(), "W".repeat(24), "🌿".repeat(24)] {
+                let mut state = WorldState::new(7, &name);
+                state.creature.preferences.insert(FoodId::Mushroom, -0.8);
+                for target in [
+                    UiTarget::Creature,
+                    UiTarget::Cave,
+                    UiTarget::Toy(ToyId::Bell),
+                    UiTarget::FoodObject(900),
+                ] {
+                    let scene = plan(
+                        &state,
+                        &ViewState {
+                            mode: UiMode::Inspect(target),
+                            context_card_anchor: Some((173, 31)),
+                            text_scale,
+                            ..ViewState::default()
+                        },
+                    )
+                    .0;
+                    let panel = scene
+                        .rects
+                        .iter()
+                        .find(|rect| rect.id == "inspect/panel")
+                        .unwrap()
+                        .rect;
+                    let title = scene
+                        .text
+                        .iter()
+                        .find(|text| text.id == "inspect/title")
+                        .unwrap()
+                        .bounds
+                        .unwrap();
+                    let detail = scene
+                        .text
+                        .iter()
+                        .find(|text| text.id == "inspect/detail")
+                        .unwrap();
+                    let body = detail.bounds.unwrap();
+                    let size = detail.role.size(text_scale >= 2);
+                    let measured = typography().lines(&detail.text, body.w as f32, size);
+                    assert_eq!(
+                        body.h,
+                        typography()
+                            .height(&detail.text, body.w as f32, size)
+                            .ceil() as i32
+                    );
+                    assert_eq!(
+                        typography().layout_lines(&detail.text, body.w as f32, body.h as f32, size),
+                        *measured
+                    );
+                    let close = scene
+                        .hit_regions
+                        .iter()
+                        .find(|hit| hit.id == "inspect/close")
+                        .unwrap()
+                        .rect;
+                    assert_eq!(panel.x, 173);
+                    assert!(panel.y >= 4 && panel.y + panel.h <= AQUARIUM_BOTTOM - 2);
+                    assert!(title.y + title.h + 3 <= body.y);
+                    assert!(body.y + body.h + 5 <= close.y);
+                    assert!(!detail.vertical_centered);
+                    if target != UiTarget::Creature {
+                        assert!(panel.h < if text_scale >= 2 { 102 } else { 82 });
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn redundant_modal_close_hint_stays_hidden_and_settings_help_remains() {
+        let state = WorldState::new(7, "Mop");
+        for text_scale in [1, 2] {
+            let scene = plan(
+                &state,
+                &ViewState {
+                    mode: UiMode::Settings,
+                    hovered_region: Some("compose/close".into()),
+                    text_scale,
+                    ..ViewState::default()
+                },
+            )
+            .0;
+            assert!(scene.hit_regions.iter().any(|hit| hit.id == "modal/close"));
+            assert!(scene.text.iter().all(|text| text.id != "ui/hover-label"));
+            let scene = plan(
+                &state,
+                &ViewState {
+                    hovered_region: Some("compose/settings".into()),
+                    text_scale,
+                    ..ViewState::default()
+                },
+            )
+            .0;
+            assert!(
+                scene
+                    .text
+                    .iter()
+                    .any(|text| text.id == "ui/hover-label" && text.text.contains("Settings"))
+            );
         }
     }
 
@@ -5322,25 +8086,24 @@ mod tests {
                 .filter(|hit| matches!(hit.action, UiAction::BeginRebind(_)))
                 .collect();
             assert_eq!(rows.len(), 6);
-            let mut previous_outline = grow(back.rect, 1);
+            let mut previous_bottom = back.rect.y + back.rect.h;
             for row in rows {
-                let outline = grow(row.rect, 1);
-                assert!(previous_outline.y + previous_outline.h < outline.y);
-                assert!(row.rect.w >= 91 && row.rect.h >= 14);
-                assert!(outline.x > panel.x && outline.y > panel.y);
-                assert!(outline.x + outline.w < panel.x + panel.w);
-                assert!(outline.y + outline.h < panel.y + panel.h);
+                assert!(previous_bottom < row.rect.y);
+                assert!(row.rect.w >= 80 && row.rect.h >= 14);
+                assert!(row.rect.x > panel.x && row.rect.y > panel.y);
+                assert!(row.rect.x + row.rect.w < panel.x + panel.w);
+                assert!(row.rect.y + row.rect.h < panel.y + panel.h);
                 let value = render
                     .text
                     .iter()
-                    .find(|text| text.id == format!("{}-value", row.id))
+                    .find(|text| text.id == format!("{}-label", row.id))
                     .unwrap();
                 let bounds = value.bounds.unwrap();
                 assert!(bounds.h >= value.role.size(text_scale == 2).ceil() as i32 + 2);
                 assert!(bounds.x >= row.rect.x && bounds.y >= row.rect.y);
                 assert!(bounds.x + bounds.w <= row.rect.x + row.rect.w);
                 assert!(bounds.y + bounds.h <= row.rect.y + row.rect.h);
-                previous_outline = outline;
+                previous_bottom = row.rect.y + row.rect.h;
             }
             let status = render
                 .rects
@@ -5384,13 +8147,17 @@ mod tests {
             for (index, left) in render
                 .hit_regions
                 .iter()
-                .filter(|hit| hit.enabled)
+                .filter(|hit| {
+                    hit.enabled && hit.shape == HitShape::Rect && !hit.id.starts_with("world/")
+                })
                 .enumerate()
             {
                 for right in render
                     .hit_regions
                     .iter()
-                    .filter(|hit| hit.enabled)
+                    .filter(|hit| {
+                        hit.enabled && hit.shape == HitShape::Rect && !hit.id.starts_with("world/")
+                    })
                     .skip(index + 1)
                 {
                     assert!(
@@ -5434,9 +8201,147 @@ mod tests {
     }
 
     #[test]
-    fn status_uses_the_summary_row_without_overlapping_modes_or_compose() {
+    fn prior_receipts_and_new_errors_leave_care_and_centered_modal_actions_clear() {
+        let state = WorldState::new(7, "Café 🌿");
+        for text_scale in [1, 2] {
+            for mode in [
+                UiMode::FoodChoice,
+                UiMode::ToyChoice,
+                UiMode::OnScreenKeyboard,
+                UiMode::Rename,
+                UiMode::Rebinding(BindableAction::PushToTalk),
+                UiMode::ConfirmReset,
+            ] {
+                let mut view = ViewState {
+                    mode,
+                    text_scale,
+                    focused_region: None,
+                    ..ViewState::default()
+                };
+                let quiet = plan(&state, &view).0;
+                for receipt in [
+                    "Your creature is now called Café 🌿.",
+                    "Could not save the change. Try again.",
+                ] {
+                    view.status_message = Some(receipt.to_owned());
+                    let scene = plan(&state, &view).0;
+                    let status = scene
+                        .rects
+                        .iter()
+                        .find(|part| part.id == "status/background")
+                        .unwrap()
+                        .rect;
+                    assert_eq!(
+                        panel_overlap(status, &quiet.rects),
+                        0,
+                        "{mode:?} scale {text_scale}"
+                    );
+                    if matches!(
+                        mode,
+                        UiMode::FoodChoice | UiMode::ToyChoice | UiMode::OnScreenKeyboard
+                    ) {
+                        assert_eq!(status.y, 5);
+                    }
+                    let message = scene
+                        .text
+                        .iter()
+                        .find(|text| text.id == "status/message")
+                        .unwrap();
+                    assert_eq!(message.text, receipt);
+                    let bounds = message.bounds.unwrap();
+                    let lines = typography().layout_lines(
+                        receipt,
+                        bounds.w as f32,
+                        bounds.h as f32,
+                        message.role.size(text_scale >= 2),
+                    );
+                    assert!(
+                        !lines.concat().contains('…'),
+                        "{mode:?} error text remains available"
+                    );
+                    for action in quiet
+                        .hit_regions
+                        .iter()
+                        .filter(|hit| hit.enabled && hit.shape == HitShape::Rect)
+                    {
+                        assert!(
+                            scene
+                                .hit_regions
+                                .iter()
+                                .any(|hit| hit.id == action.id && hit.enabled)
+                        );
+                        assert!(
+                            !rects_overlap(status, action.rect),
+                            "{mode:?} notice covers {}",
+                            action.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mushroom_tooltip_keeps_the_complete_name_at_both_text_sizes() {
+        let mut state = WorldState::new(7, "Mop");
+        state.aquarium.objects.insert(
+            100,
+            WorldObject::Food(beastie_core::FoodObject {
+                id: 100,
+                food: FoodId::Mushroom,
+                position: NormalizedPosition::new(2200, 4200),
+                velocity: beastie_core::NormalizedVelocity::default(),
+                buoyancy: beastie_core::FoodBuoyancy::Drift,
+                disposition: FoodDisposition::Falling,
+                age_ms: 0,
+                lifetime_ms: 10_000,
+            }),
+        );
+        for text_scale in [1, 2] {
+            let scene = plan(
+                &state,
+                &ViewState {
+                    text_scale,
+                    hovered_region: Some("target/object-100".into()),
+                    ..ViewState::default()
+                },
+            )
+            .0;
+            let tooltip = scene
+                .text
+                .iter()
+                .find(|text| text.id == "ui/hover-label")
+                .unwrap();
+            assert_eq!(tooltip.text, "mushroom");
+            let bounds = tooltip.bounds.unwrap();
+            let size = tooltip.role.size(text_scale >= 2);
+            assert!(typography().width(&tooltip.text, size) <= bounds.w as f32);
+            assert_eq!(
+                typography().layout_lines(&tooltip.text, bounds.w as f32, bounds.h as f32, size),
+                ["mushroom"]
+            );
+        }
+    }
+
+    #[test]
+    fn status_uses_available_space_without_overlapping_modes_or_compose() {
         let state = WorldState::new(7, "Mop");
-        for mode in [UiMode::Compose, UiMode::Settings, UiMode::FoodChoice] {
+        for mode in [
+            UiMode::Compose,
+            UiMode::Settings,
+            UiMode::Bindings,
+            UiMode::DataManagement,
+            UiMode::OnScreenKeyboard,
+        ] {
+            let quiet = plan(
+                &state,
+                &ViewState {
+                    mode,
+                    text_scale: 2,
+                    ..ViewState::default()
+                },
+            )
+            .0;
             let render = plan(
                 &state,
                 &ViewState {
@@ -5479,7 +8384,22 @@ mod tests {
                 .iter()
                 .find(|command| command.id == "status/message")
                 .expect("status message");
+            assert!(rect_contains(status, message.bounds.unwrap()));
             assert!(text_right(message) <= status.x + status.w - 3);
+            for control in quiet
+                .hit_regions
+                .iter()
+                .filter(|hit| hit.enabled && hit.shape == HitShape::Rect)
+            {
+                assert!(
+                    render
+                        .hit_regions
+                        .iter()
+                        .any(|hit| hit.id == control.id && hit.enabled),
+                    "{mode:?} notice hid {}",
+                    control.id
+                );
+            }
             if let Some(name) = render
                 .text
                 .iter()
@@ -5505,6 +8425,13 @@ mod tests {
             && left.x + left.w > right.x
             && left.y < right.y + right.h
             && left.y + left.h > right.y
+    }
+
+    fn rect_contains(outer: Rect, inner: Rect) -> bool {
+        inner.x >= outer.x
+            && inner.y >= outer.y
+            && inner.x + inner.w <= outer.x + outer.w
+            && inner.y + inner.h <= outer.y + outer.h
     }
 
     #[test]
@@ -5663,7 +8590,7 @@ mod tests {
     }
 
     #[test]
-    fn compose_focus_is_an_underlined_field_and_nameplate_fits_identity() {
+    fn compose_focus_stays_within_field_and_nameplate_fits_identity() {
         let state = WorldState::new(7, "Mop");
         let scene = plan(
             &state,
@@ -5680,9 +8607,15 @@ mod tests {
             .iter()
             .find(|r| r.id == "compose/input")
             .unwrap();
-        assert!(!focus.outline);
-        assert_eq!(focus.rect.h, 1);
-        assert_eq!(focus.rect.y, field.rect.y + field.rect.h - 1);
+        assert!(focus.outline);
+        assert!(focus.corner_radius > 0);
+        assert_eq!(focus.rect, field.rect);
+        let send = scene
+            .hit_regions
+            .iter()
+            .find(|hit| hit.id == "compose/send")
+            .unwrap();
+        assert!(!rects_overlap(focus.rect, send.rect));
         let identity = scene
             .text
             .iter()
@@ -5807,6 +8740,7 @@ mod tests {
                 };
                 let scene = plan(&state, &view).0;
                 let status = visible_status(&view, 0);
+                let has_status = status.is_some();
                 let description_id = if status.is_some() {
                     "status/message"
                 } else {
@@ -5818,15 +8752,13 @@ mod tests {
                     status.unwrap_or_else(|| microphone_label(microphone))
                 );
                 assert_eq!(help.role, TextRole::Secondary);
-                assert_eq!(
-                    help.bounds.unwrap(),
-                    Rect {
-                        x: 17,
-                        y: 140,
-                        w: 286,
-                        h: 8
-                    }
-                );
+                let bounds = help.bounds.unwrap();
+                assert!(bounds.h >= help.role.size(scale == 2).ceil() as i32);
+                assert!(bounds.x >= 0 && bounds.x + bounds.w <= LOGICAL_WIDTH);
+                assert!(bounds.y >= 0 && bounds.y + bounds.h < COMPOSE_BAR_TOP);
+                if microphone == MicrophoneState::Disabled {
+                    assert!(help.text.contains("Settings › Sound"));
+                }
                 assert_eq!(
                     scene
                         .text
@@ -5851,13 +8783,16 @@ mod tests {
                     );
                     view.hovered_region = None;
                     view.focused_region = Some("compose/settings".into());
+                    let focused = plan(&state, &view).0;
                     assert!(
-                        plan(&state, &view)
-                            .0
-                            .text
+                        focused
+                            .hit_regions
                             .iter()
-                            .any(|t| t.id == description_id)
+                            .any(|hit| hit.id == "compose/settings" && hit.enabled)
                     );
+                    if has_status {
+                        assert!(focused.text.iter().any(|text| text.id == "status/message"));
+                    }
                 }
             }
         }
@@ -5881,7 +8816,7 @@ mod tests {
                 .unwrap()
                 .bounds
                 .unwrap();
-            assert!(help.y >= 132 && help.y + help.h <= AQUARIUM_BOTTOM);
+            assert!(help.y >= 0 && help.y + help.h <= AQUARIUM_BOTTOM);
             for hit in scene
                 .hit_regions
                 .iter()
@@ -5984,7 +8919,13 @@ mod tests {
             modal
                 .hit_regions
                 .iter()
-                .all(|hit| hit.shape == HitShape::Rect)
+                .all(|hit| !matches!(hit.shape, HitShape::World(_)))
+        );
+        assert!(
+            modal
+                .hit_regions
+                .iter()
+                .any(|hit| hit.shape == HitShape::Blocker && !hit.enabled)
         );
         assert!(
             !modal
