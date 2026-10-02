@@ -14,6 +14,23 @@ and Linux are first-class release targets.
 
 ## Start here
 
+To play with real local dialogue, speech recognition and spoken replies, run from this directory:
+
+```bash
+./scripts/play.sh
+```
+
+The launcher checks for Cargo/Rust, llama.cpp, Qwen3.5, Parakeet and eSpeak NG, and reports missing
+dependencies with setup hints before starting. Use `./scripts/play.sh --check` to check installation
+without launching. Extra arguments pass through to `cargo xtask dev`, such as `--new-game`.
+Enable **Microphone** in Settings and hold **F1** to talk; **Spoken replies** controls the voice.
+
+Defaults use `models/Qwen3.5-0.8B-Q4_0.gguf`, `target/runtime/llama-cpp/llama-server`,
+`target/stt/parakeet-tdt-0.6b-v3-int8`, `target/tts-cache`, and `espeak-ng` on `PATH`.
+Override locations with `BEASTIE_AI_MODEL`, `BEASTIE_LLAMA_SERVER`, `BEASTIE_STT_MODEL_DIR`,
+`BEASTIE_TTS_CACHE_DIR`, or `BEASTIE_ESPEAK_NG`. Model sources and hashes are in
+`models/manifest.toml`; `cargo xtask stt setup` installs the selected Parakeet model.
+
 On Ubuntu, install the native build libraries first. The CI and release-build workflows use the
 same [Bevy Linux prerequisites](https://github.com/bevyengine/bevy/blob/v0.19.1/docs/linux_dependencies.md):
 
