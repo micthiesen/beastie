@@ -25,36 +25,45 @@ a 16–32 s drift labeled "hovering".
 
 ### Latency (live OS input, scripted with `cliclick`, event trace timestamps)
 
-| Measure | Budget | Result (runs C, D) |
+| Measure | Budget | Result (final runs S, T) |
 |---|---|---|
-| Input to visible reaction | ≤ 100 ms | Same frame: every input type emits a presentation cue in the command that handles it (`every_player_input_is_acknowledged_in_the_same_frame`); measured 0.06 s from the scripted click including driver time |
-| Pet | ≤ 1.5 s | 0.05–0.07 s |
-| Nearby toy | ≤ 1.5 s | 0.06–0.33 s |
-| Hand-fed food | ≈ 1.5 s | 1.43–1.71 s |
-| Cross-tank toy | ≤ 3 s | 1.41–1.51 s |
+| Input to visible reaction | ≤ 100 ms | Same frame: every input type emits a presentation cue in the command that handles it (`every_player_input_is_acknowledged_in_the_same_frame`). Live: 0.06 s from a teleport click; 0.31–0.33 s with the final driver, which moves the pointer, waits 40 ms and then clicks after logging the action |
+| Pet | ≤ 1.5 s | 0.31–0.36 s (including about 0.3 s of driver time) |
+| Nearby toy | ≤ 1.5 s | 0.31–0.66 s |
+| Hand-fed food | ≈ 1.5 s | 1.74–1.98 s (about 1.45–1.7 s of game time) |
+| Cross-tank toy | ≤ 3 s | 1.58–1.95 s |
 | Pointer motion cancelling an action | never | never (`pointer_motion_never_interrupts_an_accepted_toy_interaction`) |
 | Clicks for pet / play / feed | 1 / 1 / 1 | 1 / 1 / 1 |
-| Dead world clicks | none | none: empty water taps the glass, open menus dismiss and act |
+| Dead world clicks | none | none: ten clicks on the cave, plants, sand, side walls and corners each produced a tap or an offer. The cave, plants and food tap the glass there; Mop wins clicks that overlap scenery |
 
 ### Blind readability
 
 A fresh model reviewer saw only the tank (rail, hints and labels cropped) and named Mop's
 activity and want per frame; answers were scored against the rail's own labels and the traces.
 
-| Round | Change before it | Correct |
-|---|---|---:|
-| 1 | first pass | ~5/14 |
-| 2 | refusal bubble, play sparkles | ~6/12 |
-| 3 | intent rings, bigger bubbles, fixed brows, "!" glyph | 10/12 |
-| 4 | floor ring for foraging, brow sign fix | 11/12 |
-| 5 | random frames from ten-minute run C | 7/10 |
-| 6 | spoken refusals crossed out, glossy chased bubble, snap pop | see run E below |
+| Round | Frames | Change before it | Correct |
+|---|---|---|---:|
+| 1 | staged | first pass | ~5/14 |
+| 2 | staged | refusal bubble, play sparkles | ~6/12 |
+| 3 | staged | intent rings, bigger bubbles, fixed brows, "!" glyph | 10/12 |
+| 4 | staged | floor ring for foraging, brow sign fix | 11/12 |
+| 5 | run C | none (first sample of real play) | 7/10 |
+| 6 | run E | spoken refusals crossed out, glossy chased bubble | ~4/10 |
+| 7 | run G | bubble close to Mop, no ring around it | ~5/10 |
+| 8 | run K | 0.6 s snap, bubble kept clear of toys | 8/10 |
+| 9 | run M | sand spray for foraging, star sparkles | ~6/10 |
+| 10 | run O | Mop looks at the bubble it chases | ~7/10 |
+| 11 | run Q | Mop stops short so the bubble stays at its mouth | ~8.5/10 |
+| 12 | run S | a resting "z" when settling in the cave | 9/10 |
 
-Round 5 sampled real play rather than staged moments; its misses were a spoken refusal shown only
-as text and a bubble chase whose bubble read as an empty ring. Both were fixed before round 6.
-The reviewer consistently read "?" name bubbles, speech in Mop's learned words, refusals with a
-crossed-out bubble, rings on targets, and sleeping as high-confidence. Idle floating with no
-effect is read as idle, which is correct.
+Rounds 5 to 12 use the same ten frame positions from a fresh ten-minute run, so they sample
+ordinary play rather than staged moments. Scores vary with what the frames happen to catch.
+Rounds 6 and 7 landed on several bubble chases, which then read as an empty ring, a toy or
+nothing, and they drove most of the fixes. In round 12 the reviewer named every goal, toy, plant
+and cave rest, and read the idle frames as idle. The one doubtful frame was labeled
+"finishing up" and read as a pet prompt. Speech in Mop's learned words, dotted target rings,
+crossed-out refusals and the cave "z" read with high confidence. The weakest remaining cue is a
+lone "!", which says Mop noticed something but not what.
 
 ### Dialogue
 
@@ -71,12 +80,19 @@ tap, play and name the ball, ask for it, feed and name a berry, pet and name Mop
 for the bell, feed a mushroom, praise, scold, call, feed a pellet, and four idle stretches of
 25–60 s. Real OS pointer and keyboard input; screenshots every 1.8 s; game event trace.
 
-| Run | Voice | First word | Mop uses it | Words learned | Lines (distinct) | Quiet > 20 s | Errors |
-|---|---|---|---|---:|---:|---|---|
-| A | composer | 15.3 s | 15.3 s | 7 | 32 (30) | none | 0 |
-| B | local model | 15.3 s | 15.4 s | 7 | 31 (29) | none | 0 |
-| C | composer | 15.4 s | 15.4 s | 7 | 33 (31) | none | 0 |
-| D | local model | 15.3 s | 15.4 s | 7 | 32 (28) | none | 0 |
+| Run | Voice | First word | Mop uses it | Words | Lines (distinct) | Quiet > 20 s | Errors | Notes |
+|---|---|---|---|---:|---:|---|---|---|
+| A | composer | 15.3 s | 15.3 s | 7 | 32 (30) | none | 0 | |
+| B | local model | 15.3 s | 15.4 s | 7 | 31 (29) | none | 0 | a wedged ball dropped an offer (fixed) |
+| C | composer | 15.4 s | 15.4 s | 7 | 33 (31) | none | 0 | |
+| D | local model | 15.3 s | 15.4 s | 7 | 32 (28) | none | 0 | |
+| E–R | both | 15.2–16.8 s | same moment | 6–7 | 31–34 | none | 0 | dead clicks on scenery and edges found and fixed; driver misses (stale pointer, bell mistaken for Mop, Mop swimming away) fixed or noted |
+| **S** | composer | 16.7 s | 16.7 s | 7 | 34 (30) | none | 0 | every input paid off |
+| **T** | local model | 16.6 s | 16.7 s | 7 | 31 (28) | none | 0 | every input paid off |
+
+S and T are the final consecutive pair, run on `8eb7cb5`. Times from S onward include about 0.3 s
+of driver latency per action. Every pair after the first was rerun after any behavior change, so
+the final pair reflects the shipped code.
 
 Surprising moments recurred in every run: Mop refused a request in its own words ("no ball."),
 learned the player's coined "ding" for the bell, named toys unprompted while playing ("sock~
@@ -84,7 +100,9 @@ sock~", "mop... sock."), said "mop know sock!", asked for food by name when hung
 disliked food. A clear next thing to want was always on screen: a "?" bubble on whatever Mop played
 with, a coaching hint until the first lesson and request were done, Mop's own wants afterward.
 
-Fixes found by these runs: pointer-cancel (pre-run), keyboard focus stolen after a reply,
+Fixes found by these runs: dead clicks on the cave, plants, sand and side walls; a bubble chase
+that read as nothing; foraging and play cues mistaken for ambient bubbles; pointer-cancel
+(pre-run), keyboard focus stolen after a reply,
 Enter blocked while a reply was pending, duplicate suppression making repeated words show the
 failure banner, the model once contradicting a complied request ("no sock!"), wedged toys making
 an offer silently fail, a refused ball not learnable while Mop played with another toy, spat food

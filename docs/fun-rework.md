@@ -329,6 +329,12 @@ Living notes. Decisions here supersede the proposal text above where they differ
 - Spontaneous naming fades with each repetition; a reply never takes keyboard focus; talking is
   never blocked by a pending reply; the local model is loaded at startup.
 - A player's offer of a wedged toy waits up to 2 s while the toy is nudged free.
+- Every click in the tank gets a reaction: the cave, plants and food tap the glass there instead of
+  opening a menu, and the sand, side walls and decorative scenery count as glass. Mop wins clicks
+  that overlap scenery.
+- Bubble chases are short darts at a bubble just ahead of and above Mop. Mop watches it, stops
+  just short and snaps in 0.6 s, and the bubble pops where it was. Foraging sprays sand on both
+  sides of the head, play shows star sparkles, and settling into the cave shows a small "z".
 - One dialogue path: every request is learned-word speech (legacy intent-free prompts, lanes and
   fallback pools removed).
 

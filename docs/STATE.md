@@ -16,10 +16,11 @@ Last updated: **2026-10-04**.
 - Intent is readable: wants as pictogram thought bubbles, rings on the thing Mop is heading for,
   crossed-out refusals, play sparkles, a bubble chase instead of drifting. A shy first meeting,
   ranked per-creature preferences and state-driven coaching hints open each new save.
-- Live-input ten-minute playthroughs on both voices learn the first word in about 15 s with no
-  errors, banners or 20-second lulls. A fresh model reviewer reads Mop's activity and want from
-  frames alone 11/12 on staged moments; random play frames scored 7/10 before the last fixes.
-  A human playtest has not happened yet.
+- The final consecutive live-input ten-minute playthroughs (composer voice and local model) learn
+  the first word in about 17 s, pay off every input, and show no errors, banners or 20-second
+  lulls. Every click in the tank gets a creature reaction. A fresh model reviewer read Mop's
+  activity and want correctly in 9 of 10 random play frames in the final round. A human
+  playtest has not happened yet.
 - One dialogue path remains (learned-word speech). The session undoes any command that would
   produce invalid state; a randomized test drives 48 creatures through mixed play.
 - The game remains offline and deterministic; the simulation owns facts and the model only phrases
