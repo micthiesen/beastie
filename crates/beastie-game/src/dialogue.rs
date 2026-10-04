@@ -1055,14 +1055,15 @@ mod tests {
     #[test]
     fn duplicate_output_gets_one_retry_then_typed_fallback() {
         let worker = compile_worker("duplicate");
+        // Generous deadlines: this is about duplicates, and a loaded gate can be slow to spawn.
         let config = WorkerConfig::new(
             worker,
             vec![OsString::from("duplicate")],
-            Duration::from_secs(1),
+            Duration::from_secs(5),
         );
         let mut manager = DialogueManager::new(Some(config));
         assert!(manager.request(request()));
-        assert_eq!(manager.recv_timeout(Duration::from_secs(1)).say, "same");
+        assert_eq!(manager.recv_timeout(Duration::from_secs(5)).say, "same");
         assert!(manager.request(request()));
         let turn = loop {
             match manager.try_recv_turn() {
