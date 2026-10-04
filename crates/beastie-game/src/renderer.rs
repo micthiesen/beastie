@@ -2382,14 +2382,14 @@ fn sync_effects(
             }
             PresentationCueKind::OpenWaterDrift => {
                 // The snap: the bubble bursts into droplets at the mouth.
-                // The bubble itself shows for the first 0.2 s of the snap; then it bursts.
+                // The bubble itself shows for the first 0.38 s of the snap; then it bursts.
                 let burst = if frame.plan.reduced_motion {
                     0.5
                 } else {
-                    ((elapsed - 0.2) * 2.5).min(1.0)
+                    ((elapsed - 0.38) * 4.0).min(1.0)
                 };
                 if (0.0..1.0).contains(&burst) {
-                    let mouth = position + Vec3::new(0.0, 0.35, 0.7);
+                    let mouth = position + Vec3::new(0.0, 0.0, 0.5);
                     for index in 0..12 {
                         let angle = index as f32 * std::f32::consts::TAU / 12.0;
                         let radius = 0.3 + burst * 0.7;

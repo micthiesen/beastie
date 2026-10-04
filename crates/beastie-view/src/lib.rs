@@ -1734,7 +1734,7 @@ fn effect_scenes(
             activity.phase,
             ActivityPhase::Notice | ActivityPhase::Approach | ActivityPhase::Act
         )
-        && !(activity.phase == ActivityPhase::Act && activity.elapsed_ms > 200)
+        && !(activity.phase == ActivityPhase::Act && activity.elapsed_ms > 380)
     {
         // The bubble Mop is after, rising where it is headed, until the snap pops it.
         effects.push(EffectScene {
@@ -1786,7 +1786,10 @@ fn effect_scenes(
                     UiTarget::OpenWater,
                     NormalizedPosition::new(creature.position.x, NormalizedPosition::SCALE),
                 )),
-                PrivateLifeKind::OpenWaterDrift => Some((UiTarget::Creature, creature.position)),
+                PrivateLifeKind::OpenWaterDrift => Some((
+                    UiTarget::Creature,
+                    beastie_core::bubble_point(state, activity.id),
+                )),
             };
             if let Some((target, position)) = target {
                 effects.push(EffectScene {

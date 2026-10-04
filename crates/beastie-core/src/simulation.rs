@@ -1219,7 +1219,14 @@ fn advance_private_life(state: &mut WorldState, events: &mut Vec<GameEvent>) {
             } else {
                 // Open water is a bubble chase: a visible target high in the tank, so the swim
                 // reads as wanting something rather than floating.
-                let target = bubble_point(state, activity.id);
+                // Stop just short, so the bubble stays in front of the mouth for the snap.
+                let bubble = bubble_point(state, activity.id);
+                let here = state.creature.aquarium.position;
+                let target = NormalizedPosition::new(
+                    bubble.x - (bubble.x - here.x).signum() * 650,
+                    bubble.y + 150,
+                )
+                .clamped();
                 set_travel_target(
                     state,
                     SemanticDestination::Position(target),
