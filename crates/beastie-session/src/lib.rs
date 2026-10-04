@@ -61,6 +61,8 @@ pub enum SessionCommand {
     Tap {
         position: NormalizedPosition,
     },
+    /// The player has arrived at the aquarium from the title screen.
+    Arrive,
     Tidy,
     Advance {
         minutes: u32,
@@ -514,6 +516,9 @@ impl GameSession {
             }
             SessionCommand::Tap { position } => {
                 events = self.apply_player_event(PlayerEvent::Tap(position));
+            }
+            SessionCommand::Arrive => {
+                events = self.apply_player_event(PlayerEvent::Arrived);
             }
             SessionCommand::Tidy => {
                 events = self.apply_player_event(PlayerEvent::Tidy);

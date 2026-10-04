@@ -21,14 +21,15 @@ pub const SOCK_RELEASE_SPEED: i32 = 900;
 // Private life needs room to read as lived time, not a showcase playlist. Arrival begins a
 // state-shaped quiet span that outlasts the authored payoff and leaves genuine observation
 // between bouts.
-const IDLE_BOUT_MIN_MS: u64 = 3_000;
-const IDLE_BOUT_MAX_MS: u64 = 8_000;
+const IDLE_BOUT_MIN_MS: u64 = 1_500;
+const IDLE_BOUT_MAX_MS: u64 = 4_500;
 const AFFECTION_DURATION_MS: u64 = 7_000;
 /// How long a direct toy contact holds before recovery ends: long enough to see a sock tug.
 const TOY_RECOVERY_MS: u64 = 1_200;
 const MAX_SLEEP_MS: u64 = 30_000;
 const INITIATIVE_DURATION_MS: u64 = 45_000;
 const FIRST_MEETING_PEEK_MS: u64 = 2_500;
+const FIRST_MEETING_LINGER_MS: u64 = 6_000;
 const ASK_WITH_WORD_INTERVAL_MS: u64 = 20_000;
 const REMARK_INTERVAL_MS: u64 = 18_000;
 const ASK_WITHOUT_WORD_INTERVAL_MS: u64 = 45_000;
@@ -67,6 +68,8 @@ pub enum PlayerEvent {
     Utterance(String),
     /// A tap on the glass at a point in the water.
     Tap(NormalizedPosition),
+    /// The player has arrived at the aquarium (left the title screen).
+    Arrived,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -500,10 +503,12 @@ fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut
     advance_private_life(state, events);
     advance_relationship_beat(state, events);
     let minutes = SIMULATION_TICK_MS as f32 / 60_000.0;
-    state.creature.needs.hunger += 0.025 * minutes;
+    // Needs move fast enough that wants surface within the first minutes of a visit, so there
+    // is always something worth doing, and slow enough that caring is not a chore.
+    state.creature.needs.hunger += 0.05 * minutes;
     state.creature.needs.energy -= 0.018 * minutes;
-    state.creature.needs.comfort -= 0.008 * minutes;
-    state.creature.needs.curiosity += 0.012 * minutes;
+    state.creature.needs.comfort -= 0.03 * minutes;
+    state.creature.needs.curiosity += 0.05 * minutes;
     if state.creature.needs.energy < 0.1
         && state.creature.current_intention != crate::Intention::Sleep
     {
@@ -750,6 +755,12 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
         PlayerEvent::React(reaction) => apply_reaction(state, *reaction),
         PlayerEvent::Utterance(text) => crate::teaching::hear_utterance(state, text, events),
         PlayerEvent::Tap(position) => tap_glass(state, position.clamped(), events),
+        PlayerEvent::Arrived => {
+            state.aquarium.player_present = true;
+            if state.creature.hidden_until_met && state.creature.met_player_at_ms.is_none() {
+                state.creature.met_player_at_ms = Some(state.elapsed_ms);
+            }
+        }
         PlayerEvent::LanguageExposure(exposure) => {
             match exposure {
                 LanguageExposure::Profanity => state.creature.social_habits.profanity += 0.08,
@@ -899,6 +910,7 @@ fn should_interrupt_for_player_event(event: &PlayerEvent) -> bool {
     !matches!(
         event,
         PlayerEvent::Cursor(_)
+            | PlayerEvent::Arrived
             | PlayerEvent::Tap(_)
             | PlayerEvent::Utterance(_)
             | PlayerEvent::SpeechStarted
@@ -2824,10 +2836,11 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         // Shy at first: it peeks from the cave, then comes to the glass to see who is there,
         // sooner if the player does anything at all.
         let counters = state.creature.development.interactions;
-        let met = state.elapsed_ms >= FIRST_MEETING_PEEK_MS
-            || counters.total() > 0
-            || counters.requests > 0
-            || counters.taps > 0;
+        let waited = state
+            .creature
+            .met_player_at_ms
+            .is_some_and(|at| state.elapsed_ms.saturating_sub(at) >= FIRST_MEETING_PEEK_MS);
+        let met = waited || counters.total() > 0 || counters.requests > 0 || counters.taps > 0;
         if !met {
             state.creature.aquarium.steering = SteeringMode::Hover;
             state.creature.aquarium.velocity = NormalizedVelocity::default();
@@ -2844,11 +2857,15 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         );
         state.creature.aquarium.gaze = GazeTarget::Player;
         set_intention(state, Intention::ApproachPlayer, events);
+        // Stay at the glass a moment to look at the newcomer before going about its life.
+        state.creature.idle_life.settled_until_ms =
+            state.elapsed_ms.saturating_add(FIRST_MEETING_LINGER_MS);
         events.push(GameEvent::Emerged);
         return;
     }
     if state.elapsed_ms < state.creature.idle_life.settled_until_ms {
         state.creature.aquarium.steering = SteeringMode::Hover;
+        glance_while_pausing(state);
         return;
     }
     let quiet_moment = state.aquarium.player_present
@@ -2971,6 +2988,33 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         };
         set_intention(state, intention, events);
     }
+}
+
+/// A pausing creature is still looking at things: the player now and then, or a nearby toy.
+/// Gaze only; it never starts travel, so the pause stays a pause.
+fn glance_while_pausing(state: &mut WorldState) {
+    if state.creature.aquarium.gaze == GazeTarget::Cursor {
+        return;
+    }
+    let beat = state.elapsed_ms / 1_400;
+    if state.elapsed_ms % 1_400 >= SIMULATION_TICK_MS {
+        return;
+    }
+    let pick = deterministic_unit(state.seed, RandomDomain::Motion, beat.wrapping_mul(13));
+    let head = state.creature.aquarium.position;
+    let nearest_toy = state
+        .aquarium
+        .toy_states
+        .iter()
+        .filter(|(_, object)| !object.carried)
+        .min_by_key(|(_, object)| manhattan_distance(head, object.position))
+        .map(|(toy, _)| *toy);
+    let social = state.aquarium.player_present && state.creature.relationship.bond > 0.05;
+    state.creature.aquarium.gaze = match (pick, nearest_toy) {
+        (pick, _) if social && pick < 0.45 => GazeTarget::Player,
+        (pick, Some(toy)) if pick < 0.8 => GazeTarget::Toy(toy),
+        _ => GazeTarget::None,
+    };
 }
 
 fn start_private_life(state: &mut WorldState, events: &mut Vec<GameEvent>) -> bool {

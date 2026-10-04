@@ -2776,7 +2776,7 @@ mod tests {
             ["food-refusal", "reduced-effects"]
         );
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        for (case, seed, duration) in [(experiences[0], 4, 48_000), (experiences[1], 2, 59_000)] {
+        for (case, seed, duration) in [(experiences[0], 4, 48_000), (experiences[1], 2, 49_000)] {
             assert_eq!(experience_seed(case), seed);
             assert!(case.initial_save.is_none());
             assert_eq!(

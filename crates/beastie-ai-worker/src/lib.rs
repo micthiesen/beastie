@@ -145,6 +145,13 @@ pub fn process_line(line: &str, backend: &mut dyn DialogueBackend) -> DialogueRe
             reply.worker_fallback = None;
             reply
         }
+        // For learned-word speech the composer is a complete voice: a model whose samples all
+        // missed the creature's words is not a technical failure worth reporting.
+        Err(BackendError::InvalidReply | BackendError::MalformedReply)
+            if request.speech_intent.is_some() =>
+        {
+            return constrained_fallback_reply(&request);
+        }
         Err(_) => {
             return mark_fallback(
                 grounded_fallback_reply(&request),

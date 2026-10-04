@@ -64,9 +64,15 @@ pub fn current_want(state: &WorldState) -> Option<Want> {
         return Some(Want::Food(favorite_food(state)));
     }
     if creature.lexicon.learned_count() < CURIOUS_ABOUT_NAMES_UNTIL {
-        let engaged = engaged_toy
-            .map(Meaning::Toy)
-            .or_else(|| creature.aquarium.action.as_ref()?.food.map(Meaning::Food));
+        let engaged = engaged_toy.map(Meaning::Toy).or_else(|| {
+            // Only while the food is still there to look at.
+            let action = creature.aquarium.action.as_ref()?;
+            action
+                .food_outcome
+                .is_none()
+                .then_some(action.food?)
+                .map(Meaning::Food)
+        });
         if let Some(meaning) = engaged
             && creature.lexicon.word_for(meaning).is_none()
         {

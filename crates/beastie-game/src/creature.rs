@@ -528,7 +528,9 @@ pub(crate) fn animate_creature(
                     0.36 + side * motion.face.z * 0.12,
                     0.46,
                 );
-                turn = Quat::from_rotation_z(side * motion.face.x + motion.face.z * 0.8);
+                // Positive brow raises the inner ends (curious, attentive); negative lowers
+                // them into a cross V (resentful, refusing).
+                turn = Quat::from_rotation_z(-side * motion.face.x + motion.face.z * 0.8);
             }
             CreaturePart::Mouth => {
                 local = Vec3::new(0.0, -0.24, 0.49);

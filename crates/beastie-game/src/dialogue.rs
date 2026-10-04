@@ -54,6 +54,8 @@ pub struct WorkerConfig {
     arguments: Vec<OsString>,
     reply_timeout: Duration,
     backend: TranscriptBackend,
+    /// Load the model at startup rather than on the first spoken line.
+    warm_up: bool,
 }
 
 impl WorkerConfig {
@@ -90,6 +92,7 @@ impl WorkerConfig {
                 } else {
                     TranscriptBackend::Unknown
                 },
+                warm_up: !fake_ai,
             });
         }
         if fake_ai {
@@ -136,6 +139,7 @@ impl WorkerConfig {
                 server.into_os_string(),
             ],
             reply_timeout,
+            warm_up: true,
             backend: TranscriptBackend::LlamaServer,
         }))
     }
@@ -147,6 +151,7 @@ impl WorkerConfig {
             arguments,
             reply_timeout,
             backend: TranscriptBackend::Unknown,
+            warm_up: false,
         }
     }
 }
@@ -494,6 +499,16 @@ fn run_manager(
     backend: TranscriptBackend,
 ) {
     let mut worker = None;
+    // Load the local model before the first word is spoken, so the first reply is not the slow
+    // one. The warm-up line is discarded; failure here only means the first request retries.
+    if let Some(config) = config.as_ref().filter(|config| config.warm_up) {
+        let _ = exchange_with_recovery(
+            config,
+            &mut worker,
+            &warmup_request(),
+            &AtomicBool::new(false),
+        );
+    }
     let mut recent_fingerprints: std::collections::VecDeque<String> =
         std::collections::VecDeque::new();
     while let Ok(command) = commands.recv() {
@@ -524,11 +539,13 @@ fn run_manager(
                     generated.as_ref().and_then(|reply| reply.worker_fallback);
                 if let Some(first) = generated.take() {
                     let fingerprint = reply_fingerprint(&first.say);
-                    let duplicate = request
-                        .context
-                        .avoid_reply_fingerprints
-                        .iter()
-                        .any(|known| known == &fingerprint)
+                    // A creature repeating its few words is character, not a stuck chatbot.
+                    let duplicate = request.speech_intent.is_none()
+                        && request
+                            .context
+                            .avoid_reply_fingerprints
+                            .iter()
+                            .any(|known| known == &fingerprint)
                         || recent_fingerprints
                             .iter()
                             .any(|known| known == &fingerprint);
@@ -623,6 +640,28 @@ fn run_manager(
     if let Some(mut worker) = worker {
         worker.terminate();
     }
+}
+
+/// A minimal babble request that makes the worker start and load its model.
+fn warmup_request() -> DialogueRequest {
+    let world = beastie_core::WorldState::new(1, "Mop");
+    let mut request = beastie_protocol::build_dialogue_request(
+        &world,
+        &beastie_core::MemoryQuery {
+            cues: std::collections::BTreeSet::new(),
+            limit: 0,
+        },
+        beastie_protocol::DialogueRequestContext {
+            request_id: 0,
+            mood: "content",
+            player_said: "",
+            desired_social_act: None,
+            max_words: 3,
+            allowed_gestures: std::collections::BTreeSet::from([beastie_protocol::Gesture::None]),
+        },
+    );
+    request.speech_intent = Some(beastie_protocol::SpeechIntent::Babble);
+    request
 }
 
 fn fallback_reason_code(reason: DialogueFallbackReason) -> u8 {

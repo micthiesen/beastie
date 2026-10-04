@@ -187,7 +187,19 @@ pub(crate) fn hear_utterance(state: &mut WorldState, text: &str, events: &mut Ve
         events.push(GameEvent::TalkIgnored);
         return;
     }
-    let salient = current_salience(state);
+    let mut salient = current_salience(state);
+    // Saying the creature's own name is addressing it: the name the player gave is strong
+    // evidence that this word means the creature itself.
+    let name = state.creature.name.to_lowercase();
+    if crate::content_words(text).contains(&name) {
+        match salient
+            .iter_mut()
+            .find(|(meaning, _)| *meaning == Meaning::Creature)
+        {
+            Some(entry) => entry.1 = entry.1.max(3),
+            None => salient.push((Meaning::Creature, 3)),
+        }
+    }
     let now = state.elapsed_ms;
     let hearing = state.creature.lexicon.hear(text, &salient, now);
     if hearing.content_words.is_empty() {

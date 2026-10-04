@@ -1370,6 +1370,9 @@ pub struct Creature {
     /// A brand-new creature waits shyly in its cave until it has met the player.
     #[serde(default)]
     pub hidden_until_met: bool,
+    /// When the player arrived for the first meeting; the shy wait counts from here.
+    #[serde(default)]
+    pub met_player_at_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1447,6 +1450,7 @@ impl WorldState {
     pub fn first_meeting(seed: u64, name: impl Into<String>) -> Self {
         let mut world = Self::new(seed, name);
         world.creature.hidden_until_met = true;
+        world.aquarium.player_present = false;
         world.creature.aquarium.position = NormalizedPosition::new(1_700, 8_100);
         world.creature.aquarium.facing = Facing::Right;
         world
@@ -1538,6 +1542,7 @@ impl WorldState {
                 lexicon: crate::Lexicon::default(),
                 attention: Vec::new(),
                 hidden_until_met: false,
+                met_player_at_ms: None,
             },
             aquarium: AquariumState::default(),
             random_domains: BTreeMap::new(),

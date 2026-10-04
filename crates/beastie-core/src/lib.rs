@@ -731,7 +731,7 @@ mod tests {
             "expected several actual idle arrivals: {bouts:?}"
         );
         assert!(bouts.iter().all(|duration| {
-            (3_000..=8_000).contains(duration) && duration % SIMULATION_TICK_MS == 0
+            (1_500..=4_500).contains(duration) && duration % SIMULATION_TICK_MS == 0
         }));
         assert!(first.creature.favorite_locations.len() > 1);
         assert!(first.creature.favorite_locations.values().sum::<u32>() <= bouts.len() as u32);

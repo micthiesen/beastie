@@ -1141,6 +1141,7 @@ impl Game {
                 self.settings_from_title = false;
                 self.view.mode = UiMode::Compose;
                 self.view.focused_region = Some("compose/input".to_owned());
+                self.apply_command(SessionCommand::Arrive, false)?;
             }
             UiAction::Quit => {
                 self.persist()?;
@@ -1438,8 +1439,10 @@ impl Game {
     }
 
     fn submit_text(&mut self) -> GameResult {
+        // Never make the player wait for a reply: a new utterance supersedes a pending one, and
+        // the creature hears it at once.
         let text = self.view.text_buffer.trim().to_owned();
-        if text.is_empty() || self.view.pending {
+        if text.is_empty() {
             return Ok(());
         }
         self.view.text_buffer.clear();
@@ -2233,9 +2236,7 @@ impl Game {
                 Key::Escape => {
                     self.apply_ui_action(UiAction::ClearText, false)?;
                 }
-                Key::Enter if !self.view.pending => {
-                    self.apply_confirmed_ui_action(UiAction::SubmitText, false)?
-                }
+                Key::Enter => self.apply_confirmed_ui_action(UiAction::SubmitText, false)?,
                 Key::Backspace | Key::Delete => {
                     delete_view_text(&mut self.view, *key == Key::Backspace);
                 }

@@ -398,6 +398,7 @@ impl LegacyCreature {
             lexicon: crate::Lexicon::default(),
             attention: Vec::new(),
             hidden_until_met: false,
+            met_player_at_ms: None,
         }
     }
 }

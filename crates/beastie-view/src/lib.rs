@@ -818,6 +818,16 @@ pub struct CreatureScene {
     /// What the creature wants, shown as a thought bubble while it is not speaking.
     #[serde(default)]
     pub want: Option<beastie_core::Want>,
+    /// Something the creature is refusing right now, drawn crossed out in a bubble.
+    #[serde(default)]
+    pub refusing: Option<beastie_core::Meaning>,
+    /// The creature is in the middle of a game with a toy.
+    #[serde(default)]
+    pub playing: bool,
+    /// Where the creature is headed, so its target can be marked: a toy, food, the plant, the
+    /// cave, or the bubble it is chasing.
+    #[serde(default)]
+    pub intent_target: Option<NormalizedPosition>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1489,7 +1499,91 @@ fn creature_scene(state: &WorldState, view: &ViewState) -> CreatureScene {
         } else {
             beastie_core::current_want(state)
         },
+        refusing: refusal_subject(state),
+        intent_target: intent_target(state),
+        playing: state
+            .creature
+            .interaction_state
+            .toy_interaction
+            .as_ref()
+            .is_some_and(|interaction| {
+                interaction.outcome == beastie_core::ToyInteractionOutcome::Accepted
+                    && interaction.contacts > 0
+            })
+            || state
+                .creature
+                .private_life
+                .active
+                .as_ref()
+                .is_some_and(|activity| {
+                    matches!(activity.kind, PrivateLifeKind::ToyPlay(_))
+                        && activity.phase == ActivityPhase::Act
+                }),
     }
+}
+
+/// The object the creature is deliberately heading for, if any.
+fn intent_target(state: &WorldState) -> Option<NormalizedPosition> {
+    let aquarium = &state.creature.aquarium;
+    if let Some(action) = aquarium.action.as_ref()
+        && action.food_outcome.is_none()
+        && matches!(
+            action.phase,
+            ActionPhase::Notice
+                | ActionPhase::Brake
+                | ActionPhase::Gaze
+                | ActionPhase::Turn
+                | ActionPhase::Approach
+        )
+    {
+        return beastie_core::destination_position(state, action.destination);
+    }
+    let activity_notice = state
+        .creature
+        .private_life
+        .active
+        .as_ref()
+        .and_then(|activity| {
+            (activity.phase == ActivityPhase::Notice).then(|| {
+                match activity.kind.destination() {
+                    Some(destination) => beastie_core::destination_position(state, destination),
+                    None => Some(beastie_core::bubble_point(state, activity.id)),
+                }
+            })?
+        });
+    if activity_notice.is_some() {
+        return activity_notice;
+    }
+    match aquarium.destination? {
+        SemanticDestination::Position(_) | SemanticDestination::Player => {
+            // A bubble chase marks its bubble; a swim to the glass marks nothing.
+            let activity = state.creature.private_life.active.as_ref()?;
+            (activity.kind == PrivateLifeKind::OpenWaterDrift)
+                .then(|| beastie_core::bubble_point(state, activity.id))
+        }
+        // Foraging is about the sand itself: mark the floor under the head, not the water.
+        SemanticDestination::Bottom => {
+            beastie_core::destination_position(state, SemanticDestination::Bottom)
+                .map(|position| NormalizedPosition::new(position.x, NormalizedPosition::SCALE))
+        }
+        destination => beastie_core::destination_position(state, destination),
+    }
+}
+
+/// What the creature is visibly saying no to: a refused toy offer or food it pushed away.
+fn refusal_subject(state: &WorldState) -> Option<beastie_core::Meaning> {
+    let creature = &state.creature;
+    if let Some(interaction) = creature.interaction_state.toy_interaction.as_ref()
+        && interaction.outcome == beastie_core::ToyInteractionOutcome::Rejected
+    {
+        return Some(beastie_core::Meaning::Toy(interaction.toy));
+    }
+    creature.aquarium.action.as_ref().and_then(|action| {
+        (action.food_outcome == Some(beastie_core::FoodOutcome::Rejected))
+            .then_some(action.food)
+            .flatten()
+            .map(beastie_core::Meaning::Food)
+    })
 }
 
 /// Resolve only authoritative targets; absent or consumed objects have no gaze position.
@@ -1623,6 +1717,22 @@ fn effect_scenes(
             position: creature.position,
             target: UiTarget::Creature,
             elapsed_ms: expression.elapsed_ms,
+        });
+    }
+    if let Some(activity) = &creature.private_life
+        && activity.kind == PrivateLifeKind::OpenWaterDrift
+        && matches!(
+            activity.phase,
+            ActivityPhase::Notice | ActivityPhase::Approach
+        )
+    {
+        // The bubble Mop is after, rising where it is headed.
+        effects.push(EffectScene {
+            owner: SemanticOwner::PrivateLife(activity.id),
+            cue: PresentationCueKind::OpenWaterDrift,
+            position: beastie_core::bubble_point(state, activity.id),
+            target: UiTarget::OpenWater,
+            elapsed_ms: activity.elapsed_ms,
         });
     }
     if let Some(activity) = &creature.private_life {
@@ -2056,7 +2166,7 @@ fn add_persistent_bar(
         !dedicated_input,
         "Message",
     ));
-    let enabled = !dedicated_input && !view.pending && !view.text_buffer.trim().is_empty();
+    let enabled = !dedicated_input && !view.text_buffer.trim().is_empty();
     hits.push(hit(
         "compose/send",
         None,
@@ -2196,7 +2306,7 @@ fn add_temporary_mode(
     hits: &mut Vec<HitRegion>,
 ) {
     match view.mode {
-        UiMode::Title => add_title(view, rects, text, hits),
+        UiMode::Title => add_title(state, rects, text, hits),
         UiMode::Compose => {}
         UiMode::Inspect(target) => add_inspection(state, view, target, rects, text, hits),
         UiMode::Context(UiTarget::Toy(toy)) => add_toy_context(state, view, toy, rects, text, hits),
@@ -2245,7 +2355,7 @@ fn add_temporary_mode(
 }
 
 fn add_title(
-    _view: &ViewState,
+    state: &WorldState,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
     hits: &mut Vec<HitRegion>,
@@ -2262,8 +2372,14 @@ fn add_title(
         TextRole::Subtitle,
         29,
     ));
+    // A creature still waiting to meet the player is met, not continued.
+    let begin = if state.creature.hidden_until_met {
+        format!("Meet {}", head_fit(&state.creature.name, 12))
+    } else {
+        "Continue".to_owned()
+    };
     for (index, (id, name, action)) in [
-        ("continue", "Continue", UiAction::Continue),
+        ("continue", begin.as_str(), UiAction::Continue),
         ("settings", "Settings", UiAction::OpenSettings),
         ("quit", "Quit", UiAction::Quit),
     ]
@@ -3866,7 +3982,7 @@ fn add_keyboard(
             },
             251,
             57,
-            !view.text_buffer.trim().is_empty() && !view.pending,
+            !view.text_buffer.trim().is_empty(),
         ),
     ] {
         add_control(
@@ -4253,6 +4369,16 @@ pub fn coaching_hint(state: &WorldState, view: &ViewState) -> Option<String> {
         beastie_core::Meaning::Food(food) => food_name(food).to_lowercase(),
         _ => "that".to_owned(),
     };
+    // One hearing is never a lesson; the first echo is the moment to say it again.
+    if words == 0
+        && creature.lexicon.words.values().any(|word| {
+            word.heard == 1
+                && !word.evidence.is_empty()
+                && state.elapsed_ms.saturating_sub(word.last_heard_ms) < 15_000
+        })
+    {
+        return Some(format!("{name} tried to say it! Say it once more."));
+    }
     if let Some(beastie_core::Want::NameOf(meaning)) = want
         && words < 2
     {
@@ -4474,6 +4600,10 @@ fn add_hover_and_focus(
             "compose/settings" | "compose/close" | "compose/send" | "compose/creature"
         );
     if !microphone_help && !utility && !matches!(region.shape, HitShape::World(_)) {
+        return;
+    }
+    // Plain water needs no caption; it would only cover the creature's coaching line.
+    if region.id.starts_with("world/") {
         return;
     }
     if visible_status(view, now_ms).is_some() {
@@ -4763,8 +4893,15 @@ const fn private_life_behavior_name(
     phase: ActivityPhase,
 ) -> &'static str {
     match phase {
-        ActivityPhase::Notice => "noticing something to do",
-        ActivityPhase::Approach => "heading somewhere on its own",
+        ActivityPhase::Notice | ActivityPhase::Approach => match kind {
+            PrivateLifeKind::ToyPlay(ToyId::Ball) => "going for the ball",
+            PrivateLifeKind::ToyPlay(ToyId::Bell) => "going for the bell",
+            PrivateLifeKind::ToyPlay(ToyId::Sock) => "going for the sock",
+            PrivateLifeKind::CaveSettle => "heading for the cave",
+            PrivateLifeKind::PlantInspect => "off to the plant",
+            PrivateLifeKind::BottomForage => "looking for crumbs",
+            PrivateLifeKind::OpenWaterDrift => "chasing a bubble",
+        },
         ActivityPhase::Recover => "finishing up",
         ActivityPhase::Settle => "settling in the cave",
         ActivityPhase::Interrupted => "changing course",
@@ -4780,7 +4917,7 @@ const fn private_life_behavior_name(
             (PrivateLifeKind::PlantInspect, ActivityRecipe::PlantOrbit) => "circling the plant",
             (PrivateLifeKind::BottomForage, ActivityRecipe::BottomForage) => "foraging in the sand",
             (PrivateLifeKind::OpenWaterDrift, ActivityRecipe::OpenWaterDrift) => {
-                "drifting through open water"
+                "snapping at a bubble"
             }
             _ => "following a private routine",
         },

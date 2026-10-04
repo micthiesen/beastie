@@ -1840,6 +1840,68 @@ fn pixel_pattern(
     }
 }
 
+/// "Not that": the refused thing in a bubble with a red cross over it.
+fn refusal_bubble(shape: &mut EffectShape, head: Vec3, refused: beastie_core::Meaning, time: f32) {
+    let want = match refused {
+        beastie_core::Meaning::Toy(toy) => beastie_core::Want::Toy(toy),
+        beastie_core::Meaning::Food(food) => beastie_core::Want::Food(Some(food)),
+        _ => return,
+    };
+    want_bubble(shape, head, want, time, true);
+    // A red cross beside the pictogram, so the thing refused stays recognizable.
+    let center = head + Vec3::new(1.5, 1.5, 0.62);
+    for step in -2..=2 {
+        let offset = step as f32 * 0.045;
+        for (dx, dy) in [(offset, offset), (offset, -offset)] {
+            shape.cuboid(
+                center + Vec3::new(dx, dy, 0.0),
+                Vec3::splat(0.055),
+                [214, 72, 66],
+            );
+        }
+    }
+}
+
+/// A soft pulsing ring around whatever the creature is heading for, so its intent reads at a
+/// glance before it arrives.
+fn intent_ring(shape: &mut EffectShape, center: Vec3, time: f32, reduced_motion: bool) {
+    let pulse = if reduced_motion {
+        1.0
+    } else {
+        1.0 + (time * 4.0).sin() * 0.08
+    };
+    let radius = 0.5 * pulse;
+    for index in 0..22 {
+        let angle = index as f32 * std::f32::consts::TAU / 22.0 + time * 0.6;
+        shape.cuboid(
+            center + Vec3::new(angle.cos() * radius, angle.sin() * radius * 0.9, 0.55),
+            Vec3::splat(0.05),
+            [255, 226, 140],
+        );
+    }
+}
+
+/// Little stars and notes rising around a creature in the middle of a game.
+fn play_sparkles(shape: &mut EffectShape, head: Vec3, time: f32) {
+    for index in 0..4 {
+        let phase = (time * 0.9 + index as f32 * 0.25).fract();
+        let side = if index % 2 == 0 { -1.0 } else { 1.0 };
+        let center = head + Vec3::new(side * (0.55 + phase * 0.25), 0.35 + phase * 0.9, 0.6);
+        let size = 0.05 * (1.0 - phase) + 0.02;
+        let color = if index % 2 == 0 {
+            [255, 224, 128]
+        } else {
+            [255, 246, 222]
+        };
+        shape.cuboid(center, Vec3::splat(size), color);
+        shape.cuboid(
+            center + Vec3::new(size, size, 0.0),
+            Vec3::splat(size * 0.5),
+            color,
+        );
+    }
+}
+
 /// A thought bubble above the head holding a pictogram of what the creature wants.
 fn want_bubble(
     shape: &mut EffectShape,
@@ -1854,8 +1916,8 @@ fn want_bubble(
     } else {
         (time * 2.2).sin() * 0.035
     };
-    let pixel = 0.05;
-    let center = head + Vec3::new(0.62, 1.05 + bob, 0.55);
+    let pixel = 0.09;
+    let center = head + Vec3::new(0.95, 1.5 + bob, 0.55);
     // The cloud: a cream fill with a soft teal rim, then two trailing puffs toward the head.
     const CLOUD: &[&str] = &[
         "   ooooooo   ",
@@ -1893,7 +1955,7 @@ fn want_bubble(
         _ => (None, false),
     };
     let icon_center = if curious {
-        glyph_center + Vec3::new(-0.08, 0.0, 0.0)
+        glyph_center + Vec3::new(-0.12, 0.0, 0.0)
     } else {
         glyph_center
     };
@@ -1960,7 +2022,7 @@ fn want_bubble(
     if curious {
         pixel_pattern(
             shape,
-            glyph_center + Vec3::new(0.17, 0.0, 0.0),
+            glyph_center + Vec3::new(0.25, 0.0, 0.0),
             &["xx ", "  x", " x ", "   ", " x "],
             pixel * 0.85,
             |byte| (byte == b'x').then_some([70, 96, 120]),
@@ -1984,7 +2046,30 @@ fn sync_effects(
         .as_ref()
         .map(|timing| timing.cpu_span("sync_effects"));
     let mut shape = EffectShape::default();
-    if let Some(want) = frame.plan.creature.want {
+    let time_s = frame
+        .plan
+        .elapsed_ms
+        .saturating_add(frame.plan.simulation_remainder_ms) as f32
+        / 1000.0;
+    if let Some(target) = frame.plan.creature.intent_target {
+        intent_ring(
+            &mut shape,
+            world_position(target),
+            time_s,
+            frame.plan.reduced_motion,
+        );
+    }
+    if let Some(refused) = frame.plan.creature.refusing {
+        refusal_bubble(&mut shape, motion.position(&frame.plan), refused, time_s);
+    } else if frame.plan.creature.playing && !frame.plan.reduced_flashes {
+        play_sparkles(&mut shape, motion.position(&frame.plan), time_s);
+    }
+    if let Some(want) = frame
+        .plan
+        .creature
+        .want
+        .filter(|_| frame.plan.creature.refusing.is_none())
+    {
         let time = frame
             .plan
             .elapsed_ms
@@ -2218,10 +2303,55 @@ fn sync_effects(
                     |byte| (byte == b'y').then_some([255, 214, 92]),
                 );
             }
+            PresentationCueKind::OpenWaterDrift if effect.target == UiTarget::OpenWater => {
+                // A big glossy bubble, wobbling where Mop is headed.
+                let wobble = if frame.plan.reduced_motion {
+                    0.0
+                } else {
+                    (elapsed * 3.0).sin() * 0.04
+                };
+                let center = position + Vec3::new(wobble, 0.0, 0.5);
+                for index in 0..14 {
+                    let angle = index as f32 * std::f32::consts::TAU / 14.0;
+                    shape.cuboid(
+                        center + Vec3::new(angle.cos() * 0.17, angle.sin() * 0.17, 0.0),
+                        Vec3::splat(0.04),
+                        [190, 228, 232],
+                    );
+                }
+                shape.cuboid(
+                    center + Vec3::new(-0.06, 0.07, 0.02),
+                    Vec3::splat(0.045),
+                    [246, 252, 252],
+                );
+            }
             PresentationCueKind::Sleep
             | PresentationCueKind::CaveShelter
             | PresentationCueKind::OpenWaterDrift
             | PresentationCueKind::Comfort => {}
+            PresentationCueKind::Notice | PresentationCueKind::PositiveNotice => {
+                // A plain "!" above the head: it noticed something.
+                let pop = if frame.plan.reduced_motion {
+                    1.0
+                } else {
+                    (elapsed * 8.0).min(1.0)
+                };
+                pixel_pattern(
+                    &mut shape,
+                    position + Vec3::new(0.45, 0.95 + travel.min(0.3) * 0.2, 0.6),
+                    &["x", "x", "x", " ", "x"],
+                    0.055 * pop,
+                    |byte| {
+                        (byte == b'x').then_some(
+                            if effect.cue == PresentationCueKind::PositiveNotice {
+                                [255, 222, 120]
+                            } else {
+                                [236, 236, 214]
+                            },
+                        )
+                    },
+                );
+            }
             _ => {
                 for index in 0..3 {
                     let angle = (index as f32 - 1.0) * 0.6;
