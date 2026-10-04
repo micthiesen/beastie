@@ -1,6 +1,6 @@
 # State
 
-Last updated: **2026-10-02**.
+Last updated: **2026-10-04**.
 
 ## Now
 
@@ -29,14 +29,17 @@ Last updated: **2026-10-02**.
 
 ## Next
 
-Measure the renderer on Windows, Linux and an available lower-end GPU. Use the capture-free
-world/UI/churn/sustained scenarios and gold-reference motion suite. Record actual viewport/backend,
-selected map density, frame tails, memory and available energy accounting. Cross-device evidence
-is needed before choosing further adapter-specific policies. Reproduction commands and raw
-performance evidence are in [the evidence guide](performance/20260909-energy/README.md).
+Make Beastie fun to play. The owner's playtest found Mop unresponsive and late, its intent
+unreadable, chat generic, teaching impossible to discover, some actions needing two clicks, and the
+opening without a hook. Verified causes include pointer motion cancelling accepted play/comfort, a
+1 Hz simulation with multi-second action preambles, time-gated learning that ignores what the player
+says, and menu-gated verbs. The normative contract is [the fun rework](fun-rework.md); it
+authorizes core rewrites and supersedes conflicting rules in earlier feel contracts.
 
 ## Candidates Not Chosen
 
+- **Cross-device renderer measurement:** deferred behind the fun rework. Reproduction commands
+  and raw evidence remain in [the evidence guide](performance/20260909-energy/README.md).
 - **Spatial lighting reuse:** workgroup sharing, coarse producer/resolve passes and multiple pixels
   per invocation regressed against paired controls.
 - **Single-map soft shadows:** faster than its control but visibly weakened contact and broad shadows.
