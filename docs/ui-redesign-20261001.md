@@ -1,5 +1,10 @@
 # Beastie UI and feel redesign
 
+> Superseded in part on 2026-10-04 by [the fun rework](fun-rework.md): speech is a compact bubble
+> at the creature's head (no continuation pages, no Laugh/Disapprove/Comfort reaction controls),
+> care verbs are single clicks, food drops in front of the creature, and world targets stay live
+> under shallow menus.
+
 ## Authorized outcome
 
 The player spends time with one particular voxel creature in a beautiful, legible aquarium.

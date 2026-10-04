@@ -2304,30 +2304,61 @@ fn sync_effects(
                 );
             }
             PresentationCueKind::OpenWaterDrift if effect.target == UiTarget::OpenWater => {
-                // A big glossy bubble, wobbling where Mop is headed.
+                // A big glossy bubble wobbling where Mop is headed, shedding little bubbles.
                 let wobble = if frame.plan.reduced_motion {
                     0.0
                 } else {
                     (elapsed * 3.0).sin() * 0.04
                 };
                 let center = position + Vec3::new(wobble, 0.0, 0.5);
-                for index in 0..14 {
-                    let angle = index as f32 * std::f32::consts::TAU / 14.0;
+                let rim = [178, 222, 230];
+                for index in 0..20 {
+                    let angle = index as f32 * std::f32::consts::TAU / 20.0;
                     shape.cuboid(
-                        center + Vec3::new(angle.cos() * 0.17, angle.sin() * 0.17, 0.0),
-                        Vec3::splat(0.04),
-                        [190, 228, 232],
+                        center + Vec3::new(angle.cos() * 0.26, angle.sin() * 0.26, 0.0),
+                        Vec3::splat(0.05),
+                        rim,
                     );
                 }
-                shape.cuboid(
-                    center + Vec3::new(-0.06, 0.07, 0.02),
-                    Vec3::splat(0.045),
-                    [246, 252, 252],
-                );
+                for (dx, dy, size) in [(-0.09, 0.1, 0.06), (-0.04, 0.15, 0.04), (0.1, -0.08, 0.03)]
+                {
+                    shape.cuboid(
+                        center + Vec3::new(dx, dy, 0.03),
+                        Vec3::splat(size),
+                        [248, 254, 254],
+                    );
+                }
+                if !frame.plan.reduced_motion {
+                    for index in 0..3 {
+                        let phase = (elapsed * 0.7 + index as f32 / 3.0).fract();
+                        shape.cuboid(
+                            center + Vec3::new((index as f32 - 1.0) * 0.12, 0.3 + phase * 0.6, 0.0),
+                            Vec3::splat(0.03 * (1.0 - phase) + 0.015),
+                            rim,
+                        );
+                    }
+                }
+            }
+            PresentationCueKind::OpenWaterDrift => {
+                // The snap: the bubble bursts into droplets at the mouth.
+                let burst = if frame.plan.reduced_motion {
+                    0.5
+                } else {
+                    (elapsed * 1.2).min(1.0)
+                };
+                let mouth = position + Vec3::new(0.0, 0.25, 0.7);
+                for index in 0..10 {
+                    let angle = index as f32 * std::f32::consts::TAU / 10.0;
+                    let radius = 0.18 + burst * 0.45;
+                    shape.cuboid(
+                        mouth + Vec3::new(angle.cos() * radius, angle.sin() * radius, 0.0),
+                        Vec3::splat((0.05 * (1.1 - burst)).max(0.018)),
+                        [200, 232, 236],
+                    );
+                }
             }
             PresentationCueKind::Sleep
             | PresentationCueKind::CaveShelter
-            | PresentationCueKind::OpenWaterDrift
             | PresentationCueKind::Comfort => {}
             PresentationCueKind::Notice | PresentationCueKind::PositiveNotice => {
                 // A plain "!" above the head: it noticed something.

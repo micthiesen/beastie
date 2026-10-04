@@ -1,7 +1,10 @@
 # Fun rework
 
-Status: proposed on 2026-10-04. This is the normative contract for the next major pass. It
-supersedes lower-level rules in earlier feel contracts where they conflict (listed below).
+Status: implemented on 2026-10-04; the implementation record at the end describes the final
+design where it differs from the proposal. It supersedes lower-level rules in earlier feel
+contracts where they conflict, notably "do not shorten valid travel" in
+[creature presence and care](creature-presence-and-care.md) and the reaction chips and paged
+captions of [the UI redesign](ui-redesign-20261001.md).
 
 ## Why this pass exists
 
@@ -119,8 +122,8 @@ These hold for the whole pass. Rules from earlier feel contracts that conflict a
   asked for, and how it talks.
 - **Learning is legible.** Hearing an unknown word in a clear context makes Mop visibly curious
   (head tilt, an attempted echo like "baw?"). Learning a word is a celebrated moment with a distinct
-  animation and sound. Mop's known words are visible somewhere diegetic and lightweight (a small
-  shell of collected words, a page Mop keeps), never a stat bar or percentage.
+  animation and sound. Mop's known words are visible somewhere diegetic and lightweight (the
+  *Inspect* card lists them), never a stat bar or percentage.
 - **Being heard is never scarce; speaking is.** Mop always reacts nonverbally when addressed
   (unless asleep, and even then it can stir). Verbal replies stay short and occasional. Replace the
   silent 30 s talk cooldown with visible attention or fatigue behavior.
@@ -310,7 +313,27 @@ Living notes. Decisions here supersede the proposal text above where they differ
   meeting: Mop waits at the cave mouth and comes to the glass after 2.5 s or the first input.
 - State-driven coaching hints guide the first lessons and vanish once done.
 
-### Open work
+### Readability and robustness (done)
 
-- Native feel capture with live pointer input, blind readability check, and the ten-minute fun
-  scorecard runs.
+- The thing Mop is heading for carries a pulsing dotted ring (toys, food, plant, cave, the sand
+  it forages, the bubble it chases). Thought bubbles are larger. Refusals show the refused toy or
+  food crossed out for 2.5 s; play shows rising sparkles; "noticed" is a "!".
+- Eyebrows were inverted (curious read as angry); fixed so curious lifts and resentful frowns.
+- The first meeting starts when the player clicks *Meet Mop*; Mop lingers at the glass.
+- Spoken requests interrupt Mop's activity exactly like clicks. The session undoes any command
+  that would leave an invalid state, so a bug costs one input rather than the game. A randomized
+  test drives 48 creatures (half with vocabulary) through taps, play, food, talk, arrivals and
+  relationship moments, validating every tick.
+- Player-pointed objects outweigh Mop's own private play as teaching context; mutual exclusivity
+  lets praise words emerge once objects have names. Its own name is learned when said.
+- Spontaneous naming fades with each repetition; a reply never takes keyboard focus; talking is
+  never blocked by a pending reply; the local model is loaded at startup.
+- A player's offer of a wedged toy waits up to 2 s while the toy is nudged free.
+- One dialogue path: every request is learned-word speech (legacy intent-free prompts, lanes and
+  fallback pools removed).
+
+### Evidence
+
+Recorded in [the fun feel review](feel-review-fun-20261004.md): latency budgets, four blind
+readability rounds, the speech hillclimb, synchronized feel capture, and scored ten-minute
+playthroughs with live OS input on both the composer voice and the real local model.

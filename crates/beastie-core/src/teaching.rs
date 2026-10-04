@@ -122,6 +122,11 @@ pub(crate) fn mark_attention_from_events(state: &mut WorldState, events: &[GameE
                 response: RequestResponse::Comply,
                 ..
             } => mark(Meaning::Praise, 1, FOCUS_SHORT_MS),
+            GameEvent::Understood {
+                meaning: meaning @ (Meaning::Toy(_) | Meaning::Food(_)),
+                response: RequestResponse::Refuse,
+                ..
+            } => refusal = Some((*meaning, now + REFUSAL_SHOWN_MS)),
             _ => {}
         }
     }

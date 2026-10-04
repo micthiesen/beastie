@@ -25,6 +25,8 @@ interaction pass across the existing experience. It does not introduce another g
   authoritative target independently to make a screenshot more attractive.
 - Care remains immediate in receipt and creature-paced in outcome. Do not shorten valid travel
   merely to make every command resolve quickly, or turn acknowledgement into promised compliance.
+  *Superseded 2026-10-04 by [the fun rework](fun-rework.md): payoffs are now fast (about 1.5 s
+  nearby, 3 s across the tank); agency shows in how Mop responds, not in delay.*
 - Voice and text use the same creature semantics. Both remain optional, and text remains complete.
 - No hidden microphone activation, automatic consent, cloud service or background listening.
 - Preserve qualitative development, sparse callbacks, absence recovery and identity across brains.
