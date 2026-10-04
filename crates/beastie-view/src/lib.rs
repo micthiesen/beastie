@@ -1573,6 +1573,11 @@ fn intent_target(state: &WorldState) -> Option<NormalizedPosition> {
 /// What the creature is visibly saying no to: a refused toy offer or food it pushed away.
 fn refusal_subject(state: &WorldState) -> Option<beastie_core::Meaning> {
     let creature = &state.creature;
+    if let Some((meaning, until_ms)) = creature.refusing
+        && state.elapsed_ms < until_ms
+    {
+        return Some(meaning);
+    }
     if let Some(interaction) = creature.interaction_state.toy_interaction.as_ref()
         && interaction.outcome == beastie_core::ToyInteractionOutcome::Rejected
     {
@@ -2575,6 +2580,23 @@ fn add_toy_context(
     }
 }
 
+/// The words the player has taught, newest last: a record of shared history, not a meter.
+fn learned_words_line(state: &WorldState) -> String {
+    let words = state.creature.lexicon.learned_words();
+    if words.is_empty() {
+        return format!("{} doesn't know any words yet.", state.creature.name);
+    }
+    let shown = words
+        .iter()
+        .rev()
+        .take(12)
+        .rev()
+        .map(|(word, _)| word.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("Words: {shown}")
+}
+
 fn add_inspection(
     state: &WorldState,
     view: &ViewState,
@@ -2588,13 +2610,13 @@ fn add_inspection(
         UiTarget::Creature => (
             summary.name.clone(),
             format!(
-                "{} · {}\nDay {} together{}",
+                "{} · {}\n{}{}",
                 summary.mood_label,
                 summary.behavior,
-                state.active_day(),
+                learned_words_line(state),
                 summary
                     .discovered_fact
-                    .map_or(String::new(), |fact| format!("\n{} {fact}.", summary.name))
+                    .map_or(String::new(), |fact| format!("\n{} {fact}.", summary.name)),
             ),
         ),
         UiTarget::Toy(toy) => {

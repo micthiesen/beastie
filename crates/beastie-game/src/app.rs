@@ -949,7 +949,8 @@ impl Game {
                         show_dialogue_caption(
                             &mut self.view,
                             owner,
-                            "too many thought.",
+                            // The voice is unavailable, not the creature: a plain sound.
+                            "mrp?",
                             self.session.world().elapsed_ms,
                             self.settings.subtitles,
                             text_speed,

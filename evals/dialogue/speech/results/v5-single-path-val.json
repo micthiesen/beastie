@@ -1,0 +1,204 @@
+{
+ "summary": {
+  "label": "v5-single-path",
+  "split": "val",
+  "backend": "llama-server",
+  "cases": 15,
+  "good": 15,
+  "valid": 15,
+  "uses_word": 15,
+  "distinct_model_lines": 15,
+  "copies_composer": 5
+ },
+ "cases": [
+  {
+   "id": "new_word_some",
+   "say": "ball!",
+   "composed": "ball! ball!",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": false,
+   "raw": [
+    "ball!"
+   ]
+  },
+  {
+   "id": "new_word_coined",
+   "say": "zorp!",
+   "composed": "zorp! eep!",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": false,
+   "raw": [
+    "zorp!"
+   ]
+  },
+  {
+   "id": "new_word_name",
+   "say": "mop!",
+   "composed": "mop? yes! mop!",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": false,
+   "raw": [
+    "mop!"
+   ]
+  },
+  {
+   "id": "echo_sock",
+   "say": "so?",
+   "composed": "so?",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": true,
+   "raw": []
+  },
+  {
+   "id": "echo_zorp",
+   "say": "zow?",
+   "composed": "zow?",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": true,
+   "raw": []
+  },
+  {
+   "id": "echo_mushroom_later",
+   "say": "mu?",
+   "composed": "mu?",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": true,
+   "raw": []
+  },
+  {
+   "id": "answer_comply_few",
+   "say": "yes! ball!",
+   "composed": "yes! ball!",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": true,
+   "raw": [
+    "yes! ball!"
+   ]
+  },
+  {
+   "id": "answer_sulk_few",
+   "say": "mrp...",
+   "composed": "prr...",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": false,
+   "raw": [
+    "mrp..."
+   ]
+  },
+  {
+   "id": "answer_refuse_many",
+   "say": "no ball.",
+   "composed": "no ball. no!",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": false,
+   "raw": [
+    "no ball."
+   ]
+  },
+  {
+   "id": "answer_sulk_many",
+   "say": "nnn...",
+   "composed": "zz...",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": false,
+   "raw": [
+    "nnn..."
+   ]
+  },
+  {
+   "id": "answer_look_many",
+   "say": "ball?",
+   "composed": "ball?",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": true,
+   "raw": [
+    "ball?"
+   ]
+  },
+  {
+   "id": "want_few_berry",
+   "say": "berry mop",
+   "composed": "mop want berry.",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": false,
+   "raw": [
+    "berry mop"
+   ]
+  },
+  {
+   "id": "want_none_eat",
+   "say": "mrp!",
+   "composed": "bweep? bweep!",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": false,
+   "raw": [
+    "mrp!"
+   ]
+  },
+  {
+   "id": "remark_coined",
+   "say": "zorp.",
+   "composed": "zorp. mm.",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": false,
+   "raw": [
+    "zorp."
+   ]
+  },
+  {
+   "id": "babble_none",
+   "say": "eee",
+   "composed": "zz mrp.",
+   "valid": true,
+   "uses_word": true,
+   "refusal_marked": true,
+   "good": true,
+   "copies_composer": false,
+   "raw": [
+    "eee"
+   ]
+  }
+ ]
+}

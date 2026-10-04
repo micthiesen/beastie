@@ -73,14 +73,5 @@ while True:
         if args.fake_mode == "oversized":
             connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 4096\r\nConnection: close\r\n\r\n")
             continue
-        if args.fake_mode == "malformed":
-            content = "not a dialogue reply"
-        else:
-            content = json.dumps({
-                "protocol_version": 1,
-                "request_id": 41,
-                "say": "berry remains bad.",
-                "gesture": "look_player",
-                "recalled_memory": 41,
-            })
+        content = "not a creature line" if args.fake_mode == "malformed" else "want berry! berry!"
         reply(connection, 200, json.dumps({"choices": [{"message": {"content": content}}]}).encode("utf-8"))

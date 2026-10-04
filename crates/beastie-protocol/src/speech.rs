@@ -43,6 +43,15 @@ pub enum SpeechIntent {
     Babble,
 }
 
+impl DialogueRequest {
+    /// Why the creature speaks now. Requests without an intent, from older fixtures and saves,
+    /// babble.
+    #[must_use]
+    pub fn intent(&self) -> &SpeechIntent {
+        self.speech_intent.as_ref().unwrap_or(&SpeechIntent::Babble)
+    }
+}
+
 /// Most words the creature may say in one line, by vocabulary size.
 #[must_use]
 pub fn line_word_limit(vocabulary: usize) -> usize {
@@ -110,8 +119,8 @@ pub fn compose_line(request: &DialogueRequest) -> String {
     let words = &request.vocabulary;
     let stage = words.len();
     let me = word_for(words, Meaning::Creature);
-    let line = match request.speech_intent.as_ref() {
-        Some(SpeechIntent::NewWord { word, .. }) => match (stage, variant(request, 1, 3)) {
+    let line = match request.intent() {
+        SpeechIntent::NewWord { word, .. } => match (stage, variant(request, 1, 3)) {
             (0..=2, 0) => format!("{word}!"),
             (0..=2, 1) => format!("{word}? {word}!"),
             (0..=2, _) => format!("{word}! {}!", sound(request, 2)),
@@ -122,11 +131,11 @@ pub fn compose_line(request: &DialogueRequest) -> String {
             },
             _ => format!("{word}? yes! {word}!"),
         },
-        Some(SpeechIntent::Echo { attempt }) => attempt.clone(),
-        Some(SpeechIntent::Answer { word, response, .. }) => {
+        SpeechIntent::Echo { attempt } => attempt.clone(),
+        SpeechIntent::Answer { word, response, .. } => {
             answer_line(request, word, *response, stage, me)
         }
-        Some(SpeechIntent::Want { meaning }) => match word_for(words, *meaning) {
+        SpeechIntent::Want { meaning } => match word_for(words, *meaning) {
             Some(word) if stage >= 3 => match (me, variant(request, 3, 2)) {
                 (Some(me), 0) => format!("{me} want {word}."),
                 _ => format!("want {word}! {word}?"),
@@ -134,7 +143,7 @@ pub fn compose_line(request: &DialogueRequest) -> String {
             Some(word) => format!("{word}? {word}!"),
             None => format!("{}? {}!", sound(request, 4), sound(request, 5)),
         },
-        Some(SpeechIntent::Remark { meaning }) => match word_for(words, *meaning) {
+        SpeechIntent::Remark { meaning } => match word_for(words, *meaning) {
             Some(word) => {
                 let me = me.unwrap_or("me");
                 match (stage >= 3, variant(request, 17, 6)) {
@@ -148,7 +157,7 @@ pub fn compose_line(request: &DialogueRequest) -> String {
             }
             None => format!("{}?", sound(request, 19)),
         },
-        Some(SpeechIntent::Babble) | None => match variant(request, 6, 3) {
+        SpeechIntent::Babble => match variant(request, 6, 3) {
             0 => format!("{}?", sound(request, 7)),
             1 => format!("{} {}.", sound(request, 8), sound(request, 9)),
             _ => format!("{}! {}?", sound(request, 10), sound(request, 11)),
@@ -237,8 +246,8 @@ pub fn uses_only_known_words(request: &DialogueRequest, say: &str) -> bool {
                 || (stage >= 3 && GLUE_WORDS.contains(&word.as_str()))
                 || (stage >= 8 && PHRASE_GLUE_WORDS.contains(&word.as_str()))
                 || matches!(
-                    request.speech_intent.as_ref(),
-                    Some(SpeechIntent::Echo { attempt }) if attempt.trim_end_matches('?') == word
+                    request.intent(),
+                    SpeechIntent::Echo { attempt } if attempt.trim_end_matches('?') == word
                 )
         })
 }

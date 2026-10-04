@@ -8,9 +8,13 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
 use beastie_ai_worker::{DialogueBackend, LlamaCppBackend, LlamaCppConfig, process_line};
-use beastie_protocol::{DialogueRequest, validate_reply};
+use beastie_protocol::{DialogueFallbackReason, DialogueRequest, compose_line, validate_reply};
 
-const BERRY_MEMORY: &str = include_str!("../../../fixtures/dialogue/berry-memory.json");
+const SPEECH_REQUEST: &str = include_str!("../../../fixtures/dialogue/speech-request.json");
+
+fn request() -> DialogueRequest {
+    serde_json::from_str(SPEECH_REQUEST).expect("request should parse")
+}
 
 fn fixture_program() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-llama.sh")
@@ -49,19 +53,18 @@ fn backend(mode: &str, extra: Vec<OsString>) -> LlamaCppBackend {
 
 #[test]
 fn fake_executable_reply_passes_strict_protocol_validation() {
-    let request: DialogueRequest =
-        serde_json::from_str(BERRY_MEMORY).expect("request should parse");
+    let request = request();
     let reply = backend("valid", Vec::new())
         .generate(&request)
         .expect("fake generation should pass");
+    assert_eq!(reply.say, "want berry! berry!");
     assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
 }
 
 #[test]
-fn malformed_first_output_is_retried_once() {
+fn rejected_first_line_is_retried_once() {
     let state = temporary_path("retry");
-    let request: DialogueRequest =
-        serde_json::from_str(BERRY_MEMORY).expect("request should parse");
+    let request = request();
     let reply = backend(
         "retry",
         vec![
@@ -76,29 +79,29 @@ fn malformed_first_output_is_retried_once() {
 }
 
 #[test]
-fn timeout_and_oversized_output_use_authored_fallback() {
+fn timeout_and_oversized_output_report_failure_with_the_composed_line() {
     for mode in ["timeout", "oversized"] {
-        let reply = process_line(BERRY_MEMORY, &mut backend(mode, Vec::new()));
-        assert_eq!(reply.say, "berry remains bad.");
+        let reply = process_line(SPEECH_REQUEST, &mut backend(mode, Vec::new()));
+        assert_eq!(reply.say, compose_line(&request()));
         assert_eq!(reply.request_id, 41);
-        assert_eq!(reply.recalled_memory.map(|id| id.0), Some(41));
+        assert_eq!(
+            reply.worker_fallback,
+            Some(DialogueFallbackReason::GenerationFailed)
+        );
     }
 }
 
 #[test]
-fn prohibited_echo_falls_back_but_ordinary_profanity_passes() {
-    let echo = process_line(BERRY_MEMORY, &mut backend("echo", Vec::new()));
-    assert_eq!(echo.say, "berry remains bad.");
-
-    let profanity = process_line(BERRY_MEMORY, &mut backend("profanity", Vec::new()));
-    assert_eq!(profanity.say, "Damn berry.");
+fn unlearned_words_quietly_use_the_composed_line() {
+    let reply = process_line(SPEECH_REQUEST, &mut backend("unknown", Vec::new()));
+    assert_eq!(reply.say, compose_line(&request()));
+    assert_eq!(reply.worker_fallback, None);
 }
 
 #[test]
 fn cpu_only_flags_reach_the_replaceable_process() {
     let record = temporary_path("args");
-    let request: DialogueRequest =
-        serde_json::from_str(BERRY_MEMORY).expect("request should parse");
+    let request = request();
     backend(
         "valid",
         vec![
@@ -147,13 +150,13 @@ fn environment_selects_llama_backend_without_changing_jsonl_transport() {
         .stdin
         .take()
         .expect("stdin should be piped")
-        .write_all(BERRY_MEMORY.as_bytes())
+        .write_all(SPEECH_REQUEST.as_bytes())
         .expect("request should be written");
     let output = child.wait_with_output().expect("worker should finish");
     assert!(output.status.success());
     let reply: beastie_protocol::DialogueReply =
         serde_json::from_slice(&output.stdout).expect("worker should emit one JSONL reply");
-    assert_eq!(reply.say, "berry remains bad.");
+    assert_eq!(reply.say, "want berry! berry!");
     let arguments = fs::read_to_string(&record).expect("arguments should be recorded");
     let arguments = arguments.lines().collect::<Vec<_>>();
     assert!(arguments.windows(2).any(|pair| pair == ["--threads", "4"]));

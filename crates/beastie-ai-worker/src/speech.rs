@@ -1,9 +1,9 @@
 //! Learned-word speech for small local models.
 //!
-//! A tiny model is good at varying a short line and bad at copying JSON scaffolds, so for a
-//! request with a speech intent the model writes only the spoken line. The worker builds the
-//! reply itself and holds the line to the creature's vocabulary; anything else falls back to the
-//! deterministic composer.
+//! A tiny model is good at varying a short line and bad at copying JSON scaffolds, so the model
+//! writes only the spoken line for the request's speech intent. The worker builds the reply itself
+//! and holds the line to the creature's vocabulary; anything else falls back to the deterministic
+//! composer.
 
 use beastie_protocol::{
     DialogueReply, DialogueRequest, Gesture, Meaning, PROTOCOL_VERSION, RequestResponse,
@@ -18,10 +18,10 @@ pub(crate) const SPEECH_MAX_TOKENS: u32 = 16;
 /// Samples drawn before falling back to the composer.
 pub(crate) const SPEECH_ATTEMPTS: u64 = 3;
 
-/// The prompt for one spoken line, or `None` when the request has no speech intent.
+/// The prompt for one spoken line.
 #[must_use]
-pub(crate) fn speech_prompt(request: &DialogueRequest) -> Option<String> {
-    let intent = request.speech_intent.as_ref()?;
+pub(crate) fn speech_prompt(request: &DialogueRequest) -> String {
+    let intent = request.intent();
     let name = &request.creature_name;
     // Words only: glosses in the list invite the model to speak English it was never taught.
     let mut known = request
@@ -47,7 +47,7 @@ pub(crate) fn speech_prompt(request: &DialogueRequest) -> Option<String> {
         .map(|word| format!(" Your line must include the word \"{word}\"."))
         .unwrap_or_default();
     let example = compose_line(request);
-    Some(format!(
+    format!(
         "You are {name}, a tiny creature in an aquarium. A human friend is teaching you words, and you \
 know very few.\n\
 Words you know: {known}.{glue_line}\n\
@@ -61,7 +61,7 @@ For example, {name} might say: {example}\n\
         known = known.join(", "),
         mood = request.mood.to_lowercase(),
         max = request.constraints.max_words,
-    ))
+    )
 }
 
 fn situation(request: &DialogueRequest, intent: &SpeechIntent) -> String {
@@ -165,22 +165,19 @@ pub(crate) fn parse_speech_line(
     let said_no = line
         .split(|c: char| !c.is_alphabetic())
         .any(|word| word == "no" || (word.starts_with("nn") && word.chars().all(|c| c == 'n')));
-    match request.speech_intent.as_ref() {
-        Some(SpeechIntent::Answer {
+    match request.intent() {
+        SpeechIntent::Answer {
             response: RequestResponse::Comply | RequestResponse::Delight,
             ..
-        }) if said_no => return Err(BackendError::InvalidReply),
-        Some(SpeechIntent::Answer {
+        } if said_no => return Err(BackendError::InvalidReply),
+        SpeechIntent::Answer {
             response: RequestResponse::Refuse,
             ..
-        }) if !said_no => return Err(BackendError::InvalidReply),
+        } if !said_no => return Err(BackendError::InvalidReply),
         _ => {}
     }
     // A line about something the creature has a word for must actually use that word.
-    if let Some(target) = request
-        .speech_intent
-        .as_ref()
-        .and_then(|intent| target_word(request, intent))
+    if let Some(target) = target_word(request, request.intent())
         && !line
             .split(|c: char| !(c.is_alphabetic() || c == '\''))
             .any(|word| word == target)
@@ -258,8 +255,20 @@ mod tests {
 
     #[test]
     fn the_prompt_lists_bare_words_without_english_glosses() {
-        let prompt = speech_prompt(&request(SpeechIntent::Babble)).expect("speech prompt");
+        let prompt = speech_prompt(&request(SpeechIntent::Babble));
         assert!(prompt.contains("Words you know: ball."));
         assert!(!prompt.contains("the ball"));
+    }
+
+    #[test]
+    fn intent_free_requests_are_prompted_and_parsed_as_babble() {
+        let mut legacy = request(SpeechIntent::Babble);
+        legacy.speech_intent = None;
+        assert_eq!(
+            speech_prompt(&legacy),
+            speech_prompt(&request(SpeechIntent::Babble))
+        );
+        assert!(parse_speech_line(&legacy, "mrp? ball!").is_ok());
+        assert!(parse_speech_line(&legacy, "hello friend").is_err());
     }
 }

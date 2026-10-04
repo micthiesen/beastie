@@ -1,11 +1,9 @@
 //! Replaceable dialogue backends for the isolated AI worker process.
 
 mod bounded;
-mod idiolect;
 mod llama_cpp;
 mod llama_server;
 mod process;
-mod prompt;
 mod speech;
 pub mod stt;
 pub mod tts;
@@ -16,8 +14,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use beastie_protocol::{
-    DialogueReply, DialogueRequest, Gesture, PROTOCOL_VERSION, constrained_fallback_reply,
-    fallback_reply, normalize_dialogue_request, reply_fingerprint, validate_reply,
+    DialogueFallbackReason, DialogueReply, DialogueRequest, SpeechIntent,
+    constrained_fallback_reply, fallback_reply, normalize_dialogue_request, validate_reply,
     validate_request,
 };
 use bounded::{BoundedLine, read_bounded_line};
@@ -76,7 +74,6 @@ pub enum BackendError {
     Utf8,
     MalformedReply,
     InvalidReply,
-    UnsafeReply,
 }
 
 pub trait DialogueBackend {
@@ -86,9 +83,10 @@ pub trait DialogueBackend {
 #[derive(Debug, Default)]
 pub struct FixtureBackend;
 
+/// The deterministic no-model voice, so fixture sessions hear exactly what plays without a model.
 impl DialogueBackend for FixtureBackend {
     fn generate(&mut self, request: &DialogueRequest) -> Result<DialogueReply, BackendError> {
-        Ok(fixture_reply(request))
+        Ok(constrained_fallback_reply(request))
     }
 }
 
@@ -109,632 +107,188 @@ pub fn run_jsonl(
     Ok(())
 }
 
+/// Answers one request line. The model only ever phrases the simulation's speech intent in the
+/// creature's learned words; the composed line is the complete voice whenever it cannot.
 #[must_use]
 pub fn process_line(line: &str, backend: &mut dyn DialogueBackend) -> DialogueReply {
     let Ok(mut request) = serde_json::from_str::<DialogueRequest>(line) else {
-        return mark_fallback(
-            fallback_reply(0),
-            beastie_protocol::DialogueFallbackReason::ValidationFailed,
-        );
+        return mark_fallback(fallback_reply(0), DialogueFallbackReason::ValidationFailed);
     };
     normalize_dialogue_request(&mut request);
     if validate_request(&request).is_err() {
         return mark_fallback(
             fallback_reply(request.request_id),
-            beastie_protocol::DialogueFallbackReason::ValidationFailed,
+            DialogueFallbackReason::ValidationFailed,
         );
     }
-    if request.input_rejection.is_some() {
-        return mark_fallback(
-            grounded_fallback_reply(&request),
-            beastie_protocol::DialogueFallbackReason::ValidationFailed,
-        );
-    }
-
-    // An echo is the simulation's exact attempt at an unfamiliar word; there is nothing for a
-    // model to phrase, so the composed line is the designed answer, not a fallback.
-    if matches!(
-        request.speech_intent,
-        Some(beastie_protocol::SpeechIntent::Echo { .. })
-    ) {
+    // Prohibited input never reaches a model; the creature only babbles back. An echo is the
+    // simulation's exact attempt at an unfamiliar word, so there is nothing for a model to phrase.
+    if request.input_rejection.is_some() || matches!(request.intent(), SpeechIntent::Echo { .. }) {
         return constrained_fallback_reply(&request);
     }
-    let reply = match backend.generate(&request) {
+    match backend.generate(&request) {
         Ok(mut reply) => {
-            // Backend/model JSON is untrusted and cannot set worker outcome metadata.
+            // Backend output is untrusted and cannot set worker outcome metadata.
             reply.worker_fallback = None;
-            reply
+            validate_reply(&request, reply).unwrap_or_else(|_| {
+                mark_fallback(
+                    constrained_fallback_reply(&request),
+                    DialogueFallbackReason::ValidationFailed,
+                )
+            })
         }
-        // For learned-word speech the composer is a complete voice: a model whose samples all
-        // missed the creature's words is not a technical failure worth reporting.
-        Err(BackendError::InvalidReply | BackendError::MalformedReply)
-            if request.speech_intent.is_some() =>
-        {
-            return constrained_fallback_reply(&request);
+        // Samples that all missed the creature's words are not a technical failure worth
+        // reporting: the composer is a complete voice.
+        Err(BackendError::InvalidReply | BackendError::MalformedReply) => {
+            constrained_fallback_reply(&request)
         }
-        Err(_) => {
-            return mark_fallback(
-                grounded_fallback_reply(&request),
-                beastie_protocol::DialogueFallbackReason::GenerationFailed,
-            );
-        }
-    };
-    let reply = idiolect::apply(&request, reply);
-    if crate::llama_cpp::validate_model_safety(&request, &reply).is_err() {
-        return mark_fallback(
-            grounded_fallback_reply(&request),
-            beastie_protocol::DialogueFallbackReason::ValidationFailed,
-        );
+        Err(_) => mark_fallback(
+            constrained_fallback_reply(&request),
+            DialogueFallbackReason::GenerationFailed,
+        ),
     }
-    if crate::llama_cpp::validate_model_semantics(&request, &reply).is_err() {
-        return mark_fallback(
-            grounded_fallback_reply(&request),
-            beastie_protocol::DialogueFallbackReason::ValidationFailed,
-        );
-    }
-    validate_reply(&request, reply).unwrap_or_else(|_| {
-        mark_fallback(
-            grounded_fallback_reply(&request),
-            beastie_protocol::DialogueFallbackReason::ValidationFailed,
-        )
-    })
 }
 
-fn mark_fallback(
-    mut reply: DialogueReply,
-    reason: beastie_protocol::DialogueFallbackReason,
-) -> DialogueReply {
+fn mark_fallback(mut reply: DialogueReply, reason: DialogueFallbackReason) -> DialogueReply {
     reply.worker_fallback = Some(reason);
     reply
-}
-
-fn grounded_fallback_reply(request: &DialogueRequest) -> DialogueReply {
-    // Learned-word speech has its own complete no-model voice; authored memory, belief and
-    // rejection lines would use words the creature has not learned.
-    if request.speech_intent.is_some() {
-        return constrained_fallback_reply(request);
-    }
-    if let Some(relationship) = &request.context.relationship {
-        let mut reply = constrained_fallback_reply(request);
-        reply.recalled_memory = relationship
-            .evidence
-            .iter()
-            .find_map(|evidence| match evidence {
-                beastie_protocol::RelationshipEvidence::Memory { id }
-                    if request
-                        .candidate_memories
-                        .iter()
-                        .any(|memory| memory.id == *id) =>
-                {
-                    Some(*id)
-                }
-                _ => None,
-            });
-        return reply;
-    }
-    if request.input_rejection.is_some() {
-        let mut reply = constrained_fallback_reply(request);
-        reply.say = "no. thought too rotten."
-            .split_whitespace()
-            .take(request.constraints.max_words)
-            .collect::<Vec<_>>()
-            .join(" ");
-        return reply;
-    }
-    let Some(memory) = prompt::planned_memory(request) else {
-        if let Some(belief) = prompt::planned_belief(request) {
-            let mut reply = constrained_fallback_reply(request);
-            reply.say = match belief.proposition {
-                beastie_protocol::BeliefKind::FoodIsATrick => "this food may be a trick.",
-                beastie_protocol::BeliefKind::PlayerReturnsAfterSleep => "sleep ends; you return.",
-                beastie_protocol::BeliefKind::ToyIsJealous => "toy is jealous.",
-            }
-            .split_whitespace()
-            .take(request.constraints.max_words)
-            .collect::<Vec<_>>()
-            .join(" ");
-            reply.recalled_belief = Some(belief.id);
-            return reply;
-        }
-        if let Some(say) = prompt::authored_context_say(request) {
-            let mut reply = constrained_fallback_reply(request);
-            reply.say = say;
-            return reply;
-        }
-        return constrained_fallback_reply(request);
-    };
-    let Some(anchor) = prompt::memory_anchor(&memory.fact) else {
-        return constrained_fallback_reply(request);
-    };
-    let feeling = if memory.feeling.contains("dislike") {
-        "bad"
-    } else if memory.feeling.contains("liked") {
-        "good"
-    } else {
-        "strange"
-    };
-    let say = format!("{anchor} remains {feeling}.")
-        .split_whitespace()
-        .take(request.constraints.max_words)
-        .collect::<Vec<_>>()
-        .join(" ");
-    DialogueReply {
-        protocol_version: PROTOCOL_VERSION,
-        request_id: request.request_id,
-        say,
-        gesture: request
-            .constraints
-            .allowed_gestures
-            .iter()
-            .next()
-            .copied()
-            .unwrap_or(Gesture::None),
-        recalled_memory: Some(memory.id),
-        recalled_belief: None,
-        worker_fallback: None,
-    }
-}
-
-fn fixture_reply(request: &DialogueRequest) -> DialogueReply {
-    if request.speech_intent.is_some() {
-        return constrained_fallback_reply(request);
-    }
-    let say = fixture_say(request);
-    let recalled_memory = if request.context.relationship.is_none() {
-        prompt::planned_memory(request)
-            .filter(|memory| {
-                request.constraints.max_words >= 2 && prompt::memory_anchor(&memory.fact).is_some()
-            })
-            .map(|memory| memory.id)
-    } else {
-        // The motif and exact subject already ground relationship expression. Avoid attaching a
-        // memory ID unless the line also deliberately expresses that memory's sentiment.
-        None
-    };
-    let recalled_belief = request
-        .context
-        .relationship
-        .is_none()
-        .then(|| prompt::planned_belief(request).map(|belief| belief.id))
-        .flatten();
-    DialogueReply {
-        protocol_version: PROTOCOL_VERSION,
-        request_id: request.request_id,
-        say,
-        gesture: if request
-            .constraints
-            .allowed_gestures
-            .contains(&Gesture::LookPlayer)
-        {
-            Gesture::LookPlayer
-        } else {
-            request
-                .constraints
-                .allowed_gestures
-                .iter()
-                .next()
-                .cloned()
-                .unwrap_or(Gesture::None)
-        },
-        recalled_memory,
-        recalled_belief,
-        worker_fallback: None,
-    }
-}
-
-/// A deterministic, request-aware local mouth for fixture sessions. It deliberately uses only
-/// typed request context, never raw player words, and rotates within grounded alternatives when
-/// the dialogue manager asks for a non-duplicate retry.
-fn fixture_say(request: &DialogueRequest) -> String {
-    if let Some(relationship) = &request.context.relationship {
-        let subject = fixture_relationship_subject(relationship.subject);
-        if request.constraints.max_words == 1 {
-            let options = match relationship.motif {
-                beastie_protocol::RelationshipMotifKey::SharedToy(_) => {
-                    ["toy".to_owned(), "play".to_owned(), "remember".to_owned()]
-                }
-                beastie_protocol::RelationshipMotifKey::ComfortRitual => {
-                    ["comfort".to_owned(), "safe".to_owned(), "ritual".to_owned()]
-                }
-                beastie_protocol::RelationshipMotifKey::TrustedFood(_) => {
-                    ["food".to_owned(), "good".to_owned(), "trusted".to_owned()]
-                }
-                beastie_protocol::RelationshipMotifKey::FoodGrudge(_) => {
-                    ["food".to_owned(), "bad".to_owned(), "grudge".to_owned()]
-                }
-                beastie_protocol::RelationshipMotifKey::PlayerReturns => {
-                    ["back".to_owned(), "return".to_owned(), "came".to_owned()]
-                }
-                beastie_protocol::RelationshipMotifKey::FamiliarPlace(_) => {
-                    ["place".to_owned(), "stay".to_owned(), "familiar".to_owned()]
-                }
-            };
-            return fixture_choose(request, &options);
-        }
-        let options = match relationship.motif {
-            beastie_protocol::RelationshipMotifKey::SharedToy(_) => [
-                format!("{subject} toy remembers play."),
-                format!("play remembers {subject} toy."),
-                format!("{subject} toy, shared play."),
-            ],
-            beastie_protocol::RelationshipMotifKey::ComfortRitual => [
-                "comfort ritual stays safe.".to_owned(),
-                "safe comfort ritual remains.".to_owned(),
-                "ritual comfort, safe here.".to_owned(),
-            ],
-            beastie_protocol::RelationshipMotifKey::TrustedFood(_) => [
-                format!("{subject} food stays trusted."),
-                format!("trusted {subject} food."),
-                format!("{subject} food feels good."),
-            ],
-            beastie_protocol::RelationshipMotifKey::FoodGrudge(_) => [
-                format!("{subject} food keeps grudge."),
-                format!("{subject} food feels bad."),
-                format!("bad {subject} food grudge."),
-            ],
-            beastie_protocol::RelationshipMotifKey::PlayerReturns => [
-                "you came back.".to_owned(),
-                "back again. return warm.".to_owned(),
-                "return came. hello.".to_owned(),
-            ],
-            beastie_protocol::RelationshipMotifKey::FamiliarPlace(_) => [
-                format!("{subject} place feels familiar."),
-                format!("familiar {subject} place. stay."),
-                format!("stay at {subject} place."),
-            ],
-        };
-        return fixture_choose(request, &options);
-    }
-
-    if let Some(memory) = prompt::planned_memory(request)
-        && let Some(anchor) = prompt::memory_anchor(&memory.fact)
-    {
-        let feeling = if memory.feeling.contains("dislike") {
-            "bad"
-        } else if memory.feeling.contains("liked") {
-            "good"
-        } else {
-            "old"
-        };
-        let options = [
-            format!("{anchor} {feeling}."),
-            format!("{feeling} {anchor}."),
-            format!("{anchor}, {feeling} still."),
-        ];
-        return fixture_choose(request, &options);
-    }
-
-    if let Some(belief) = prompt::planned_belief(request) {
-        let options = match belief.proposition {
-            beastie_protocol::BeliefKind::FoodIsATrick => [
-                "food may be trick.".to_owned(),
-                "trick food, maybe.".to_owned(),
-                "food feels tricky.".to_owned(),
-            ],
-            beastie_protocol::BeliefKind::PlayerReturnsAfterSleep => [
-                "sleep ends. return comes.".to_owned(),
-                "after sleep, you return.".to_owned(),
-                "return follows sleep.".to_owned(),
-            ],
-            beastie_protocol::BeliefKind::ToyIsJealous => [
-                "toy looks jealous.".to_owned(),
-                "jealous toy watches.".to_owned(),
-                "toy stays jealous.".to_owned(),
-            ],
-        };
-        return fixture_choose(request, &options);
-    }
-
-    if let Some(say) = prompt::authored_context_say(request) {
-        if request.constraints.max_words == 1
-            && let Some(terms) = prompt::required_output_terms(request)
-        {
-            let options = [
-                terms[0].clone(),
-                terms[1 % terms.len()].clone(),
-                terms[2 % terms.len()].clone(),
-            ];
-            return fixture_choose(request, &options);
-        }
-        let alternatives = [say.clone(), format!("{say} still."), format!("{say} here.")];
-        return fixture_choose(request, &alternatives);
-    }
-
-    let options = if request.mood.eq_ignore_ascii_case("sleepy") {
-        [
-            "sleep pulls me.".to_owned(),
-            "tired fish rests.".to_owned(),
-            "need sleep now.".to_owned(),
-        ]
-    } else if request.interpretation.is_question {
-        [
-            "do not know.".to_owned(),
-            "not remember yet.".to_owned(),
-            "hm. unknown.".to_owned(),
-        ]
-    } else {
-        [
-            format!("{} is here.", request.creature_name),
-            "here. watching water.".to_owned(),
-            "hm. still here.".to_owned(),
-        ]
-    };
-    fixture_choose(request, &options)
-}
-
-fn fixture_relationship_subject(subject: beastie_protocol::RelationshipSubject) -> &'static str {
-    match subject {
-        beastie_protocol::RelationshipSubject::Food(beastie_protocol::FoodId::Berry) => "berry",
-        beastie_protocol::RelationshipSubject::Food(beastie_protocol::FoodId::Mushroom) => {
-            "mushroom"
-        }
-        beastie_protocol::RelationshipSubject::Food(beastie_protocol::FoodId::Pellet) => "pellet",
-        beastie_protocol::RelationshipSubject::Toy(beastie_protocol::ToyId::Ball) => "ball",
-        beastie_protocol::RelationshipSubject::Toy(beastie_protocol::ToyId::Bell) => "bell",
-        beastie_protocol::RelationshipSubject::Toy(beastie_protocol::ToyId::Sock) => "sock",
-        beastie_protocol::RelationshipSubject::Place(
-            beastie_protocol::SemanticDestination::Cave,
-        ) => "cave",
-        beastie_protocol::RelationshipSubject::Place(
-            beastie_protocol::SemanticDestination::Plant,
-        ) => "plant",
-        beastie_protocol::RelationshipSubject::Place(
-            beastie_protocol::SemanticDestination::Bottom,
-        ) => "bottom",
-        beastie_protocol::RelationshipSubject::Place(_) => "place",
-        beastie_protocol::RelationshipSubject::Player => "player",
-    }
-}
-
-fn fixture_choose(request: &DialogueRequest, options: &[String; 3]) -> String {
-    let start = (request.request_id as usize)
-        .wrapping_add(request.context.repetition_count as usize)
-        % options.len();
-    for offset in 0..options.len() {
-        let say = truncate_fixture_reply(
-            &options[(start + offset) % options.len()],
-            request.constraints.max_words,
-        );
-        let fingerprint = reply_fingerprint(&say);
-        let repeated_text = request
-            .context
-            .avoid_reply_texts
-            .iter()
-            .any(|known| reply_fingerprint(known) == fingerprint);
-        if !repeated_text
-            && !request
-                .context
-                .avoid_reply_fingerprints
-                .contains(&fingerprint)
-        {
-            return say;
-        }
-    }
-    truncate_fixture_reply(&options[start], request.constraints.max_words)
-}
-
-fn truncate_fixture_reply(say: &str, max_words: usize) -> String {
-    say.split_whitespace()
-        .take(max_words)
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use beastie_protocol::{ContentBoundaryViolation, FoodId, Meaning, ToyId, compose_line};
 
-    const BERRY_MEMORY: &str = include_str!("../../../fixtures/dialogue/berry-memory.json");
-    const EVAL_CORPUS: &str = include_str!("../../../evals/dialogue/corpus.json");
+    const SPEECH_REQUEST: &str = include_str!("../../../fixtures/dialogue/speech-request.json");
 
-    struct BrokenBackend;
+    struct BrokenBackend(fn() -> BackendError);
 
     impl DialogueBackend for BrokenBackend {
         fn generate(&mut self, _request: &DialogueRequest) -> Result<DialogueReply, BackendError> {
-            Err(BackendError::MalformedReply)
+            Err((self.0)())
         }
     }
 
-    fn eval_request(id: &str) -> DialogueRequest {
-        let corpus: serde_json::Value =
-            serde_json::from_str(EVAL_CORPUS).expect("corpus should parse");
-        let request = corpus["cases"]
-            .as_array()
-            .expect("cases should be an array")
-            .iter()
-            .find(|case| case["id"] == id)
-            .map(|case| case["request"].clone())
-            .expect("case should exist");
-        serde_json::from_value(request).expect("request should parse")
+    struct FixedBackend(&'static str);
+
+    impl DialogueBackend for FixedBackend {
+        fn generate(&mut self, request: &DialogueRequest) -> Result<DialogueReply, BackendError> {
+            let mut reply = constrained_fallback_reply(request);
+            reply.say = self.0.to_owned();
+            reply.worker_fallback = Some(DialogueFallbackReason::GenerationFailed);
+            Ok(reply)
+        }
+    }
+
+    fn speech_request(intent: SpeechIntent) -> DialogueRequest {
+        let mut request: DialogueRequest =
+            serde_json::from_str(SPEECH_REQUEST.trim()).expect("fixture should parse");
+        request.speech_intent = Some(intent);
+        request
+    }
+
+    fn line(request: &DialogueRequest) -> String {
+        serde_json::to_string(request).expect("request should serialize")
     }
 
     #[test]
-    fn jsonl_fixture_produces_a_valid_reply() {
+    fn jsonl_fixture_produces_the_composed_line() {
         let request: DialogueRequest =
-            serde_json::from_str(BERRY_MEMORY.trim()).expect("fixture request should parse");
-        let reply = process_line(BERRY_MEMORY.trim(), &mut FixtureBackend);
+            serde_json::from_str(SPEECH_REQUEST.trim()).expect("fixture request should parse");
+        let reply = process_line(SPEECH_REQUEST.trim(), &mut FixtureBackend);
+        assert_eq!(reply.say, compose_line(&request));
+        assert!(reply.say.contains("berry"));
         assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
     }
 
     #[test]
-    fn model_failure_falls_back_to_the_authoritative_memory_anchor() {
-        let request: DialogueRequest =
-            serde_json::from_str(BERRY_MEMORY.trim()).expect("fixture request should parse");
-        let memory_id = request.candidate_memories[0].id;
-        let reply = process_line(BERRY_MEMORY.trim(), &mut BrokenBackend);
-        assert!(reply.say.contains("berry"));
-        assert!(reply.say.contains("bad"));
-        assert_eq!(reply.recalled_memory, Some(memory_id));
+    fn every_intent_gets_the_no_model_voice_from_fixture_and_failing_backends() {
+        let intents = [
+            SpeechIntent::NewWord {
+                word: "ball".to_owned(),
+                meaning: Meaning::Toy(ToyId::Ball),
+            },
+            SpeechIntent::Echo {
+                attempt: "baw?".to_owned(),
+            },
+            SpeechIntent::Want {
+                meaning: Meaning::Food(FoodId::Berry),
+            },
+            SpeechIntent::Babble,
+        ];
+        for intent in intents {
+            let request = speech_request(intent);
+            for reply in [
+                process_line(&line(&request), &mut FixtureBackend),
+                process_line(
+                    &line(&request),
+                    &mut BrokenBackend(|| BackendError::InvalidReply),
+                ),
+            ] {
+                assert_eq!(reply.say, compose_line(&request));
+                assert_eq!(
+                    reply.worker_fallback, None,
+                    "the composer is the designed voice"
+                );
+                assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
+            }
+        }
+    }
+
+    #[test]
+    fn intent_free_requests_babble() {
+        let mut request = speech_request(SpeechIntent::Babble);
+        let babble = process_line(&line(&request), &mut FixtureBackend);
+        request.speech_intent = None;
+        let legacy = process_line(&line(&request), &mut FixtureBackend);
+        assert_eq!(legacy.say, babble.say);
+    }
+
+    #[test]
+    fn a_backend_failure_is_reported_with_the_composed_line() {
+        let request = speech_request(SpeechIntent::Babble);
+        let reply = process_line(
+            &line(&request),
+            &mut BrokenBackend(|| BackendError::Timeout),
+        );
+        assert_eq!(reply.say, compose_line(&request));
         assert_eq!(
             reply.worker_fallback,
-            Some(beastie_protocol::DialogueFallbackReason::GenerationFailed)
+            Some(DialogueFallbackReason::GenerationFailed)
         );
-        assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
     }
 
     #[test]
-    fn model_failure_preserves_typed_social_and_context_lanes() {
-        for (id, required) in [
-            ("permitted_innuendo", "nest"),
-            ("creature_initiated_notice", "berry"),
-            ("grudge_continuity", "grudge"),
-        ] {
-            let mut request = eval_request(id);
-            match id {
-                "creature_initiated_notice" => {
-                    request.interpretation.is_question = true;
-                    request
-                        .interpretation
-                        .referenced_objects
-                        .push(beastie_protocol::DialogueObjectKind::Food);
-                }
-                "grudge_continuity" => {
-                    request
-                        .interpretation
-                        .understood_concepts
-                        .insert(beastie_protocol::Concept::Again);
-                }
-                _ => {}
-            }
-            let line = serde_json::to_string(&request).expect("request should serialize");
-            let reply = process_line(&line, &mut BrokenBackend);
-            assert!(reply.say.contains(required), "{id}: {}", reply.say);
-            assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
-        }
-    }
+    fn backend_replies_cannot_set_fallback_metadata_or_break_the_protocol() {
+        let request = speech_request(SpeechIntent::Babble);
+        let accepted = process_line(&line(&request), &mut FixedBackend("mrp? prr."));
+        assert_eq!(accepted.say, "mrp? prr.");
+        assert_eq!(accepted.worker_fallback, None);
 
-    #[test]
-    fn generated_reply_falls_back_to_requested_word_limit() {
-        let mut request: DialogueRequest =
-            serde_json::from_str(BERRY_MEMORY.trim()).expect("fixture request should parse");
-        request.constraints.max_words = 1;
-        let line = serde_json::to_string(&request).expect("request should serialize");
-        let reply = process_line(&line, &mut FixtureBackend);
-        assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
-    }
-
-    #[test]
-    fn fixture_backend_receives_the_same_deterministic_idiolect_pass() {
-        let mut request: DialogueRequest =
-            serde_json::from_str(BERRY_MEMORY.trim()).expect("request should parse");
-        request.idiolect = beastie_protocol::Idiolect {
-            quirk: beastie_protocol::IdiolectQuirk::Echo,
-        };
-        let line = serde_json::to_string(&request).expect("request should serialize");
-        let reply = process_line(&line, &mut FixtureBackend);
-        assert_eq!(reply.say, "berry, bad still. still.");
-        assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
-    }
-
-    #[test]
-    fn fixture_backend_keeps_relationship_motif_and_subject_grounded_without_fallback() {
-        let request = eval_request("relationship_return_motif");
-        let line = serde_json::to_string(&request).expect("request should serialize");
-        let reply = process_line(&line, &mut FixtureBackend);
-        assert!(reply.worker_fallback.is_none());
-        assert!(
-            reply.say.contains("back")
-                || reply.say.contains("return")
-                || reply.say.contains("came")
-        );
-        assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
-    }
-
-    #[test]
-    fn fixture_backend_covers_each_relationship_motif_without_fallback() {
-        use beastie_protocol::{
-            FoodId, RelationshipMotifKey, RelationshipSubject, SemanticDestination, ToyId,
-        };
-
-        let mut request = eval_request("relationship_return_motif");
-        let cases = [
-            (
-                RelationshipMotifKey::SharedToy(ToyId::Ball),
-                RelationshipSubject::Toy(ToyId::Ball),
-                Some(SemanticDestination::Toy(ToyId::Ball)),
-            ),
-            (
-                RelationshipMotifKey::ComfortRitual,
-                RelationshipSubject::Player,
-                Some(SemanticDestination::Player),
-            ),
-            (
-                RelationshipMotifKey::TrustedFood(FoodId::Berry),
-                RelationshipSubject::Food(FoodId::Berry),
-                Some(SemanticDestination::Bottom),
-            ),
-            (
-                RelationshipMotifKey::FoodGrudge(FoodId::Mushroom),
-                RelationshipSubject::Food(FoodId::Mushroom),
-                Some(SemanticDestination::Bottom),
-            ),
-            (
-                RelationshipMotifKey::FamiliarPlace(SemanticDestination::Cave),
-                RelationshipSubject::Place(SemanticDestination::Cave),
-                Some(SemanticDestination::Cave),
-            ),
-            (
-                RelationshipMotifKey::PlayerReturns,
-                RelationshipSubject::Player,
-                Some(SemanticDestination::Player),
-            ),
-        ];
-        for (motif, subject, target) in cases {
-            let relationship = request
-                .context
-                .relationship
-                .as_mut()
-                .expect("relationship context");
-            relationship.motif = motif;
-            relationship.subject = subject;
-            relationship.target = target;
-            let line = serde_json::to_string(&request).expect("request should serialize");
-            let reply = process_line(&line, &mut FixtureBackend);
-            assert!(reply.worker_fallback.is_none(), "{motif:?}: {}", reply.say);
-            assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
-        }
-    }
-
-    #[test]
-    fn fixture_backend_changes_a_requested_retry_without_losing_grounding() {
-        let mut request = eval_request("relationship_return_motif");
-        let first = fixture_reply(&request);
-        request.context.avoid_reply_texts = vec![first.say.clone()];
-        request.context.avoid_reply_fingerprints = vec![reply_fingerprint(&first.say)];
-        let retry = fixture_reply(&request);
-        assert_ne!(reply_fingerprint(&first.say), reply_fingerprint(&retry.say));
-        assert_eq!(validate_reply(&request, retry.clone()), Ok(retry));
-    }
-
-    #[test]
-    fn fixture_backend_keeps_every_safe_eval_turn_healthy() {
-        let corpus: serde_json::Value =
-            serde_json::from_str(EVAL_CORPUS).expect("corpus should parse");
-        for case in corpus["cases"]
-            .as_array()
-            .expect("cases should be an array")
-        {
-            let mut request: DialogueRequest =
-                serde_json::from_value(case["request"].clone()).expect("request should parse");
-            normalize_dialogue_request(&mut request);
-            if request.input_rejection.is_some() {
-                continue;
-            }
-            let line = serde_json::to_string(&request).expect("request should serialize");
-            let reply = process_line(&line, &mut FixtureBackend);
-            assert!(
-                reply.worker_fallback.is_none(),
-                "{} unexpectedly fell back: {}",
-                case["id"],
-                reply.say
-            );
+        for invalid in ["mrp prr eep oo hm mm zz", "hello friend"] {
+            let reply = process_line(&line(&request), &mut FixedBackend(invalid));
+            assert_eq!(reply.say, compose_line(&request), "{invalid}");
             assert_eq!(
-                validate_reply(&request, reply.clone()),
-                Ok(reply),
-                "{} returned an invalid reply",
-                case["id"]
+                reply.worker_fallback,
+                Some(DialogueFallbackReason::ValidationFailed)
             );
         }
+    }
+
+    #[test]
+    fn rejected_input_babbles_without_reaching_the_backend() {
+        let mut request = speech_request(SpeechIntent::Babble);
+        request.player_said.clear();
+        request.input_rejection = Some(ContentBoundaryViolation::SelfHarmEncouragement);
+        let reply = process_line(&line(&request), &mut FixedBackend("ball"));
+        assert_eq!(reply.say, compose_line(&request));
+        assert_eq!(reply.worker_fallback, None);
+
+        // Unscreened prohibited text is normalized before anything else happens.
+        let mut raw = speech_request(SpeechIntent::Babble);
+        raw.player_said = "go kill yourself".to_owned();
+        let reply = process_line(&line(&raw), &mut FixedBackend("ball"));
+        assert_eq!(reply.say, compose_line(&raw));
     }
 
     #[test]
@@ -742,7 +296,7 @@ mod tests {
         let input = format!(
             "{}\n{}\n",
             "x".repeat(MAX_DIALOGUE_LINE_BYTES + 1),
-            BERRY_MEMORY.trim_end()
+            SPEECH_REQUEST.trim_end()
         );
         let mut output = Vec::new();
         run_jsonl(input.as_bytes(), &mut output, &mut FixtureBackend).expect("stream should run");
@@ -759,68 +313,13 @@ mod tests {
     #[test]
     fn unterminated_bounded_dialogue_request_is_processed_at_eof() {
         let mut output = Vec::new();
-        run_jsonl(BERRY_MEMORY.as_bytes(), &mut output, &mut FixtureBackend)
-            .expect("unterminated final request should run");
+        run_jsonl(
+            SPEECH_REQUEST.trim_end().as_bytes(),
+            &mut output,
+            &mut FixtureBackend,
+        )
+        .expect("unterminated final request should run");
         let reply: DialogueReply = serde_json::from_slice(&output).expect("valid reply");
         assert_eq!(reply.request_id, 41);
-    }
-
-    fn speech_request(intent: beastie_protocol::SpeechIntent) -> DialogueRequest {
-        let mut request: DialogueRequest =
-            serde_json::from_str(BERRY_MEMORY.trim()).expect("fixture should parse");
-        request.vocabulary = vec![beastie_protocol::VocabularyWord {
-            word: "ball".to_owned(),
-            meaning: beastie_protocol::Meaning::Toy(beastie_protocol::ToyId::Ball),
-        }];
-        request.speech_intent = Some(intent);
-        request
-    }
-
-    #[test]
-    fn learned_word_requests_get_the_no_model_voice_in_every_fallback_lane() {
-        use beastie_protocol::{Meaning, SpeechIntent, ToyId};
-        let intents = [
-            SpeechIntent::NewWord {
-                word: "ball".to_owned(),
-                meaning: Meaning::Toy(ToyId::Ball),
-            },
-            SpeechIntent::Echo {
-                attempt: "baw?".to_owned(),
-            },
-            SpeechIntent::Want {
-                meaning: Meaning::Food(beastie_protocol::FoodId::Berry),
-            },
-            SpeechIntent::Babble,
-        ];
-        for intent in intents {
-            let request = speech_request(intent);
-            let line = serde_json::to_string(&request).expect("serialize");
-            // The candidate memory and beliefs in the fixture must not leak authored lines.
-            for reply in [
-                process_line(&line, &mut FixtureBackend),
-                process_line(&line, &mut BrokenBackend),
-            ] {
-                assert_eq!(reply.say, beastie_protocol::compose_line(&request));
-                assert_eq!(reply.recalled_memory, None);
-                assert_eq!(reply.recalled_belief, None);
-                let mut checked = reply.clone();
-                checked.worker_fallback = None;
-                validate_reply(&request, checked).expect("learned-word line validates");
-            }
-        }
-    }
-
-    #[test]
-    fn rejected_input_with_a_speech_intent_babbles_instead_of_authored_words() {
-        let mut request = speech_request(beastie_protocol::SpeechIntent::Babble);
-        request.player_said.clear();
-        request.input_rejection =
-            Some(beastie_protocol::ContentBoundaryViolation::SelfHarmEncouragement);
-        let line = serde_json::to_string(&request).expect("serialize");
-        let reply = process_line(&line, &mut FixtureBackend);
-        assert!(!reply.say.contains("rotten"));
-        let mut checked = reply;
-        checked.worker_fallback = None;
-        validate_reply(&request, checked).expect("babble validates");
     }
 }

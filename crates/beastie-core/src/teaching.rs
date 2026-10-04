@@ -37,11 +37,14 @@ pub enum RequestResponse {
 const FOCUS_SHORT_MS: u64 = 6_000;
 const FOCUS_LONG_MS: u64 = 10_000;
 const GREETING_WINDOW_MS: u64 = 20_000;
+/// How long a refusal stays visible: long enough to read, short enough not to sulk.
+const REFUSAL_SHOWN_MS: u64 = 2_500;
 
 /// Record shared focus from authoritative events, so a word said right after a moment can
 /// refer to it.
 pub(crate) fn mark_attention_from_events(state: &mut WorldState, events: &[GameEvent]) {
     let now = state.elapsed_ms;
+    let mut refusal = None;
     let mut mark = |meaning: Meaning, weight: u16, duration: u64| {
         mark_focus(
             &mut state.creature.attention,
@@ -66,6 +69,7 @@ pub(crate) fn mark_attention_from_events(state: &mut WorldState, events: &[GameE
                 mark(Meaning::Praise, 2, FOCUS_SHORT_MS);
             }
             GameEvent::FoodRejected(food) => {
+                refusal = Some((Meaning::Food(*food), now + REFUSAL_SHOWN_MS));
                 mark(Meaning::Food(*food), 3, FOCUS_SHORT_MS);
                 mark(Meaning::Scold, 2, FOCUS_SHORT_MS);
             }
@@ -91,6 +95,7 @@ pub(crate) fn mark_attention_from_events(state: &mut WorldState, events: &[GameE
                 mark(Meaning::Act(ActWord::Play), 1, FOCUS_SHORT_MS);
             }
             GameEvent::ToyRejected { toy, .. } => {
+                refusal = Some((Meaning::Toy(*toy), now + REFUSAL_SHOWN_MS));
                 // Refused or not, the player pointed at this toy.
                 mark(Meaning::Toy(*toy), 4, FOCUS_LONG_MS);
                 mark(Meaning::Scold, 1, FOCUS_SHORT_MS);
@@ -118,6 +123,9 @@ pub(crate) fn mark_attention_from_events(state: &mut WorldState, events: &[GameE
             } => mark(Meaning::Praise, 1, FOCUS_SHORT_MS),
             _ => {}
         }
+    }
+    if refusal.is_some() {
+        state.creature.refusing = refusal;
     }
 }
 

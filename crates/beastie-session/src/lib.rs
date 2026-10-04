@@ -10,11 +10,9 @@ use beastie_core::{
     SpeechAttention, ToyId, ToyOrigin, WorldState, advance_offline, speech_attention, step,
 };
 use beastie_protocol::{
-    AcousticConfidence, DialogueActionPhase, DialogueReply, DialogueRequest,
-    DialogueRequestContext, DialogueTopic, FallbackLane, Gesture, RecentTurn,
-    RelationshipDialogueContext, SpeechInputFailure, SpeechIntent, build_dialogue_request,
-    classify_content_boundary, line_word_limit, normalize_dialogue_request, reply_fingerprint,
-    validate_reply, validate_request,
+    AcousticConfidence, DialogueReply, DialogueRequest, DialogueRequestContext, Gesture,
+    SpeechInputFailure, SpeechIntent, build_dialogue_request, classify_content_boundary,
+    line_word_limit, normalize_dialogue_request, validate_reply, validate_request,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -25,8 +23,6 @@ const LEGACY_CORE_SAVE_VERSION: u32 = 1;
 pub const MAX_COMMAND_BYTES: usize = 4_096;
 pub const MAX_ADVANCE_MINUTES: u32 = 45;
 pub const MAX_SCENARIO_ABSENCE_MS: u64 = beastie_core::MAX_OFFLINE_MS;
-const DIALOGUE_HISTORY_VERSION: u32 = 1;
-const MAX_DIALOGUE_HISTORY: usize = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandEnvelope {
@@ -144,31 +140,6 @@ pub struct GameSession {
     next_request_id: u64,
     checkpoint: Option<Checkpoint>,
     spoken_input: SpokenInputState,
-    dialogue_history: DialogueHistory,
-    pending_dialogue: Option<PendingDialogue>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct PendingDialogue {
-    request_id: u64,
-    motif: beastie_protocol::RelationshipMotifKey,
-    subject: beastie_protocol::RelationshipSubject,
-    mode: beastie_protocol::RelationshipExpressionMode,
-    expression_kind: beastie_protocol::RelationshipExpressionKind,
-    action_id: Option<u64>,
-    invalidated: bool,
-}
-
-#[derive(Debug, Clone)]
-struct RelationshipDialogueSelection {
-    motif: beastie_protocol::RelationshipMotifKey,
-    subject: beastie_protocol::RelationshipSubject,
-    mode: beastie_protocol::RelationshipExpressionMode,
-    expression_kind: beastie_protocol::RelationshipExpressionKind,
-    phase: Option<beastie_protocol::RelationshipBeatPhase>,
-    evidence: Vec<beastie_protocol::RelationshipEvidence>,
-    target: Option<beastie_core::SemanticDestination>,
-    action_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,7 +168,6 @@ struct Checkpoint {
     world: WorldState,
     random: SeededRandom,
     next_request_id: u64,
-    dialogue_history: DialogueHistory,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -209,68 +179,6 @@ pub struct SessionSave {
     pub random: SeededRandom,
     pub sequence: u64,
     pub next_request_id: u64,
-    #[serde(default)]
-    pub dialogue_history: DialogueHistory,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct DialogueHistory {
-    #[serde(default = "dialogue_history_version")]
-    pub version: u32,
-    #[serde(default)]
-    pub recent: Vec<SemanticDialogueTurn>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SemanticDialogueTurn {
-    pub turn_id: u64,
-    pub topic: DialogueTopic,
-    pub action_phase: DialogueActionPhase,
-    #[serde(default)]
-    pub selected_memory: Option<beastie_core::MemoryId>,
-    #[serde(default)]
-    pub selected_belief: Option<beastie_protocol::BeliefId>,
-    #[serde(default)]
-    pub motif: Option<beastie_protocol::RelationshipMotifKey>,
-    #[serde(default)]
-    pub expression_kind: Option<beastie_protocol::RelationshipExpressionKind>,
-    #[serde(default)]
-    pub fallback_lane: Option<FallbackLane>,
-    pub expressed_at_ms: u64,
-    #[serde(default)]
-    pub reply_fingerprint: Option<String>,
-}
-
-fn dialogue_history_version() -> u32 {
-    DIALOGUE_HISTORY_VERSION
-}
-
-impl DialogueHistory {
-    fn validate(&self) -> Result<(), SessionError> {
-        if self.version != DIALOGUE_HISTORY_VERSION || self.recent.len() > MAX_DIALOGUE_HISTORY {
-            return Err(SessionError::DialogueHistory);
-        }
-        if self.recent.iter().any(|turn| {
-            turn.turn_id == 0
-                || turn
-                    .reply_fingerprint
-                    .as_deref()
-                    .is_some_and(|fingerprint| !beastie_protocol::is_reply_fingerprint(fingerprint))
-        }) {
-            return Err(SessionError::DialogueHistory);
-        }
-        Ok(())
-    }
-
-    fn push(&mut self, turn: SemanticDialogueTurn) {
-        self.recent.push(turn);
-        let keep_from = self.recent.len().saturating_sub(MAX_DIALOGUE_HISTORY);
-        if keep_from > 0 {
-            self.recent.drain(..keep_from);
-        }
-    }
 }
 
 impl SessionSave {
@@ -292,10 +200,11 @@ impl SessionSave {
         }
         migrate_embedded_core_save(&mut value)?;
         value["version"] = serde_json::Value::from(SESSION_SAVE_VERSION);
-        let mut save = serde_json::from_value::<Self>(value).map_err(SessionError::Json)?;
-        if save.dialogue_history.version == 0 {
-            save.dialogue_history.version = DIALOGUE_HISTORY_VERSION;
+        // Older saves kept a history of intent-free dialogue turns; learned-word speech needs none.
+        if let Some(save) = value.as_object_mut() {
+            save.remove("dialogue_history");
         }
+        let save = serde_json::from_value::<Self>(value).map_err(SessionError::Json)?;
         save.validate()?;
         Ok(save)
     }
@@ -308,7 +217,6 @@ impl SessionSave {
             return Err(SessionError::RequestId);
         }
         self.world.validate().map_err(SessionError::State)?;
-        self.dialogue_history.validate()?;
         Ok(())
     }
 }
@@ -372,11 +280,6 @@ impl GameSession {
             next_request_id: 1,
             checkpoint: None,
             spoken_input: SpokenInputState::Idle,
-            dialogue_history: DialogueHistory {
-                version: DIALOGUE_HISTORY_VERSION,
-                recent: Vec::new(),
-            },
-            pending_dialogue: None,
         }
     }
 
@@ -402,7 +305,6 @@ impl GameSession {
             random: self.random,
             sequence: self.sequence,
             next_request_id: self.next_request_id,
-            dialogue_history: self.dialogue_history.clone(),
         }
     }
 
@@ -419,8 +321,6 @@ impl GameSession {
             next_request_id: save.next_request_id,
             checkpoint: None,
             spoken_input: SpokenInputState::Idle,
-            dialogue_history: save.dialogue_history,
-            pending_dialogue: None,
         };
         let progress = advance_offline(&mut session.world, offline_ms, &mut session.random);
         if progress.applied_ms > 0 {
@@ -452,11 +352,6 @@ impl GameSession {
                         next_request_id: 1,
                         checkpoint: None,
                         spoken_input: SpokenInputState::Idle,
-                        dialogue_history: DialogueHistory {
-                            version: DIALOGUE_HISTORY_VERSION,
-                            recent: Vec::new(),
-                        },
-                        pending_dialogue: None,
                     },
                     OfflineProgress {
                         requested_ms: 0,
@@ -632,14 +527,12 @@ impl GameSession {
                     random: self.random,
                     sequence: next_sequence,
                     next_request_id: self.next_request_id,
-                    dialogue_history: self.dialogue_history.clone(),
                 };
                 save_json = Some(durable.to_json()?);
                 self.checkpoint = Some(Checkpoint {
                     world: self.world.clone(),
                     random: self.random,
                     next_request_id: self.next_request_id,
-                    dialogue_history: self.dialogue_history.clone(),
                 });
             }
             SessionCommand::Load => {
@@ -647,17 +540,11 @@ impl GameSession {
                 self.world = loaded.world.clone();
                 self.random = loaded.random;
                 self.next_request_id = loaded.next_request_id;
-                self.dialogue_history = loaded.dialogue_history.clone();
                 self.spoken_input = SpokenInputState::Idle;
-                self.pending_dialogue = None;
             }
             SessionCommand::Inspect => inspected_world = Some(self.world.clone()),
         }
 
-        self.observe_dialogue_events(
-            &events,
-            dialogue_request.as_ref().map(|request| request.request_id),
-        );
         self.world.validate().map_err(SessionError::State)?;
         self.sequence = next_sequence;
         Ok(Observation {
@@ -765,10 +652,6 @@ impl GameSession {
         }
         request.speech_intent = Some(intent);
         normalize_dialogue_request(&mut request);
-        self.attach_dialogue_context(&mut request, DialogueTopic::Greeting);
-        // Learned-word speech is grounded by its intent and vocabulary, not by a relationship
-        // motif; the motif's own wording constraints would contradict the creature's words.
-        request.context.relationship = None;
         validate_request(&request).map_err(SessionError::Dialogue)?;
         self.next_request_id = self.next_request_id.saturating_add(1);
         Ok(request)
@@ -802,288 +685,16 @@ impl GameSession {
             .map(Some)
     }
 
-    fn attach_dialogue_context(&mut self, request: &mut DialogueRequest, topic: DialogueTopic) {
-        let current_turns = request.context.recent_turns.clone();
-        let mut recent_turns = self
-            .dialogue_history
-            .recent
-            .iter()
-            .map(|turn| RecentTurn {
-                turn_id: turn.turn_id,
-                topic: turn.topic,
-                action_phase: turn.action_phase,
-                selected_memory: turn.selected_memory,
-                selected_belief: turn.selected_belief,
-                selected_fact_ids: turn.selected_memory.into_iter().map(|id| id.0).collect(),
-                fallback_lane: turn.fallback_lane,
-                motif: turn.motif,
-                expression_kind: turn.expression_kind,
-                expressed_at_ms: Some(turn.expressed_at_ms),
-                reply_fingerprint: turn.reply_fingerprint.clone(),
-            })
-            .collect::<Vec<_>>();
-        recent_turns.extend(current_turns);
-        let keep_from = recent_turns
-            .len()
-            .saturating_sub(beastie_protocol::MAX_RECENT_TURNS);
-        if keep_from > 0 {
-            recent_turns.drain(..keep_from);
-        }
-        request.context.recent_turns = recent_turns;
-        request.context.repetition_count = repetition_count(&request.context.recent_turns, topic);
-        request.context.avoid_reply_fingerprints = self
-            .dialogue_history
-            .recent
-            .iter()
-            .filter_map(|turn| turn.reply_fingerprint.clone())
-            .rev()
-            .take(beastie_protocol::MAX_REPLY_PROHIBITIONS)
-            .collect();
-        if let Some(selected) = self.relationship_dialogue_selection() {
-            let evidence = selected
-                .evidence
-                .iter()
-                .filter(|evidence| match evidence {
-                    beastie_core::RelationshipEvidence::Memory { id } => request
-                        .candidate_memories
-                        .iter()
-                        .any(|memory| memory.id == *id),
-                    beastie_core::RelationshipEvidence::Belief { id, kind } => request
-                        .candidate_beliefs
-                        .iter()
-                        .any(|candidate| candidate.id == *id && candidate.proposition == *kind),
-                    beastie_core::RelationshipEvidence::Visit { .. } => true,
-                })
-                .cloned()
-                .collect();
-            request.context.relationship = Some(RelationshipDialogueContext {
-                motif: selected.motif,
-                subject: selected.subject,
-                mode: selected.mode,
-                expression_kind: selected.expression_kind,
-                recently_expressed: self
-                    .dialogue_history
-                    .recent
-                    .iter()
-                    .any(|turn| turn.motif == Some(selected.motif)),
-                phase: selected.phase,
-                evidence,
-                target: selected.target,
-            });
-            if request.context.recent_turns.last().is_none() {
-                request.context.recent_turns.push(RecentTurn {
-                    turn_id: request.request_id,
-                    topic,
-                    action_phase: DialogueActionPhase::Notice,
-                    selected_memory: None,
-                    selected_belief: None,
-                    selected_fact_ids: Vec::new(),
-                    fallback_lane: Some(FallbackLane::Relationship),
-                    motif: request.context.relationship.as_ref().map(|r| r.motif),
-                    expression_kind: request
-                        .context
-                        .relationship
-                        .as_ref()
-                        .map(|r| r.expression_kind),
-                    expressed_at_ms: Some(self.world.elapsed_ms),
-                    reply_fingerprint: None,
-                });
-            }
-            self.pending_dialogue = Some(PendingDialogue {
-                request_id: request.request_id,
-                motif: selected.motif,
-                subject: selected.subject,
-                mode: selected.mode,
-                expression_kind: selected.expression_kind,
-                action_id: selected.action_id,
-                invalidated: false,
-            });
-        } else {
-            self.pending_dialogue = None;
-        }
-    }
-
-    fn relationship_dialogue_selection(&self) -> Option<RelationshipDialogueSelection> {
-        if let Some(action) = self.world.creature.aquarium.action.as_ref()
-            && let Some(context) = action.relationship.as_ref()
-        {
-            return Some(RelationshipDialogueSelection {
-                motif: context.motif,
-                subject: context.subject,
-                mode: beastie_protocol::RelationshipExpressionMode::ActionBound,
-                expression_kind: context.expression_kind,
-                phase: Some(action_relationship_phase(action.phase)),
-                evidence: context.evidence.clone(),
-                target: relationship_dialogue_target(context.motif),
-                action_id: Some(action.action_id),
-            });
-        }
-        if let Some(moment) = self
-            .world
-            .creature
-            .interaction_state
-            .relationship_moment
-            .as_ref()
-        {
-            return Some(RelationshipDialogueSelection {
-                motif: moment.context.motif,
-                subject: moment.context.subject,
-                mode: beastie_protocol::RelationshipExpressionMode::ActionBound,
-                expression_kind: moment.context.expression_kind,
-                phase: Some(beastie_protocol::RelationshipBeatPhase::Act),
-                evidence: moment.context.evidence.clone(),
-                target: relationship_dialogue_target(moment.context.motif),
-                action_id: Some(moment.action_id),
-            });
-        }
-        let beat = self
-            .world
-            .creature
-            .relationship_expression
-            .active
-            .as_ref()?;
-        Some(RelationshipDialogueSelection {
-            motif: beat.motif,
-            subject: beat
-                .subject
-                .expect("validated relationship beat has a subject"),
-            mode: beastie_protocol::RelationshipExpressionMode::Standalone,
-            expression_kind: beat.expression_kind,
-            phase: Some(beat.phase),
-            evidence: beat.evidence.clone(),
-            target: beat.target,
-            action_id: None,
-        })
-    }
-
-    fn observe_dialogue_events(&mut self, events: &[GameEvent], created_request_id: Option<u64>) {
-        let Some(pending) = self.pending_dialogue.as_mut() else {
-            return;
-        };
-        let request_created_here = created_request_id == Some(pending.request_id);
-        if events.iter().any(|event| match event {
-            GameEvent::RelationshipBeatInterrupted(motif) => {
-                *motif == pending.motif && !request_created_here
-            }
-            GameEvent::RelationshipBeatStarted { .. } => !request_created_here,
-            GameEvent::ActionRelationshipInterrupted { action_id, .. } => {
-                pending.action_id == Some(*action_id) && !request_created_here
-            }
-            GameEvent::ActionRelationshipStarted { action_id, .. } => {
-                pending.action_id != Some(*action_id) && !request_created_here
-            }
-            _ => false,
-        }) {
-            pending.invalidated = true;
-        }
-    }
-
-    /// Accepts a completed worker turn only while its authoritative relationship beat is current.
-    /// The persisted record contains IDs, enums, time, fallback metadata, and a one-way digest,
-    /// never player or generated prose.
+    /// Whether a completed worker turn may be presented: its reply must validate against the
+    /// request it answers, after at most one retry. Speech leaves no session state behind.
     pub fn accept_dialogue_turn(
-        &mut self,
+        &self,
         request: &DialogueRequest,
         reply: &DialogueReply,
         retry_count: u8,
-        fallback: bool,
+        _fallback: bool,
     ) -> bool {
-        if validate_reply(request, reply.clone()).is_err() || retry_count > 1 {
-            return false;
-        }
-        if let Some(selected) = &request.context.relationship {
-            let Some(pending) = self.pending_dialogue else {
-                return false;
-            };
-            if pending.invalidated
-                || pending.request_id != request.request_id
-                || pending.motif != selected.motif
-                || pending.subject != selected.subject
-                || pending.mode != selected.mode
-                || pending.expression_kind != selected.expression_kind
-            {
-                return false;
-            }
-            if let Some(current) = self.relationship_dialogue_selection()
-                && (current.motif != selected.motif
-                    || current.subject != selected.subject
-                    || current.mode != selected.mode
-                    || current.expression_kind != selected.expression_kind
-                    || current.action_id != pending.action_id)
-            {
-                return false;
-            }
-        }
-        let relationship = request.context.relationship.as_ref();
-        let fallback_lane = request
-            .context
-            .recent_turns
-            .last()
-            .and_then(|turn| turn.fallback_lane)
-            .or_else(|| relationship.map(|_| FallbackLane::Relationship));
-        let turn = SemanticDialogueTurn {
-            turn_id: request.request_id,
-            topic: request
-                .context
-                .recent_turns
-                .last()
-                .map_or(DialogueTopic::Other, |turn| turn.topic),
-            action_phase: request
-                .context
-                .recent_turns
-                .last()
-                .map_or(DialogueActionPhase::Idle, |turn| turn.action_phase),
-            selected_memory: reply.recalled_memory,
-            selected_belief: reply.recalled_belief,
-            motif: relationship.map(|relationship| relationship.motif),
-            expression_kind: relationship.map(|relationship| relationship.expression_kind),
-            fallback_lane: fallback.then_some(fallback_lane).flatten(),
-            expressed_at_ms: self.world.elapsed_ms,
-            reply_fingerprint: Some(reply_fingerprint(&reply.say)),
-        };
-        self.dialogue_history.push(turn);
-        self.pending_dialogue = None;
-        true
-    }
-
-    #[must_use]
-    pub fn dialogue_history(&self) -> &DialogueHistory {
-        &self.dialogue_history
-    }
-}
-
-const fn action_relationship_phase(
-    phase: beastie_core::ActionPhase,
-) -> beastie_protocol::RelationshipBeatPhase {
-    match phase {
-        beastie_core::ActionPhase::Notice | beastie_core::ActionPhase::Gaze => {
-            beastie_protocol::RelationshipBeatPhase::Notice
-        }
-        beastie_core::ActionPhase::Brake
-        | beastie_core::ActionPhase::Turn
-        | beastie_core::ActionPhase::Approach
-        | beastie_core::ActionPhase::Inspect => beastie_protocol::RelationshipBeatPhase::Anticipate,
-        beastie_core::ActionPhase::Act => beastie_protocol::RelationshipBeatPhase::Act,
-        beastie_core::ActionPhase::Recover => beastie_protocol::RelationshipBeatPhase::Recover,
-    }
-}
-
-const fn relationship_dialogue_target(
-    motif: beastie_protocol::RelationshipMotifKey,
-) -> Option<beastie_core::SemanticDestination> {
-    match motif {
-        beastie_protocol::RelationshipMotifKey::SharedToy(toy) => {
-            Some(beastie_core::SemanticDestination::Toy(toy))
-        }
-        beastie_protocol::RelationshipMotifKey::ComfortRitual
-        | beastie_protocol::RelationshipMotifKey::PlayerReturns => {
-            Some(beastie_core::SemanticDestination::Player)
-        }
-        beastie_protocol::RelationshipMotifKey::TrustedFood(_)
-        | beastie_protocol::RelationshipMotifKey::FoodGrudge(_) => {
-            Some(beastie_core::SemanticDestination::Bottom)
-        }
-        beastie_protocol::RelationshipMotifKey::FamiliarPlace(destination) => Some(destination),
+        retry_count <= 1 && validate_reply(request, reply.clone()).is_ok()
     }
 }
 
@@ -1128,15 +739,6 @@ fn compact_advance_events(events: &mut Vec<GameEvent>) {
             true
         }
     });
-}
-
-fn repetition_count(turns: &[RecentTurn], topic: DialogueTopic) -> u8 {
-    turns
-        .iter()
-        .rev()
-        .take_while(|turn| turn.topic == topic)
-        .count()
-        .min(8) as u8
 }
 
 /// The words of an utterance the creature has learned, in order.
@@ -1343,8 +945,6 @@ pub enum SessionError {
     SaveVersion(u32),
     #[error("next dialogue request ID must be nonzero")]
     RequestId,
-    #[error("dialogue history is malformed or exceeds its bound")]
-    DialogueHistory,
     #[error("legacy save migration failed: {0}")]
     LegacySave(beastie_core::SaveError),
     #[error("session state became invalid: {0}")]
@@ -1592,9 +1192,8 @@ mod tests {
         assert_eq!(resumed.world(), original.world());
     }
 
-    /// Every request the session emits must pass protocol validation, including while an
-    /// action-bound relationship beat is live. Relationship context used to make learned-word
-    /// requests invalid; learned-word speech no longer carries it.
+    /// Every request the session emits must pass protocol validation and carry a speech intent,
+    /// including while an action-bound relationship beat is live.
     #[test]
     fn every_emitted_request_validates_even_with_relationship_evidence() {
         let source = include_str!("../../../fixtures/saves/feel/trusted-berry.json");
@@ -1610,7 +1209,13 @@ mod tests {
             }))
             .expect("drop trusted berry");
         assert!(
-            session.relationship_dialogue_selection().is_some(),
+            session
+                .world()
+                .creature
+                .aquarium
+                .action
+                .as_ref()
+                .is_some_and(|action| action.relationship.is_some()),
             "fixture must exercise live relationship evidence"
         );
 
@@ -1649,7 +1254,6 @@ mod tests {
         for request in &requests {
             validate_request(request).expect("emitted request validates");
             assert!(request.speech_intent.is_some());
-            assert!(request.context.relationship.is_none());
             let reply = beastie_protocol::constrained_fallback_reply(request);
             validate_reply(request, reply).expect("no-model line validates");
         }
@@ -2668,7 +2272,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_dialogue_persists_only_semantic_history_and_fingerprint() {
+    fn completed_speech_is_accepted_and_never_saved() {
         let mut session = GameSession::new(57, "History");
         let observation = session
             .apply(command(SessionCommand::Talk {
@@ -2678,11 +2282,36 @@ mod tests {
         let request = observation.dialogue_request.expect("dialogue request");
         let reply = beastie_protocol::constrained_fallback_reply(&request);
         assert!(session.accept_dialogue_turn(&request, &reply, 0, true));
-        let saved = session.capture(0).to_json().expect("history save");
-        assert!(saved.contains("dialogue_history"));
-        assert!(saved.contains("reply_fingerprint"));
+        assert!(!session.accept_dialogue_turn(&request, &reply, 2, true));
+        let mut invented = reply;
+        invented.say = "hello there friend".to_owned();
+        assert!(!session.accept_dialogue_turn(&request, &invented, 0, false));
+        let saved = session.capture(0).to_json().expect("save");
+        assert!(!saved.contains("dialogue_history"));
         assert!(!saved.contains("hello there"));
-        let (resumed, _) = GameSession::resume_json(&saved, 0).expect("history migration");
-        assert_eq!(resumed.dialogue_history().recent.len(), 1);
+    }
+
+    #[test]
+    fn saves_with_legacy_dialogue_history_still_load() {
+        let mut save: serde_json::Value = serde_json::from_str(
+            &GameSession::new(58, "Legacy")
+                .capture(0)
+                .to_json()
+                .expect("save"),
+        )
+        .expect("save JSON");
+        save["dialogue_history"] = serde_json::json!({
+            "version": 1,
+            "recent": [{
+                "turn_id": 1,
+                "topic": "grudge",
+                "action_phase": "recover",
+                "motif": "player_returns",
+                "fallback_lane": "relationship",
+                "expressed_at_ms": 5,
+                "reply_fingerprint": "0123456789abcdef"
+            }]
+        });
+        GameSession::resume_json(&save.to_string(), 0).expect("legacy history is dropped");
     }
 }

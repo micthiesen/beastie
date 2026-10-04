@@ -210,6 +210,10 @@ The creature's condition should be communicated primarily through behavior, expr
 context rather than exact bars and meters. Presentation projects authoritative meaning; it does not
 invent it.
 
+A record of shared history is not a meter. Showing which words the creature has learned from the
+player, or picturing the thing it wants in a thought bubble, reveals state the way the creature
+itself would; percentages, need bars and scores do not.
+
 Generated dialogue may contain impossible boasts, dreams, jokes, or mistaken recollections. Text
 alone cannot create items, currency, memories, relationships, or stat changes.
 
@@ -221,6 +225,9 @@ history. Productivity features and generic assistant behavior are not default go
 
 Conversation stays scarce enough to feel like one faculty of the animal rather than the entire
 game. The creature should surprise the player without becoming an endless chat interface.
+Scarcity applies to the creature's own speech, never to being heard: every utterance is perceived
+at once and visibly received, and the creature then speaks only when it has something of its own to
+say, in the words the player has taught it.
 
 ## Independent design axes
 

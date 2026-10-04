@@ -9,9 +9,9 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use beastie_ai_worker::{DialogueBackend, LlamaServerBackend, LlamaServerConfig, process_line};
-use beastie_protocol::DialogueRequest;
+use beastie_protocol::{DialogueFallbackReason, DialogueRequest, compose_line};
 
-const BERRY_MEMORY: &str = include_str!("../../../fixtures/dialogue/berry-memory.json");
+const SPEECH_REQUEST: &str = include_str!("../../../fixtures/dialogue/speech-request.json");
 
 fn fixture_program() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-llama-server.py")
@@ -61,7 +61,7 @@ fn record_lines(record: &PathBuf) -> Vec<String> {
 fn warm_server_reuses_one_pid_and_receives_flags_auth_and_bounded_payload() {
     let record = temporary_path("warm");
     let request: DialogueRequest =
-        serde_json::from_str(BERRY_MEMORY).expect("request should parse");
+        serde_json::from_str(SPEECH_REQUEST).expect("request should parse");
     let mut server = backend("valid", &record, 8 * 1024);
     server
         .generate(&request)
@@ -103,13 +103,17 @@ fn warm_server_reuses_one_pid_and_receives_flags_auth_and_bounded_payload() {
 }
 
 #[test]
-fn malformed_timeout_and_oversized_responses_restart_once_then_fallback() {
-    for mode in ["malformed", "timeout", "oversized"] {
+fn transport_failures_restart_once_then_report_the_composed_line() {
+    let request: DialogueRequest = serde_json::from_str(SPEECH_REQUEST).expect("valid request");
+    for mode in ["timeout", "oversized"] {
         let record = temporary_path(mode);
         let mut server = backend(mode, &record, 512);
-        let reply = process_line(BERRY_MEMORY, &mut server);
-        assert_eq!(reply.say, "berry remains bad.", "{mode}");
-        assert_eq!(reply.recalled_memory.map(|id| id.0), Some(41));
+        let reply = process_line(SPEECH_REQUEST, &mut server);
+        assert_eq!(reply.say, compose_line(&request), "{mode}");
+        assert_eq!(
+            reply.worker_fallback,
+            Some(DialogueFallbackReason::GenerationFailed)
+        );
         let starts = record_lines(&record)
             .iter()
             .filter(|line| line.starts_with("start "))
@@ -120,11 +124,37 @@ fn malformed_timeout_and_oversized_responses_restart_once_then_fallback() {
 }
 
 #[test]
+fn rejected_lines_are_resampled_on_the_warm_server() {
+    let request: DialogueRequest = serde_json::from_str(SPEECH_REQUEST).expect("valid request");
+    let record = temporary_path("malformed");
+    let mut server = backend("malformed", &record, 8 * 1024);
+    let reply = process_line(SPEECH_REQUEST, &mut server);
+    assert_eq!(reply.say, compose_line(&request));
+    assert_eq!(reply.worker_fallback, None);
+    let lines = record_lines(&record);
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.starts_with("start "))
+            .count(),
+        1
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.contains("POST /v1/chat/completions"))
+            .count(),
+        3
+    );
+    fs::remove_file(record).expect("record should be removable");
+}
+
+#[test]
 fn dropping_backend_reaps_server_process() {
     let record = temporary_path("drop");
     {
         let request: DialogueRequest =
-            serde_json::from_str(BERRY_MEMORY).expect("request should parse");
+            serde_json::from_str(SPEECH_REQUEST).expect("request should parse");
         let mut server = backend("valid", &record, 8 * 1024);
         server
             .generate(&request)
@@ -177,7 +207,7 @@ fn supervisor_reaps_server_when_worker_is_killed() {
         .stdin
         .as_mut()
         .expect("stdin should be piped")
-        .write_all(BERRY_MEMORY.as_bytes())
+        .write_all(SPEECH_REQUEST.as_bytes())
         .expect("request should be written");
     let start = (0..50).find_map(|_| {
         let start = fs::read_to_string(&record).ok().and_then(|contents| {
@@ -237,12 +267,12 @@ fn environment_selects_warm_server_without_changing_jsonl_transport() {
         .stdin
         .take()
         .expect("stdin should be piped")
-        .write_all(BERRY_MEMORY.as_bytes())
+        .write_all(SPEECH_REQUEST.as_bytes())
         .expect("request should be written");
     let output = child.wait_with_output().expect("worker should finish");
     assert!(output.status.success());
     let reply: beastie_protocol::DialogueReply =
         serde_json::from_slice(&output.stdout).expect("worker should emit one JSONL reply");
-    assert_eq!(reply.say, "berry remains bad.");
+    assert_eq!(reply.say, "want berry! berry!");
     fs::remove_file(record).expect("record should be removable");
 }

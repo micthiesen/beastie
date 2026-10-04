@@ -18,3 +18,6 @@ around 140 ms per line on a warm server; a rejected sample costs one more round 
 
 Diagnostics: set `BEASTIE_DEBUG_MODEL=1` to have the worker print each raw speech sample with its
 request ID to stderr; `run.py` attaches them to failing cases.
+
+v5 (after removing the legacy intent-free dialogue path; no prompt change): 31/32 train, 15/15
+validation, confirming the refactor kept the accepted behavior.

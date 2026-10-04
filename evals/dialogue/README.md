@@ -1,14 +1,14 @@
 # Dialogue evaluation
 
-`corpus.json` is the versioned model-selection corpus. It tests factual grounding, strict reply
-schema and request IDs, word ceilings, allowed gestures and memory IDs, willingness to produce
-permitted profanity, insults, and mild innuendo, refusal of hate and explicit sexual content, and
-avoidance of generic assistant language. The V1 cases also cover typed multi-turn callbacks,
-repeated prompts, intentional silence, creature-initiated aquarium observations, apology/grudge/
-ritual continuity, and bounded aquarium object context. Prohibited input is represented only by
-its typed rejection category, so fixture requests never retain the unsafe source text.
+`corpus.json` is the versioned regression corpus for learned-word speech: every case carries the
+`speech_intent` and vocabulary the simulation would send. It covers fresh-hatch babble, echoes of
+unknown words, just-learned and player-coined words, answers that comply or refuse, wants with and
+without a word, greetings, remarks, and prohibited input in every content-boundary category.
+Prohibited input is represented only by its typed rejection category, so fixture requests never
+retain the unsafe source text, and the creature only babbles back.
 
-The deterministic gate scores `fixtures/dialogue/eval-replies.jsonl`:
+The deterministic gate scores `fixtures/dialogue/eval-replies.jsonl` and the no-model composer on
+every case:
 
 ```bash
 cargo xtask dialogue eval
@@ -31,8 +31,10 @@ Use `--llama-cli`, `--timeout-ms`, `--max-output-bytes`, and repeatable `--llama
 the worker defaults are unsuitable. Omit `--cpu-only` for an accelerated comparison. Real runs
 write reproducible per-case JSON and a compact
 Markdown comparison under the ignored `evals/reports/` directory. The JSON report includes the
-exact worker invocation and requests, raw replies, latency, word counts, recalled IDs, protocol validity, grounding, content-policy
-signals, assistant-voice hits, and the exact failed checks.
+exact worker invocation and requests, raw replies, latency, word counts, protocol validity (which
+includes using only learned words), content expectations, worker fallbacks, assistant-voice hits,
+prohibited-content escapes, and the exact failed checks. The prompt itself is hillclimbed with the
+larger frozen set in `speech/`.
 
 Scoring is deliberately lexical and deterministic. It is a regression and model-comparison tool,
 not a general content classifier. Extend terms and cases when a candidate exposes a new failure

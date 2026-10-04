@@ -1,10 +1,16 @@
 # Beastie AI worker
 
-The worker speaks versioned JSONL on standard input and output. Its deterministic fixture backend
-is the default and requires no model, runtime, network, display, or GPU:
+The worker speaks versioned JSONL on standard input and output. Every request carries a speech
+intent decided by the simulation (a request without one, from an older fixture or save, babbles).
+The model writes only the spoken line, which must use the creature's learned words, its sounds and
+stage glue; anything else is answered by the deterministic composer, `compose_line`, which is the
+complete no-model voice. Prohibited player input and echo attempts never reach a model.
+
+The fixture backend is the default. It returns the composed line and requires no model, runtime,
+network, display, or GPU:
 
 ```sh
-cargo run -p beastie-ai-worker < fixtures/dialogue/berry-memory.json
+cargo run -p beastie-ai-worker --bin beastie-ai-worker < fixtures/dialogue/speech-request.json
 ```
 
 The companion `beastie-tts` binary provides bounded offline speech through a separately installed
@@ -32,11 +38,13 @@ cargo run -p beastie-ai-worker -- \
 
 It binds only `127.0.0.1` on an ephemeral port, retries startup, creates a unique API key for the
 worker process, waits for `/health`, and sends authenticated bounded requests to
-`/v1/chat/completions`. Each request uses `temperature: 0`, a fixed seed, no reasoning
-(`reasoning_effort: "none"` and `chat_template_kwargs.enable_thinking: false`), and the existing
-strict reply plus safety validation. A malformed response, timeout, or sidecar exit stops that
-sidecar, starts a replacement once, and otherwise returns the authored fallback. `--cpu-only`
-supplies `--device none --no-op-offload -ngl 0` to the server as well.
+`/v1/chat/completions`. Each request samples one short line (see `src/speech.rs` for temperature,
+token ceiling and per-request seeds) with reasoning disabled (`reasoning_effort: "none"` and
+`chat_template_kwargs.enable_thinking: false`). A line outside the creature's words is resampled on
+the warm server, up to three draws, then the composed line answers. A timeout, oversized response,
+or sidecar exit stops that sidecar and starts a replacement once; a second transport failure
+returns the composed line marked `generation_failed`. `--cpu-only` supplies
+`--device none --no-op-offload -ngl 0` to the server as well.
 
 `BEASTIE_AI_BACKEND=llama-server`, `BEASTIE_LLAMA_SERVER`, `BEASTIE_AI_MODEL`,
 `BEASTIE_AI_TIMEOUT_MS`, `BEASTIE_AI_MAX_OUTPUT_BYTES`, and `BEASTIE_AI_CPU_ONLY` configure this
@@ -52,26 +60,20 @@ cleanup after a forced worker shutdown.
 `BEASTIE_AI_TIMEOUT_MS`, `BEASTIE_AI_MAX_OUTPUT_BYTES`, and `BEASTIE_AI_CPU_ONLY` provide the same
 configuration for launchers. Repeat `--llama-arg VALUE` to add runtime-specific arguments.
 
-Each attempt receives a curated structured-output contract, a 128-token ceiling, and reasoning
-disabled. llama-cli 10310 writes its console banner and echoed prompt to stdout, so the adapter
-requires exactly one unique JSON value in that stream to parse and validate as a `DialogueReply`. Validation rejects an
-incorrect request ID, disallowed gesture, unoffered memory, or excessive word count. The worker
-retries once, then returns the authored constrained fallback. Child stdout and runtime are bounded,
-stderr is discarded, and `--cpu-only` supplies `--device none --no-op-offload -ngl 0`.
+Each attempt receives the same line-only prompt with reasoning disabled. The adapter takes the first
+non-empty output line, and the worker builds the `DialogueReply` itself. The worker retries once,
+then returns the composed line. Child stdout and runtime are bounded, stderr is discarded, and
+`--cpu-only` supplies `--device none --no-op-offload -ngl 0`.
 
-Before acceptance, a deterministic last-line filter rejects near-verbatim player echoes, racial
-slurs, protected-class extermination endorsements, and a narrow graphic-sex lexicon. Ordinary
-profanity and mild non-explicit innuendo remain allowed. Rust also selects the content lane,
-gesture, and recalled-memory ID before prompting; the model only phrases `say` in a request-specific
-reply scaffold.
+Every accepted reply also passes protocol validation, including the content boundary for racial
+slurs, protected-class extermination endorsements, and a narrow graphic-sex lexicon.
 
 ## Runtime limitation
 
 This backend launches `llama-cli` once per attempt, so it reloads the GGUF for every utterance.
 llama.cpp 10310 interactive stdin mode was investigated but is not a dependable framed protocol:
 EOF produced an unbounded prompt loop, and its human console delimiters can collide with generated
-text. The installed build's `--json-schema` sampler also failed to initialize even for a generic
-object schema, so schema enforcement remains in Beastie's strict parser and validator. Treat this
+text. Treat this
 adapter as replayable model evaluation, not the shipping warm runtime.
 
 The game currently also launches the Beastie worker once per dialogue. Production integration must

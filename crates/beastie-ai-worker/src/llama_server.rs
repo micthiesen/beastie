@@ -9,11 +9,10 @@ use beastie_protocol::{DialogueReply, DialogueRequest};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::llama_cpp::{
-    parse_single_reply, validate_model_grounding, validate_model_safety, validate_model_semantics,
-};
 use crate::process::{ContainedChild, UnixProcessGroup};
-use crate::prompt::structured_prompt;
+use crate::speech::{
+    SPEECH_ATTEMPTS, SPEECH_MAX_TOKENS, SPEECH_TEMPERATURE, parse_speech_line, speech_prompt,
+};
 use crate::{BackendError, DialogueBackend, LlamaServerConfig, bounded_llama_threads};
 
 const LOOPBACK_HOST: &str = "127.0.0.1";
@@ -47,55 +46,6 @@ impl LlamaServerBackend {
         }
     }
 
-    fn attempt(&mut self, request: &DialogueRequest) -> Result<DialogueReply, BackendError> {
-        self.ensure_server()?;
-        let prompt = server_prompt(request)?;
-        let body = serde_json::to_vec(&json!({
-            "messages": [{ "role": "user", "content": prompt }],
-            "temperature": 0,
-            "top_p": 1,
-            "top_k": 1,
-            "min_p": 0,
-            "seed": 1,
-            "max_tokens": 128,
-            "stream": false,
-            "reasoning_effort": "none",
-            "chat_template_kwargs": { "enable_thinking": false },
-        }))
-        .map_err(|_| BackendError::MalformedReply)?;
-        if body.len() > self.config.max_output_bytes {
-            return Err(BackendError::OutputTooLarge);
-        }
-
-        let address = self
-            .server
-            .as_ref()
-            .map(|server| server.address)
-            .ok_or(BackendError::ExitFailure)?;
-        let response = http_request(
-            address,
-            "POST",
-            "/v1/chat/completions",
-            Some(&body),
-            &self.api_key,
-            self.config.timeout,
-            self.config.max_output_bytes,
-        )?;
-        if response.status != 200 {
-            return Err(BackendError::ExitFailure);
-        }
-        let response: ChatResponse =
-            serde_json::from_slice(&response.body).map_err(|_| BackendError::MalformedReply)?;
-        let [choice] = response.choices.as_slice() else {
-            return Err(BackendError::MalformedReply);
-        };
-        let reply = parse_single_reply(request, &choice.message.content)?;
-        validate_model_safety(request, &reply)?;
-        validate_model_grounding(request, &reply)?;
-        validate_model_semantics(request, &reply)?;
-        Ok(reply)
-    }
-
     /// One short learned-word line. The model writes only the words; the worker owns the reply.
     fn speech_attempt(
         &mut self,
@@ -106,12 +56,12 @@ impl LlamaServerBackend {
         self.ensure_server()?;
         let body = serde_json::to_vec(&json!({
             "messages": [{ "role": "user", "content": prompt }],
-            "temperature": crate::speech::SPEECH_TEMPERATURE,
+            "temperature": SPEECH_TEMPERATURE,
             "top_p": 0.95,
             "top_k": 40,
             "min_p": 0.05,
             "seed": request.request_id.wrapping_mul(31).wrapping_add(salt),
-            "max_tokens": crate::speech::SPEECH_MAX_TOKENS,
+            "max_tokens": SPEECH_MAX_TOKENS,
             "stop": ["\n"],
             "stream": false,
             "reasoning_effort": "none",
@@ -147,7 +97,7 @@ impl LlamaServerBackend {
                 request.request_id, choice.message.content
             );
         }
-        crate::speech::parse_speech_line(request, &choice.message.content)
+        parse_speech_line(request, &choice.message.content)
     }
 
     fn ensure_server(&mut self) -> Result<(), BackendError> {
@@ -260,57 +210,28 @@ impl LlamaServerBackend {
     }
 }
 
-fn server_prompt(request: &DialogueRequest) -> Result<String, BackendError> {
-    let prompt = structured_prompt(request).map_err(|_| BackendError::MalformedReply)?;
-    let (prefix, scaffold) = prompt
-        .rsplit_once('\n')
-        .ok_or(BackendError::MalformedReply)?;
-    let scaffold: serde_json::Value =
-        serde_json::from_str(scaffold).map_err(|_| BackendError::MalformedReply)?;
-    let gesture = scaffold
-        .get("gesture")
-        .ok_or(BackendError::MalformedReply)?;
-    let recalled_memory = scaffold
-        .get("recalled_memory")
-        .ok_or(BackendError::MalformedReply)?;
-    let recalled_belief = scaffold
-        .get("recalled_belief")
-        .ok_or(BackendError::MalformedReply)?;
-    let gesture = serde_json::to_string(gesture).map_err(|_| BackendError::MalformedReply)?;
-    let recalled_memory =
-        serde_json::to_string(recalled_memory).map_err(|_| BackendError::MalformedReply)?;
-    let recalled_belief =
-        serde_json::to_string(recalled_belief).map_err(|_| BackendError::MalformedReply)?;
-    Ok(format!(
-        "{prefix}\n{{\"protocol_version\":{},\"request_id\":{},\"say\":\"__WRITE_SAY__\",\"gesture\":{gesture},\"recalled_memory\":{recalled_memory},\"recalled_belief\":{recalled_belief}}}",
-        request.protocol_version, request.request_id
-    ))
-}
-
 impl DialogueBackend for LlamaServerBackend {
     fn generate(&mut self, request: &DialogueRequest) -> Result<DialogueReply, BackendError> {
-        if let Some(prompt) = crate::speech::speech_prompt(request) {
-            // A rejected line is just an unlucky sample: draw again on the warm server. Only a
-            // transport failure restarts it.
-            let mut last = Err(BackendError::InvalidReply);
-            for salt in 0..crate::speech::SPEECH_ATTEMPTS {
-                last = self.speech_attempt(request, &prompt, salt);
-                match &last {
-                    Ok(_) => return last,
-                    Err(BackendError::InvalidReply | BackendError::MalformedReply) => {}
-                    Err(_) => {
-                        self.stop_server();
+        let prompt = speech_prompt(request);
+        // A rejected line is just an unlucky sample: draw again on the warm server. A transport
+        // failure replaces the server once.
+        let mut restarted = false;
+        let mut last = Err(BackendError::InvalidReply);
+        for salt in 0..SPEECH_ATTEMPTS {
+            last = self.speech_attempt(request, &prompt, salt);
+            match &last {
+                Ok(_) => break,
+                Err(BackendError::InvalidReply | BackendError::MalformedReply) => {}
+                Err(_) => {
+                    self.stop_server();
+                    if restarted {
+                        break;
                     }
+                    restarted = true;
                 }
             }
-            return last;
         }
-        let first = self.attempt(request);
-        if first.is_ok() {
-            return first;
-        }
-        self.stop_server();
-        self.attempt(request)
+        last
     }
 }
 
@@ -589,20 +510,7 @@ fn terminate_child(child: &mut ContainedChild) {
 mod tests {
     use std::time::Duration;
 
-    use beastie_protocol::DialogueRequest;
-
-    use super::{LlamaServerBackend, LlamaServerConfig, MAX_HTTP_BODY_BYTES, server_prompt};
-
-    const BERRY_MEMORY: &str = include_str!("../../../fixtures/dialogue/berry-memory.json");
-
-    #[test]
-    fn server_prompt_puts_say_before_the_remaining_reply_fields() {
-        let request: DialogueRequest = serde_json::from_str(BERRY_MEMORY).expect("valid request");
-        let prompt = server_prompt(&request).expect("prompt should build");
-        assert!(prompt.ends_with(
-            "{\"protocol_version\":1,\"request_id\":41,\"say\":\"__WRITE_SAY__\",\"gesture\":\"none\",\"recalled_memory\":41,\"recalled_belief\":null}"
-        ));
-    }
+    use super::{LlamaServerBackend, LlamaServerConfig, MAX_HTTP_BODY_BYTES};
 
     #[test]
     fn configured_output_limit_cannot_exceed_the_hard_http_cap() {

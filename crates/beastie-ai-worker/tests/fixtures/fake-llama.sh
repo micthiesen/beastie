@@ -18,20 +18,19 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-reply='{"protocol_version":1,"request_id":41,"say":"berry remains bad.","gesture":"look_player","recalled_memory":41}'
+reply='want berry! berry!'
 case "$mode" in
   valid) printf '%s\n' "$reply" ;;
   retry)
     if [ ! -e "$state" ]; then
       : > "$state"
-      printf '%s\n' 'not json'
+      printf '%s\n' 'hello friend'
     else
       printf '%s\n' "$reply"
     fi
     ;;
   timeout) while :; do :; done ;;
   oversized) awk 'BEGIN { for (i = 0; i < 4096; i++) printf "x" }' ;;
-  echo) printf '%s\n' '{"protocol_version":1,"request_id":41,"say":"Do you remember the berry?","gesture":"none","recalled_memory":null}' ;;
-  profanity) printf '%s\n' '{"protocol_version":1,"request_id":41,"say":"Damn berry.","gesture":"none","recalled_memory":null}' ;;
+  unknown) printf '%s\n' 'I would love a berry please' ;;
   *) exit 2 ;;
 esac

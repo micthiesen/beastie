@@ -312,7 +312,5 @@ Living notes. Decisions here supersede the proposal text above where they differ
 
 ### Open work
 
-- Remove the legacy intent-free dialogue path (relationship-lane prompts, `authored_fallback_phrase`,
-  legacy corpus cases) now that every request carries a speech intent.
 - Native feel capture with live pointer input, blind readability check, and the ten-minute fun
   scorecard runs.

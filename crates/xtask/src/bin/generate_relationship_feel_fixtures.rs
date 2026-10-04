@@ -2,7 +2,7 @@ use beastie_core::{
     ACTIVE_DAY_MS, FoodId, GameEvent, Intention, NormalizedPosition, PlayerEvent, SeededRandom,
     SemanticDestination, SteeringMode, ToyId, WorldState, step,
 };
-use beastie_session::{DialogueHistory, SESSION_SAVE_VERSION, SessionSave};
+use beastie_session::{SESSION_SAVE_VERSION, SessionSave};
 
 fn finish_food(world: &mut WorldState, random: &mut SeededRandom, food: FoodId) {
     let position = world.creature.aquarium.position;
@@ -45,7 +45,6 @@ fn food_fixture(seed: u64, food: FoodId, preference: f32) -> SessionSave {
         random,
         sequence: 0,
         next_request_id: 1,
-        dialogue_history: DialogueHistory::default(),
     }
 }
 
@@ -78,7 +77,6 @@ fn familiar_fixture(
         random,
         sequence: 0,
         next_request_id: 1,
-        dialogue_history: DialogueHistory::default(),
     }
 }
 

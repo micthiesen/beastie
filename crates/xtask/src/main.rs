@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use beastie_core::{ACTIVE_DAY_MS, GameEvent, MemoryId, SeededRandom, WorldState, step};
+use beastie_core::{ACTIVE_DAY_MS, GameEvent, SeededRandom, WorldState, step};
 use beastie_protocol::{
     DialogueReply, DialogueRequest, Gesture, constrained_fallback_reply, validate_reply,
 };
@@ -1016,24 +1016,20 @@ fn process_command(
         .map_err(|error| AdapterError::new("invalid_utf8", error.to_string()))?;
     let command = GameSession::parse_command(line).map_err(AdapterError::from_session)?;
     let observation = session.apply(command).map_err(AdapterError::from_session)?;
-    let (speech, recalled_memory) = observation
+    let speech = observation
         .dialogue_request
         .as_ref()
         .map(fixture_reply)
         .transpose()?
-        .map_or((None, None), |reply| {
-            (Some(reply.say), reply.recalled_memory)
-        });
+        .map(|reply| reply.say);
     Ok(PlayOutput {
         observation,
         accepted: true,
         speech,
-        recalled_memory,
     })
 }
 
 fn fixture_reply(request: &DialogueRequest) -> std::result::Result<DialogueReply, AdapterError> {
-    let memory = request.candidate_memories.first();
     let mut reply = constrained_fallback_reply(request);
     if request
         .constraints
@@ -1042,7 +1038,6 @@ fn fixture_reply(request: &DialogueRequest) -> std::result::Result<DialogueReply
     {
         reply.gesture = Gesture::LookPlayer;
     }
-    reply.recalled_memory = memory.map(|candidate| candidate.id);
     validate_reply(request, reply).map_err(|error| {
         AdapterError::new(
             "fixture_reply_invalid",
@@ -1058,17 +1053,11 @@ struct PlayOutput {
     accepted: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     speech: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    recalled_memory: Option<MemoryId>,
 }
 
 impl PlayOutput {
-    /// A reply is grounded when it recalls an offered memory or says a word the creature
-    /// learned from the player.
+    /// A reply is grounded when it says a word the creature learned from the player.
     fn is_grounded(&self) -> bool {
-        if self.recalled_memory.is_some() {
-            return true;
-        }
         let (Some(request), Some(speech)) = (&self.observation.dialogue_request, &self.speech)
         else {
             return false;
@@ -1110,7 +1099,6 @@ impl AdapterError {
             | SessionError::RequestId => "save_failed",
             SessionError::State(_) => "invalid_state",
             SessionError::Dialogue(_) => "invalid_dialogue_request",
-            SessionError::DialogueHistory => "invalid_dialogue_history",
         };
         Self::new(code, error.to_string())
     }

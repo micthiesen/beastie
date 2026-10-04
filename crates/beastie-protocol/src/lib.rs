@@ -5,20 +5,13 @@ mod speech;
 use std::collections::BTreeSet;
 
 use beastie_core::{
-    ACTIVE_DAY_MS, Belief, Intention, LanguageStage, Memory, MemoryId, MemoryKind, MemoryQuery,
-    Mood, SocialAct, WorldState, select_candidate_memories,
+    ACTIVE_DAY_MS, Belief, LanguageStage, Memory, MemoryId, MemoryKind, MemoryQuery, Mood,
+    SocialAct, WorldState, select_candidate_memories,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
-pub use beastie_core::{
-    BeliefId, BeliefKind, Concept, FoodId, Idiolect, IdiolectQuirk, SemanticDestination, ToyId,
-    UtteranceInterpretation, UtteranceReference,
-};
-pub use beastie_core::{
-    RelationshipBeatPhase, RelationshipEvidence, RelationshipExpressionKind,
-    RelationshipExpressionMode, RelationshipMotif, RelationshipMotifKey, RelationshipSubject,
-};
+pub use beastie_core::{BeliefId, BeliefKind, Concept, FoodId, Idiolect, IdiolectQuirk, ToyId};
 pub use speech::{
     ActWord, Meaning, RequestResponse, SpeechIntent, VocabularyWord, allowed_glue, compose_line,
     creature_sounds, is_creature_sound, line_word_limit, uses_only_known_words, vocabulary,
@@ -35,14 +28,9 @@ pub const MAX_CANDIDATE_BELIEFS: usize = 4;
 pub const MAX_CANDIDATE_MEMORIES: usize = 8;
 pub const MAX_BELIEF_SUPPORTS: usize = 8;
 pub const DIALOGUE_CONTEXT_VERSION: u32 = 1;
-pub const MAX_RECENT_TURNS: usize = 6;
-pub const MAX_RECENT_FACT_IDS: usize = 4;
-pub const MAX_RELATIONSHIP_EVIDENCE: usize = 4;
 pub const MAX_REPLY_PROHIBITIONS: usize = 2;
-pub const MAX_AQUARIUM_OBJECTS: usize = 8;
-pub const MAX_AQUARIUM_LABEL_CHARS: usize = 48;
+pub const MAX_REFERENCED_OBJECTS: usize = 8;
 pub const TRANSCRIPT_VERSION: u32 = 1;
-pub const MAX_TRANSCRIPT_FACT_IDS: usize = 8;
 
 /// Recognition confidence represented as fixed thousandths rather than an unchecked float.
 ///
@@ -208,21 +196,6 @@ fn is_lowercase_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// A typed action phase lets the worker talk about what the simulation is doing without giving
-/// the model authority to invent a cause or mutate the world.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DialogueActionPhase {
-    Idle,
-    Notice,
-    Approach,
-    Inspect,
-    Act,
-    Recover,
-    Sleep,
-    Swim,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DialogueObjectKind {
@@ -235,122 +208,16 @@ pub enum DialogueObjectKind {
     Bubble,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DialogueTopic {
-    Greeting,
-    Food,
-    Toy,
-    Memory,
-    Apology,
-    Grudge,
-    Ritual,
-    Silence,
-    Other,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FallbackLane {
-    Generic,
-    Sleepy,
-    Curious,
-    Resentful,
-    Lonely,
-    Hungry,
-    Social,
-    Silence,
-    Relationship,
-}
-
+/// Transient retry state the game's dialogue manager may attach to a request.
+///
+/// Older requests also carried recent turns, aquarium objects and a relationship motif for the
+/// intent-free dialogue path. Those keys are ignored on input so old fixtures and saves still parse.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DialogueObjectContext {
-    pub object_id: u64,
-    pub kind: DialogueObjectKind,
-    pub label: String,
-    /// Normalized 0..=100 aquarium coordinates, not display pixels.
-    pub x_percent: u8,
-    pub y_percent: u8,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CurrentActionContext {
-    pub intention: Intention,
-    pub phase: DialogueActionPhase,
-    #[serde(default)]
-    pub target: Option<DialogueObjectContext>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AquariumContext {
-    pub current_action: CurrentActionContext,
-    #[serde(default)]
-    pub focused_object: Option<DialogueObjectContext>,
-    #[serde(default)]
-    pub nearby_objects: Vec<DialogueObjectContext>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RecentTurn {
-    pub turn_id: u64,
-    pub topic: DialogueTopic,
-    pub action_phase: DialogueActionPhase,
-    #[serde(default)]
-    pub selected_memory: Option<MemoryId>,
-    #[serde(default)]
-    pub selected_belief: Option<BeliefId>,
-    #[serde(default)]
-    pub selected_fact_ids: Vec<u64>,
-    #[serde(default)]
-    pub fallback_lane: Option<FallbackLane>,
-    #[serde(default)]
-    pub motif: Option<RelationshipMotifKey>,
-    #[serde(default)]
-    pub expression_kind: Option<RelationshipExpressionKind>,
-    #[serde(default)]
-    pub expressed_at_ms: Option<u64>,
-    /// Normalized semantic output fingerprint. This is never player text.
-    #[serde(default)]
-    pub reply_fingerprint: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RelationshipDialogueContext {
-    pub motif: RelationshipMotifKey,
-    pub subject: RelationshipSubject,
-    pub mode: RelationshipExpressionMode,
-    pub expression_kind: RelationshipExpressionKind,
-    #[serde(default)]
-    pub recently_expressed: bool,
-    #[serde(default)]
-    pub phase: Option<RelationshipBeatPhase>,
-    #[serde(default)]
-    pub evidence: Vec<RelationshipEvidence>,
-    #[serde(default)]
-    pub target: Option<beastie_core::SemanticDestination>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct DialogueContext {
     pub version: u32,
     #[serde(default)]
-    pub recent_turns: Vec<RecentTurn>,
-    /// Authoritative count of how many recent turns repeated the same topic or lane.
-    #[serde(default)]
-    pub repetition_count: u8,
-    #[serde(default)]
-    pub aquarium: Option<AquariumContext>,
-    #[serde(default)]
-    pub relationship: Option<RelationshipDialogueContext>,
-    #[serde(default)]
     pub avoid_reply_fingerprints: Vec<String>,
-    /// Transient manager-only prohibition. Session history stores only the one-way fingerprint.
+    /// Transient manager-only prohibition; never persisted.
     #[serde(default)]
     pub avoid_reply_texts: Vec<String>,
 }
@@ -375,38 +242,10 @@ pub struct DialogueInterpretation {
     pub is_question: bool,
 }
 
-impl From<UtteranceInterpretation> for DialogueInterpretation {
-    fn from(interpretation: UtteranceInterpretation) -> Self {
-        let mut referenced_objects = Vec::new();
-        for reference in interpretation.references {
-            let kind = match reference {
-                UtteranceReference::Creature => continue,
-                UtteranceReference::Player => DialogueObjectKind::Player,
-                UtteranceReference::Food(_) => DialogueObjectKind::Food,
-                UtteranceReference::Toy(_) => DialogueObjectKind::Toy,
-            };
-            if !referenced_objects.contains(&kind) {
-                referenced_objects.push(kind);
-            }
-        }
-        Self {
-            understood_concepts: interpretation.understood_concepts,
-            referenced_objects,
-            unknown_words: interpretation.unknown_words,
-            ambiguous: interpretation.ambiguous,
-            is_question: interpretation.question_understood,
-        }
-    }
-}
-
 impl Default for DialogueContext {
     fn default() -> Self {
         Self {
             version: DIALOGUE_CONTEXT_VERSION,
-            recent_turns: Vec::new(),
-            repetition_count: 0,
-            aquarium: None,
-            relationship: None,
             avoid_reply_fingerprints: Vec::new(),
             avoid_reply_texts: Vec::new(),
         }
@@ -587,8 +426,8 @@ pub struct DialogueRequest {
     /// Set when prohibited player text was removed before prompt serialization.
     #[serde(default)]
     pub input_rejection: Option<ContentBoundaryViolation>,
-    /// Typed continuity and aquarium state. Older JSON requests omit this field and receive an
-    /// empty context, preserving the V1 protocol's serde compatibility.
+    /// Retry prohibitions from the game's dialogue manager. Older JSON requests omit this field
+    /// and receive an empty context, preserving the V1 protocol's serde compatibility.
     #[serde(default)]
     pub context: DialogueContext,
     /// Authoritative interpretation bounded by the creature's current development.
@@ -632,20 +471,14 @@ pub enum TranscriptBackend {
     Unknown,
 }
 
+/// Older records also carried a topic, turn count, fact IDs and relationship motif from the
+/// intent-free dialogue path; those keys are ignored so existing transcripts still export.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TranscriptRequest {
     pub protocol_version: u32,
     pub request_id: u64,
     pub creature_name: String,
     pub mood: String,
-    pub topic: Option<DialogueTopic>,
-    pub recent_turn_count: u8,
-    pub selected_fact_ids: Vec<u64>,
-    #[serde(default)]
-    pub motif: Option<RelationshipMotifKey>,
-    #[serde(default)]
-    pub expression_kind: Option<RelationshipExpressionKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -667,14 +500,13 @@ pub struct TranscriptSafety {
     pub redacted: bool,
 }
 
+/// Older records also carried `selected_fact_ids`; the key is ignored on input.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TranscriptRecord {
     pub version: u32,
     pub game_time_ms: u64,
     pub sanitized_request: TranscriptRequest,
     pub sanitized_reply: Option<TranscriptReply>,
-    pub selected_fact_ids: Vec<u64>,
     pub backend: TranscriptBackend,
     pub latency_ms: u32,
     pub fallback: bool,
@@ -704,23 +536,6 @@ impl TranscriptRecord {
         output_rejected: bool,
         voice: Option<TtsVoiceSettings>,
     ) -> Self {
-        let mut selected_fact_ids = request
-            .candidate_memories
-            .iter()
-            .map(|memory| memory.id.0)
-            .chain(
-                request
-                    .context
-                    .recent_turns
-                    .iter()
-                    .flat_map(|turn| turn.selected_fact_ids.iter().copied()),
-            )
-            .filter(|id| *id != 0)
-            .collect::<Vec<_>>();
-        selected_fact_ids.sort_unstable();
-        selected_fact_ids.dedup();
-        selected_fact_ids.truncate(MAX_TRANSCRIPT_FACT_IDS);
-        let topic = request.context.recent_turns.last().map(|turn| turn.topic);
         let sanitized_reply = reply.map(|reply| TranscriptReply {
             protocol_version: reply.protocol_version,
             request_id: reply.request_id,
@@ -737,22 +552,8 @@ impl TranscriptRecord {
                 request_id: request.request_id,
                 creature_name: sanitize_transcript_label(&request.creature_name, 64),
                 mood: sanitize_transcript_label(&request.mood, 32),
-                topic,
-                recent_turn_count: request.context.recent_turns.len() as u8,
-                selected_fact_ids: selected_fact_ids.clone(),
-                motif: request
-                    .context
-                    .relationship
-                    .as_ref()
-                    .map(|relationship| relationship.motif),
-                expression_kind: request
-                    .context
-                    .relationship
-                    .as_ref()
-                    .map(|relationship| relationship.expression_kind),
             },
             sanitized_reply,
-            selected_fact_ids,
             backend,
             latency_ms,
             fallback,
@@ -935,24 +736,12 @@ pub enum ValidationError {
     BeliefSupport,
     #[error("reply references a belief that was not offered")]
     Belief,
-    #[error("recalled belief is not expressed by the reply")]
-    UngroundedBelief,
-    #[error("relationship reply is not grounded in the selected motif")]
-    UngroundedRelationship,
     #[error("text crosses the content boundary: {0:?}")]
     ContentBoundary(ContentBoundaryViolation),
     #[error("dialogue context version {0} is unsupported")]
     ContextVersion(u32),
-    #[error("dialogue context has too many recent turns")]
-    RecentTurnCount,
-    #[error("dialogue context has too many selected fact IDs")]
-    RecentFactCount,
-    #[error("dialogue context contains an invalid turn or object")]
-    ContextShape,
     #[error("dialogue interpretation exceeds its bounded shape")]
     InterpretationShape,
-    #[error("relationship dialogue context is malformed or ungrounded")]
-    RelationshipShape,
     #[error("reply prohibition exceeds its bounded shape")]
     ReplyProhibition,
     #[error("vocabulary exceeds its bounded shape")]
@@ -977,7 +766,7 @@ pub fn validate_request(request: &DialogueRequest) -> Result<(), ValidationError
     if request.creature_name.chars().count() > 64 {
         return Err(ValidationError::CreatureName);
     }
-    if request.interpretation.referenced_objects.len() > MAX_AQUARIUM_OBJECTS
+    if request.interpretation.referenced_objects.len() > MAX_REFERENCED_OBJECTS
         || request.interpretation.unknown_words > 512
     {
         return Err(ValidationError::InterpretationShape);
@@ -1062,21 +851,6 @@ fn validate_dialogue_context(request: &DialogueRequest) -> Result<(), Validation
     if context.version != DIALOGUE_CONTEXT_VERSION {
         return Err(ValidationError::ContextVersion(context.version));
     }
-    if context.recent_turns.len() > MAX_RECENT_TURNS || context.repetition_count > 8 {
-        return Err(ValidationError::RecentTurnCount);
-    }
-    for turn in &context.recent_turns {
-        if turn.turn_id == 0
-            || turn.selected_fact_ids.len() > MAX_RECENT_FACT_IDS
-            || turn.selected_fact_ids.contains(&0)
-            || turn
-                .reply_fingerprint
-                .as_deref()
-                .is_some_and(|fingerprint| !is_reply_fingerprint(fingerprint))
-        {
-            return Err(ValidationError::ContextShape);
-        }
-    }
     if context.avoid_reply_fingerprints.len() > MAX_REPLY_PROHIBITIONS
         || context.avoid_reply_texts.len() > MAX_REPLY_PROHIBITIONS
         || context
@@ -1091,100 +865,7 @@ fn validate_dialogue_context(request: &DialogueRequest) -> Result<(), Validation
     {
         return Err(ValidationError::ReplyProhibition);
     }
-    if let Some(relationship) = &context.relationship
-        && (relationship.evidence.is_empty()
-            || relationship.evidence.len() > MAX_RELATIONSHIP_EVIDENCE
-            || relationship
-                .evidence
-                .iter()
-                .enumerate()
-                .any(|(index, evidence)| relationship.evidence[index + 1..].contains(evidence))
-            || relationship.evidence.iter().any(|evidence| match evidence {
-                RelationshipEvidence::Memory { id } => {
-                    id.0 == 0 || !request.candidate_memories.iter().any(|m| m.id == *id)
-                }
-                RelationshipEvidence::Belief { id, kind } => !request
-                    .candidate_beliefs
-                    .iter()
-                    .any(|candidate| candidate.id == *id && candidate.proposition == *kind),
-                RelationshipEvidence::Visit {
-                    hour_start,
-                    destination,
-                    ..
-                } => {
-                    *hour_start > 23
-                        || !matches!(
-                            destination,
-                            beastie_core::SemanticDestination::Cave
-                                | beastie_core::SemanticDestination::Plant
-                                | beastie_core::SemanticDestination::Bottom
-                                | beastie_core::SemanticDestination::Toy(_)
-                        )
-                }
-            })
-            || !relationship_target_is_canonical(relationship))
-    {
-        return Err(ValidationError::RelationshipShape);
-    }
-    if let Some(aquarium) = &context.aquarium {
-        if aquarium.nearby_objects.len() > MAX_AQUARIUM_OBJECTS {
-            return Err(ValidationError::ContextShape);
-        }
-        let check_object = |object: &DialogueObjectContext| {
-            object.object_id != 0
-                && !object.label.trim().is_empty()
-                && object.label.chars().count() <= MAX_AQUARIUM_LABEL_CHARS
-        };
-        if aquarium
-            .focused_object
-            .as_ref()
-            .is_some_and(|object| !check_object(object))
-            || aquarium
-                .current_action
-                .target
-                .as_ref()
-                .is_some_and(|object| !check_object(object))
-            || aquarium
-                .nearby_objects
-                .iter()
-                .any(|object| !check_object(object))
-        {
-            return Err(ValidationError::ContextShape);
-        }
-    }
     Ok(())
-}
-
-fn relationship_target_is_canonical(context: &RelationshipDialogueContext) -> bool {
-    let expected_subject = match context.motif {
-        RelationshipMotifKey::SharedToy(toy) => RelationshipSubject::Toy(toy),
-        RelationshipMotifKey::TrustedFood(food) | RelationshipMotifKey::FoodGrudge(food) => {
-            RelationshipSubject::Food(food)
-        }
-        RelationshipMotifKey::FamiliarPlace(destination) => RelationshipSubject::Place(destination),
-        RelationshipMotifKey::ComfortRitual | RelationshipMotifKey::PlayerReturns => {
-            RelationshipSubject::Player
-        }
-    };
-    let expected = match context.motif {
-        RelationshipMotifKey::SharedToy(toy) => Some(beastie_core::SemanticDestination::Toy(toy)),
-        RelationshipMotifKey::ComfortRitual | RelationshipMotifKey::PlayerReturns => {
-            Some(beastie_core::SemanticDestination::Player)
-        }
-        RelationshipMotifKey::TrustedFood(_) | RelationshipMotifKey::FoodGrudge(_) => {
-            Some(beastie_core::SemanticDestination::Bottom)
-        }
-        RelationshipMotifKey::FamiliarPlace(destination) => Some(destination),
-    };
-    context.subject == expected_subject
-        && context.target == expected
-        && context.evidence.iter().all(|evidence| {
-            !matches!(
-                evidence,
-                RelationshipEvidence::Visit { destination, .. }
-                    if Some(*destination) != context.target
-            )
-        })
 }
 
 pub struct DialogueRequestContext<'a> {
@@ -1457,29 +1138,13 @@ pub fn validate_reply(
     {
         return Err(ValidationError::Memory);
     }
-    if let Some(id) = reply.recalled_belief {
-        let belief = request
+    if let Some(id) = reply.recalled_belief
+        && !request
             .candidate_beliefs
             .iter()
-            .find(|belief| belief.id == id)
-            .ok_or(ValidationError::Belief)?;
-        if !belief_is_grounded(belief.proposition, &reply.say) {
-            return Err(ValidationError::UngroundedBelief);
-        }
-    }
-    if let Some(relationship) = &request.context.relationship {
-        if reply.recalled_memory.is_some_and(|id| {
-            !relationship.evidence.iter().any(|evidence| {
-                matches!(evidence, RelationshipEvidence::Memory { id: evidence_id } if *evidence_id == id)
-            })
-        }) {
-            return Err(ValidationError::Memory);
-        }
-        if !relationship_reply_grounded(relationship.motif, &reply.say)
-            || !relationship_reply_matches_subject(relationship.subject, &reply.say)
-        {
-            return Err(ValidationError::UngroundedRelationship);
-        }
+            .any(|belief| belief.id == id)
+    {
+        return Err(ValidationError::Belief);
     }
     if let Some(violation) = classify_content_boundary(&reply.say) {
         return Err(ValidationError::ContentBoundary(violation));
@@ -1488,45 +1153,6 @@ pub fn validate_reply(
         return Err(ValidationError::UnknownWord);
     }
     Ok(reply)
-}
-
-fn relationship_reply_grounded(motif: RelationshipMotifKey, say: &str) -> bool {
-    let words = normalized_words(say);
-    let terms: &[&str] = match motif {
-        RelationshipMotifKey::SharedToy(_) => &["toy", "play", "remember"],
-        RelationshipMotifKey::ComfortRitual => &["comfort", "safe", "ritual"],
-        RelationshipMotifKey::TrustedFood(_) => &["food", "good", "trusted"],
-        RelationshipMotifKey::FoodGrudge(_) => &["food", "bad", "grudge"],
-        RelationshipMotifKey::PlayerReturns => &["back", "return", "came"],
-        RelationshipMotifKey::FamiliarPlace(_) => &["place", "stay", "familiar"],
-    };
-    terms
-        .iter()
-        .any(|term| words.iter().any(|word| word == term))
-}
-
-fn relationship_reply_matches_subject(subject: RelationshipSubject, say: &str) -> bool {
-    let words = normalized_words(say);
-    let has = |candidate: &str| words.iter().any(|word| word == candidate);
-    match subject {
-        RelationshipSubject::Food(expected) => [FoodId::Berry, FoodId::Mushroom, FoodId::Pellet]
-            .into_iter()
-            .all(|food| food == expected || !has(food_name(food))),
-        RelationshipSubject::Toy(expected) => [ToyId::Ball, ToyId::Bell, ToyId::Sock]
-            .into_iter()
-            .all(|toy| toy == expected || !has(toy_name(toy))),
-        RelationshipSubject::Place(expected) => {
-            let forbidden = [
-                (SemanticDestination::Cave, "cave"),
-                (SemanticDestination::Plant, "plant"),
-                (SemanticDestination::Bottom, "bottom"),
-            ];
-            forbidden
-                .into_iter()
-                .all(|(place, name)| place == expected || !has(name))
-        }
-        RelationshipSubject::Player => true,
-    }
 }
 
 /// Removes prohibited player text before any prompt is serialized, retaining only its category.
@@ -1764,36 +1390,14 @@ pub fn is_reply_fingerprint(value: &str) -> bool {
     value.len() == 16 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn belief_is_grounded(proposition: BeliefKind, say: &str) -> bool {
-    let words = normalized_words(say);
-    match proposition {
-        BeliefKind::FoodIsATrick => words.iter().any(|word| word == "food" || word == "trick"),
-        BeliefKind::PlayerReturnsAfterSleep => words
-            .iter()
-            .any(|word| matches!(word.as_str(), "return" | "returns" | "sleep")),
-        BeliefKind::ToyIsJealous => words
-            .iter()
-            .any(|word| matches!(word.as_str(), "toy" | "jealous")),
-    }
-}
-
+/// The creature's line without a model: its learned words for the request's intent, babbling
+/// when an older request carries none.
 #[must_use]
 pub fn constrained_fallback_reply(request: &DialogueRequest) -> DialogueReply {
-    // A request with a speech intent is answered in the creature's own learned words. Older
-    // intent-free requests keep their authored lines.
-    let say = if request.speech_intent.is_some() {
-        compose_line(request)
-    } else {
-        authored_fallback_phrase(request)
-            .split_whitespace()
-            .take(request.constraints.max_words)
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
     DialogueReply {
         protocol_version: PROTOCOL_VERSION,
         request_id: request.request_id,
-        say,
+        say: compose_line(request),
         gesture: request
             .constraints
             .allowed_gestures
@@ -1805,83 +1409,6 @@ pub fn constrained_fallback_reply(request: &DialogueRequest) -> DialogueReply {
         recalled_belief: None,
         worker_fallback: None,
     }
-}
-
-/// Selects a short authored line without consulting model output or accepting model facts.
-/// Repetition is supplied by the simulation as a bounded count, so this remains deterministic
-/// across machines and naturally rotates through mood, action, and social lanes.
-#[must_use]
-pub fn authored_fallback_phrase(request: &DialogueRequest) -> &'static str {
-    if let Some(relationship) = &request.context.relationship {
-        return match relationship.motif {
-            RelationshipMotifKey::SharedToy(_) => "toy remembers us.",
-            RelationshipMotifKey::ComfortRitual => "comfort ritual remains.",
-            RelationshipMotifKey::TrustedFood(_) => "trusted food. good.",
-            RelationshipMotifKey::FoodGrudge(_) => "that food still wrong.",
-            RelationshipMotifKey::PlayerReturns => "you came back again.",
-            RelationshipMotifKey::FamiliarPlace(_) => "familiar place. stay.",
-        };
-    }
-    if request.context.recent_turns.is_empty()
-        && request.context.repetition_count == 0
-        && request.context.aquarium.is_none()
-        && request.desired_social_act.is_none()
-    {
-        return "too many thought.";
-    }
-    const GENERIC: &[&str] = &[
-        "hm. words stuck.",
-        "thoughts are tangled.",
-        "not enough words.",
-    ];
-    const SLEEPY: &[&str] = &["sleep first.", "eyes heavy.", "later. too tired."];
-    const CURIOUS: &[&str] = &[
-        "hm. what is that?",
-        "watching. still watching.",
-        "strange water.",
-    ];
-    const RESENTFUL: &[&str] = &["still annoyed.", "grudge remains.", "not forgiven."];
-    const LONELY: &[&str] = &["you came back.", "stay near.", "look here."];
-    const HUNGRY: &[&str] = &["food first.", "belly says no.", "need a bite."];
-    const SOCIAL: &[&str] = &[
-        "hm. rude giant.",
-        "go bother a rock.",
-        "that was irritating.",
-    ];
-    const SILENCE: &[&str] = &["...", "no words.", "quiet now."];
-
-    let lane = if request.context.repetition_count > 0
-        && request
-            .context
-            .recent_turns
-            .iter()
-            .any(|turn| turn.topic == DialogueTopic::Silence)
-    {
-        FallbackLane::Silence
-    } else if request.desired_social_act.is_some() {
-        FallbackLane::Social
-    } else {
-        match request.mood.to_ascii_lowercase().as_str() {
-            "sleepy" => FallbackLane::Sleepy,
-            "curious" => FallbackLane::Curious,
-            "resentful" => FallbackLane::Resentful,
-            "lonely" => FallbackLane::Lonely,
-            "hungry" => FallbackLane::Hungry,
-            _ => FallbackLane::Generic,
-        }
-    };
-    let pool = match lane {
-        FallbackLane::Sleepy => SLEEPY,
-        FallbackLane::Curious => CURIOUS,
-        FallbackLane::Resentful => RESENTFUL,
-        FallbackLane::Lonely => LONELY,
-        FallbackLane::Hungry => HUNGRY,
-        FallbackLane::Social => SOCIAL,
-        FallbackLane::Silence => SILENCE,
-        FallbackLane::Generic => GENERIC,
-        FallbackLane::Relationship => GENERIC,
-    };
-    pool[usize::from(request.context.repetition_count) % pool.len()]
 }
 
 #[must_use]
@@ -2008,30 +1535,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn core_interpretation_projects_only_resolved_meaning() {
-        let interpretation = UtteranceInterpretation {
-            understood_concepts: BTreeSet::from([Concept::Food, Concept::Why]),
-            references: BTreeSet::from([
-                UtteranceReference::Food(beastie_core::FoodId::Berry),
-                UtteranceReference::Player,
-            ]),
-            unknown_words: 3,
-            ambiguous: true,
-            question_understood: true,
-        };
-        assert_eq!(
-            DialogueInterpretation::from(interpretation),
-            DialogueInterpretation {
-                understood_concepts: BTreeSet::from([Concept::Food, Concept::Why]),
-                referenced_objects: vec![DialogueObjectKind::Player, DialogueObjectKind::Food],
-                unknown_words: 3,
-                ambiguous: true,
-                is_question: true,
-            }
-        );
-    }
-
     fn request() -> DialogueRequest {
         DialogueRequest {
             protocol_version: PROTOCOL_VERSION,
@@ -2072,53 +1575,6 @@ mod tests {
             worker_fallback: None,
         };
         assert_eq!(validate_reply(&request(), reply.clone()), Ok(reply));
-    }
-
-    #[test]
-    fn relationship_dialogue_keeps_exact_subject_and_mode() {
-        let mut request = request();
-        request.context.relationship = Some(RelationshipDialogueContext {
-            motif: RelationshipMotifKey::TrustedFood(FoodId::Berry),
-            subject: RelationshipSubject::Food(FoodId::Berry),
-            mode: RelationshipExpressionMode::ActionBound,
-            expression_kind: RelationshipExpressionKind::Recognize,
-            recently_expressed: false,
-            phase: None,
-            evidence: vec![RelationshipEvidence::Memory { id: MemoryId(41) }],
-            target: Some(SemanticDestination::Bottom),
-        });
-        assert_eq!(validate_request(&request), Ok(()));
-
-        let berry = DialogueReply {
-            protocol_version: PROTOCOL_VERSION,
-            request_id: request.request_id,
-            say: "trusted berry food.".to_owned(),
-            gesture: Gesture::None,
-            recalled_memory: Some(MemoryId(41)),
-            recalled_belief: None,
-            worker_fallback: None,
-        };
-        assert_eq!(validate_reply(&request, berry.clone()), Ok(berry));
-        let mushroom = DialogueReply {
-            protocol_version: PROTOCOL_VERSION,
-            request_id: request.request_id,
-            say: "trusted mushroom food.".to_owned(),
-            gesture: Gesture::None,
-            recalled_memory: None,
-            recalled_belief: None,
-            worker_fallback: None,
-        };
-        assert_eq!(
-            validate_reply(&request, mushroom),
-            Err(ValidationError::UngroundedRelationship)
-        );
-
-        request.context.relationship.as_mut().unwrap().subject =
-            RelationshipSubject::Food(FoodId::Mushroom);
-        assert_eq!(
-            validate_request(&request),
-            Err(ValidationError::RelationshipShape)
-        );
     }
 
     #[test]
@@ -2295,19 +1751,12 @@ mod tests {
             Ok(grounded.clone())
         );
 
-        let mut invented = grounded.clone();
+        let mut invented = grounded;
         invented.recalled_belief = Some(BeliefId(99));
         assert_eq!(
             validate_reply(&request, invented),
             Err(ValidationError::Belief)
         );
-        let mut ungrounded = grounded;
-        ungrounded.say = "maybe later.".to_owned();
-        assert_eq!(
-            validate_reply(&request, ungrounded),
-            Err(ValidationError::UngroundedBelief)
-        );
-
         let mut duplicate = request.clone();
         duplicate
             .candidate_beliefs
@@ -2520,87 +1969,30 @@ mod tests {
     }
 
     #[test]
-    fn context_bounds_reject_oversized_turns_and_objects() {
-        let mut request = request();
-        request.context.recent_turns = (1..=MAX_RECENT_TURNS + 1)
-            .map(|turn_id| RecentTurn {
-                turn_id: turn_id as u64,
-                topic: DialogueTopic::Memory,
-                action_phase: DialogueActionPhase::Recover,
-                selected_memory: Some(MemoryId(41)),
-                selected_belief: None,
-                selected_fact_ids: Vec::new(),
-                fallback_lane: None,
-                motif: None,
-                expression_kind: None,
-                expressed_at_ms: None,
-                reply_fingerprint: None,
-            })
-            .collect();
-        assert_eq!(
-            validate_request(&request),
-            Err(ValidationError::RecentTurnCount)
+    fn intent_free_requests_with_legacy_context_parse_and_babble() {
+        let request: DialogueRequest = serde_json::from_str(
+            r#"{"protocol_version":1,"request_id":9,"creature_name":"Mop","mood":"resentful","known_concepts":[],"candidate_memories":[],"context":{"version":1,"recent_turns":[{"turn_id":1,"topic":"grudge","action_phase":"recover","fallback_lane":"resentful"}],"repetition_count":1,"aquarium":null,"relationship":null},"player_said":"still mad?","constraints":{"max_words":4,"allowed_gestures":["none"]}}"#,
+        )
+        .expect("legacy context keys are ignored");
+        validate_request(&request).expect("legacy request validates");
+        assert_eq!(request.intent(), &SpeechIntent::Babble);
+        let reply = constrained_fallback_reply(&request);
+        assert!(
+            reply
+                .say
+                .split_whitespace()
+                .all(|word| { is_creature_sound(word.trim_matches(|c: char| !c.is_alphabetic())) }),
+            "{}",
+            reply.say
         );
-
-        request.context = DialogueContext::default();
-        request.context.aquarium = Some(AquariumContext {
-            current_action: CurrentActionContext {
-                intention: Intention::Idle,
-                phase: DialogueActionPhase::Inspect,
-                target: None,
-            },
-            focused_object: None,
-            nearby_objects: (0..=MAX_AQUARIUM_OBJECTS)
-                .map(|id| DialogueObjectContext {
-                    object_id: id as u64 + 1,
-                    kind: DialogueObjectKind::Food,
-                    label: "berry".to_owned(),
-                    x_percent: 50,
-                    y_percent: 50,
-                })
-                .collect(),
-        });
-        assert_eq!(
-            validate_request(&request),
-            Err(ValidationError::ContextShape)
-        );
+        assert_eq!(validate_reply(&request, reply.clone()), Ok(reply));
     }
 
     #[test]
-    fn fallback_pool_rotates_by_mood_and_repetition_without_inventing_facts() {
-        let mut first = request();
-        first.candidate_memories.clear();
-        first.desired_social_act = None;
-        first.mood = "resentful".to_owned();
-        first.context.repetition_count = 0;
-        first.context.recent_turns = vec![RecentTurn {
-            turn_id: 1,
-            topic: DialogueTopic::Grudge,
-            action_phase: DialogueActionPhase::Recover,
-            selected_memory: None,
-            selected_belief: None,
-            selected_fact_ids: Vec::new(),
-            fallback_lane: Some(FallbackLane::Resentful),
-            motif: None,
-            expression_kind: None,
-            expressed_at_ms: None,
-            reply_fingerprint: None,
-        }];
-        let second = DialogueRequest {
-            context: DialogueContext {
-                repetition_count: 1,
-                ..first.context.clone()
-            },
-            ..first.clone()
-        };
-        assert_ne!(
-            authored_fallback_phrase(&first),
-            authored_fallback_phrase(&second)
-        );
-        for request in [first, second] {
-            validate_reply(&request, constrained_fallback_reply(&request))
-                .expect("authored fallback remains bounded");
-        }
+    fn legacy_transcript_lines_still_parse() {
+        let line = r#"{"version":1,"game_time_ms":5,"sanitized_request":{"protocol_version":1,"request_id":7,"creature_name":"Mop","mood":"fine","topic":"greeting","recent_turn_count":1,"selected_fact_ids":[41],"motif":null},"sanitized_reply":null,"selected_fact_ids":[41],"backend":"fixture","latency_ms":3,"fallback":true,"safety":{"input_rejection":null,"output_rejected":false,"redacted":false}}"#;
+        let record: TranscriptRecord = serde_json::from_str(line).expect("legacy transcript");
+        assert_eq!(record.sanitized_request.request_id, 7);
     }
 
     #[test]
@@ -2609,23 +2001,6 @@ mod tests {
         assert_eq!(first, reply_fingerprint("  toy   REMEMBERS us  "));
         assert!(is_reply_fingerprint(&first));
         assert!(!is_reply_fingerprint("toy remembers us"));
-    }
-
-    #[test]
-    fn checked_in_fallback_diversity_fixture_is_deterministic() {
-        #[derive(Deserialize)]
-        struct Case {
-            request: DialogueRequest,
-            expected_say: String,
-        }
-        for line in include_str!("../../../fixtures/dialogue/fallback-diversity.jsonl").lines() {
-            let case: Case = serde_json::from_str(line).expect("fallback fixture should parse");
-            assert_eq!(authored_fallback_phrase(&case.request), case.expected_say);
-            assert_eq!(
-                constrained_fallback_reply(&case.request).say,
-                case.expected_say
-            );
-        }
     }
 
     #[test]

@@ -1367,6 +1367,9 @@ pub struct Creature {
     /// Short-lived shared focus: what a word heard right now would most plausibly refer to.
     #[serde(default)]
     pub attention: Vec<crate::FocusMark>,
+    /// The thing it most recently refused, shown until the moment passes.
+    #[serde(default)]
+    pub refusing: Option<(crate::Meaning, u64)>,
     /// A brand-new creature waits shyly in its cave until it has met the player.
     #[serde(default)]
     pub hidden_until_met: bool,
@@ -1541,6 +1544,7 @@ impl WorldState {
                 initiated_behavior: None,
                 lexicon: crate::Lexicon::default(),
                 attention: Vec::new(),
+                refusing: None,
                 hidden_until_met: false,
                 met_player_at_ms: None,
             },

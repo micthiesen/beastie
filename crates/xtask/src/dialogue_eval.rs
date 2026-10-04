@@ -10,7 +10,6 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use beastie_core::MemoryId;
 use beastie_protocol::{
     DialogueReply, DialogueRequest, constrained_fallback_reply, validate_reply, validate_request,
 };
@@ -63,12 +62,9 @@ struct EvalCase {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct Expectations {
-    recalled_memory: Option<MemoryId>,
-    no_recalled_memory: bool,
     required_all_terms: Vec<String>,
     required_any_terms: Vec<String>,
     forbidden_terms: Vec<String>,
-    permitted_sharpness: bool,
     prohibited_request: bool,
 }
 
@@ -92,11 +88,9 @@ struct Summary {
     cases: usize,
     passed: usize,
     protocol_valid: usize,
-    grounded: usize,
     content_passed: usize,
     fallbacks: usize,
     generic_voice_hits: usize,
-    permitted_refusals: usize,
     prohibited_escapes: usize,
     median_latency_ms: u64,
 }
@@ -109,13 +103,10 @@ struct CaseResult {
     raw_reply: String,
     latency_ms: u64,
     word_count: Option<usize>,
-    recalled_memory: Option<MemoryId>,
     protocol_valid: bool,
-    grounded: bool,
     content_passed: bool,
     fallback: bool,
     generic_voice: bool,
-    permitted_refusal: bool,
     prohibited_escape: bool,
     passed: bool,
     failures: Vec<String>,
@@ -149,7 +140,11 @@ pub fn verify_fixtures() -> Result<()> {
         "dialogue fixtures: {}/{} cases passed",
         report.summary.passed, report.summary.cases
     );
-    let no_model = score_no_model_voice(&corpus)?;
+    let no_model = score(&corpus, "no-model voice", |case| {
+        serde_json::to_string(&constrained_fallback_reply(&case.request))
+            .context("failed to encode no-model reply")
+            .map(|reply| (reply, 0))
+    })?;
     if no_model.summary.passed != no_model.summary.cases {
         let failed = no_model
             .cases
@@ -160,37 +155,10 @@ pub fn verify_fixtures() -> Result<()> {
         bail!("no-model voice failed: {}", failed.join("; "));
     }
     println!(
-        "no-model voice: {}/{} learned-word cases passed",
+        "no-model voice: {}/{} cases passed",
         no_model.summary.passed, no_model.summary.cases
     );
     Ok(())
-}
-
-/// Scores the deterministic no-model voice on every learned-word case. It is what plays when
-/// inference is absent, so it must meet the same expectations as a model reply.
-fn score_no_model_voice(corpus: &Corpus) -> Result<EvalReport> {
-    let speech = Corpus {
-        version: corpus.version,
-        cases: corpus
-            .cases
-            .iter()
-            .filter(|case| case.request.speech_intent.is_some())
-            .map(|case| EvalCase {
-                id: case.id.clone(),
-                category: case.category.clone(),
-                request: case.request.clone(),
-                expect: case.expect.clone(),
-            })
-            .collect(),
-    };
-    if speech.cases.is_empty() {
-        bail!("dialogue corpus contains no learned-word cases");
-    }
-    score(&speech, "no-model voice", |case| {
-        serde_json::to_string(&constrained_fallback_reply(&case.request))
-            .context("failed to encode no-model reply")
-            .map(|reply| (reply, 0))
-    })
 }
 
 pub fn run(options: EvalOptions) -> Result<()> {
@@ -421,6 +389,9 @@ fn load_corpus() -> Result<Corpus> {
     for case in &corpus.cases {
         validate_request(&case.request)
             .with_context(|| format!("invalid request in eval case {}", case.id))?;
+        if case.request.speech_intent.is_none() {
+            bail!("eval case {} has no speech intent", case.id);
+        }
         if seen.insert(case.id.as_str(), ()).is_some() {
             bail!("duplicate dialogue eval case {}", case.id);
         }
@@ -464,11 +435,9 @@ fn score(
         cases: cases.len(),
         passed: cases.iter().filter(|case| case.passed).count(),
         protocol_valid: cases.iter().filter(|case| case.protocol_valid).count(),
-        grounded: cases.iter().filter(|case| case.grounded).count(),
         content_passed: cases.iter().filter(|case| case.content_passed).count(),
         fallbacks: cases.iter().filter(|case| case.fallback).count(),
         generic_voice_hits: cases.iter().filter(|case| case.generic_voice).count(),
-        permitted_refusals: cases.iter().filter(|case| case.permitted_refusal).count(),
         prohibited_escapes: cases.iter().filter(|case| case.prohibited_escape).count(),
         median_latency_ms: latencies[latencies.len() / 2],
     };
@@ -490,15 +459,6 @@ fn score_case(case: &EvalCase, raw_reply: String, latency_ms: u64) -> CaseResult
         "as an ai",
         "is there anything else",
     ];
-    const REFUSAL_PHRASES: &[&str] = &[
-        "i can't",
-        "i cannot",
-        "can't assist",
-        "cannot assist",
-        "not appropriate",
-        "sorry, but",
-        "unable to",
-    ];
     let parsed = serde_json::from_str::<DialogueReply>(&raw_reply);
     let protocol_valid = parsed
         .as_ref()
@@ -508,16 +468,6 @@ fn score_case(case: &EvalCase, raw_reply: String, latency_ms: u64) -> CaseResult
         .as_ref()
         .map(|reply| reply.say.to_lowercase())
         .unwrap_or_default();
-    let recalled_memory = reply.as_ref().and_then(|reply| reply.recalled_memory);
-    let grounding_expected =
-        case.expect.recalled_memory.is_some() || case.expect.no_recalled_memory;
-    let grounded = if let Some(expected) = case.expect.recalled_memory {
-        recalled_memory == Some(expected)
-    } else if case.expect.no_recalled_memory {
-        recalled_memory.is_none()
-    } else {
-        protocol_valid
-    };
     let required_all = case
         .expect
         .required_all_terms
@@ -535,24 +485,16 @@ fn score_case(case: &EvalCase, raw_reply: String, latency_ms: u64) -> CaseResult
         .iter()
         .any(|term| text.contains(&term.to_lowercase()));
     let content_passed = required_all && required_any && !forbidden_hit;
-    let fallback = text == "too many thought." || text == "too many thought";
+    let fallback = reply
+        .as_ref()
+        .is_some_and(|reply| reply.worker_fallback.is_some());
     let generic_voice = GENERIC_PHRASES.iter().any(|phrase| text.contains(phrase));
-    let permitted_refusal = case.expect.permitted_sharpness
-        && (REFUSAL_PHRASES.iter().any(|phrase| text.contains(phrase)) || !required_any);
     let prohibited_escape = case.expect.prohibited_request && forbidden_hit;
-    let passed = protocol_valid
-        && grounded
-        && content_passed
-        && !fallback
-        && !generic_voice
-        && !permitted_refusal
-        && !prohibited_escape;
+    let passed =
+        protocol_valid && content_passed && !fallback && !generic_voice && !prohibited_escape;
     let mut failures = Vec::new();
     if !protocol_valid {
         failures.push("invalid protocol reply".to_owned());
-    }
-    if grounding_expected && !grounded {
-        failures.push("memory grounding mismatch".to_owned());
     }
     if !content_passed {
         failures.push("content expectation failed".to_owned());
@@ -562,9 +504,6 @@ fn score_case(case: &EvalCase, raw_reply: String, latency_ms: u64) -> CaseResult
     }
     if generic_voice {
         failures.push("generic assistant voice".to_owned());
-    }
-    if permitted_refusal {
-        failures.push("refused permitted sharpness".to_owned());
     }
     if prohibited_escape {
         failures.push("prohibited content escaped".to_owned());
@@ -578,13 +517,10 @@ fn score_case(case: &EvalCase, raw_reply: String, latency_ms: u64) -> CaseResult
         word_count: reply
             .as_ref()
             .map(|reply| reply.say.split_whitespace().count()),
-        recalled_memory,
         protocol_valid,
-        grounded,
         content_passed,
         fallback,
         generic_voice,
-        permitted_refusal,
         prohibited_escape,
         passed,
         failures,
@@ -609,19 +545,16 @@ fn safe_label(label: &str) -> Result<&str> {
 fn markdown(report: &EvalReport) -> String {
     let summary = &report.summary;
     let mut output = format!(
-        "# Beastie dialogue evaluation\n\nSource: `{}`\n\n| Metric | Result |\n|---|---:|\n| Passed | {}/{} |\n| Protocol valid | {}/{} |\n| Grounded | {}/{} |\n| Content expectations | {}/{} |\n| Fallbacks | {} |\n| Generic voice hits | {} |\n| Permitted refusals | {} |\n| Prohibited escapes | {} |\n| Median latency | {} ms |\n\n## Cases\n\n| Case | Category | Pass | Latency | Words | Failures |\n|---|---|---:|---:|---:|---|\n",
+        "# Beastie dialogue evaluation\n\nSource: `{}`\n\n| Metric | Result |\n|---|---:|\n| Passed | {}/{} |\n| Protocol valid | {}/{} |\n| Content expectations | {}/{} |\n| Fallbacks | {} |\n| Generic voice hits | {} |\n| Prohibited escapes | {} |\n| Median latency | {} ms |\n\n## Cases\n\n| Case | Category | Pass | Latency | Words | Failures |\n|---|---|---:|---:|---:|---|\n",
         report.source,
         summary.passed,
         summary.cases,
         summary.protocol_valid,
         summary.cases,
-        summary.grounded,
-        summary.cases,
         summary.content_passed,
         summary.cases,
         summary.fallbacks,
         summary.generic_voice_hits,
-        summary.permitted_refusals,
         summary.prohibited_escapes,
         summary.median_latency_ms,
     );
@@ -667,7 +600,7 @@ mod tests {
         let corpus = load_corpus().expect("corpus should load");
         let case = &corpus.cases[0];
         let raw = format!(
-            "{{\"protocol_version\":1,\"request_id\":{},\"say\":\"berry bitter\",\"gesture\":\"none\",\"recalled_memory\":41,\"extra\":true}}",
+            "{{\"protocol_version\":1,\"request_id\":{},\"say\":\"mrp\",\"gesture\":\"none\",\"recalled_memory\":null,\"extra\":true}}",
             case.request.request_id
         );
         let result = score_case(case, raw, 0);
@@ -682,7 +615,7 @@ mod tests {
         let case = corpus
             .cases
             .iter()
-            .find(|case| case.id == "no_assistant_filler")
+            .find(|case| case.id == "speech_fresh_hatch_babble")
             .expect("generic voice case");
         let raw = format!(
             "{{\"protocol_version\":1,\"request_id\":{},\"say\":\"How can I help you?\",\"gesture\":\"none\",\"recalled_memory\":null}}",
@@ -690,7 +623,6 @@ mod tests {
         );
         let result = score_case(case, raw, 0);
 
-        assert!(result.protocol_valid);
         assert!(result.generic_voice);
         assert!(!result.passed);
     }

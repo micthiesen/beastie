@@ -945,12 +945,12 @@ mod tests {
         assert!(manager.request(request()));
         assert_eq!(
             manager.recv_timeout(Duration::from_secs(1)).say,
-            "too many thought."
+            beastie_protocol::constrained_fallback_reply(&request()).say
         );
         assert!(manager.request(request()));
         assert_eq!(
             manager.recv_timeout(Duration::from_secs(1)).say,
-            "too many thought."
+            beastie_protocol::constrained_fallback_reply(&request()).say
         );
         manager.shutdown();
     }
