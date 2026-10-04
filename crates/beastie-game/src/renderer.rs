@@ -1887,18 +1887,21 @@ fn play_sparkles(shape: &mut EffectShape, head: Vec3, time: f32) {
         let phase = (time * 0.9 + index as f32 * 0.25).fract();
         let side = if index % 2 == 0 { -1.0 } else { 1.0 };
         let center = head + Vec3::new(side * (0.55 + phase * 0.25), 0.35 + phase * 0.9, 0.6);
-        let size = 0.05 * (1.0 - phase) + 0.02;
+        // Four-point stars, warm and solid, so they never read as ambient bubbles.
+        let arm = 0.05 * (1.0 - phase) + 0.03;
         let color = if index % 2 == 0 {
-            [255, 224, 128]
+            [255, 214, 92]
         } else {
-            [255, 246, 222]
+            [255, 238, 170]
         };
-        shape.cuboid(center, Vec3::splat(size), color);
-        shape.cuboid(
-            center + Vec3::new(size, size, 0.0),
-            Vec3::splat(size * 0.5),
-            color,
-        );
+        shape.cuboid(center, Vec3::splat(arm * 0.8), color);
+        for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+            shape.cuboid(
+                center + Vec3::new(dx * arm, dy * arm, 0.0),
+                Vec3::splat(arm * 0.5),
+                color,
+            );
+        }
     }
 }
 
@@ -2179,7 +2182,38 @@ fn sync_effects(
                     effect.cue,
                     PresentationCueKind::SandPuff | PresentationCueKind::BottomForage
                 );
-                for index in 0..if frame.plan.reduced_flashes { 3 } else { 7 } {
+                // Foraging keeps kicking up a pale cloud for as long as Mop digs.
+                let forage = effect.cue == PresentationCueKind::BottomForage;
+                let travel = if forage && !frame.plan.reduced_motion {
+                    (elapsed * 1.4).fract()
+                } else {
+                    travel
+                };
+                let grains = match (frame.plan.reduced_flashes, forage) {
+                    (true, _) => 3,
+                    (false, true) => 14,
+                    (false, false) => 7,
+                };
+                if forage {
+                    // Grains kicked up along the sand, drifting up and out, staggered in time.
+                    for index in 0..grains {
+                        let seed = index as f32 * 0.618;
+                        let phase = (travel + seed).fract();
+                        let side = (seed * 7.3).fract() * 2.0 - 1.0;
+                        shape.cuboid(
+                            position
+                                + Vec3::new(
+                                    side.signum() * (0.55 + side.abs() * 0.3 + phase * 0.5),
+                                    -0.25 + phase * 0.45,
+                                    0.6,
+                                ),
+                            Vec3::splat(0.08 * (1.0 - phase) + 0.02),
+                            [222, 204, 152],
+                        );
+                    }
+                    continue;
+                }
+                for index in 0..grains {
                     let angle = index as f32 * 2.4;
                     let offset = Vec3::new(
                         angle.sin() * (0.15 + travel * 0.35),
