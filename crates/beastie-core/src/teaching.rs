@@ -9,8 +9,9 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 
 use crate::simulation::{
-    GameEvent, allocate_action_id, creature_is_occupied, improve_relationship, play_with_toy,
-    reinforce_act, set_intention, set_travel_target, start_sleep,
+    GameEvent, allocate_action_id, creature_is_occupied, improve_relationship,
+    interrupt_for_player, play_with_toy, reinforce_act, set_intention, set_travel_target,
+    start_sleep,
 };
 use crate::{
     ActWord, ActivityPhase, DevelopmentMilestone, FocusMark, FoodId, GazeTarget, Intention,
@@ -312,6 +313,7 @@ fn answer_request(
             RequestResponse::Refuse
         }
         Meaning::Toy(toy) => {
+            interrupt_for_player(state, events);
             play_with_toy(state, toy, None, events);
             if state
                 .creature
@@ -328,6 +330,7 @@ fn answer_request(
             }
         }
         Meaning::Act(ActWord::Play) => {
+            interrupt_for_player(state, events);
             let toy = favorite_toy(state);
             play_with_toy(state, toy, None, events);
             RequestResponse::Comply
@@ -348,6 +351,7 @@ fn answer_request(
             if state.creature.needs.hunger < 0.3 {
                 RequestResponse::Refuse
             } else {
+                interrupt_for_player(state, events);
                 // It cannot feed itself: it comes to the glass and asks.
                 come_to_player(state, events);
                 RequestResponse::Comply
@@ -357,11 +361,13 @@ fn answer_request(
             if state.creature.needs.energy > 0.6 {
                 RequestResponse::Refuse
             } else {
+                interrupt_for_player(state, events);
                 start_sleep(state, events);
                 RequestResponse::Comply
             }
         }
         Meaning::Act(ActWord::Come) => {
+            interrupt_for_player(state, events);
             come_to_player(state, events);
             RequestResponse::Comply
         }
@@ -370,6 +376,7 @@ fn answer_request(
             if state.creature.aquarium.action.is_none()
                 && state.creature.interaction_state.toy_interaction.is_none()
             {
+                interrupt_for_player(state, events);
                 come_to_player(state, events);
             }
             RequestResponse::Delight
@@ -649,17 +656,39 @@ mod tests {
     fn random_play_never_produces_invalid_state() {
         use crate::{FoodId, RandomSource};
         let words = [
-            "ball", "bell", "sock", "berry", "mop", "good", "no", "zorp", "come",
+            "ball", "bell", "sock", "berry", "mop", "good", "no", "zorp", "come", "play", "sleep",
+            "pellet", "eat",
         ];
-        for seed in 0..24_u64 {
+        for seed in 0..48_u64 {
             let mut world = if seed % 2 == 0 {
                 WorldState::first_meeting(seed, "Mop")
             } else {
                 WorldState::new(seed, "Mop")
             };
+            // Half the creatures already know words, so requests and remarks fire often.
+            if seed % 4 < 2 {
+                let taught = [
+                    ("ball", Meaning::Toy(ToyId::Ball)),
+                    ("bell", Meaning::Toy(ToyId::Bell)),
+                    ("sock", Meaning::Toy(ToyId::Sock)),
+                    ("berry", Meaning::Food(FoodId::Berry)),
+                    ("pellet", Meaning::Food(FoodId::Pellet)),
+                    ("mop", Meaning::Creature),
+                    ("come", Meaning::Act(ActWord::Come)),
+                    ("play", Meaning::Act(ActWord::Play)),
+                    ("sleep", Meaning::Act(ActWord::Sleep)),
+                    ("eat", Meaning::Act(ActWord::Eat)),
+                    ("good", Meaning::Praise),
+                    ("no", Meaning::Scold),
+                ];
+                for (word, meaning) in taught {
+                    world.creature.lexicon.hear(word, &[(meaning, 3)], 0);
+                    world.creature.lexicon.hear(word, &[(meaning, 3)], 1);
+                }
+            }
             let mut rng = SeededRandom::new(seed);
             let mut chooser = SeededRandom::new(seed ^ 0x5eed);
-            for _ in 0..260 {
+            for _ in 0..400 {
                 let pick = (chooser.next_unit() * 10.0) as u32;
                 let x = (chooser.next_unit() * 10_000.0) as i32;
                 let y = (chooser.next_unit() * 10_000.0) as i32;
@@ -670,6 +699,7 @@ mod tests {
                 let word = words[(chooser.next_unit() * words.len() as f32) as usize % words.len()];
                 let event = match pick {
                     0 => Some(PlayerEvent::Play(toy)),
+                    1 if chooser.next_unit() < 0.2 => Some(PlayerEvent::Arrived),
                     1 => Some(PlayerEvent::Comfort),
                     2 => Some(PlayerEvent::DropFood {
                         food,
@@ -678,6 +708,17 @@ mod tests {
                     3 => Some(PlayerEvent::Tap(NormalizedPosition::new(x, y))),
                     4 | 5 => Some(PlayerEvent::Utterance(word.to_owned())),
                     6 => Some(PlayerEvent::Cursor(Some(NormalizedPosition::new(x, y)))),
+                    7 => {
+                        // Relationship moments overlap with requests in real play.
+                        crate::trigger_relationship_beat(
+                            &mut world,
+                            crate::RelationshipTrigger::QuietMoment,
+                        );
+                        world
+                            .validate()
+                            .unwrap_or_else(|error| panic!("seed {seed} beat: {error}"));
+                        None
+                    }
                     _ => None,
                 };
                 if let Some(event) = event {

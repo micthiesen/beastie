@@ -361,11 +361,7 @@ pub fn step(
     for event in input {
         let before = state.creature.memories.len();
         if should_interrupt_for_player_event(event) {
-            interrupt_private_life(state, ActivityInterruptionOwner::Player, &mut events);
-            interrupt_toy_interaction(state, &mut events);
-            interrupt_action_relationship_moment(state, &mut events);
-            interrupt_relationship_beat(state, &mut events);
-            interrupt_travel(state, &mut events);
+            interrupt_for_player(state, &mut events);
         }
         let first = events.len();
         apply_player_event(state, event, &mut events);
@@ -394,6 +390,15 @@ pub fn step(
         maybe_remark(state, first, &mut events);
     }
     events
+}
+
+/// What any direct player request does first: the creature drops what it was doing for it.
+pub(crate) fn interrupt_for_player(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    interrupt_private_life(state, ActivityInterruptionOwner::Player, events);
+    interrupt_toy_interaction(state, events);
+    interrupt_action_relationship_moment(state, events);
+    interrupt_relationship_beat(state, events);
+    interrupt_travel(state, events);
 }
 
 fn clear_stationary_velocity(state: &mut WorldState) {

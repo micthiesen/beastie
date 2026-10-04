@@ -1098,6 +1098,7 @@ impl AdapterError {
             | SessionError::LegacySave(_)
             | SessionError::RequestId => "save_failed",
             SessionError::State(_) => "invalid_state",
+            SessionError::RolledBack(_) => "rolled_back",
             SessionError::Dialogue(_) => "invalid_dialogue_request",
         };
         Self::new(code, error.to_string())

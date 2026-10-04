@@ -608,13 +608,19 @@ impl Game {
         if clears_speech(&command) {
             self.supersede_dialogue_turn()?;
         }
-        let observation = self
-            .session
-            .apply(CommandEnvelope {
-                version: SESSION_PROTOCOL_VERSION,
-                command,
-            })
-            .map_err(session_error)?;
+        let observation = match self.session.apply(CommandEnvelope {
+            version: SESSION_PROTOCOL_VERSION,
+            command,
+        }) {
+            Ok(observation) => observation,
+            // The session undid a command that would have broken the creature's state. Keep
+            // playing from the last valid moment rather than quitting.
+            Err(beastie_session::SessionError::RolledBack(error)) => {
+                bevy::log::error!("session command undone: {error}");
+                return Ok(());
+            }
+            Err(error) => return Err(session_error(error)),
+        };
         self.trace_events(&observation.events);
         let audio = self
             .view

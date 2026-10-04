@@ -383,6 +383,9 @@ impl GameSession {
         validate_envelope(&envelope)?;
         validate_spoken_input_order(&self.spoken_input, &envelope.command)?;
         self.world.validate().map_err(SessionError::State)?;
+        // A command must never leave the creature in a state the save validator rejects. If a
+        // bug does, the command is undone so play continues from the last valid moment.
+        let before = (self.world.clone(), self.random, self.next_request_id);
         let next_sequence = self.sequence.saturating_add(1);
         let mut events = Vec::new();
         let mut dialogue_request = None;
@@ -545,7 +548,11 @@ impl GameSession {
             SessionCommand::Inspect => inspected_world = Some(self.world.clone()),
         }
 
-        self.world.validate().map_err(SessionError::State)?;
+        if let Err(error) = self.world.validate() {
+            (self.world, self.random, self.next_request_id) = before;
+            self.spoken_input = SpokenInputState::Idle;
+            return Err(SessionError::RolledBack(error));
+        }
         self.sequence = next_sequence;
         Ok(Observation {
             version: SESSION_PROTOCOL_VERSION,
@@ -949,6 +956,9 @@ pub enum SessionError {
     LegacySave(beastie_core::SaveError),
     #[error("session state became invalid: {0}")]
     State(beastie_core::StateValidationError),
+    /// A command produced an invalid state and was undone; the session is unchanged.
+    #[error("command undone after producing an invalid state: {0}")]
+    RolledBack(beastie_core::StateValidationError),
     #[error("dialogue request is invalid: {0}")]
     Dialogue(beastie_protocol::ValidationError),
 }
