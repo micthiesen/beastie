@@ -251,6 +251,7 @@ fn migrate_pre_travel_ownership(world: &mut WorldState) {
             recovery_until_ms: 0,
             rounds_left: 0,
             contacts: 0,
+            unblock_until_ms: 0,
         });
         world.creature.aquarium.travel_purpose =
             Some(crate::TravelPurpose::RefusalStare { interaction_id });

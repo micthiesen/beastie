@@ -409,6 +409,7 @@ mod tests {
             recovery_until_ms: 0,
             rounds_left: 0,
             contacts: 0,
+            unblock_until_ms: 0,
         });
         let mut rng = SeededRandom::new(10);
 
@@ -2823,7 +2824,8 @@ mod tests {
                 destination: SemanticDestination::Cave,
             },
         );
-        step(&mut world, &[], 4_000, &mut SeededRandom::new(124));
+        // Still swimming from the far corner: the familiar-place act must wait for arrival.
+        step(&mut world, &[], 1_500, &mut SeededRandom::new(124));
         assert_eq!(
             world
                 .creature
@@ -3504,6 +3506,24 @@ mod tests {
             );
             let relationship = world.creature.relationship;
             let mut events = Vec::new();
+            if !private {
+                // A player's offer waits while the wedged toy is nudged free, then reaches it.
+                let mut contacted = false;
+                for _ in 0..(6_000 / SIMULATION_TICK_MS) {
+                    let tick = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+                    assert!(
+                        !tick.iter().any(|event| matches!(
+                            event,
+                            GameEvent::ToyInteractionInterrupted { .. }
+                        ))
+                    );
+                    contacted |= tick
+                        .iter()
+                        .any(|event| matches!(event, GameEvent::ToyContacted { .. }));
+                }
+                assert!(contacted, "the freed ball is reached");
+                continue;
+            }
             // Long enough to cover the notice pause before travel begins.
             for _ in 0..(2_000 / SIMULATION_TICK_MS) {
                 events.extend(step(&mut world, &[], SIMULATION_TICK_MS, &mut rng));
@@ -4348,6 +4368,7 @@ mod tests {
             recovery_until_ms: 0,
             rounds_left: 0,
             contacts: 0,
+            unblock_until_ms: 0,
         });
         world.creature.aquarium.steering = SteeringMode::Approach;
         let relationship = world.creature.relationship;

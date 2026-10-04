@@ -751,6 +751,9 @@ pub struct ToyInteraction {
     /// Contacts made so far; history and reward are recorded on the first one only.
     #[serde(default)]
     pub contacts: u8,
+    /// While a player's offer waits for its wedged toy to drift free, until this time.
+    #[serde(default)]
+    pub unblock_until_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -2249,12 +2249,12 @@ fn advance_aquarium(state: &mut WorldState, sock_just_released: bool, events: &m
 /// a short sniff, the bite and a satisfied settle.
 const fn food_phase_duration_ms(phase: ActionPhase) -> u64 {
     match phase {
-        ActionPhase::Notice => 200,
-        ActionPhase::Brake | ActionPhase::Gaze => 100,
-        ActionPhase::Turn => 150,
+        ActionPhase::Notice => 120,
+        ActionPhase::Brake | ActionPhase::Gaze => 60,
+        ActionPhase::Turn => 100,
         ActionPhase::Approach => 0,
-        ActionPhase::Inspect => 300,
-        ActionPhase::Act => 500,
+        ActionPhase::Inspect => 200,
+        ActionPhase::Act => 350,
         ActionPhase::Recover => 800,
     }
 }
@@ -2346,12 +2346,14 @@ fn advance_creature_motion(state: &mut WorldState, events: &mut Vec<GameEvent>) 
 
 const ARRIVAL_DISTANCE: i32 = 220;
 /// Cruise speed in fixed-point units per second; the tank is 10,000 units wide.
-const APPROACH_SPEED: i32 = 3_400;
+const APPROACH_SPEED: i32 = 4_200;
 /// How quickly swimming speed can change, in units per second squared.
 const SWIM_ACCELERATION: i32 = 16_000;
 const FLEE_DISTANCE: i32 = 2_000;
 /// `0.5^(tick / 1s)` in thousandths: free toys lose half their speed each second.
 const TOY_DRAG_PER_TICK: i32 = 933;
+/// How long a player's offer waits for a wedged toy to drift free before giving up.
+const UNBLOCK_WAIT_MS: u64 = 2_000;
 /// A nudged ball travels roughly a fifth of the tank before water drag stops it.
 const BALL_NUDGE_SPEED: i32 = 1_500;
 
@@ -2407,6 +2409,29 @@ fn steering_target(
     let purpose = state.creature.aquarium.travel_purpose?;
     let Some(target) = approach_position(state, destination) else {
         if let SemanticDestination::Toy(toy) = destination {
+            // A player's offer is worth a moment: nudge the wedged toy free and keep trying
+            // briefly, so the click is never silently dropped.
+            let now = state.elapsed_ms;
+            if let crate::TravelPurpose::ToyInteraction { interaction_id } = purpose
+                && let Some(interaction) = state
+                    .creature
+                    .interaction_state
+                    .toy_interaction
+                    .as_mut()
+                    .filter(|interaction| {
+                        interaction.id == interaction_id
+                            && interaction.origin == crate::ToyOrigin::Player
+                    })
+            {
+                if interaction.unblock_until_ms == 0 {
+                    interaction.unblock_until_ms = now.saturating_add(UNBLOCK_WAIT_MS);
+                    free_wedged_toy(state, toy);
+                    return None;
+                }
+                if now < interaction.unblock_until_ms {
+                    return None;
+                }
+            }
             free_wedged_toy(state, toy);
             // An obstructed contact is an interrupted approach, not a refusal or payoff.
             match purpose {
@@ -2750,8 +2775,8 @@ fn toy_rest_target(state: &WorldState, position: NormalizedPosition) -> Option<N
 pub fn feeding_position(state: &WorldState) -> NormalizedPosition {
     let head = state.creature.aquarium.position;
     // Lean toward open water so the creature turns into the tank rather than toward the glass.
-    let inward = if head.x > 5_000 { -700 } else { 700 };
-    NormalizedPosition::new(head.x + inward, head.y - 1_500).clamped()
+    let inward = if head.x > 5_000 { -500 } else { 500 };
+    NormalizedPosition::new(head.x + inward, head.y - 900).clamped()
 }
 
 /// Shared carried-object anchor, including the aquarium boundary at the floor.
@@ -2989,6 +3014,7 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
                     recovery_until_ms: 0,
                     rounds_left: toy_session_rounds(toy, crate::ToyOrigin::Autonomous),
                     contacts: 0,
+                    unblock_until_ms: 0,
                 });
                 set_travel_target(
                     state,
@@ -3423,6 +3449,7 @@ pub(crate) fn play_with_toy(
             recovery_until_ms: 0,
             rounds_left: 0,
             contacts: 0,
+            unblock_until_ms: 0,
         });
         set_travel_target(
             state,
@@ -3450,6 +3477,7 @@ pub(crate) fn play_with_toy(
             recovery_until_ms: 0,
             rounds_left: toy_session_rounds(toy, crate::ToyOrigin::Player),
             contacts: 0,
+            unblock_until_ms: 0,
         });
         set_travel_target(
             state,
