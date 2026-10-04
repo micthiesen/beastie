@@ -2254,6 +2254,38 @@ const fn food_phase_duration_ms(phase: ActionPhase) -> u64 {
     }
 }
 
+/// A toy wedged so that no contact surface is clear gets nudged away from its nearest neighbor,
+/// so the next attempt can reach it instead of failing again.
+fn free_wedged_toy(state: &mut WorldState, toy: ToyId) {
+    const PUSH: i32 = 1_200;
+    let Some(position) = state
+        .aquarium
+        .toy_states
+        .get(&toy)
+        .map(|object| object.position)
+    else {
+        return;
+    };
+    let neighbor = state
+        .aquarium
+        .toy_states
+        .iter()
+        .filter(|(id, object)| **id != toy && !object.carried)
+        .min_by_key(|(_, object)| manhattan_distance(object.position, position))
+        .map(|(_, object)| object.position);
+    let Some(neighbor) = neighbor else {
+        return;
+    };
+    let away = if position.x == neighbor.x {
+        if position.x < 5_000 { 1 } else { -1 }
+    } else {
+        (position.x - neighbor.x).signum()
+    };
+    if let Some(object) = state.aquarium.toy_states.get_mut(&toy) {
+        object.velocity.x = away * PUSH;
+    }
+}
+
 fn advance_creature_motion(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     let action_target =
         state
@@ -2369,7 +2401,8 @@ fn steering_target(
     let destination = state.creature.aquarium.destination?;
     let purpose = state.creature.aquarium.travel_purpose?;
     let Some(target) = approach_position(state, destination) else {
-        if matches!(destination, SemanticDestination::Toy(_)) {
+        if let SemanticDestination::Toy(toy) = destination {
+            free_wedged_toy(state, toy);
             // An obstructed contact is an interrupted approach, not a refusal or payoff.
             match purpose {
                 crate::TravelPurpose::PrivateLife { .. } => {
@@ -3520,6 +3553,8 @@ fn resolve_food(
     if preference < -0.35 {
         if let Some(WorldObject::Food(object)) = state.aquarium.objects.get_mut(&id) {
             object.disposition = FoodDisposition::Rejected;
+            // Spat-out food dissolves soon rather than haunting the tank.
+            object.lifetime_ms = object.lifetime_ms.min(object.age_ms.saturating_add(15_000));
         }
         let memory = state.remember(
             MemoryKind::RejectedFood { food },

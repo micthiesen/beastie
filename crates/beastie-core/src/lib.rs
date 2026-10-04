@@ -1709,7 +1709,7 @@ mod tests {
                 food: FoodId::Berry,
                 position: NormalizedPosition::new(5_500, 4_500),
             }],
-            20_000,
+            5_000,
             &mut rng,
         );
         assert!(world.aquarium.objects.values().any(|object| matches!(

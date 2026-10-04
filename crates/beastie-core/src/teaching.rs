@@ -769,6 +769,30 @@ mod tests {
     }
 
     #[test]
+    fn a_wedged_toy_is_freed_so_the_next_offer_reaches_it() {
+        let mut world = WorldState::new(42, "Mop");
+        let mut rng = SeededRandom::new(42);
+        world
+            .aquarium
+            .toy_states
+            .retain(|toy, _| *toy != ToyId::Sock);
+        for object in world.aquarium.toy_states.values_mut() {
+            object.position = NormalizedPosition::new(5_000, 10_000);
+        }
+        world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        world.creature.idle_life.settled_until_ms = 600_000;
+        step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        run_until(&mut world, &mut rng, 4_000, |_, _| false);
+        step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        assert!(
+            run_until(&mut world, &mut rng, 10_000, |events, _| events
+                .iter()
+                .any(|event| matches!(event, GameEvent::ToyContacted { .. }))),
+            "the second offer reaches the freed ball"
+        );
+    }
+
+    #[test]
     fn vocabulary_size_drives_language_stage() {
         let mut world = WorldState::new(3, "Mop");
         let mut events = Vec::new();
