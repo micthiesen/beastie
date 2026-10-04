@@ -2405,6 +2405,21 @@ fn sync_effects(
                     }
                 }
             }
+            PresentationCueKind::CaveShelter if effect.target == UiTarget::Cave => {
+                // Resting in the cave: a small pale "z" drifts up out of the arch.
+                let rise = if frame.plan.reduced_motion {
+                    0.4
+                } else {
+                    (elapsed * 0.45).fract()
+                };
+                pixel_pattern(
+                    &mut shape,
+                    position + Vec3::new(0.35 + rise * 0.2, 0.9 + rise * 0.7, 0.8),
+                    &["zzzz", "  z ", " z  ", "zzzz"],
+                    0.075,
+                    |byte| (byte == b'z').then_some([176, 196, 226]),
+                );
+            }
             PresentationCueKind::Sleep
             | PresentationCueKind::CaveShelter
             | PresentationCueKind::Comfort => {}
