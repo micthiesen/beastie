@@ -643,6 +643,9 @@ pub struct PrivateLifeActivity {
     pub selected_from: ActivitySelectionEvidence,
     #[serde(default)]
     pub payoff_reached: bool,
+    /// For a bubble chase, the bubble Mop is after, chosen close in front of it at selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bubble: Option<NormalizedPosition>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

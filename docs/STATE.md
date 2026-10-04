@@ -4,37 +4,34 @@ Last updated: **2026-10-04**.
 
 ## Now
 
-- The complete UI and feel redesign is implemented. Twenty-one ImageGen targets cover every
-  existing page and shared interaction family; rounded teal/brass surfaces, readable Normal/Large
-  typography, compact captions, Unicode editing and clear local feedback form one interface.
-  See the [design contract](ui-redesign-20261001.md), [review and evidence](feel-review-ui-20261001.md)
-  and [target/native capture index](style-reference/ui-20261001/README.md).
-- Toy invitations now produce their actual ball, bell and sock responses exactly once at contact.
-  Sock pickup/release, body turns at tank boundaries and bottom foraging retain clear, continuous
-  silhouettes. Speech follows actual playback ownership; temporary affection cannot strand newer
-  private journeys. Regression tests preserve saved continuation, offline return and deferred talk.
-- The game remains offline and deterministic. Simulation owns facts, the model supplies expression,
-  and care, quiet life and relationship behavior remain usable without inference or speech.
-- Final native and headless verification is recorded in the [review](feel-review-ui-20261001.md).
-  Native evidence is M2 Pro/Metal; physical microphone, gamepad and speaker audition, pinned-toolchain
-  verification and other platforms remain outside this pass. Fixed-rate capture is not a host
-  performance measurement.
-- The existing renderer retains raster visibility, shared compute lighting, exact static caches,
-  adaptive shadow maps, indexed shadow-only LOD and background geometry preparation. Earlier paired
-  M5 Max measurements reduced GPU throughput time about 32%, ordinary task CPU energy about 33%
-  and hidden task CPU energy about 85%. These are separate measurements, not device battery claims;
-  see [renderer energy](renderer-energy.md).
-- `dev-perf` keeps application assertions and overflow checks. Routine work uses the headless gate
-  and native development path; release installers and model bundles remain explicit checkpoints.
+- **The fun rework is implemented** ([contract](fun-rework.md), [review and
+  evidence](feel-review-fun-20261004.md), [owner playtest brief](playtest-brief-fun.md)). Mop
+  reacts in the same frame to every input; pet, play and feed are one click each and pay off in
+  under about 1.7 s; pointer motion never cancels anything; empty water taps the glass.
+- Teaching is the core loop: words learn from what the player points at and what Mop is doing
+  (lexicon with evidence, mutual exclusivity, coined words, curious echoes, a learned-word
+  celebration). Learned words become requests Mop may honor or refuse, and Mop speaks only in the
+  player's words plus creature sounds, through a deterministic composer or the local model held to
+  the same vocabulary (speech hillclimb 31/32 train, 15/15 validation).
+- Intent is readable: wants as pictogram thought bubbles, rings on the thing Mop is heading for,
+  crossed-out refusals, play sparkles, a bubble chase instead of drifting. A shy first meeting,
+  ranked per-creature preferences and state-driven coaching hints open each new save.
+- Live-input ten-minute playthroughs on both voices learn the first word in about 15 s with no
+  errors, banners or 20-second lulls. A fresh model reviewer reads Mop's activity and want from
+  frames alone 11/12 on staged moments; random play frames scored 7/10 before the last fixes.
+  A human playtest has not happened yet.
+- One dialogue path remains (learned-word speech). The session undoes any command that would
+  produce invalid state; a randomized test drives 48 creatures through mixed play.
+- The game remains offline and deterministic; the simulation owns facts and the model only phrases
+  them. The renderer and art direction are unchanged from the [UI redesign](ui-redesign-20261001.md)
+  and [renderer energy](renderer-energy.md) work.
 
 ## Next
 
-Make Beastie fun to play. The owner's playtest found Mop unresponsive and late, its intent
-unreadable, chat generic, teaching impossible to discover, some actions needing two clicks, and the
-opening without a hook. Verified causes include pointer motion cancelling accepted play/comfort, a
-1 Hz simulation with multi-second action preambles, time-gated learning that ignores what the player
-says, and menu-gated verbs. The normative contract is [the fun rework](fun-rework.md); it
-authorizes core rewrites and supersedes conflicting rules in earlier feel contracts.
+The owner plays ten minutes using the [playtest brief](playtest-brief-fun.md); their verdict
+decides whether the fun rework reopens. Without new feedback, the strongest next candidates are
+richer word grammar as vocabulary grows (two-word requests such as "ball come"), and verifying
+microphone input with the learned-word loop.
 
 ## Candidates Not Chosen
 
@@ -50,6 +47,8 @@ authorizes core rewrites and supersedes conflicting rules in earlier feel contra
 
 ## Learned Recently
 
+- Live-input playtest scripts and the opt-in `BEASTIE_EVENT_LOG` trace: [tools/playtest](../tools/playtest/README.md).
+- Learned-word speech eval and hillclimb log: [evals/dialogue/speech](../evals/dialogue/speech/README.md).
 - UI targets, reconciled mockup details and native examples: [target index](style-reference/ui-20261001/README.md).
 - Complete findings, accepted fixes, repeated native comparisons and honest limits: [UI/feel review](feel-review-ui-20261001.md).
 - Shared text metrics, modal/input ownership and physical presentation boundaries: [architecture](architecture.md).

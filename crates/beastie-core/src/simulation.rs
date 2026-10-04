@@ -1292,10 +1292,39 @@ const BUBBLE_CHASE_GIVE_UP_MS: u64 = 4_000;
 /// Where an open-water bubble chase heads: somewhere in the upper water, varied per activity.
 #[must_use]
 pub fn bubble_point(state: &WorldState, activity_id: NonZeroU64) -> NormalizedPosition {
+    if let Some(bubble) = state
+        .creature
+        .private_life
+        .active
+        .as_ref()
+        .filter(|activity| activity.id == activity_id)
+        .and_then(|activity| activity.bubble)
+    {
+        return bubble;
+    }
     let key = activity_id.get().wrapping_mul(7);
     let x = deterministic_unit(state.seed, RandomDomain::Motion, key + 3);
     let y = deterministic_unit(state.seed, RandomDomain::Motion, key + 5);
     NormalizedPosition::new(1_500 + (x * 7_000.0) as i32, 1_400 + (y * 2_200.0) as i32)
+}
+
+/// A bubble close in front of and above the creature, so the chase is a short, legible dart
+/// rather than a trip across the tank.
+fn nearby_bubble(state: &WorldState, activity_id: NonZeroU64) -> NormalizedPosition {
+    let key = activity_id.get().wrapping_mul(11);
+    let reach = deterministic_unit(state.seed, RandomDomain::Motion, key + 1);
+    let rise = deterministic_unit(state.seed, RandomDomain::Motion, key + 2);
+    let here = state.creature.aquarium.position;
+    let ahead = 1_400 + (reach * 1_000.0) as i32;
+    let mut x = match state.creature.aquarium.facing {
+        crate::Facing::Right => here.x + ahead,
+        crate::Facing::Left => here.x - ahead,
+    };
+    if !(1_200..=8_800).contains(&x) {
+        x = 2 * here.x - x;
+    }
+    let y = here.y - 700 - (rise * 900.0) as i32;
+    NormalizedPosition::new(x.clamp(1_200, 8_800), y.clamp(1_300, 7_000))
 }
 
 fn perform_private_life_payoff(
@@ -3249,7 +3278,9 @@ fn start_private_life(state: &mut WorldState, events: &mut Vec<GameEvent>) -> bo
     } else {
         ActivityPurpose::Autonomous
     };
+    let bubble = (kind == PrivateLifeKind::OpenWaterDrift).then(|| nearby_bubble(state, id));
     let activity = PrivateLifeActivity {
+        bubble,
         id,
         kind,
         subject: Some(kind.subject()),

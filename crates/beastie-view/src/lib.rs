@@ -1545,22 +1545,19 @@ fn intent_target(state: &WorldState) -> Option<NormalizedPosition> {
         .as_ref()
         .and_then(|activity| {
             (activity.phase == ActivityPhase::Notice).then(|| {
-                match activity.kind.destination() {
-                    Some(destination) => beastie_core::destination_position(state, destination),
-                    None => Some(beastie_core::bubble_point(state, activity.id)),
-                }
+                // A chased bubble is its own marker; a ring around it reads as an empty circle.
+                activity
+                    .kind
+                    .destination()
+                    .and_then(|destination| beastie_core::destination_position(state, destination))
             })?
         });
     if activity_notice.is_some() {
         return activity_notice;
     }
     match aquarium.destination? {
-        SemanticDestination::Position(_) | SemanticDestination::Player => {
-            // A bubble chase marks its bubble; a swim to the glass marks nothing.
-            let activity = state.creature.private_life.active.as_ref()?;
-            (activity.kind == PrivateLifeKind::OpenWaterDrift)
-                .then(|| beastie_core::bubble_point(state, activity.id))
-        }
+        // A bubble chase shows the bubble itself; a swim to the glass marks nothing.
+        SemanticDestination::Position(_) | SemanticDestination::Player => None,
         // Foraging is about the sand itself: mark the floor under the head, not the water.
         SemanticDestination::Bottom => {
             beastie_core::destination_position(state, SemanticDestination::Bottom)
@@ -1728,10 +1725,11 @@ fn effect_scenes(
         && activity.kind == PrivateLifeKind::OpenWaterDrift
         && matches!(
             activity.phase,
-            ActivityPhase::Notice | ActivityPhase::Approach
+            ActivityPhase::Notice | ActivityPhase::Approach | ActivityPhase::Act
         )
+        && !(activity.phase == ActivityPhase::Act && activity.elapsed_ms > 250)
     {
-        // The bubble Mop is after, rising where it is headed.
+        // The bubble Mop is after, rising where it is headed, until the snap pops it.
         effects.push(EffectScene {
             owner: SemanticOwner::PrivateLife(activity.id),
             cue: PresentationCueKind::OpenWaterDrift,
@@ -5639,6 +5637,7 @@ mod tests {
                 urgency_overrode_repetition: false,
             },
             payoff_reached: false,
+            bubble: None,
         }
     }
 
