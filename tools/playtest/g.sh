@@ -10,7 +10,7 @@ lx() { echo $(( WX + $1 * WW / 320 )); }
 ly() { echo $(( WY + TB + $1 * CH / 180 )); }
 case $cmd in
   shot) screencapture -x -R$WX,$WY,$WW,$WH $S/$1.png ;;
-  click) cliclick c:$(lx $1),$(ly $2) ;;
+  click) cliclick m:$(lx $1),$(ly $2) w:40 c:$(lx $1),$(ly $2) ;;
   move) cliclick m:$(lx $1),$(ly $2) ;;
   type) cliclick t:"$1" ;;
   key) case $1 in return) osascript -e "tell application \"System Events\" to key code 36";; *) cliclick kp:$1;; esac ;;

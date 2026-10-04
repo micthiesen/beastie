@@ -1592,6 +1592,13 @@ fn refusal_subject(state: &WorldState) -> Option<beastie_core::Meaning> {
 fn gaze_position(state: &WorldState) -> Option<NormalizedPosition> {
     match state.creature.aquarium.gaze {
         GazeTarget::Cursor => state.aquarium.cursor,
+        GazeTarget::Bubble => state
+            .creature
+            .private_life
+            .active
+            .as_ref()
+            .filter(|activity| activity.kind == PrivateLifeKind::OpenWaterDrift)
+            .map(|activity| beastie_core::bubble_point(state, activity.id)),
         GazeTarget::Food(id) => match state.aquarium.objects.get(&id)? {
             WorldObject::Food(food) if food.disposition != FoodDisposition::Consumed => {
                 Some(food.position)

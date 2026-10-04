@@ -16,9 +16,14 @@ for y in range(int(sh * 0.08), int(sh * 0.82)):
             pts.append((x, y))
 if not pts:
     sys.exit(1)
-# densest cluster: use median as a robust center (head is the largest yellow mass)
-xs = sorted(p[0] for p in pts); ys = sorted(p[1] for p in pts)
-cx, cy = xs[len(xs) // 2], ys[len(ys) // 2]
+# Densest cluster, not the median: the gold bell and the ball's stripe are yellow too, and the
+# head is the largest solid yellow mass.
+R = max(6, sw // 40)
+def density(p):
+    return sum(1 for q in pts if abs(q[0] - p[0]) <= R and abs(q[1] - p[1]) <= R)
+seed = max(pts[:: max(1, len(pts) // 400)], key=density)
+near = [q for q in pts if abs(q[0] - seed[0]) <= R * 2 and abs(q[1] - seed[1]) <= R * 2]
+cx = sum(q[0] for q in near) / len(near); cy = sum(q[1] for q in near) / len(near)
 # map screenshot pixels to logical UI units: window has 28pt title bar, screenshot is 2x
 lx = cx * 4 / 2 * 320 / (w / 2)
 ly = (cy * 4 / 2 - 28) * 180 / (h / 2 - 28)

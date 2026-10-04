@@ -457,6 +457,8 @@ pub enum GazeTarget {
     Toy(ToyId),
     Cave,
     Plant,
+    /// The bubble an open-water chase is after.
+    Bubble,
     #[default]
     None,
 }

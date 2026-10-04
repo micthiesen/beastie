@@ -1228,7 +1228,7 @@ fn advance_private_life(state: &mut WorldState, events: &mut Vec<GameEvent>) {
                     },
                     events,
                 );
-                state.creature.aquarium.gaze = GazeTarget::None;
+                state.creature.aquarium.gaze = GazeTarget::Bubble;
             }
         }
         // A bubble that drifted out of reach is snapped at from wherever the chase got to.
@@ -1318,7 +1318,7 @@ fn nearby_bubble(state: &WorldState, activity_id: NonZeroU64) -> NormalizedPosit
     let reach = deterministic_unit(state.seed, RandomDomain::Motion, key + 1);
     let rise = deterministic_unit(state.seed, RandomDomain::Motion, key + 2);
     let here = state.creature.aquarium.position;
-    let ahead = 1_400 + (reach * 1_000.0) as i32;
+    let ahead = 1_000 + (reach * 600.0) as i32;
     let mut x = match state.creature.aquarium.facing {
         crate::Facing::Right => here.x + ahead,
         crate::Facing::Left => here.x - ahead,
@@ -1326,7 +1326,7 @@ fn nearby_bubble(state: &WorldState, activity_id: NonZeroU64) -> NormalizedPosit
     if !(1_200..=8_800).contains(&x) {
         x = 2 * here.x - x;
     }
-    let y = (here.y - 1_000 - (rise * 1_000.0) as i32).clamp(1_300, 5_200);
+    let y = (here.y - 700 - (rise * 600.0) as i32).clamp(1_300, 5_200);
     let mut bubble = NormalizedPosition::new(x.clamp(1_200, 8_800), y);
     // Keep it in clear water: a bubble over a toy reads as wanting the toy.
     let near_toy = |point: NormalizedPosition| {
@@ -3333,6 +3333,10 @@ fn start_private_life(state: &mut WorldState, events: &mut Vec<GameEvent>) -> bo
     };
     state.creature.private_life.active = Some(activity.clone());
     state.creature.aquarium.steering = SteeringMode::Hover;
+    if kind == PrivateLifeKind::OpenWaterDrift {
+        // It spots the bubble first, then darts for it.
+        state.creature.aquarium.gaze = GazeTarget::Bubble;
+    }
     events.push(GameEvent::PrivateLifeStarted {
         activity_id: id,
         kind,
