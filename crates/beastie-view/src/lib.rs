@@ -1727,7 +1727,7 @@ fn effect_scenes(
             activity.phase,
             ActivityPhase::Notice | ActivityPhase::Approach | ActivityPhase::Act
         )
-        && !(activity.phase == ActivityPhase::Act && activity.elapsed_ms > 250)
+        && !(activity.phase == ActivityPhase::Act && activity.elapsed_ms > 200)
     {
         // The bubble Mop is after, rising where it is headed, until the snap pops it.
         effects.push(EffectScene {

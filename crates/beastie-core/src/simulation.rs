@@ -39,6 +39,7 @@ const DIRECT_RELATIONSHIP_MOMENT_MS: u64 = 3_000;
 const MAX_RECENT_ACTIVITIES: usize = 32;
 const PRIVATE_NOTICE_MS: u64 = 500;
 const PRIVATE_ACT_MS: u64 = 1_600;
+const BUBBLE_SNAP_MS: u64 = 600;
 const PRIVATE_RECOVER_MS: u64 = 900;
 const PRIVATE_SETTLE_MS: u64 = 3_500;
 
@@ -1171,10 +1172,12 @@ fn interrupt_private_life(
     });
 }
 
-fn private_phase_duration(phase: ActivityPhase) -> u64 {
+fn private_phase_duration(kind: PrivateLifeKind, phase: ActivityPhase) -> u64 {
     match phase {
         ActivityPhase::Notice => PRIVATE_NOTICE_MS,
         ActivityPhase::Approach => PRIVATE_NOTICE_MS,
+        // A snap at a bubble is quick; a long one reads as hovering with nothing there.
+        ActivityPhase::Act if kind == PrivateLifeKind::OpenWaterDrift => BUBBLE_SNAP_MS,
         ActivityPhase::Act => PRIVATE_ACT_MS,
         ActivityPhase::Recover => PRIVATE_RECOVER_MS,
         ActivityPhase::Settle => PRIVATE_SETTLE_MS,
@@ -1189,7 +1192,7 @@ fn advance_private_life(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     if state
         .elapsed_ms
         .saturating_sub(activity.phase_started_at_ms)
-        < private_phase_duration(activity.phase)
+        < private_phase_duration(activity.kind, activity.phase)
     {
         return;
     }
@@ -1323,8 +1326,23 @@ fn nearby_bubble(state: &WorldState, activity_id: NonZeroU64) -> NormalizedPosit
     if !(1_200..=8_800).contains(&x) {
         x = 2 * here.x - x;
     }
-    let y = here.y - 700 - (rise * 900.0) as i32;
-    NormalizedPosition::new(x.clamp(1_200, 8_800), y.clamp(1_300, 7_000))
+    let y = (here.y - 1_000 - (rise * 1_000.0) as i32).clamp(1_300, 5_200);
+    let mut bubble = NormalizedPosition::new(x.clamp(1_200, 8_800), y);
+    // Keep it in clear water: a bubble over a toy reads as wanting the toy.
+    let near_toy = |point: NormalizedPosition| {
+        state.aquarium.toy_states.values().any(|toy| {
+            (toy.position.x - point.x).abs() < 1_300 && (toy.position.y - point.y).abs() < 1_500
+        })
+    };
+    if near_toy(bubble) {
+        let mirrored = NormalizedPosition::new((2 * here.x - bubble.x).clamp(1_200, 8_800), y);
+        bubble = if near_toy(mirrored) {
+            NormalizedPosition::new(bubble.x, 1_300)
+        } else {
+            mirrored
+        };
+    }
+    bubble
 }
 
 fn perform_private_life_payoff(
