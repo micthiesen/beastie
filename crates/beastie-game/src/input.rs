@@ -120,7 +120,6 @@ pub fn move_focus(plan: &ScenePlan, current: Option<&str>, delta: i32) -> Option
                 || hit.id == "rename/input"
                 || hit.id == "inspect/close"
                 || hit.id == "reset/cancel"
-                || hit.id == "world/drop-food"
         })
     {
         return Some(preferred.id.clone());

@@ -1,0 +1,55 @@
+{
+ "protocol_version": 1,
+ "request_id": 1000,
+ "creature_name": "Mop",
+ "mood": "content",
+ "known_concepts": [],
+ "candidate_memories": [],
+ "candidate_beliefs": [],
+ "idiolect": {
+  "quirk": "plain"
+ },
+ "desired_social_act": null,
+ "input_rejection": null,
+ "context": {
+  "version": 1,
+  "recent_turns": [],
+  "repetition_count": 0,
+  "aquarium": null,
+  "relationship": null,
+  "avoid_reply_fingerprints": [],
+  "avoid_reply_texts": []
+ },
+ "interpretation": {
+  "understood_concepts": [],
+  "referenced_objects": [],
+  "unknown_words": 0,
+  "ambiguous": false,
+  "is_question": false
+ },
+ "player_said": "ball",
+ "constraints": {
+  "max_words": 3,
+  "allowed_gestures": [
+   "none",
+   "look_player"
+  ]
+ },
+ "vocabulary": [
+  {
+   "word": "ball",
+   "meaning": {
+    "kind": "toy",
+    "value": "ball"
+   }
+  }
+ ],
+ "speech_intent": {
+  "kind": "new_word",
+  "word": "ball",
+  "meaning": {
+   "kind": "toy",
+   "value": "ball"
+  }
+ }
+}

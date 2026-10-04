@@ -1,16 +1,23 @@
 //! Authoritative, deterministic creature simulation.
 
 mod language;
+mod lexicon;
 mod memory;
 mod model;
 mod random;
 mod relationship;
 mod save;
 mod simulation;
+mod teaching;
+mod wants;
 
 pub use language::{
     GroundedUtterance, UtteranceInterpretation, UtteranceReference, ground_utterance,
     interpret_utterance,
+};
+pub use lexicon::{
+    ActWord, FocusMark, Hearing, LEARN_EVIDENCE, LEARN_HEARINGS, Lexicon, Meaning, Salience,
+    WordKnowledge, content_words, echo_attempt, mark_focus,
 };
 pub use memory::{MemoryCue, MemoryQuery, select_candidate_memories};
 pub use model::{
@@ -41,10 +48,12 @@ pub use save::{SaveError, SaveGame, migrate_world};
 pub use simulation::{
     DialogueActionOwner, DialogueHandoff, DialogueHandoffState, GameEvent, MAX_OFFLINE_MS,
     OfflineProgress, PlayerEvent, SIMULATION_TICK_MS, SOCK_RELEASE_SPEED, SpeechAttention,
-    TALK_COOLDOWN_MS, advance_offline, apply_grounded_utterance, approach_position,
-    destination_position, dialogue_handoff, held_toy_position, movement_target, speech_attention,
-    step, trigger_relationship_beat,
+    TALK_COOLDOWN_MS, advance_offline, apply_grounded_utterance, approach_position, bubble_point,
+    destination_position, dialogue_handoff, feeding_position, held_toy_position, movement_target,
+    speech_attention, step, trigger_relationship_beat,
 };
+pub use teaching::{RequestResponse, current_salience};
+pub use wants::{Want, current_want, engaged_toy};
 
 pub const SAVE_VERSION: u32 = 7;
 pub const ACTIVE_DAY_MS: u64 = 15 * 60_000;
@@ -55,6 +64,19 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
+
+    /// Pointer motion is attention: it must never produce any of these events.
+    fn is_interruption_or_intention_change(event: &GameEvent) -> bool {
+        matches!(
+            event,
+            GameEvent::IntentionChanged { .. }
+                | GameEvent::ActionAborted { .. }
+                | GameEvent::ToyInteractionInterrupted { .. }
+                | GameEvent::PrivateLifeInterrupted { .. }
+                | GameEvent::ActionRelationshipInterrupted { .. }
+                | GameEvent::RelationshipBeatInterrupted(_)
+        )
+    }
 
     #[test]
     fn stationary_food_phases_clear_old_swim_velocity_without_moving() {
@@ -384,6 +406,9 @@ mod tests {
             outcome: ToyInteractionOutcome::Accepted,
             phase: ToyInteractionPhase::Approach,
             relationship: None,
+            recovery_until_ms: 0,
+            rounds_left: 0,
+            contacts: 0,
         });
         let mut rng = SeededRandom::new(10);
 
@@ -616,10 +641,11 @@ mod tests {
                 food: FoodId::Pellet,
                 position: NormalizedPosition::new(3_000, 3_000),
             }],
-            1_500,
+            SIMULATION_TICK_MS * 15 + SIMULATION_TICK_MS / 2,
             &mut rng,
         );
-        assert_eq!(a.simulation_remainder_ms, 500);
+        assert_eq!(a.simulation_remainder_ms, SIMULATION_TICK_MS / 2);
+        assert!(a.creature.aquarium.action.is_some());
         let json = SaveGame::capture(&a, &rng).to_json().unwrap();
         let (b, _) = SaveGame::from_json(&json).unwrap().resume();
         assert_eq!(a, b);
@@ -676,7 +702,8 @@ mod tests {
         let mut previous_visits = 0_u32;
         let mut autonomous_toy_arrivals = 0_u32;
 
-        for _ in 0..180 {
+        // Three simulated minutes.
+        for _ in 0..(180_000 / SIMULATION_TICK_MS) {
             let first_events = step(&mut first, &[], SIMULATION_TICK_MS, &mut first_rng);
             let replay_events = step(&mut replay, &[], SIMULATION_TICK_MS, &mut replay_rng);
             assert_eq!(first_events, replay_events);
@@ -704,7 +731,7 @@ mod tests {
             "expected several actual idle arrivals: {bouts:?}"
         );
         assert!(bouts.iter().all(|duration| {
-            (16_000..=32_000).contains(duration) && duration % SIMULATION_TICK_MS == 0
+            (3_000..=8_000).contains(duration) && duration % SIMULATION_TICK_MS == 0
         }));
         assert!(first.creature.favorite_locations.len() > 1);
         assert!(first.creature.favorite_locations.values().sum::<u32>() <= bouts.len() as u32);
@@ -740,10 +767,19 @@ mod tests {
 
         step(&mut world, &[], 8_000, &mut rng);
         assert_eq!(world.creature.current_intention, Intention::Idle);
-        assert!(
-            world.creature.aquarium.destination.is_some()
+        // Shorter idle bouts mean the creature may be settled at this instant; it must resume
+        // its own life within a bounded quiet span.
+        let mut resumed_life = false;
+        for _ in 0..(20_000 / SIMULATION_TICK_MS) {
+            if world.creature.aquarium.destination.is_some()
                 || world.creature.private_life.active.is_some()
-        );
+            {
+                resumed_life = true;
+                break;
+            }
+            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        }
+        assert!(resumed_life, "comforted creature returns to its own life");
     }
 
     #[test]
@@ -754,11 +790,30 @@ mod tests {
         step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
         step(&mut world, &[PlayerEvent::Talk], 0, &mut rng);
         step(&mut world, &[PlayerEvent::Comfort], 0, &mut rng);
-        step(&mut world, &[], SIMULATION_TICK_MS * 6, &mut rng);
+        // The comfort journey arrives, then a private activity starts travelling.
+        for _ in 0..(10_000 / SIMULATION_TICK_MS) {
+            if world
+                .creature
+                .private_life
+                .active
+                .as_ref()
+                .is_some_and(|activity| {
+                    activity.phase == ActivityPhase::Approach
+                        && world.creature.aquarium.destination.is_some()
+                })
+            {
+                break;
+            }
+            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        }
         let activity = world.creature.private_life.active.as_ref().unwrap().clone();
         assert_eq!(activity.kind, PrivateLifeKind::PlantInspect);
         assert_eq!(activity.phase, ActivityPhase::Approach);
         assert_eq!(world.creature.current_intention, Intention::ShowAffection);
+        // Short private journeys finish well inside the affection span, so expire the old
+        // affection timer on the next tick while the newer private travel owns locomotion.
+        world.creature.interaction_state.affectionate_until_ms =
+            world.elapsed_ms + SIMULATION_TICK_MS;
         let owner = Some(TravelPurpose::PrivateLife {
             activity_id: activity.id,
         });
@@ -787,13 +842,19 @@ mod tests {
             }
         );
 
+        let continuation_ticks = 80;
         let mut continuation = Vec::new();
-        for _ in 0..20 {
+        for _ in 0..continuation_ticks {
             continuation.extend(step(&mut world, &[], SIMULATION_TICK_MS, &mut rng));
         }
         assert_eq!(
             continuation,
-            step(&mut resumed, &[], SIMULATION_TICK_MS * 20, &mut resumed_rng)
+            step(
+                &mut resumed,
+                &[],
+                SIMULATION_TICK_MS * continuation_ticks,
+                &mut resumed_rng
+            )
         );
         assert_eq!(world, resumed);
         assert_eq!(continuation.iter().filter(|event| matches!(event,
@@ -822,12 +883,16 @@ mod tests {
             &mut rng,
         );
         step(&mut world, &[PlayerEvent::Comfort], 0, &mut rng);
-        step(&mut world, &[], SIMULATION_TICK_MS * 6, &mut rng);
+        step(&mut world, &[], SIMULATION_TICK_MS * 2, &mut rng);
         assert_eq!(
             world.creature.aquarium.destination,
             Some(SemanticDestination::Player)
         );
         assert_eq!(world.creature.current_intention, Intention::ShowAffection);
+        // The swim to the player is now much shorter than the affection span; expire the
+        // timer while the comfort journey is still unfinished.
+        world.creature.interaction_state.affectionate_until_ms =
+            world.elapsed_ms + SIMULATION_TICK_MS;
 
         let expiry = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
         assert!(expiry.contains(&GameEvent::IntentionChanged {
@@ -840,32 +905,41 @@ mod tests {
     }
 
     #[test]
-    fn affection_expiry_cannot_clear_a_new_cursor_journey() {
+    fn cursor_motion_during_affection_never_replaces_the_comfort_journey() {
         let mut world = WorldState::new(42, "Following");
         let mut rng = SeededRandom::new(42);
         world.creature.relationship.trust = 0.8;
         world.creature.traits.sociability = 0.8;
         step(&mut world, &[PlayerEvent::Comfort], 0, &mut rng);
-        step(&mut world, &[], SIMULATION_TICK_MS * 6, &mut rng);
-        let cursor = NormalizedPosition::new(10_000, 10_000);
-        step(
-            &mut world,
-            &[PlayerEvent::Cursor(Some(cursor))],
-            0,
-            &mut rng,
-        );
+        step(&mut world, &[], SIMULATION_TICK_MS * 2, &mut rng);
         let owner = world.creature.aquarium.travel_purpose;
         assert!(matches!(owner, Some(TravelPurpose::CursorSocial { .. })));
-        assert_eq!(world.creature.current_intention, Intention::ShowAffection);
-
-        step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
-        assert_ne!(world.creature.current_intention, Intention::ShowAffection);
         assert_eq!(
             world.creature.aquarium.destination,
-            Some(SemanticDestination::Position(cursor))
+            Some(SemanticDestination::Player)
         );
-        assert_eq!(world.creature.aquarium.travel_purpose, owner);
-        assert_eq!(world.creature.aquarium.steering, SteeringMode::Approach);
+        let near = world.creature.aquarium.position;
+        for cursor in [
+            NormalizedPosition::new(10_000, 10_000),
+            near,
+            NormalizedPosition::new(near.x + 400, near.y - 300),
+        ] {
+            let events = step(
+                &mut world,
+                &[PlayerEvent::Cursor(Some(cursor))],
+                0,
+                &mut rng,
+            );
+            assert!(!events.iter().any(is_interruption_or_intention_change));
+            assert_eq!(world.aquarium.cursor, Some(cursor));
+            assert_eq!(world.creature.current_intention, Intention::ShowAffection);
+            assert_eq!(
+                world.creature.aquarium.destination,
+                Some(SemanticDestination::Player)
+            );
+            assert_eq!(world.creature.aquarium.travel_purpose, owner);
+            assert_eq!(world.creature.aquarium.gaze, GazeTarget::Player);
+        }
     }
 
     #[test]
@@ -894,37 +968,37 @@ mod tests {
     }
 
     #[test]
-    fn cursor_follow_requires_sustained_care() {
+    fn cursor_never_starts_travel_even_with_sustained_care() {
         let mut world = WorldState::new(45, "Trust");
         world.creature.traits.sociability = 1.0;
+        world.creature.relationship.trust = 0.9;
         let mut rng = SeededRandom::new(45);
-        let cursor = NormalizedPosition::new(8_000, 4_500);
-
-        step(
-            &mut world,
-            &[PlayerEvent::Cursor(Some(cursor))],
-            0,
-            &mut rng,
-        );
-        assert_ne!(world.creature.aquarium.steering, SteeringMode::Approach);
-        step(&mut world, &[PlayerEvent::Cursor(None)], 0, &mut rng);
-        for _ in 0..36 {
-            step(
+        let position = world.creature.aquarium.position;
+        for cursor in [
+            NormalizedPosition::new(8_000, 4_500),
+            NormalizedPosition::new(position.x + 600, position.y),
+            NormalizedPosition::new(0, 0),
+        ] {
+            let events = step(
                 &mut world,
-                &[PlayerEvent::Comfort],
-                SIMULATION_TICK_MS,
+                &[PlayerEvent::Cursor(Some(cursor))],
+                0,
                 &mut rng,
             );
+            assert!(!events.iter().any(is_interruption_or_intention_change));
+            assert_ne!(world.creature.aquarium.steering, SteeringMode::Approach);
+            assert_eq!(world.creature.aquarium.destination, None);
+            assert_eq!(world.creature.aquarium.travel_purpose, None);
         }
-        assert!(world.creature.relationship.trust > 0.5);
-
-        step(
-            &mut world,
-            &[PlayerEvent::Cursor(Some(cursor))],
-            0,
-            &mut rng,
-        );
-        assert_eq!(world.creature.aquarium.steering, SteeringMode::Approach);
+        // Holding a cursor in the tank never turns into a player-following journey.
+        for _ in 0..(20_000 / SIMULATION_TICK_MS) {
+            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+            assert_ne!(world.creature.current_intention, Intention::ApproachPlayer);
+            assert!(!matches!(
+                world.creature.aquarium.travel_purpose,
+                Some(TravelPurpose::CursorSocial { .. })
+            ));
+        }
     }
 
     #[test]
@@ -934,15 +1008,21 @@ mod tests {
         let mut rng = SeededRandom::new(46);
         let mut events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
         assert!(events.contains(&GameEvent::SleepStarted));
-        for _ in 0..10 {
+        // Sleep restores energy per second; ten seconds is enough to wake rested.
+        for _ in 0..(10_000 / SIMULATION_TICK_MS) {
             events.extend(step(&mut world, &[], SIMULATION_TICK_MS, &mut rng));
         }
         assert!(events.contains(&GameEvent::SleepEnded));
         assert_ne!(world.creature.current_intention, Intention::Sleep);
         assert!(world.creature.needs.energy >= 0.68);
 
+        // An unoccupied, hungry creature asks; satisfying the need clears the request, and it
+        // does not nag again until its asking interval has passed.
+        world.creature.private_life.active = None;
+        world.creature.idle_life.settled_until_ms = world.elapsed_ms + 600_000;
         world.creature.needs.hunger = 0.9;
-        step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        let asked = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        assert!(asked.contains(&GameEvent::InitiatedTalk(InitiativeReason::Hunger)));
         let first_request = world
             .creature
             .initiated_behavior
@@ -954,22 +1034,17 @@ mod tests {
         assert!(world.creature.initiated_behavior.is_none());
 
         world.creature.needs.hunger = 0.9;
-        step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
-        let expires_at = world
-            .creature
-            .initiated_behavior
-            .as_ref()
-            .expect("second hunger request")
-            .expires_at_ms;
-        let remaining = expires_at.saturating_sub(world.elapsed_ms);
-        step(&mut world, &[], remaining, &mut rng);
-        assert!(
-            world
-                .creature
-                .initiated_behavior
-                .as_ref()
-                .is_some_and(|request| request.requested_at_ms > first_request)
-        );
+        let mut asked_again_at = None;
+        for _ in 0..(60_000 / SIMULATION_TICK_MS) {
+            world.creature.needs.hunger = 0.9;
+            let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+            if events.contains(&GameEvent::InitiatedTalk(InitiativeReason::Hunger)) {
+                asked_again_at = Some(world.elapsed_ms);
+                break;
+            }
+        }
+        let asked_again_at = asked_again_at.expect("asks again after its interval");
+        assert!(asked_again_at.saturating_sub(first_request) >= 45_000);
     }
 
     #[test]
@@ -1049,16 +1124,20 @@ mod tests {
     }
 
     #[test]
-    fn motivated_creature_initiates_nonverbal_request() {
+    fn motivated_creature_asks_for_company_and_leans_in() {
         let mut a = WorldState::new(12, "Ask");
         a.creature.needs.comfort = 0.1;
         a.creature.traits.sociability = 1.0;
+        a.creature.idle_life.settled_until_ms = 600_000;
         let mut rng = SeededRandom::new(12);
         let events = step(&mut a, &[], 1_000, &mut rng);
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, GameEvent::NonverbalRequest(_)))
+        assert!(events.contains(&GameEvent::InitiatedTalk(InitiativeReason::Loneliness)));
+        assert_eq!(
+            a.creature
+                .initiated_behavior
+                .as_ref()
+                .and_then(|ask| ask.nonverbal),
+            Some(NonverbalAct::LeanAgainstPlayer)
         );
     }
 
@@ -1168,7 +1247,75 @@ mod tests {
     }
 
     #[test]
-    fn cursor_is_persisted_and_uses_bounded_follow_or_flee_intent() {
+    fn pointer_motion_never_interrupts_an_accepted_toy_interaction() {
+        let mut world = WorldState::new(213, "Pointer");
+        let mut rng = SeededRandom::new(213);
+        world.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        world.creature.aquarium.position = NormalizedPosition::new(1_000, 2_000);
+        let receipt = step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        let interaction_id = receipt
+            .iter()
+            .find_map(|event| match event {
+                GameEvent::ToyPlayAccepted { interaction_id, .. } => Some(*interaction_id),
+                _ => None,
+            })
+            .expect("play is accepted");
+        let gaze = world.creature.aquarium.gaze;
+        assert_eq!(gaze, GazeTarget::Toy(ToyId::Ball));
+        let mut contacted = false;
+        for tick in 0..(10_000 / SIMULATION_TICK_MS) as i32 {
+            // A restless pointer: sweeping, hovering right over the creature, leaving.
+            let position = world.creature.aquarium.position;
+            let cursor = match tick % 4 {
+                0 => Some(NormalizedPosition::new(position.x + 150, position.y - 100)),
+                1 => Some(NormalizedPosition::new(
+                    (tick * 731) % 10_000,
+                    (tick * 389) % 10_000,
+                )),
+                2 => Some(position),
+                _ => None,
+            };
+            let events = step(
+                &mut world,
+                &[PlayerEvent::Cursor(cursor)],
+                SIMULATION_TICK_MS,
+                &mut rng,
+            );
+            assert!(
+                !events.iter().any(is_interruption_or_intention_change),
+                "pointer motion interrupted play at tick {tick}: {events:?}"
+            );
+            if events.contains(&GameEvent::ToyContacted {
+                toy: ToyId::Ball,
+                interaction_id,
+                origin: ToyOrigin::Player,
+            }) {
+                contacted = true;
+                break;
+            }
+            assert_eq!(
+                world
+                    .creature
+                    .interaction_state
+                    .toy_interaction
+                    .as_ref()
+                    .map(|interaction| interaction.id),
+                Some(interaction_id)
+            );
+            assert_eq!(
+                world.creature.aquarium.travel_purpose,
+                Some(TravelPurpose::ToyInteraction { interaction_id })
+            );
+            assert_eq!(
+                world.creature.aquarium.gaze, gaze,
+                "the pointer never steals an occupied creature's gaze"
+            );
+        }
+        assert!(contacted, "the accepted toy is eventually contacted");
+    }
+
+    #[test]
+    fn cursor_is_persisted_draws_idle_gaze_and_resentment_flees() {
         let mut world = WorldState::new(88, "Cursor");
         let mut rng = SeededRandom::new(88);
         world.creature.relationship.trust = 0.8;
@@ -1185,23 +1332,49 @@ mod tests {
             world.aquarium.cursor,
             Some(NormalizedPosition::new(10_000, 0))
         );
-        assert_eq!(world.creature.aquarium.steering, SteeringMode::Approach);
-        assert_eq!(
-            world.creature.aquarium.destination,
-            Some(SemanticDestination::Position(NormalizedPosition::new(
-                10_000, 0
-            )))
-        );
-        world.creature.relationship.resentment = 0.9;
+        let json = SaveGame::capture(&world, &rng).to_json().unwrap();
+        let (resumed, _) = SaveGame::from_json(&json).unwrap().resume();
+        assert_eq!(resumed.aquarium.cursor, world.aquarium.cursor);
+        // A distant pointer neither draws gaze nor starts travel.
+        assert_ne!(world.creature.aquarium.gaze, GazeTarget::Cursor);
+        assert_ne!(world.creature.aquarium.steering, SteeringMode::Approach);
+        assert_eq!(world.creature.aquarium.destination, None);
+
+        // A nearby pointer catches an unoccupied creature's eye without moving it.
+        let position = world.creature.aquarium.position;
+        let near = NormalizedPosition::new(position.x + 500, position.y - 300);
+        step(&mut world, &[PlayerEvent::Cursor(Some(near))], 0, &mut rng);
+        assert_eq!(world.creature.aquarium.gaze, GazeTarget::Cursor);
+        assert_ne!(world.creature.aquarium.steering, SteeringMode::Approach);
+        assert_eq!(world.creature.aquarium.destination, None);
+        // Moving away again releases the glance.
         step(
             &mut world,
-            &[PlayerEvent::Cursor(Some(NormalizedPosition::new(
-                2_000, 2_000,
-            )))],
+            &[PlayerEvent::Cursor(Some(NormalizedPosition::new(0, 0)))],
             0,
             &mut rng,
         );
+        assert_ne!(world.creature.aquarium.gaze, GazeTarget::Cursor);
+
+        // A resentful creature flees a nearby pointer, then calms once it has distance.
+        world.creature.relationship.resentment = 0.9;
+        step(&mut world, &[PlayerEvent::Cursor(Some(near))], 0, &mut rng);
         assert_eq!(world.creature.aquarium.steering, SteeringMode::Flee);
+        let distance = |world: &WorldState| -> i32 {
+            let position = world.creature.aquarium.position;
+            (position.x - near.x).abs() + (position.y - near.y).abs()
+        };
+        let start = distance(&world);
+        let mut calmed = false;
+        for _ in 0..(5_000 / SIMULATION_TICK_MS) {
+            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+            if world.creature.aquarium.steering != SteeringMode::Flee {
+                calmed = true;
+                break;
+            }
+        }
+        assert!(calmed, "flight ends once the creature has distance");
+        assert!(distance(&world) > start);
     }
 
     #[test]
@@ -1319,73 +1492,98 @@ mod tests {
                 + (world.creature.aquarium.position.y - food.position.y).abs()
         };
         let initial_distance = distance(&world);
-        for _ in 0..7 {
-            let events = step(&mut world, &[], 1_000, &mut rng);
+        let mut approach_ticks = 0;
+        for _ in 0..(10_000 / SIMULATION_TICK_MS) {
+            let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
             assert!(!events.iter().any(|event| matches!(
                 event,
                 GameEvent::FoodConsumed(_) | GameEvent::FoodRejected(_)
             )));
+            let phase = world
+                .creature
+                .aquarium
+                .action
+                .as_ref()
+                .map(|action| action.phase);
+            match phase {
+                Some(ActionPhase::Approach) => approach_ticks += 1,
+                Some(ActionPhase::Inspect) => break,
+                _ => {}
+            }
         }
+        assert!(approach_ticks > 1, "feeding includes a visible swim");
+        assert_eq!(
+            world
+                .creature
+                .aquarium
+                .action
+                .as_ref()
+                .map(|action| action.phase),
+            Some(ActionPhase::Inspect)
+        );
         assert!(distance(&world) < initial_distance);
-        assert!(world.creature.aquarium.action.is_some());
     }
 
     #[test]
-    fn cursor_follow_and_flee_move_until_their_stop_thresholds() {
+    fn cursor_flee_moves_until_its_stop_threshold() {
         let mut world = WorldState::new(91, "Cursor");
         let mut rng = SeededRandom::new(91);
         world.creature.relationship.trust = 0.9;
         world.creature.traits.sociability = 0.9;
-        let cursor = NormalizedPosition::new(8_500, 4_500);
-        step(
-            &mut world,
-            &[PlayerEvent::Cursor(Some(cursor))],
-            0,
-            &mut rng,
-        );
-        let before_follow = (world.creature.aquarium.position.x - cursor.x).abs();
-        step(&mut world, &[], 1_000, &mut rng);
-        assert!(world.creature.aquarium.position.x > 5_000);
-        assert!((world.creature.aquarium.position.x - cursor.x).abs() < before_follow);
-
         world.creature.relationship.resentment = 0.9;
-        let flee_cursor = NormalizedPosition::new(6_000, 4_500);
+        let position = world.creature.aquarium.position;
+        let flee_cursor = NormalizedPosition::new(position.x + 1_000, position.y);
         step(
             &mut world,
             &[PlayerEvent::Cursor(Some(flee_cursor))],
             0,
             &mut rng,
         );
+        assert_eq!(world.creature.aquarium.steering, SteeringMode::Flee);
         let before_flee = (world.creature.aquarium.position.x - flee_cursor.x).abs();
         for _ in 0..3 {
-            step(&mut world, &[], 1_000, &mut rng);
+            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
         }
         assert!((world.creature.aquarium.position.x - flee_cursor.x).abs() > before_flee);
-        for _ in 0..8 {
-            step(&mut world, &[], 1_000, &mut rng);
+        for _ in 0..(5_000 / SIMULATION_TICK_MS) {
+            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
         }
         assert_ne!(world.creature.aquarium.steering, SteeringMode::Flee);
     }
 
     #[test]
     fn needs_traits_routines_and_favorites_choose_distinct_destinations() {
+        // Private activities notice before they travel, so wait for the first chosen journey.
+        fn first_destination(
+            world: &mut WorldState,
+            rng: &mut SeededRandom,
+        ) -> Option<SemanticDestination> {
+            for _ in 0..(5_000 / SIMULATION_TICK_MS) {
+                step(world, &[], SIMULATION_TICK_MS, rng);
+                if world.creature.aquarium.destination.is_some() {
+                    break;
+                }
+            }
+            world.creature.aquarium.destination
+        }
+
         let mut hungry = WorldState::new(92, "Hungry");
         hungry.creature.needs.hunger = 0.9;
         hungry.creature.idle_life.last_arrived_destination = Some(SemanticDestination::Bottom);
         let mut rng = SeededRandom::new(92);
-        step(&mut hungry, &[], 2_000, &mut rng);
         assert_eq!(
-            hungry.creature.aquarium.destination,
+            first_destination(&mut hungry, &mut rng),
             Some(SemanticDestination::Bottom)
         );
 
         let mut fussy = WorldState::new(93, "Fussy");
         fussy.creature.needs.curiosity = 0.9;
         fussy.creature.traits.fussiness = 0.9;
+        // Without a favorite toy pulling it away, fussiness favors the plant.
+        fussy.creature.toy_preferences.clear();
         let mut fussy_rng = SeededRandom::new(93);
-        step(&mut fussy, &[], 2_000, &mut fussy_rng);
         assert_eq!(
-            fussy.creature.aquarium.destination,
+            first_destination(&mut fussy, &mut fussy_rng),
             Some(SemanticDestination::Plant)
         );
 
@@ -1396,9 +1594,8 @@ mod tests {
             strength: 3,
         });
         let mut routine_rng = SeededRandom::new(94);
-        step(&mut routine, &[], 2_000, &mut routine_rng);
         assert_eq!(
-            routine.creature.aquarium.destination,
+            first_destination(&mut routine, &mut routine_rng),
             Some(SemanticDestination::Cave)
         );
         routine.creature.routines.clear();
@@ -1407,9 +1604,8 @@ mod tests {
         routine.creature.aquarium.destination = None;
         routine.creature.aquarium.travel_purpose = None;
         routine.creature.private_life.active = None;
-        step(&mut routine, &[], 2_000, &mut routine_rng);
         assert_eq!(
-            routine.creature.aquarium.destination,
+            first_destination(&mut routine, &mut routine_rng),
             Some(SemanticDestination::Plant)
         );
     }
@@ -1458,7 +1654,16 @@ mod tests {
                 .iter()
                 .any(|memory| matches!(memory.kind, MemoryKind::PlayedWith { toy: ToyId::Bell }))
         );
-        let played_toy = step(&mut world, &[], 10_000, &mut rng);
+        let mut played_toy = Vec::new();
+        for _ in 0..(10_000 / SIMULATION_TICK_MS) {
+            played_toy.extend(step(&mut world, &[], SIMULATION_TICK_MS, &mut rng));
+            if played_toy
+                .iter()
+                .any(|event| matches!(event, GameEvent::ToyPlayed { .. }))
+            {
+                break;
+            }
+        }
         assert!(played_toy.iter().any(|event| matches!(
             event,
             GameEvent::ToyPlayed {
@@ -1551,9 +1756,23 @@ mod tests {
                 food: FoodId::Mushroom,
                 position: NormalizedPosition::new(8_000, 2_000),
             }],
-            6_000,
+            0,
             &mut first_rng,
         );
+        // Step into the swim, then a little further so the save lands mid approach.
+        for _ in 0..(5_000 / SIMULATION_TICK_MS) {
+            if first
+                .creature
+                .aquarium
+                .action
+                .as_ref()
+                .is_some_and(|action| action.phase == ActionPhase::Approach)
+            {
+                break;
+            }
+            step(&mut first, &[], SIMULATION_TICK_MS, &mut first_rng);
+        }
+        step(&mut first, &[], SIMULATION_TICK_MS * 2, &mut first_rng);
         assert_eq!(
             first
                 .creature
@@ -2861,7 +3080,18 @@ mod tests {
             .get_mut(&ToyId::Ball)
             .unwrap()
             .position = NormalizedPosition::new(5_000, 9_200);
-        step(&mut world, &[], SIMULATION_TICK_MS * 2, &mut rng);
+        for _ in 0..(3_000 / SIMULATION_TICK_MS) {
+            step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+            if world
+                .creature
+                .private_life
+                .active
+                .as_ref()
+                .is_some_and(|activity| activity.phase == ActivityPhase::Approach)
+            {
+                break;
+            }
+        }
         let activity = world.creature.private_life.active.as_ref().unwrap();
         assert_eq!(activity.kind, PrivateLifeKind::BottomForage);
         assert_eq!(activity.phase, ActivityPhase::Approach);
@@ -2875,19 +3105,26 @@ mod tests {
         // Only 170 from the destination, but 950 from the ball's center. The old
         // 220-unit arrival threshold entered Act while still inside its contact radius.
         world.creature.aquarium.position = NormalizedPosition::new(4_050, 9_200);
-        let approach = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
-        assert_eq!(world.creature.aquarium.position, endpoint);
-        assert_eq!(
-            world.creature.private_life.active.as_ref().unwrap().phase,
-            ActivityPhase::Approach
-        );
-        assert!(!approach.iter().any(|event| matches!(
-            event,
-            GameEvent::PrivateLifePhaseChanged {
-                to: ActivityPhase::Act,
-                ..
+        // Eased arrival may take a few ticks; every one of them stays in Approach until the
+        // creature lands exactly on the endpoint.
+        for _ in 0..(2_000 / SIMULATION_TICK_MS) {
+            let approach = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+            assert_eq!(
+                world.creature.private_life.active.as_ref().unwrap().phase,
+                ActivityPhase::Approach
+            );
+            assert!(!approach.iter().any(|event| matches!(
+                event,
+                GameEvent::PrivateLifePhaseChanged {
+                    to: ActivityPhase::Act,
+                    ..
+                }
+            )));
+            if world.creature.aquarium.position == endpoint {
+                break;
             }
-        )));
+        }
+        assert_eq!(world.creature.aquarium.position, endpoint);
 
         let arrived = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
         let activity = world.creature.private_life.active.as_ref().unwrap();
@@ -2920,7 +3157,7 @@ mod tests {
         let mut saw_act = false;
         let mut saw_recover = false;
         let mut completed = false;
-        for _ in 0..40 {
+        for _ in 0..(20_000 / SIMULATION_TICK_MS) {
             let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
             assert!(!events.iter().any(|event| matches!(
                 event,
@@ -3142,8 +3379,9 @@ mod tests {
             let mut payoff_at = None;
             let mut responses = 0;
             let mut finished = false;
-            for _ in 0..30 {
+            for _ in 0..(30_000 / SIMULATION_TICK_MS) {
                 let before = world.creature.aquarium.position;
+                let travelling = world.creature.aquarium.destination.is_some();
                 if payoff_at.is_none() {
                     let target =
                         approach_position(&world, SemanticDestination::Toy(ToyId::Sock)).unwrap();
@@ -3192,7 +3430,9 @@ mod tests {
                         );
                     }
                 }
-                if payoff_at.is_none() {
+                // Notice is a short in-place pause with gentle drift; the swim itself must
+                // converge monotonically.
+                if payoff_at.is_none() && travelling {
                     assert!(
                         world.creature.aquarium.position.x >= before.x,
                         "approach must not oscillate horizontally"
@@ -3210,8 +3450,9 @@ mod tests {
                 };
                 if completed {
                     if private {
-                        assert_eq!(payoff_at.unwrap() - act_started.unwrap(), 2_000);
-                        assert_eq!(world.elapsed_ms - payoff_at.unwrap(), 2_000);
+                        // The private Act and Recover phase durations.
+                        assert_eq!(payoff_at.unwrap() - act_started.unwrap(), 1_600);
+                        assert_eq!(world.elapsed_ms - payoff_at.unwrap(), 900);
                     }
                     assert!(!world.aquarium.toy_states[&ToyId::Sock].carried);
                     finished = true;
@@ -3229,9 +3470,13 @@ mod tests {
             );
         }
         assert_eq!(contact_positions.len(), 2);
-        assert_eq!(
-            contact_positions[0], contact_positions[1],
-            "direct and private approaches use the same physical surface"
+        // Private play pauses to notice (with gentle drift) before swimming, so its path
+        // starts a few units away. Both must still land on the same surface point within
+        // the six-unit contact arrival tolerance.
+        let (direct, private) = (contact_positions[0], contact_positions[1]);
+        assert!(
+            (direct.x - private.x).abs() + (direct.y - private.y).abs() <= 6,
+            "direct and private approaches use the same physical surface: {direct:?} {private:?}"
         );
     }
 
@@ -3259,7 +3504,8 @@ mod tests {
             );
             let relationship = world.creature.relationship;
             let mut events = Vec::new();
-            for _ in 0..4 {
+            // Long enough to cover the notice pause before travel begins.
+            for _ in 0..(2_000 / SIMULATION_TICK_MS) {
                 events.extend(step(&mut world, &[], SIMULATION_TICK_MS, &mut rng));
             }
             assert_eq!(
@@ -3310,7 +3556,7 @@ mod tests {
                 }
             )));
             let mut payoffs = 0;
-            for _ in 0..20 {
+            for _ in 0..(20_000 / SIMULATION_TICK_MS) {
                 let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
                 payoffs += events
                     .iter()
@@ -3390,17 +3636,25 @@ mod tests {
             assert_eq!(approach_position(&world, destination), None);
             let relationship_before = world.creature.relationship;
             let mut events = Vec::new();
-            let mut interrupted = false;
-            for _ in 0..6 {
+            let mut interrupted_at = None;
+            // Long enough to cover the beat's pause before travel begins, then one more
+            // second (shorter than any idle bout) to prove the interruption happens once.
+            for tick_index in 0..(6_000 / SIMULATION_TICK_MS) {
                 let tick = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
-                interrupted |= tick.iter().any(|event| matches!(event, GameEvent::RelationshipBeatInterrupted(interrupted_motif) if *interrupted_motif == motif));
-                if interrupted {
+                let interrupted_now = tick.iter().any(|event| matches!(event, GameEvent::RelationshipBeatInterrupted(interrupted_motif) if *interrupted_motif == motif));
+                if interrupted_now {
+                    interrupted_at.get_or_insert(tick_index);
+                }
+                if interrupted_at.is_some() {
                     assert!(world.creature.relationship_expression.active.is_none());
                     assert!(world.creature.aquarium.destination.is_none());
                     assert!(world.creature.aquarium.travel_purpose.is_none());
                     assert_eq!(dialogue_handoff(&world).state, DialogueHandoffState::Ready);
                 }
                 events.extend(tick);
+                if interrupted_at.is_some_and(|at| tick_index >= at + 1_000 / SIMULATION_TICK_MS) {
+                    break;
+                }
             }
             assert_eq!(events.iter().filter(|event| matches!(event, GameEvent::RelationshipBeatInterrupted(interrupted_motif) if *interrupted_motif == motif)).count(), 1);
             assert!(!events.iter().any(|event| matches!(
@@ -3442,7 +3696,7 @@ mod tests {
                 }
             )));
             let mut payoffs = 0;
-            for _ in 0..20 {
+            for _ in 0..(20_000 / SIMULATION_TICK_MS) {
                 let tick = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
                 payoffs += tick
                     .iter()
@@ -3592,7 +3846,7 @@ mod tests {
         world.creature.aquarium.position = NormalizedPosition::new(5_000, 3_000);
         begin_private_toy(&mut world, ToyId::Sock, &mut rng);
         let mut release = None;
-        for _ in 0..30 {
+        for _ in 0..(30_000 / SIMULATION_TICK_MS) {
             let before = world.aquarium.toy_states[&ToyId::Sock].clone();
             step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
             let sock = &world.aquarium.toy_states[&ToyId::Sock];
@@ -3725,6 +3979,15 @@ mod tests {
                     _ => None,
                 })
                 .unwrap();
+            // One round isolates the per-contact exactly-once property; multi-round sessions
+            // have their own test.
+            world
+                .creature
+                .interaction_state
+                .toy_interaction
+                .as_mut()
+                .unwrap()
+                .rounds_left = 0;
             assert_eq!(world.aquarium.toy_states[&toy], before);
             assert!(!receipt.iter().any(|event| matches!(
                 event,
@@ -3792,11 +4055,12 @@ mod tests {
             let encoded = SaveGame::capture(&world, &rng).to_json().unwrap();
             let (mut resumed, mut resumed_rng) = SaveGame::from_json(&encoded).unwrap().resume();
             assert_eq!(resumed, world);
+            // Recovery holds up to 2.6 s (the towed sock); step past it in both forms.
             let mut individual = Vec::new();
-            for _ in 0..5 {
+            for _ in 0..30 {
                 individual.extend(step(&mut world, &[], SIMULATION_TICK_MS, &mut rng));
             }
-            let batched = step(&mut resumed, &[], SIMULATION_TICK_MS * 5, &mut resumed_rng);
+            let batched = step(&mut resumed, &[], SIMULATION_TICK_MS * 30, &mut resumed_rng);
             assert_eq!(batched, individual);
             assert_eq!(resumed, world);
             assert!(
@@ -3832,15 +4096,26 @@ mod tests {
         )));
         let encoded = SaveGame::capture(&world, &rng).to_json().unwrap();
         let (mut resumed, mut resumed_rng) = SaveGame::from_json(&encoded).unwrap().resume();
-        let next = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
-        assert_eq!(
-            step(&mut resumed, &[], SIMULATION_TICK_MS, &mut resumed_rng),
-            next
-        );
-        assert_eq!(resumed, world);
+        // The hold lasts a readable moment, then releases identically after the save.
+        let mut next = Vec::new();
+        let mut held_ticks = 0;
+        let mut last_held = held.position;
+        while world.aquarium.toy_states[&ToyId::Sock].carried {
+            assert!(held_ticks < 40, "the sock hold must end");
+            held_ticks += 1;
+            last_held = world.aquarium.toy_states[&ToyId::Sock].position;
+            next = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+            assert_eq!(
+                step(&mut resumed, &[], SIMULATION_TICK_MS, &mut resumed_rng),
+                next
+            );
+            assert_eq!(resumed, world);
+        }
+        assert!(held_ticks >= 10, "the hold is visible, not a single tick");
         let released = &world.aquarium.toy_states[&ToyId::Sock];
         assert!(!released.carried);
-        assert_eq!(released.position, held.position);
+        // Release starts exactly where the sock was last held, without a jump.
+        assert_eq!(released.position, last_held);
         assert_eq!(
             released.velocity,
             NormalizedVelocity {
@@ -3854,9 +4129,11 @@ mod tests {
                 .any(|event| matches!(event, GameEvent::ToyInteractionResponded { .. }))
         );
         step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
+        // Velocity is per second; one tick moves the matching fraction of it.
+        let fall = SOCK_RELEASE_SPEED * SIMULATION_TICK_MS as i32 / 1_000;
         assert_eq!(
             world.aquarium.toy_states[&ToyId::Sock].position.y,
-            (held.position.y + SOCK_RELEASE_SPEED).min(10_000)
+            (last_held.y + fall).min(10_000)
         );
     }
 
@@ -4068,6 +4345,9 @@ mod tests {
             outcome: ToyInteractionOutcome::Accepted,
             phase: ToyInteractionPhase::Approach,
             relationship: None,
+            recovery_until_ms: 0,
+            rounds_left: 0,
+            contacts: 0,
         });
         world.creature.aquarium.steering = SteeringMode::Approach;
         let relationship = world.creature.relationship;
@@ -4418,7 +4698,22 @@ mod tests {
             kind: activity.kind,
             recipe: activity.recipe,
         }));
-        step(&mut first, &[], SIMULATION_TICK_MS, &mut first_rng);
+        // The notice pause owns the activity without travel; travel begins once it ends.
+        for _ in 0..(3_000 / SIMULATION_TICK_MS) {
+            step(&mut first, &[], SIMULATION_TICK_MS, &mut first_rng);
+            if first.creature.aquarium.travel_purpose.is_some() {
+                break;
+            }
+            assert_eq!(
+                first
+                    .creature
+                    .private_life
+                    .active
+                    .as_ref()
+                    .map(|activity| activity.id),
+                Some(interaction_id)
+            );
+        }
         assert_eq!(
             first.creature.aquarium.travel_purpose,
             Some(TravelPurpose::PrivateLife {
@@ -4470,7 +4765,7 @@ mod tests {
         let mut replay = first.clone();
         let mut first_rng = SeededRandom::new(42);
         let mut replay_rng = first_rng;
-        for _ in 0..180 {
+        for _ in 0..(180_000 / SIMULATION_TICK_MS) {
             assert_eq!(
                 step(&mut first, &[], SIMULATION_TICK_MS, &mut first_rng),
                 step(&mut replay, &[], SIMULATION_TICK_MS, &mut replay_rng),
@@ -4501,7 +4796,7 @@ mod tests {
         let sequence = |seed| {
             let mut world = WorldState::new(seed, "Shape");
             let mut rng = SeededRandom::new(seed);
-            for _ in 0..120 {
+            for _ in 0..(120_000 / SIMULATION_TICK_MS) {
                 step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
             }
             world
@@ -4527,7 +4822,7 @@ mod tests {
         world.creature.traits.fussiness = 0.1;
         let mut rng = SeededRandom::new(212);
         let mut contacts = Vec::new();
-        for _ in 0..16 {
+        for _ in 0..(16_000 / SIMULATION_TICK_MS) {
             contacts.extend(step(&mut world, &[], SIMULATION_TICK_MS, &mut rng));
         }
         let response = contacts
@@ -4608,7 +4903,7 @@ mod tests {
             activity.subject = Some(ActivitySubject::Toy(toy));
             let activity_id = activity.id;
             let mut reached_contact = false;
-            for _ in 0..30 {
+            for _ in 0..(30_000 / SIMULATION_TICK_MS) {
                 let events = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
                 if events.contains(&GameEvent::ToyObjectResponded {
                     toy,
@@ -4632,7 +4927,8 @@ mod tests {
             assert_eq!(resumed, world);
             assert_eq!(toy_position(&resumed, toy), saved_position);
 
-            for _ in 0..10 {
+            // Water drag needs several seconds to stop a nudged ball completely.
+            for _ in 0..(10_000 / SIMULATION_TICK_MS) {
                 let expected = step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
                 let actual = step(&mut resumed, &[], SIMULATION_TICK_MS, &mut resumed_rng);
                 assert_eq!(actual, expected);
@@ -4669,7 +4965,7 @@ mod tests {
                 state: DialogueHandoffState::WaitingForContact,
             }
         );
-        for _ in 0..12 {
+        for _ in 0..(12_000 / SIMULATION_TICK_MS) {
             step(&mut world, &[], SIMULATION_TICK_MS, &mut rng);
             if dialogue_handoff(&world).state == DialogueHandoffState::SafeBoundary {
                 break;

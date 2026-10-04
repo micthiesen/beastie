@@ -1,8 +1,6 @@
-use std::collections::BTreeSet;
-
-use beastie_core::{
-    BeliefKind, Concept, FoodId, GameEvent, Intention, LanguageStage, MemoryKind, NonverbalAct,
-    Reaction, SocialAct,
+use beastie_core::{BeliefKind, FoodId, GameEvent, Intention, Meaning, MemoryKind, NonverbalAct};
+use beastie_protocol::{
+    SpeechIntent, constrained_fallback_reply, validate_reply, validate_request,
 };
 use beastie_session::{CommandEnvelope, GameSession, SessionCommand};
 
@@ -12,7 +10,8 @@ const VISIBLE_SCENARIO: &str =
 const AQUARIUM_SCENARIO: &str = include_str!("../../../fixtures/scenarios/aquarium-v1.jsonl");
 const AQUARIUM_VISIBLE_SCENARIO: &str =
     include_str!("../../../fixtures/scenarios/aquarium-v1-visible.jsonl");
-const DISLIKED_BERRY_SEED: u64 = 8;
+/// A seed whose ranked preferences make berry the disliked food.
+const DISLIKED_BERRY_SEED: u64 = 1;
 
 fn commands() -> Vec<CommandEnvelope> {
     SCENARIO
@@ -95,6 +94,16 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
 
     assert_eq!(observations.len(), 17);
 
+    // Every line the creature is asked to say is valid, and its no-model voice is too.
+    for observation in &observations {
+        if let Some(request) = &observation.dialogue_request {
+            validate_request(request).expect("emitted request validates");
+            assert!(request.speech_intent.is_some());
+            validate_reply(request, constrained_fallback_reply(request))
+                .expect("no-model line validates");
+        }
+    }
+
     let berry_preference = session
         .world()
         .creature
@@ -121,31 +130,36 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
             .any(|belief| belief.kind == BeliefKind::FoodIsATrick)
     );
 
-    let first_talk = &observations[4];
-    assert!(has_event(&first_talk.events, |event| {
-        matches!(event, GameEvent::SocialActExpressed(SocialAct::Neutral))
+    // Day one: the first mention earns a curious echo, the second, in the same moment, a word.
+    let first_mention = &observations[1];
+    assert!(has_event(&first_mention.events, |event| {
+        matches!(event, GameEvent::WordHeard { word: Some(word), echo: Some(_) } if word == "berry")
     }));
-    let first_request = first_talk
+    assert!(matches!(
+        first_mention
+            .dialogue_request
+            .as_ref()
+            .and_then(|request| request.speech_intent.as_ref()),
+        Some(SpeechIntent::Echo { .. })
+    ));
+    let lesson = &observations[3];
+    assert!(lesson.events.contains(&GameEvent::WordLearned {
+        word: "berry".to_owned(),
+        meaning: Meaning::Food(FoodId::Berry),
+    }));
+    let lesson_request = lesson
         .dialogue_request
         .as_ref()
-        .expect("first talk should create a dialogue request");
+        .expect("a new word is said back");
+    assert!(matches!(
+        lesson_request.speech_intent,
+        Some(SpeechIntent::NewWord { ref word, .. }) if word == "berry"
+    ));
     assert!(
-        first_request
-            .candidate_memories
-            .iter()
-            .any(|memory| { memory.id.0 == 1 && memory.fact.contains("pushed away the berry") })
+        constrained_fallback_reply(lesson_request)
+            .say
+            .contains("berry")
     );
-
-    assert!(session.world().creature.memories.iter().any(|memory| {
-        memory.kind
-            == (MemoryKind::PlayerReacted {
-                reaction: Reaction::Laugh,
-                to: SocialAct::Neutral,
-            })
-    }));
-    assert!(has_event(&observations[6].events, |event| {
-        matches!(event, GameEvent::SocialActExpressed(SocialAct::Provocation))
-    }));
 
     let saved_world = saved_world.expect("fixture should checkpoint before reload");
     let saved_json = saved_json.expect("fixture should encode a durable save");
@@ -153,6 +167,11 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
         GameSession::resume_json(&saved_json, 1_000_000).expect("save should reload");
     assert_eq!(progress.applied_ms, 0);
     assert_eq!(resumed.world(), &saved_world);
+    assert_eq!(
+        resumed.world().creature.lexicon.meaning_of("berry"),
+        Some(Meaning::Food(FoodId::Berry)),
+        "a learned word survives the durable save"
+    );
 
     let mut uninterrupted = GameSession::new(DISLIKED_BERRY_SEED, "Mop");
     for command in commands().into_iter().take(8) {
@@ -194,32 +213,33 @@ fn three_day_acceptance_arc_is_deterministic_and_grounded() {
 
     assert_eq!(session.world().active_day(), 3);
     assert_eq!(session.world().creature.development.active_days_reached, 3);
-    assert_eq!(
-        session.world().creature.development.language_stage,
-        LanguageStage::Phrases
-    );
-    assert!(
-        session
-            .world()
-            .creature
-            .known_concepts
-            .is_superset(&BTreeSet::from([Concept::Yesterday]))
-    );
 
-    let later_talk = &observations[13];
-    assert!(has_event(&later_talk.events, |event| {
-        matches!(event, GameEvent::SocialActExpressed(SocialAct::Provocation))
-    }));
-    let later_request = later_talk
-        .dialogue_request
-        .as_ref()
-        .expect("later talk should create a dialogue request");
-    assert_eq!(later_request.idiolect, session.world().idiolect());
-    assert!(
-        later_request
-            .candidate_memories
-            .iter()
-            .any(|memory| memory.id.0 == 1)
+    // Days two and three: the taught word is understood and used back.
+    for later in [&observations[11], &observations[13]] {
+        assert!(has_event(&later.events, |event| matches!(
+            event,
+            GameEvent::Understood { word, meaning: Meaning::Food(FoodId::Berry), .. } if word == "berry"
+        )));
+        let request = later
+            .dialogue_request
+            .as_ref()
+            .expect("an understood word is answered");
+        assert!(matches!(
+            request.speech_intent,
+            Some(SpeechIntent::Answer { ref word, .. }) if word == "berry"
+        ));
+        assert!(request.vocabulary.iter().any(|entry| entry.word == "berry"));
+    }
+    assert_eq!(
+        observations[13]
+            .dialogue_request
+            .as_ref()
+            .map(|request| request.idiolect),
+        Some(session.world().idiolect())
+    );
+    assert_eq!(
+        session.world().creature.lexicon.learned_words(),
+        vec![("berry".to_owned(), Meaning::Food(FoodId::Berry))]
     );
 
     let rejection = &observations[15];

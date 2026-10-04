@@ -6,7 +6,7 @@
 use beastie_core::{
     ActionPhase, ActivityPhase, ActivityRecipe, FoodDisposition, FoodDropRejectionReason, FoodId,
     GameEvent, GazeTarget, Intention, Mood, NonverbalAct, NormalizedPosition, PrivateLifeKind,
-    Reaction, RelationshipBeatPhase, RelationshipExpressionKind, RelationshipMotifKey,
+    RelationshipBeatPhase, RelationshipExpressionKind, RelationshipMotifKey,
     RelationshipPerformanceRecipe, SemanticDestination, SpeechAttention, SteeringMode, ToyId,
     ToyResponse, WorldObject, WorldState, performance_recipe_for,
 };
@@ -58,7 +58,6 @@ pub enum UiTarget {
     Plant(u64),
     FoodObject(u64),
     Toy(ToyId),
-    Reaction(Reaction),
     ComposeField,
     Actions,
 }
@@ -73,14 +72,14 @@ pub enum UiAction {
     CloseContext,
     OpenFoodChoice,
     OpenToyChoice,
+    /// Drops the chosen food just in front of the creature: feeding is one click.
     SelectFood(FoodId),
-    /// The game shell combines this with the pointer's normalized aquarium position.
-    DropFood(FoodId),
+    /// Tap the glass where the pointer is; the shell supplies the aquarium position.
+    TapWater,
     Play(ToyId),
     Comfort,
     Inspect,
     Talk,
-    React(Reaction),
     FocusCompose,
     TypeCharacter(char),
     Backspace,
@@ -99,6 +98,7 @@ pub enum UiAction {
     CycleSpeechVolume,
     ToggleVoice,
     ToggleSubtitles,
+    /// Speech is no longer paged; retained as a no-op so older scenario scripts still parse.
     ChangeSpeechPage(i8),
     ToggleMicrophone,
     /// Starts push-to-talk on press. The shell ends capture on release or focus loss.
@@ -152,7 +152,6 @@ pub enum UiMode {
     /// A live, qualitative reading of an actual aquarium inhabitant or object.
     Inspect(UiTarget),
     FoodChoice,
-    FoodDrop(FoodId),
     ToyChoice,
     OnScreenKeyboard,
     Settings,
@@ -168,7 +167,6 @@ pub enum UiMode {
 pub enum CursorKind {
     Default,
     Pointer,
-    FoodDrop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,6 +194,12 @@ pub enum PresentationCueKind {
     PlantOrbit,
     BottomForage,
     OpenWaterDrift,
+    /// Head tilt and a question mark: an unfamiliar word was heard.
+    Curious,
+    /// A burst of sparkle: a word was just learned.
+    WordLearned,
+    /// Rings spreading from a tap on the glass.
+    Ripple,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -274,14 +278,14 @@ pub struct ViewState {
     /// Session-only guidance, dismissed by an observed care interaction.
     #[serde(default)]
     pub care_guidance_dismissed: bool,
+    /// Recent taps on the glass, for their ripples.
+    #[serde(default)]
+    pub ripples: Vec<(NormalizedPosition, u64)>,
     pub pending: bool,
     pub speech: Option<String>,
     /// Full utterance keeps the caption bounds steady during progressive text reveal.
     #[serde(default)]
     pub speech_layout_text: Option<String>,
-    /// Page of the current utterance only; a replacement caption starts at zero.
-    #[serde(default)]
-    pub speech_page: usize,
     pub speech_expires_at_ms: Option<u64>,
     #[serde(default)]
     pub cue_queue: Vec<PresentationCue>,
@@ -373,10 +377,10 @@ impl Default for ViewState {
             compose_engaged: false,
             renaming_with_osk: false,
             care_guidance_dismissed: false,
+            ripples: Vec::new(),
             pending: false,
             speech: None,
             speech_layout_text: None,
-            speech_page: 0,
             speech_expires_at_ms: None,
             cue_queue: Vec::new(),
             text_scale: default_text_scale(),
@@ -409,53 +413,13 @@ impl ViewState {
     pub fn show_speech(&mut self, speech: String, now_ms: u64) {
         self.speech_layout_text = Some(speech.clone());
         self.speech = Some(speech);
-        self.speech_page = 0;
         self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_LIFETIME_MS));
-    }
-
-    #[must_use]
-    pub fn has_speech_pages(&self) -> bool {
-        self.speech_layout_text
-            .as_deref()
-            .or(self.speech.as_deref())
-            .is_some_and(|speech| speech_pages(speech).len() > 1)
-    }
-
-    pub fn change_speech_page(&mut self, delta: i8, now_ms: u64) {
-        let Some(speech) = self.speech.as_deref() else {
-            return;
-        };
-        let layout = self.speech_layout_text.as_deref().unwrap_or(speech);
-        let pages = speech_pages(layout);
-        let revealed = speech_revealed_bytes(layout, speech);
-        let available = speech_available_page(&pages, revealed);
-        let next = self
-            .speech_page
-            .saturating_add_signed(isize::from(delta))
-            .min(available);
-        if next != self.speech_page {
-            self.speech_page = next;
-            self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_LIFETIME_MS));
-            if self.focused_region.as_deref() == Some("speech/next") && next == available {
-                self.focused_region = Some("speech/back".to_owned());
-            } else if self.focused_region.as_deref() == Some("speech/back") && next == 0 {
-                self.focused_region = Some("speech/next".to_owned());
-            }
-        }
     }
 
     pub fn clear_speech(&mut self) {
         self.speech = None;
         self.speech_layout_text = None;
-        self.speech_page = 0;
         self.speech_expires_at_ms = None;
-        if self
-            .focused_region
-            .as_deref()
-            .is_some_and(|region| region.starts_with("reaction/") || region.starts_with("speech/"))
-        {
-            self.focused_region = Some("compose/input".to_owned());
-        }
     }
 
     pub fn show_status(&mut self, status: impl Into<String>, now_ms: u64, duration_ms: u64) {
@@ -482,6 +446,13 @@ impl ViewState {
     /// Projects an authoritative event batch and returns its owned audio commands.
     pub fn observe_events(&mut self, events: &[GameEvent], now_ms: u64) -> AudioPlan {
         self.expire(now_ms);
+        self.ripples
+            .retain(|(_, at)| now_ms.saturating_sub(*at) < RIPPLE_MS);
+        for event in events {
+            if let GameEvent::TapNoticed { position, .. } = event {
+                self.ripples.push((*position, now_ms));
+            }
+        }
         if events.iter().any(|event| {
             matches!(
                 event,
@@ -555,11 +526,8 @@ impl ViewState {
             self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_LIFETIME_MS));
         }
         if let (Some(speech), Some(layout)) = (&self.speech, &self.speech_layout_text) {
-            // Reading time starts after reveal completes and the final page is reached.
-            // Earlier pages remain available without becoming a conversation history.
-            if speech_revealed_bytes(layout, speech) < layout.len()
-                || self.speech_page.saturating_add(1) < speech_pages(layout).len()
-            {
+            // Reading time starts after the progressive reveal completes.
+            if speech_revealed_bytes(layout, speech) < layout.len() {
                 self.speech_expires_at_ms = Some(now_ms.saturating_add(SPEECH_LIFETIME_MS));
             }
         }
@@ -847,6 +815,9 @@ pub struct CreatureScene {
     pub private_life: Option<PrivateLifeScene>,
     pub relationship: Option<RelationshipScene>,
     pub highlight: Highlight,
+    /// What the creature wants, shown as a thought bubble while it is not speaking.
+    #[serde(default)]
+    pub want: Option<beastie_core::Want>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -922,6 +893,8 @@ pub enum AudioCue {
     BubbleAlternate,
     /// Recovery sound for a creature completing a retreat into its cave.
     CaveSettle,
+    /// The creature learned what a word means.
+    WordLearned,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1082,6 +1055,31 @@ pub fn audio_plan_for_events(events: &[GameEvent]) -> AudioPlan {
             GameEvent::SpeechPerceived(SpeechAttention::Glanced | SpeechAttention::Attended) => {
                 Some((ordinary, voice, AudioCue::Curious, 700))
             }
+            GameEvent::WordHeard { .. } => Some((ordinary, voice, AudioCue::Curious, 650)),
+            GameEvent::Emerged => Some((ordinary, voice, AudioCue::Curious, 700)),
+            GameEvent::TapNoticed { .. } => Some((
+                ordinary,
+                PresentationChannel::Ambience,
+                AudioCue::BubbleAlternate,
+                620,
+            )),
+            GameEvent::WordLearned { .. } => Some((
+                SemanticOwner::DirectOutcome,
+                voice,
+                AudioCue::WordLearned,
+                760,
+            )),
+            GameEvent::Understood { response, .. } => match response {
+                beastie_core::RequestResponse::Comply | beastie_core::RequestResponse::Delight => {
+                    Some((SemanticOwner::DirectOutcome, voice, AudioCue::Mrr, 700))
+                }
+                beastie_core::RequestResponse::Refuse | beastie_core::RequestResponse::Sulk => {
+                    Some((SemanticOwner::DirectOutcome, voice, AudioCue::Annoyed, 600))
+                }
+                beastie_core::RequestResponse::Look => {
+                    Some((ordinary, voice, AudioCue::Curious, 600))
+                }
+            },
             GameEvent::NonverbalAct(NonverbalAct::LeanAgainstPlayer) if !comforted => {
                 Some((ordinary, voice, AudioCue::Mrr, 700))
             }
@@ -1225,7 +1223,7 @@ pub fn contextual_actions(target: UiTarget) -> Vec<UiAction> {
         UiTarget::Cave | UiTarget::Plant(_) | UiTarget::FoodObject(_) | UiTarget::OpenWater => {
             vec![UiAction::Inspect]
         }
-        UiTarget::Reaction(_) | UiTarget::ComposeField | UiTarget::Actions => Vec::new(),
+        UiTarget::ComposeField | UiTarget::Actions => Vec::new(),
     }
 }
 
@@ -1264,7 +1262,7 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (ScenePlan, AudioPlan) {
     let effects = effect_scenes(state, &creature, view);
     let mut hit_regions = world_hit_regions(state, view);
     if !matches!(view.mode, UiMode::Title) {
-        add_speech(state, view, &mut rects, &mut text, &mut hit_regions);
+        add_speech(state, view, &mut rects, &mut text);
         add_persistent_bar(
             state,
             view,
@@ -1336,6 +1334,9 @@ pub fn plan(state: &WorldState, view: &ViewState) -> (ScenePlan, AudioPlan) {
         &mut text,
         &mut hit_regions,
     );
+    if visible_status(view, state.elapsed_ms).is_none() {
+        add_coaching(state, view, &mut rects, &mut text);
+    }
     add_hover_and_focus(view, state.elapsed_ms, &hit_regions, &mut rects, &mut text);
     for command in &mut text {
         command.scale = view.text_scale.clamp(1, 2);
@@ -1483,6 +1484,11 @@ fn creature_scene(state: &WorldState, view: &ViewState) -> CreatureScene {
         private_life,
         relationship,
         highlight: highlight_for(view, "target/creature"),
+        want: if view.speaking || view.speech.is_some() {
+            None
+        } else {
+            beastie_core::current_want(state)
+        },
     }
 }
 
@@ -1567,12 +1573,26 @@ fn object_scenes(state: &WorldState, view: &ViewState) -> Vec<ObjectScene> {
         .collect()
 }
 
+const RIPPLE_MS: u64 = 900;
+
 fn effect_scenes(
     state: &WorldState,
     creature: &CreatureScene,
     view: &ViewState,
 ) -> Vec<EffectScene> {
     let mut effects = Vec::new();
+    for (position, at) in &view.ripples {
+        let elapsed_ms = state.elapsed_ms.saturating_sub(*at);
+        if elapsed_ms < RIPPLE_MS {
+            effects.push(EffectScene {
+                owner: SemanticOwner::Ordinary,
+                cue: PresentationCueKind::Ripple,
+                position: *position,
+                target: UiTarget::OpenWater,
+                elapsed_ms,
+            });
+        }
+    }
     for cue in &view.cue_queue {
         if cue.channel != PresentationChannel::Physical
             || state.elapsed_ms < cue.starts_at_ms
@@ -1685,11 +1705,22 @@ fn effect_scenes(
 }
 
 fn world_hit_regions(state: &WorldState, view: &ViewState) -> Vec<HitRegion> {
-    if let UiMode::FoodDrop(food) = view.mode {
-        return vec![HitRegion {
-            id: "world/drop-food".to_owned(),
+    // The aquarium stays touchable under shallow menus: a world click both dismisses the menu
+    // and acts, so nothing ever needs a separate close click first.
+    let menu_open = matches!(
+        view.mode,
+        UiMode::Context(_) | UiMode::Inspect(_) | UiMode::ToyChoice | UiMode::FoodChoice
+    );
+    if !matches!(view.mode, UiMode::Compose) && !menu_open {
+        return Vec::new();
+    }
+    let (x, y) = world_to_logical(state.creature.aquarium.position);
+    let mut hits = Vec::new();
+    if menu_open {
+        hits.push(HitRegion {
+            id: "world/dismiss".to_owned(),
             target: Some(UiTarget::OpenWater),
-            action: UiAction::DropFood(food),
+            action: UiAction::CloseContext,
             rect: Rect {
                 x: 0,
                 y: 0,
@@ -1697,19 +1728,33 @@ fn world_hit_regions(state: &WorldState, view: &ViewState) -> Vec<HitRegion> {
                 h: AQUARIUM_BOTTOM,
             },
             enabled: true,
-            label: format!("Drop {}", food_name(food)),
-            cursor: CursorKind::FoodDrop,
-            shape: HitShape::Rect,
-        }];
+            label: "Close".to_owned(),
+            cursor: CursorKind::Default,
+            shape: HitShape::World(UiTarget::OpenWater),
+        });
     }
-    if !matches!(view.mode, UiMode::Compose) {
-        return Vec::new();
+    if !menu_open {
+        // Empty water is never a dead click: tapping the glass gets the creature's attention.
+        hits.push(HitRegion {
+            id: "world/water".to_owned(),
+            target: Some(UiTarget::OpenWater),
+            action: UiAction::TapWater,
+            rect: Rect {
+                x: 0,
+                y: 0,
+                w: LOGICAL_WIDTH,
+                h: AQUARIUM_BOTTOM,
+            },
+            enabled: true,
+            label: "Tap the glass".to_owned(),
+            cursor: CursorKind::Default,
+            shape: HitShape::World(UiTarget::OpenWater),
+        });
     }
-    let (x, y) = world_to_logical(state.creature.aquarium.position);
-    let mut hits = vec![HitRegion {
+    hits.push(HitRegion {
         id: "target/creature".to_owned(),
         target: Some(UiTarget::Creature),
-        action: UiAction::OpenContext(UiTarget::Creature),
+        action: UiAction::Comfort,
         rect: Rect {
             x: x - CREATURE_HIT_WIDTH / 2,
             y: y - CREATURE_HIT_HEIGHT / 2,
@@ -1717,10 +1762,10 @@ fn world_hit_regions(state: &WorldState, view: &ViewState) -> Vec<HitRegion> {
             h: CREATURE_HIT_HEIGHT,
         },
         enabled: true,
-        label: format!("{} · care and play", head_fit(&state.creature.name, 18)),
+        label: format!("Pet {}", head_fit(&state.creature.name, 18)),
         cursor: CursorKind::Pointer,
         shape: HitShape::World(UiTarget::Creature),
-    }];
+    });
     for (id, object) in &state.aquarium.objects {
         let (target, position, label) = match object {
             WorldObject::Food(food) if !matches!(food.disposition, FoodDisposition::Consumed) => (
@@ -1761,7 +1806,10 @@ fn world_hit_regions(state: &WorldState, view: &ViewState) -> Vec<HitRegion> {
         hits.push(HitRegion {
             id: hit_id.clone(),
             target: Some(target),
-            action: UiAction::OpenContext(target),
+            action: match target {
+                UiTarget::Toy(toy) => UiAction::Play(toy),
+                _ => UiAction::OpenContext(target),
+            },
             rect: Rect {
                 x: x - 10,
                 y: y - 10,
@@ -1770,7 +1818,7 @@ fn world_hit_regions(state: &WorldState, view: &ViewState) -> Vec<HitRegion> {
             },
             enabled: true,
             label: match target {
-                UiTarget::Toy(_) => format!("{} · play", head_fit(&label, 22)),
+                UiTarget::Toy(_) => format!("Play with {}", head_fit(&label, 18)),
                 _ => label,
             },
             cursor: CursorKind::Pointer,
@@ -1802,26 +1850,44 @@ fn add_persistent_bar(
         rects,
         hits,
     );
+    let status = format!("{} · {}", summary.mood_label, summary.behavior);
+    // The name opens the rarer verbs (inspect, rename); everyday care is one click elsewhere.
+    // Its label carries the complete status, which the narrow rail may have to shorten.
+    hits.push(hit(
+        "compose/creature",
+        Some(UiTarget::Creature),
+        UiAction::OpenContext(UiTarget::Creature),
+        Rect {
+            x: 4,
+            y: 152,
+            w: 52,
+            h: 24,
+        },
+        true,
+        &format!(
+            "{} is {status}. Click to look closer.",
+            head_fit(&summary.name, 18)
+        ),
+    ));
     text.push(bounded_label(
         "compose/summary-name",
         &summary.name,
         Rect {
             x: 9,
             y: 151,
-            w: 62,
+            w: 46,
             h: 11,
         },
         TextRole::Identity,
         35,
     ));
-    let status = format!("{} · {}", summary.mood_label, summary.behavior);
     text.push(bounded_label(
         "compose/summary-behavior",
         &status,
         Rect {
             x: 9,
             y: 162,
-            w: 65,
+            w: 46,
             h: 15,
         },
         TextRole::Secondary,
@@ -1836,7 +1902,7 @@ fn add_persistent_bar(
     .enumerate()
     {
         let area = Rect {
-            x: 76 + index as i32 * 21,
+            x: 59 + index as i32 * 20,
             y: 154,
             w: 18,
             h: 20,
@@ -1847,10 +1913,10 @@ fn add_persistent_bar(
         hits.push(hit(
             &id,
             Some(UiTarget::Toy(toy)),
-            UiAction::OpenContext(UiTarget::Toy(toy)),
+            UiAction::Play(toy),
             area,
             true,
-            name,
+            &format!("Play with {name}"),
         ));
         icons.push(IconCommand {
             id,
@@ -1864,56 +1930,44 @@ fn add_persistent_bar(
             layer: 35,
         });
     }
-    let food = Rect {
-        x: 139,
-        y: 154,
-        w: 21,
-        h: 20,
-    };
-    add_button_chrome(
-        "compose/food",
-        food,
-        true,
-        matches!(view.mode, UiMode::FoodChoice | UiMode::FoodDrop(_)),
-        31,
-        rects,
-    );
-    hits.push(hit(
-        "compose/food",
-        Some(UiTarget::Actions),
-        UiAction::OpenFoodChoice,
-        food,
-        true,
-        "Feed",
-    ));
-    icons.push(IconCommand {
-        id: "ui/button-food".into(),
-        kind: IconKind::Food,
-        bounds: Rect {
-            x: 145,
-            y: 156,
-            w: 9,
-            h: 9,
-        },
-        layer: 35,
-    });
-    text.push(bounded_label(
-        "compose/control-feed",
-        "Feed",
-        Rect {
-            x: 141,
-            y: 165,
-            w: 17,
-            h: 8,
-        },
-        TextRole::ControlCaption,
-        35,
-    ));
+    // One click feeds: the chosen food drops in front of the creature.
+    for (index, food) in [FoodId::Berry, FoodId::Mushroom, FoodId::Pellet]
+        .into_iter()
+        .enumerate()
+    {
+        let area = Rect {
+            x: 121 + index as i32 * 20,
+            y: 154,
+            w: 18,
+            h: 20,
+        };
+        let id = format!("compose/food-{}", food_name(food).to_lowercase());
+        add_button_chrome(&id, area, true, false, 31, rects);
+        hits.push(hit(
+            &id,
+            Some(UiTarget::Actions),
+            UiAction::SelectFood(food),
+            area,
+            true,
+            &format!("Feed {}", food_name(food).to_lowercase()),
+        ));
+        icons.push(IconCommand {
+            id,
+            kind: IconKind::FoodItem(food),
+            bounds: Rect {
+                x: area.x + 3,
+                y: area.y + 4,
+                w: 12,
+                h: 12,
+            },
+            layer: 35,
+        });
+    }
 
     let input = Rect {
-        x: 164,
+        x: 183,
         y: 155,
-        w: 112,
+        w: 93,
         h: 18,
     };
     let send = Rect {
@@ -1950,7 +2004,7 @@ fn add_persistent_bar(
     } else {
         TextRole::Secondary
     };
-    let capacity = (87.0 / (field_role.size(large) * 0.56)).floor() as usize;
+    let capacity = (68.0 / (field_role.size(large) * 0.56)).floor() as usize;
     let value = if dedicated_input {
         if view.mode == UiMode::Rename || naming {
             "Naming your creature…"
@@ -1974,9 +2028,9 @@ fn add_persistent_bar(
             head_fit(&value, capacity)
         },
         Rect {
-            x: 168,
+            x: 187,
             y: 155,
-            w: 87,
+            w: 68,
             h: 18,
         },
         field_role,
@@ -1995,7 +2049,10 @@ fn add_persistent_bar(
         "compose/input",
         Some(UiTarget::ComposeField),
         UiAction::FocusCompose,
-        Rect { w: 94, ..input },
+        Rect {
+            w: input.w - 18,
+            ..input
+        },
         !dedicated_input,
         "Message",
     ));
@@ -2164,49 +2221,6 @@ fn add_temporary_mode(
             text,
             hits,
         ),
-        UiMode::FoodDrop(food) => {
-            add_interactive_panel(
-                "mode/drop-food-background",
-                Rect {
-                    x: 55,
-                    y: 4,
-                    w: 210,
-                    h: 24,
-                },
-                28,
-                rects,
-                hits,
-            );
-            text.push(bounded_label(
-                "mode/drop-food-label",
-                &format!("Drop {} into the water", food_name(food)),
-                Rect {
-                    x: 62,
-                    y: 8,
-                    w: 155,
-                    h: 16,
-                },
-                TextRole::Body,
-                32,
-            ));
-            add_control(
-                "mode/drop-cancel",
-                "Cancel",
-                UiAction::CancelMode,
-                Rect {
-                    x: 222,
-                    y: 8,
-                    w: 37,
-                    h: 16,
-                },
-                true,
-                false,
-                28,
-                rects,
-                text,
-                hits,
-            );
-        }
         UiMode::ToyChoice => add_action_strip(
             "toy",
             &[
@@ -3891,12 +3905,26 @@ fn add_key(
     );
 }
 
+/// Logical half extents of the creature's head around its projected center, with a little
+/// room for animation; the speech bubble never covers this box.
+const HEAD_HALF_WIDTH: i32 = 14;
+const HEAD_HALF_HEIGHT: i32 = 14;
+/// Space between the head box and the bubble, which the bubble's tail crosses.
+const SPEECH_TAIL_GAP: i32 = 8;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BubbleSide {
+    Above,
+    Below,
+    Right,
+    Left,
+}
+
 fn add_speech(
     state: &WorldState,
     view: &ViewState,
     rects: &mut Vec<RectCommand>,
     text: &mut Vec<TextCommand>,
-    hits: &mut Vec<HitRegion>,
 ) {
     if speech_obstructed(view.mode) {
         return;
@@ -3908,167 +3936,177 @@ fn add_speech(
     else {
         return;
     };
-    let (creature_x, _) = world_to_logical(state.creature.aquarium.position);
+    // The creature's lines are short and its own: a small bubble at its head, sized to the whole
+    // utterance so the reveal never reflows it, with a pixel tail pointing at the speaker.
     let layout_text = view.speech_layout_text.as_deref().unwrap_or(speech);
-    let pages = speech_pages(layout_text);
     let revealed = speech_revealed_bytes(layout_text, speech);
-    let available_page = speech_available_page(&pages, revealed);
-    let page_index = view.speech_page.min(available_page);
-    let paginated = pages.len() > 1;
-    let page_start = pages
-        .iter()
-        .take(page_index)
-        .map(|page| page.len())
-        .sum::<usize>();
-    let page = pages[page_index];
-    let page_speech = &page[..revealed.saturating_sub(page_start).min(page.len())];
+    let shown = &layout_text[..revealed.min(layout_text.len())];
     let font_size = TextRole::Dialogue.size(view.text_scale >= 2);
-    let width = SPEECH_PANEL_WIDTH;
-    let caption_y = if paginated { 38 } else { 22 };
-    // The complete owned page fixes the card during reveal. Explicit navigation
-    // can size the next page to its content, including a short final sentence.
-    let body_height = typography()
-        .height(page, SPEECH_TEXT_WIDTH as f32, font_size)
-        .ceil() as i32;
-    let height = (caption_y - 5 + body_height + 5).max(36);
-    let panel_x = if view.mode == UiMode::Settings || creature_x >= LOGICAL_WIDTH / 2 {
-        5
-    } else {
-        LOGICAL_WIDTH - 5 - width
-    };
-    add_interactive_panel(
-        "speech/panel",
-        Rect {
-            x: panel_x,
-            y: 5,
-            w: width,
-            h: height,
-        },
-        12,
-        rects,
-        hits,
-    );
-    let reactions_y = 5 + height;
-    let mut speaker = label(
-        "speech/speaker",
-        &format!("{} says", head_fit(&state.creature.name, 16)),
-        panel_x + 9,
-        10,
-        16,
-    );
-    speaker.role = TextRole::Secondary;
-    speaker.bounds = Some(Rect {
-        x: panel_x + 9,
-        y: 8,
-        w: width - 18,
-        h: 10,
-    });
-    text.push(speaker);
-    if paginated {
-        text.push(bounded_label(
-            "speech/page-count",
-            &format!("{} / {}", page_index + 1, pages.len()),
+    let natural = typography().width(layout_text, font_size).ceil() as i32;
+    let text_width = natural.clamp(14, SPEECH_TEXT_WIDTH);
+    // Lines are short by design. A malformed overlong reply is bounded and ellipsized rather
+    // than paged, so the bubble always stays a bubble.
+    let lines = typography()
+        .lines(layout_text, text_width as f32, font_size)
+        .len()
+        .clamp(1, SPEECH_MAX_LINES);
+    let body_height = (lines as f32 * line_height(font_size)).ceil() as i32;
+    let width = text_width + 14;
+    let height = body_height + 10;
+    let bubble = speech_bubble_rect(state, view.mode, width, height);
+    let (head_x, head_y) = world_to_logical(state.creature.aquarium.position);
+    let side = bubble.1;
+    let bubble = bubble.0;
+    // The bubble is see-through to input: clicks beside the head still reach the creature or
+    // the water, so a line of speech never creates a dead click.
+    add_panel_chrome("speech/panel", bubble, 12, rects);
+    // Three stepped pixels lead from the bubble toward the head.
+    for step in 0..3 {
+        let size = 3 - step;
+        // Each step shrinks and moves two pixels on, so the tail stays inside the gap.
+        let (x, y) = match side {
+            BubbleSide::Above | BubbleSide::Below => {
+                let x = (head_x + 2).clamp(bubble.x + 4, bubble.x + bubble.w - 6) - step;
+                let y = if side == BubbleSide::Above {
+                    bubble.y + bubble.h + step * 2
+                } else {
+                    bubble.y - size - step * 2
+                };
+                (x, y)
+            }
+            BubbleSide::Right | BubbleSide::Left => {
+                let y = head_y.clamp(bubble.y + 4, bubble.y + bubble.h - 6) - step;
+                let x = if side == BubbleSide::Left {
+                    bubble.x + bubble.w + step * 2
+                } else {
+                    bubble.x - size - step * 2
+                };
+                (x, y)
+            }
+        };
+        rects.push(rounded_rect(
+            &format!("speech/tail-{step}"),
             Rect {
-                x: panel_x + 54,
-                y: 20,
-                w: 32,
-                h: 14,
+                x,
+                y,
+                w: size,
+                h: size,
             },
-            TextRole::ControlCaption,
-            16,
+            UI_CORAL,
+            13,
+            0,
+            false,
         ));
-        for (id, shown, delta, x, enabled) in [
-            ("speech/back", "Back", -1, panel_x + 9, page_index > 0),
-            (
-                "speech/next",
-                "Next",
-                1,
-                panel_x + 95,
-                page_index < available_page,
-            ),
-        ] {
-            add_control(
-                id,
-                shown,
-                UiAction::ChangeSpeechPage(delta),
-                Rect {
-                    x,
-                    y: 20,
-                    w: 36,
-                    h: 14,
-                },
-                enabled,
-                false,
-                12,
-                rects,
-                text,
-                hits,
-            );
-        }
     }
-    let mut caption = label("speech/text", page_speech, panel_x + 9, caption_y, 16);
+    let mut caption = label("speech/text", shown, bubble.x + 7, bubble.y + 5, 16);
     caption.role = TextRole::Dialogue;
     caption.bounds = Some(Rect {
-        x: panel_x + 9,
-        y: caption_y,
-        w: width - 18,
+        x: bubble.x + 7,
+        y: bubble.y + 5,
+        w: text_width,
         h: body_height,
     });
     text.push(caption);
-    let reaction_width = (width - 16) / 3;
-    for (index, reaction) in [Reaction::Laugh, Reaction::Disapprove, Reaction::Comfort]
-        .into_iter()
-        .enumerate()
-    {
-        let reaction_rect = Rect {
-            x: panel_x + 6 + i32::try_from(index).unwrap_or_default() * (reaction_width + 2),
-            y: reactions_y,
-            w: reaction_width,
-            h: 18,
-        };
-        let shown = match reaction {
-            Reaction::Laugh => "Laugh",
-            Reaction::Disapprove => "Disapprove",
-            Reaction::Comfort => "Comfort",
-        };
-        let id = format!("reaction/{}", reaction_name(reaction));
-        add_control(
-            &id,
-            shown,
-            UiAction::React(reaction),
-            reaction_rect,
-            true,
-            false,
-            12,
-            rects,
-            text,
-            hits,
-        );
-        if let Some(region) = hits.last_mut() {
-            region.target = Some(UiTarget::Reaction(reaction));
-        }
+}
+
+/// The creature's projected head box in logical coordinates.
+fn head_box(state: &WorldState) -> Rect {
+    let (x, y) = world_to_logical(state.creature.aquarium.position);
+    Rect {
+        x: x - HEAD_HALF_WIDTH,
+        y: y - HEAD_HALF_HEIGHT,
+        w: HEAD_HALF_WIDTH * 2,
+        h: HEAD_HALF_HEIGHT * 2,
     }
+}
+
+/// Place the bubble above the head when it fits, then below, then beside, always inside the
+/// water, clear of the rail, and never over the head. Settings keeps its panel column clear.
+fn speech_bubble_rect(
+    state: &WorldState,
+    mode: UiMode,
+    width: i32,
+    height: i32,
+) -> (Rect, BubbleSide) {
+    let (head_x, head_y) = world_to_logical(state.creature.aquarium.position);
+    let head = head_box(state);
+    let min_x = 4;
+    let max_x = if mode == UiMode::Settings {
+        166
+    } else {
+        LOGICAL_WIDTH - 4
+    };
+    let (min_y, max_y) = (4, AQUARIUM_BOTTOM - 2);
+    let clamp_x = |x: i32| x.clamp(min_x, (max_x - width).max(min_x));
+    let clamp_y = |y: i32| y.clamp(min_y, (max_y - height).max(min_y));
+    let centered_x = clamp_x(head_x + 6 - width / 3);
+    let beside_y = clamp_y(head_y - height / 2);
+    let candidates = [
+        (
+            Rect {
+                x: centered_x,
+                y: head.y - SPEECH_TAIL_GAP - height,
+                w: width,
+                h: height,
+            },
+            BubbleSide::Above,
+        ),
+        (
+            Rect {
+                x: centered_x,
+                y: head.y + head.h + SPEECH_TAIL_GAP,
+                w: width,
+                h: height,
+            },
+            BubbleSide::Below,
+        ),
+        (
+            Rect {
+                x: head.x + head.w + SPEECH_TAIL_GAP,
+                y: beside_y,
+                w: width,
+                h: height,
+            },
+            BubbleSide::Right,
+        ),
+        (
+            Rect {
+                x: head.x - SPEECH_TAIL_GAP - width,
+                y: beside_y,
+                w: width,
+                h: height,
+            },
+            BubbleSide::Left,
+        ),
+    ];
+    let fits = |rect: Rect| {
+        rect.x >= min_x && rect.x + rect.w <= max_x && rect.y >= min_y && rect.y + rect.h <= max_y
+    };
+    candidates
+        .into_iter()
+        .find(|(rect, _)| fits(*rect) && !rectangles_overlap(*rect, head))
+        .unwrap_or_else(|| {
+            // Nothing fits whole: stay inside the water on the roomier side of the head.
+            let (rect, side) = if head_x < (min_x + max_x) / 2 {
+                candidates[2]
+            } else {
+                candidates[3]
+            };
+            (
+                Rect {
+                    x: clamp_x(rect.x),
+                    y: clamp_y(rect.y),
+                    ..rect
+                },
+                side,
+            )
+        })
 }
 
 /// Temporary care and editing surfaces own the water while open. Settings leaves
 /// a complete caption column beside it; other modes cannot guarantee that space.
 fn speech_obstructed(mode: UiMode) -> bool {
     !matches!(mode, UiMode::Compose | UiMode::Settings)
-}
-
-/// Stable, lossless pages bounded for five lines at the large dialogue size.
-/// Whitespace belongs to a page so joining the pages reconstructs the exact utterance.
-fn speech_pages(speech: &str) -> Vec<&str> {
-    typography()
-        .pages(
-            speech,
-            SPEECH_TEXT_WIDTH as f32,
-            TextRole::Dialogue.size(true),
-            SPEECH_MAX_LINES,
-        )
-        .iter()
-        .map(|range| &speech[range.clone()])
-        .collect()
 }
 
 /// Reveal is a prefix of the owned utterance, rounded down to whole graphemes.
@@ -4081,19 +4119,6 @@ fn speech_revealed_bytes(layout: &str, speech: &str) -> usize {
         .take_while(|(start, grapheme)| start + grapheme.len() <= speech.len())
         .last()
         .map_or(0, |(start, grapheme)| start + grapheme.len())
-}
-
-fn speech_available_page(pages: &[&str], revealed: usize) -> usize {
-    let mut start = 0;
-    let mut available = 0;
-    for (index, page) in pages.iter().enumerate() {
-        let visible = revealed.saturating_sub(start).min(page.len());
-        if visible > 0 {
-            available = index;
-        }
-        start += page.len();
-    }
-    available
 }
 
 fn add_status(
@@ -4206,6 +4231,119 @@ fn add_status(
             hits,
         );
     }
+}
+
+/// The next thing worth trying, while the player is still learning how Mop learns. Hints come
+/// from the creature's actual state and disappear once the player has done the thing.
+#[must_use]
+pub fn coaching_hint(state: &WorldState, view: &ViewState) -> Option<String> {
+    if view.mode != UiMode::Compose || !view.text_buffer.is_empty() {
+        return None;
+    }
+    let creature = &state.creature;
+    let name = head_fit(&creature.name, 16);
+    let words = creature.lexicon.learned_count();
+    let counters = creature.development.interactions;
+    if words >= 5 && counters.requests >= 1 {
+        return None;
+    }
+    let want = beastie_core::current_want(state);
+    let thing = |meaning: beastie_core::Meaning| match meaning {
+        beastie_core::Meaning::Toy(toy) => toy_name(toy).to_lowercase(),
+        beastie_core::Meaning::Food(food) => food_name(food).to_lowercase(),
+        _ => "that".to_owned(),
+    };
+    if let Some(beastie_core::Want::NameOf(meaning)) = want
+        && words < 2
+    {
+        return Some(format!(
+            "{name} wonders what the {} is called. Type its name!",
+            thing(meaning)
+        ));
+    }
+    if matches!(want, Some(beastie_core::Want::Food(_))) && counters.feeds == 0 {
+        return Some(format!("{name} is hungry. Pick a food below."));
+    }
+    if words == 0 {
+        return Some(if counters.plays == 0 {
+            format!("Click a toy to play with {name}.")
+        } else {
+            format!("Talk to {name} while it plays. It learns your words.")
+        });
+    }
+    if counters.requests == 0 {
+        let (word, _) = creature.lexicon.learned_words().last().cloned()?;
+        return Some(format!("{name} knows “{word}”. Say it to ask for it."));
+    }
+    if creature
+        .lexicon
+        .word_for(beastie_core::Meaning::Creature)
+        .is_none()
+        && matches!(
+            creature.aquarium.gaze,
+            GazeTarget::Player | GazeTarget::Cursor
+        )
+    {
+        return Some(format!(
+            "{name} doesn't know its name yet. Say it while it looks at you."
+        ));
+    }
+    None
+}
+
+fn add_coaching(
+    state: &WorldState,
+    view: &ViewState,
+    rects: &mut Vec<RectCommand>,
+    text: &mut Vec<TextCommand>,
+) {
+    let Some(hint) = coaching_hint(state, view) else {
+        return;
+    };
+    let size = TextRole::Secondary.size(view.text_scale >= 2);
+    let width = (typography().width(&hint, size).ceil() as i32 + 16).min(260);
+    let height = typography().height(&hint, (width - 16) as f32, size).ceil() as i32 + 8;
+    let x = LOGICAL_WIDTH / 2 - width / 2;
+    let candidates = [5, 148 - height];
+    let y = candidates
+        .into_iter()
+        .min_by_key(|y| {
+            panel_overlap(
+                Rect {
+                    x,
+                    y: *y,
+                    w: width,
+                    h: height,
+                },
+                rects,
+            )
+        })
+        .unwrap_or(5);
+    rects.push(rounded_rect(
+        "coach/background",
+        Rect {
+            x,
+            y,
+            w: width,
+            h: height,
+        },
+        [12, 42, 47, 214],
+        34,
+        4,
+        false,
+    ));
+    text.push(bounded_label(
+        "coach/hint",
+        &hint,
+        Rect {
+            x: x + 8,
+            y: y + 4,
+            w: width - 16,
+            h: height - 8,
+        },
+        TextRole::Secondary,
+        38,
+    ));
 }
 
 fn panel_overlap(area: Rect, rects: &[RectCommand]) -> i32 {
@@ -4330,9 +4468,10 @@ fn add_hover_and_focus(
     };
     let microphone_help = region.id == "compose/microphone";
     let utility = region.id.starts_with("compose/toy-")
+        || region.id.starts_with("compose/food-")
         || matches!(
             region.id.as_str(),
-            "compose/settings" | "compose/close" | "compose/send"
+            "compose/settings" | "compose/close" | "compose/send" | "compose/creature"
         );
     if !microphone_help && !utility && !matches!(region.shape, HitShape::World(_)) {
         return;
@@ -4655,6 +4794,11 @@ fn cue_for_event(event: &GameEvent) -> Option<(SemanticOwner, PresentationCueKin
         GameEvent::FoodDropped { .. } => Some((ordinary, PresentationCueKind::Notice, 700)),
         GameEvent::FoodConsumed(_) => Some((direct, PresentationCueKind::Crumbs, 900)),
         GameEvent::FoodRejected(_) => Some((direct, PresentationCueKind::Spit, 1_100)),
+        // An accepted offer perks up at once, before the swim to the toy begins.
+        GameEvent::ToyPlayAccepted {
+            origin: beastie_core::ToyOrigin::Player,
+            ..
+        } => Some((direct, PresentationCueKind::PositiveNotice, 600)),
         GameEvent::ToyPlayed { .. } => Some((direct, PresentationCueKind::Delight, 900)),
         GameEvent::ToyRejected { .. } => Some((direct, PresentationCueKind::Suspicion, 1_100)),
         GameEvent::FoodDropRejected(FoodDropRejectionReason::AquariumFull) => {
@@ -4690,6 +4834,33 @@ fn cue_for_event(event: &GameEvent) -> Option<(SemanticOwner, PresentationCueKin
             Some((ordinary, PresentationCueKind::Notice, 900))
         }
         GameEvent::TalkAccepted { .. } => Some((ordinary, PresentationCueKind::Notice, 700)),
+        GameEvent::WordHeard { .. } => Some((ordinary, PresentationCueKind::Curious, 1_400)),
+        GameEvent::Emerged => Some((direct, PresentationCueKind::Curious, 1_600)),
+        GameEvent::TapNoticed { approached, .. } => Some((
+            ordinary,
+            if *approached {
+                PresentationCueKind::Curious
+            } else {
+                PresentationCueKind::Notice
+            },
+            900,
+        )),
+        GameEvent::WordLearned { .. } => Some((direct, PresentationCueKind::WordLearned, 2_200)),
+        GameEvent::Understood { response, .. } => match response {
+            beastie_core::RequestResponse::Comply => {
+                Some((direct, PresentationCueKind::PositiveNotice, 700))
+            }
+            beastie_core::RequestResponse::Delight => {
+                Some((direct, PresentationCueKind::Delight, 1_200))
+            }
+            beastie_core::RequestResponse::Refuse => {
+                Some((direct, PresentationCueKind::Suspicion, 1_100))
+            }
+            beastie_core::RequestResponse::Sulk => Some((direct, PresentationCueKind::Recoil, 900)),
+            beastie_core::RequestResponse::Look => {
+                Some((ordinary, PresentationCueKind::Notice, 700))
+            }
+        },
         GameEvent::ActionRelationshipStarted {
             action_id, motif, ..
         } => Some((
@@ -5198,14 +5369,6 @@ fn mood_name(mood: Mood) -> &'static str {
     }
 }
 
-fn reaction_name(reaction: Reaction) -> &'static str {
-    match reaction {
-        Reaction::Laugh => "laugh",
-        Reaction::Disapprove => "disapprove",
-        Reaction::Comfort => "comfort",
-    }
-}
-
 fn action_id(action: UiAction) -> String {
     match action {
         UiAction::SelectFood(food) => format!("select-{}", food_name(food)),
@@ -5560,7 +5723,6 @@ mod tests {
             (UiMode::DataManagement, "data/panel"),
             (UiMode::Rename, "rename/prompt-background"),
             (UiMode::Inspect(UiTarget::Creature), "inspect/panel"),
-            (UiMode::FoodDrop(FoodId::Berry), "mode/drop-food-background"),
             (UiMode::OnScreenKeyboard, "keyboard/panel"),
         ] {
             for text_scale in [1, 2] {
@@ -5798,29 +5960,21 @@ mod tests {
         )
         .0;
         let panel = scene.rects.iter().find(|r| r.id == "speech/panel").unwrap();
-        assert!(
-            panel.rect.h <= 40,
-            "short speech should not reserve several empty rows"
-        );
         let caption = scene
             .text
             .iter()
             .find(|text| text.id == "speech/text")
             .unwrap();
         let bounds = caption.bounds.unwrap();
+        let size = caption.role.size(true);
+        assert_eq!(bounds.h, line_height(size).ceil() as i32);
+        assert_eq!(panel.rect.h, bounds.h + 10, "one line reserves one line");
         assert!(rect_contains(panel.rect, bounds));
-        assert!(bounds.h >= caption.role.size(true).ceil() as i32 + 2);
+        assert!(bounds.h >= size.ceil() as i32 + 2);
         assert!(panel.rect.w <= LOGICAL_WIDTH / 2);
-        let reactions: Vec<_> = scene
-            .text
-            .iter()
-            .filter(|text| text.id.starts_with("reaction/"))
-            .collect();
-        assert_eq!(reactions.len(), 3);
         assert!(
-            reactions
-                .iter()
-                .all(|text| text.bounds.unwrap().h >= text.role.size(true).ceil() as i32 + 2)
+            typography().width("hm. rude giant.", size) <= bounds.w as f32,
+            "the bubble is sized to its words"
         );
     }
 
@@ -5935,26 +6089,93 @@ mod tests {
     }
 
     #[test]
-    fn food_drop_mode_makes_open_water_one_semantic_target() {
+    fn tap_water_region_is_present_in_compose_and_absent_in_settings() {
         let state = WorldState::new(7, "Mop");
-        let view = ViewState {
-            mode: UiMode::FoodDrop(FoodId::Berry),
-            ..ViewState::default()
-        };
-        let (render, _) = plan(&state, &view);
-        let drop = render
+        let compose = plan(&state, &ViewState::default()).0;
+        let water = compose
             .hit_regions
             .iter()
-            .find(|hit| hit.id == "world/drop-food")
-            .expect("drop target");
-        assert_eq!(drop.action, UiAction::DropFood(FoodId::Berry));
-        assert_eq!(drop.cursor, CursorKind::FoodDrop);
+            .find(|hit| hit.id == "world/water")
+            .expect("open water is a tap target");
+        assert_eq!(water.action, UiAction::TapWater);
+        assert_eq!(water.shape, HitShape::World(UiTarget::OpenWater));
+        assert!(water.enabled && !water.label.is_empty());
+        let creature = compose
+            .hit_regions
+            .iter()
+            .find(|hit| hit.id == "target/creature")
+            .unwrap();
+        assert_eq!(creature.action, UiAction::Comfort, "one click pets");
+        for hit in compose.hit_regions.iter().filter(|hit| {
+            matches!(hit.target, Some(UiTarget::Toy(_))) && hit.id.starts_with("target/")
+        }) {
+            let Some(UiTarget::Toy(toy)) = hit.target else {
+                unreachable!()
+            };
+            assert_eq!(hit.action, UiAction::Play(toy), "one click plays");
+        }
+
+        let settings = plan(
+            &state,
+            &ViewState {
+                mode: UiMode::Settings,
+                ..ViewState::default()
+            },
+        )
+        .0;
         assert!(
-            render
+            settings
                 .hit_regions
                 .iter()
-                .any(|hit| hit.id == "compose/input")
+                .all(|hit| hit.id != "world/water"
+                    && hit.action != UiAction::TapWater
+                    && !matches!(hit.shape, HitShape::World(_)))
         );
+    }
+
+    #[test]
+    fn menu_open_world_click_dismisses_and_world_targets_still_act() {
+        let state = WorldState::new(7, "Mop");
+        for mode in [
+            UiMode::Context(UiTarget::Creature),
+            UiMode::Inspect(UiTarget::Creature),
+            UiMode::ToyChoice,
+            UiMode::FoodChoice,
+        ] {
+            let scene = plan(
+                &state,
+                &ViewState {
+                    mode,
+                    ..ViewState::default()
+                },
+            )
+            .0;
+            let water: Vec<_> = scene
+                .hit_regions
+                .iter()
+                .filter(|hit| hit.shape == HitShape::World(UiTarget::OpenWater))
+                .collect();
+            assert_eq!(water.len(), 1, "{mode:?}");
+            assert_eq!(water[0].id, "world/dismiss");
+            assert_eq!(water[0].action, UiAction::CloseContext, "{mode:?}");
+            assert!(water[0].enabled);
+            assert!(
+                scene
+                    .hit_regions
+                    .iter()
+                    .any(|hit| hit.id == "target/creature"
+                        && hit.enabled
+                        && hit.action == UiAction::Comfort),
+                "{mode:?}: the creature stays one click away under a menu"
+            );
+            assert!(
+                scene
+                    .hit_regions
+                    .iter()
+                    .all(|hit| hit.action != UiAction::TapWater),
+                "{mode:?}: a dismissing click is not also a tap"
+            );
+        }
     }
 
     #[test]
@@ -6091,441 +6312,269 @@ mod tests {
                 },
             )
             .0;
-            let speaker = speech
+            // The bubble's tail names the speaker: no label, no paging, no reaction chips.
+            let speech_text: Vec<_> = speech
                 .text
                 .iter()
-                .find(|t| t.id == "speech/speaker")
-                .unwrap();
-            let words = speech.text.iter().find(|t| t.id == "speech/text").unwrap();
-            assert_eq!(speaker.text, "Mop says");
-            assert!(!rects_overlap(
-                speaker.bounds.unwrap(),
-                words.bounds.unwrap()
-            ));
-            for name in ["laugh", "disapprove", "comfort"] {
-                assert!(
-                    speech
-                        .text
-                        .iter()
-                        .any(|t| t.id == format!("reaction/{name}-label"))
-                );
-            }
+                .filter(|t| t.id.starts_with("speech/") || t.id.starts_with("reaction/"))
+                .collect();
+            assert_eq!(speech_text.len(), 1);
+            assert_eq!(speech_text[0].id, "speech/text");
+            assert_eq!(speech_text[0].text, "Hello");
+            assert_eq!(speech_text[0].role, TextRole::Dialogue);
+            assert!(speech.rects.iter().any(|r| r.id == "speech/tail-0"));
         }
     }
 
-    #[test]
-    fn short_caption_fits_content_and_keeps_all_reaction_targets() {
-        let state = WorldState::new(42, "Mop");
-        let mut view = ViewState::default();
-        view.show_speech("hm. rude giant.".to_owned(), 0);
-        let full = plan(&state, &view).0;
-        let panel = full
-            .rects
-            .iter()
-            .find(|r| r.id == "speech/panel-edge")
-            .expect("caption panel");
-        assert_eq!(panel.rect.w, 140);
-        assert_eq!(panel.rect.h, 36);
-        let reactions: Vec<_> = full
-            .hit_regions
-            .iter()
-            .filter(|hit| hit.id.starts_with("reaction/"))
-            .collect();
-        assert_eq!(reactions.len(), 3);
-        for hit in reactions {
-            assert!(hit.enabled);
-            assert!(hit.rect.w >= 22);
-            assert_eq!(hit.rect.y, panel.rect.y + panel.rect.h);
-            assert!(hit.rect.x + hit.rect.w <= panel.rect.x + panel.rect.w);
-        }
-        view.speech = Some("hm.".to_owned());
-        let revealing = plan(&state, &view).0;
-        assert_eq!(
-            revealing.rects.iter().find(|r| r.id == "speech/panel-edge"),
-            Some(panel)
-        );
-    }
-
-    #[test]
-    fn multiline_caption_and_large_text_grow_within_the_water_stage() {
-        let state = WorldState::new(42, "Mop");
-        let mut view = ViewState {
-            text_scale: 2,
-            ..ViewState::default()
-        };
-        view.show_speech("I remember the berry you brought. It tasted sweet, and I liked sharing that quiet moment with you.".to_owned(), 0);
-        let scene = plan(&state, &view).0;
+    fn speech_parts(scene: &ScenePlan) -> (Rect, Rect, Vec<Rect>) {
         let panel = scene
             .rects
             .iter()
-            .find(|r| r.id == "speech/panel-edge")
-            .expect("caption panel");
-        assert!(panel.rect.h > 27);
-        assert!(panel.rect.x >= 0 && panel.rect.x + panel.rect.w <= LOGICAL_WIDTH);
-        assert!(
-            scene
-                .hit_regions
-                .iter()
-                .filter(|hit| hit.id.starts_with("reaction/"))
-                .all(|hit| hit.rect.y + hit.rect.h < COMPOSE_BAR_TOP)
-        );
-        assert_eq!(
-            scene
-                .text
-                .iter()
-                .find(|t| t.id == "speech/text")
-                .expect("caption")
-                .text,
-            speech_pages(view.speech.as_deref().unwrap())[0]
-        );
+            .find(|rect| rect.id == "speech/panel")
+            .expect("speech bubble")
+            .rect;
+        let caption = scene
+            .text
+            .iter()
+            .find(|text| text.id == "speech/text")
+            .and_then(|text| text.bounds)
+            .expect("caption bounds");
+        let tail = scene
+            .rects
+            .iter()
+            .filter(|rect| rect.id.starts_with("speech/tail-"))
+            .map(|rect| rect.rect)
+            .collect();
+        (panel, caption, tail)
     }
 
     #[test]
-    fn speech_pages_preserve_exact_text_and_bound_long_unbroken_replies() {
-        for speech in [
+    fn speech_bubble_stays_in_the_water_clear_of_the_rail_head_and_settings() {
+        let speeches = [
+            "hm.".to_owned(),
+            "ball? mop wants the red ball now, please".to_owned(),
+            "e\u{301} 🌿 👩‍🔬 café".to_owned(),
             "W".repeat(512),
-            "A quiet thought.  Another thought.\n\n雪と海 🐟 e\u{301}  ".repeat(12),
-            "👩‍👩‍👧‍👦 ".repeat(150),
-            "one\n".repeat(80),
-        ] {
-            let pages = speech_pages(&speech);
-            assert!(pages.len() > 1);
-            assert_eq!(pages.concat(), speech);
-            assert!(pages.iter().all(|page| !page.is_empty()));
-            assert!(pages.iter().all(|page| {
-                typography()
-                    .lines(
-                        page,
-                        SPEECH_TEXT_WIDTH as f32,
-                        TextRole::Dialogue.size(true),
-                    )
-                    .len()
-                    <= SPEECH_MAX_LINES
-            }));
-            assert_eq!(
-                pages
-                    .iter()
-                    .flat_map(|page| page.graphemes(true))
-                    .collect::<Vec<_>>(),
-                speech.graphemes(true).collect::<Vec<_>>()
-            );
-        }
-        assert_eq!(speech_pages(""), vec![""]);
-    }
-
-    #[test]
-    fn short_speech_and_final_pages_reserve_only_their_exact_line_boxes() {
-        let state = WorldState::new(7, "Mop");
-        let wide = "W".repeat(512);
-        let first_page_chars = speech_pages(&wide)[0].len();
-        let paged = format!("{} W", "W".repeat(first_page_chars));
-        assert_eq!(*speech_pages(&paged).last().unwrap(), "W");
+        ];
         for text_scale in [1, 2] {
-            for speech in ["A little quiet place.".to_owned(), paged.clone()] {
-                let mut view = ViewState {
-                    text_scale,
-                    ..ViewState::default()
-                };
-                view.show_speech(speech.clone(), 0);
-                let pages = speech_pages(&speech);
-                view.speech_page = pages.len() - 1;
-                let scene = plan(&state, &view).0;
-                let caption = scene
-                    .text
-                    .iter()
-                    .find(|text| text.id == "speech/text")
-                    .unwrap();
-                let panel = scene
-                    .rects
-                    .iter()
-                    .find(|rect| rect.id == "speech/panel")
-                    .unwrap()
-                    .rect;
-                let bounds = caption.bounds.unwrap();
-                let size = caption.role.size(text_scale >= 2);
-                assert_eq!(
-                    typography()
-                        .lines(&caption.text, bounds.w as f32, size)
-                        .len(),
-                    1
-                );
-                assert_eq!(bounds.h, line_height(size).ceil() as i32);
-                assert_eq!(
-                    typography().layout_lines(
-                        &caption.text,
-                        bounds.w as f32,
-                        bounds.h as f32,
-                        size
-                    ),
-                    std::slice::from_ref(&caption.text)
-                );
-                assert!(panel.h <= if pages.len() > 1 { 48 } else { 36 });
-                let normal_page = caption.text.clone();
-                view.text_scale = if text_scale == 1 { 2 } else { 1 };
-                assert_eq!(
-                    plan(&state, &view)
-                        .0
-                        .text
-                        .iter()
-                        .find(|text| text.id == "speech/text")
-                        .unwrap()
-                        .text,
-                    normal_page
-                );
+            for mode in [UiMode::Compose, UiMode::Settings] {
+                for x in [0, 1_500, 3_000, 5_000, 6_500, 8_000, 10_000] {
+                    for y in [0, 2_500, 5_000, 7_500, 10_000] {
+                        for speech in &speeches {
+                            let mut state = WorldState::new(7, "Mop");
+                            state.creature.aquarium.position = NormalizedPosition::new(x, y);
+                            let mut view = ViewState {
+                                mode,
+                                text_scale,
+                                ..ViewState::default()
+                            };
+                            view.show_speech(speech.clone(), 0);
+                            let scene = plan(&state, &view).0;
+                            let (panel, caption, tail) = speech_parts(&scene);
+                            let at =
+                                format!("{mode:?} scale {text_scale} at ({x}, {y}) {speech:.12}");
+                            let water = Rect {
+                                x: 4,
+                                y: 4,
+                                w: LOGICAL_WIDTH - 8,
+                                h: AQUARIUM_BOTTOM - 6,
+                            };
+                            assert!(rect_contains(water, panel), "{at}: {panel:?}");
+                            assert!(panel.y + panel.h < COMPOSE_BAR_TOP, "{at}");
+                            assert!(rect_contains(panel, caption), "{at}");
+                            let head = head_box(&state);
+                            assert!(!rects_overlap(panel, head), "{at}: covers the head");
+                            for part in &tail {
+                                assert!(rect_contains(water, *part), "{at}");
+                                assert!(!rects_overlap(*part, head), "{at}: tail on the head");
+                            }
+                            if mode == UiMode::Settings {
+                                let settings = scene
+                                    .rects
+                                    .iter()
+                                    .find(|rect| rect.id == "settings/panel")
+                                    .unwrap()
+                                    .rect;
+                                assert!(!rects_overlap(panel, settings), "{at}");
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
     #[test]
-    fn complete_measured_page_bounds_stay_fixed_through_unicode_reveal() {
+    fn speech_bubble_follows_the_head() {
+        let mut previous: Option<(i32, Rect)> = None;
+        for x in [500, 2_500, 4_500, 6_500, 8_500] {
+            let mut state = WorldState::new(7, "Mop");
+            state.creature.aquarium.position = NormalizedPosition::new(x, 6_000);
+            let mut view = ViewState::default();
+            view.show_speech("mop sees ball".to_owned(), 0);
+            let (panel, _, tail) = speech_parts(&plan(&state, &view).0);
+            let head = head_box(&state);
+            let head_center = head.x + head.w / 2;
+            // Bubble sits above the head and its tail lies between the two.
+            assert!(panel.y + panel.h <= head.y, "{x}");
+            assert!(
+                panel.x <= head_center && head_center <= panel.x + panel.w,
+                "{x}"
+            );
+            for part in &tail {
+                assert!(
+                    part.y >= panel.y + panel.h && part.y + part.h <= head.y,
+                    "{x}"
+                );
+            }
+            if let Some((last_head, last_panel)) = previous {
+                assert_eq!(
+                    panel.x - last_panel.x,
+                    head_center - last_head,
+                    "moves with the head"
+                );
+            }
+            previous = Some((head_center, panel));
+        }
+        // Near the surface there is no room above, so the bubble hangs below the head.
+        let mut state = WorldState::new(7, "Mop");
+        state.creature.aquarium.position = NormalizedPosition::new(5_000, 0);
+        let mut view = ViewState::default();
+        view.show_speech("mop sees ball".to_owned(), 0);
+        let (panel, _, _) = speech_parts(&plan(&state, &view).0);
+        assert!(panel.y >= head_box(&state).y + head_box(&state).h);
+    }
+
+    #[test]
+    fn short_speech_reserves_only_its_exact_line_box() {
         let state = WorldState::new(7, "Mop");
-        let full = "Quiet water 🌿, a scientist 👩‍🔬, and cafe\u{301}. ".repeat(8);
-        let first_page_end = speech_pages(&full)[0].len();
         for text_scale in [1, 2] {
             let mut view = ViewState {
                 text_scale,
                 ..ViewState::default()
             };
-            view.show_speech(full.clone(), 0);
-            let initial = plan(&state, &view).0;
-            let panel = initial
-                .rects
-                .iter()
-                .find(|rect| rect.id == "speech/panel")
-                .unwrap()
-                .rect;
-            let body = initial
+            view.show_speech("A little quiet place.".to_owned(), 0);
+            let scene = plan(&state, &view).0;
+            let caption = scene
                 .text
                 .iter()
                 .find(|text| text.id == "speech/text")
-                .unwrap()
-                .bounds;
-            for (start, grapheme) in full[..first_page_end].grapheme_indices(true) {
+                .unwrap();
+            let bounds = caption.bounds.unwrap();
+            let size = caption.role.size(text_scale >= 2);
+            assert_eq!(bounds.h, line_height(size).ceil() as i32);
+            assert_eq!(
+                typography().layout_lines(&caption.text, bounds.w as f32, bounds.h as f32, size),
+                std::slice::from_ref(&caption.text)
+            );
+        }
+    }
+
+    #[test]
+    fn multiline_speech_grows_within_the_water() {
+        let state = WorldState::new(42, "Mop");
+        let mut view = ViewState {
+            text_scale: 2,
+            ..ViewState::default()
+        };
+        let line = "mop remembers the sweet berry you brought";
+        view.show_speech(line.to_owned(), 0);
+        let scene = plan(&state, &view).0;
+        let (panel, caption, _) = speech_parts(&scene);
+        let size = TextRole::Dialogue.size(true);
+        let lines = typography().lines(line, caption.w as f32, size).len();
+        assert!(lines > 1);
+        assert_eq!(caption.h, (lines as f32 * line_height(size)).ceil() as i32);
+        assert!(panel.y + panel.h < COMPOSE_BAR_TOP);
+        let text = scene.text.iter().find(|t| t.id == "speech/text").unwrap();
+        assert_eq!(text.text, line, "the whole line is shown at once");
+    }
+
+    #[test]
+    fn bubble_bounds_stay_fixed_through_unicode_reveal() {
+        let state = WorldState::new(7, "Mop");
+        let full = "cafe\u{301} 🌿 and 👩‍🔬, mop likes it";
+        for text_scale in [1, 2] {
+            let mut view = ViewState {
+                text_scale,
+                ..ViewState::default()
+            };
+            view.show_speech(full.to_owned(), 0);
+            let (panel, body, _) = speech_parts(&plan(&state, &view).0);
+            for (start, grapheme) in full.grapheme_indices(true) {
                 let end = start + grapheme.len();
                 view.speech = Some(full[..end].to_owned());
                 let revealed = plan(&state, &view).0;
-                assert_eq!(
-                    revealed
-                        .rects
-                        .iter()
-                        .find(|rect| rect.id == "speech/panel")
-                        .unwrap()
-                        .rect,
-                    panel
-                );
+                let (revealed_panel, revealed_body, _) = speech_parts(&revealed);
+                assert_eq!(revealed_panel, panel);
+                assert_eq!(revealed_body, body);
                 let caption = revealed
                     .text
                     .iter()
                     .find(|text| text.id == "speech/text")
                     .unwrap();
-                assert_eq!(caption.bounds, body);
                 assert_eq!(caption.text, full[..end]);
             }
         }
     }
 
     #[test]
-    fn maximum_wide_reply_keeps_every_page_readable_at_large_text_size() {
+    fn overlong_reply_is_bounded_and_ellipsized_rather_than_paged() {
         let state = WorldState::new(7, "Mop");
         let speech = "W".repeat(512);
-        let pages = speech_pages(&speech);
-        let mut view = ViewState {
-            text_scale: 2,
-            ..ViewState::default()
-        };
-        view.show_speech(speech.clone(), 0);
-        let mut opening: Option<Rect> = None;
-        for (index, expected) in pages.iter().enumerate() {
+        for text_scale in [1, 2] {
+            let mut view = ViewState {
+                text_scale,
+                ..ViewState::default()
+            };
+            view.show_speech(speech.clone(), 0);
             let scene = plan(&state, &view).0;
-            let panel = scene
-                .rects
-                .iter()
-                .find(|rect| rect.id == "speech/panel")
-                .unwrap()
-                .rect;
-            if let Some(first) = opening {
-                assert_eq!((panel.x, panel.y, panel.w), (first.x, first.y, first.w));
-                assert!(
-                    panel.h <= first.h,
-                    "short final pages should fit their content"
-                );
-            } else {
-                opening = Some(panel);
-            }
             let caption = scene
                 .text
                 .iter()
                 .find(|text| text.id == "speech/text")
                 .unwrap();
-            assert_eq!(caption.text, *expected);
-            assert_eq!(caption.role, TextRole::Dialogue);
-            assert_eq!(caption.scale, 2);
             let bounds = caption.bounds.unwrap();
-            assert!(rect_contains(panel, bounds));
-            let font_size = caption.role.size(true);
-            let needed_height = typography()
-                .height(&caption.text, bounds.w as f32, font_size)
-                .ceil() as i32;
+            let size = caption.role.size(text_scale >= 2);
             assert_eq!(
-                needed_height, bounds.h,
-                "page {index} reserves exactly its measured lines"
+                bounds.h,
+                (SPEECH_MAX_LINES as f32 * line_height(size)).ceil() as i32
             );
+            let lines =
+                typography().layout_lines(&caption.text, bounds.w as f32, bounds.h as f32, size);
+            assert_eq!(lines.len(), SPEECH_MAX_LINES);
+            assert!(lines.last().unwrap().ends_with('…'));
             assert!(
                 scene
                     .hit_regions
                     .iter()
-                    .filter(|hit| hit.id.starts_with("reaction/"))
-                    .all(|hit| hit.rect.y + hit.rect.h < COMPOSE_BAR_TOP)
+                    .all(|hit| !hit.id.starts_with("speech/") && !hit.id.starts_with("reaction/"))
             );
-            view.change_speech_page(1, index as u64 + 1);
         }
     }
 
     #[test]
-    fn speech_page_navigation_clamps_to_reveal_and_only_resizes_on_navigation() {
-        let state = WorldState::new(7, "Mop");
-        let speech = "A shared quiet moment beside the plant. ".repeat(14);
-        let mut view = ViewState {
-            text_scale: 2,
-            ..ViewState::default()
-        };
-        view.show_speech(speech.clone(), 0);
-        let page_count = speech_pages(&speech).len();
-        assert!(view.has_speech_pages());
-        view.speech = Some(speech.chars().take(5).collect());
-        let opening = plan(&state, &view).0;
-        let panel = opening
-            .rects
+    fn speech_bubble_never_swallows_a_click() {
+        let mut state = WorldState::new(7, "Mop");
+        state.creature.aquarium.position = NormalizedPosition::new(5_000, 6_000);
+        let mut view = ViewState::default();
+        view.show_speech("ball! mop wants ball".to_owned(), 0);
+        let scene = plan(&state, &view).0;
+        let (panel, _, _) = speech_parts(&scene);
+        // Only world targets lie under the bubble, so a click there still reaches the water.
+        for hit in scene
+            .hit_regions
             .iter()
-            .find(|rect| rect.id == "speech/panel")
-            .unwrap()
-            .rect;
-        for id in ["speech/back", "speech/next"] {
-            assert!(
-                !opening
-                    .hit_regions
-                    .iter()
-                    .find(|hit| hit.id == id)
-                    .unwrap()
-                    .enabled
-            );
+            .filter(|hit| rects_overlap(hit.rect, panel))
+        {
+            assert!(matches!(hit.shape, HitShape::World(_)), "{}", hit.id);
         }
-        view.change_speech_page(i8::MAX, 100);
-        assert_eq!(
-            view.speech_page, 0,
-            "unrevealed words cannot be paged into view"
-        );
-        view.speech = Some(speech.clone());
-        let revealed = plan(&state, &view).0;
-        assert_eq!(
-            revealed
-                .rects
+        assert!(
+            scene
+                .hit_regions
                 .iter()
-                .find(|rect| rect.id == "speech/panel")
-                .unwrap()
-                .rect,
-            panel,
-            "revealing the same owned page does not move its geometry"
+                .any(|hit| hit.id == "world/water" && rect_contains(hit.rect, panel))
         );
-        view.change_speech_page(i8::MAX, 200);
-        assert_eq!(view.speech_page, page_count - 1);
-        let last = plan(&state, &view).0;
-        assert!(last.hit_regions.iter().any(|hit| hit.id == "speech/back"
-            && hit.enabled
-            && hit.action == UiAction::ChangeSpeechPage(-1)));
-        assert!(last.hit_regions.iter().any(|hit| hit.id == "speech/next"
-            && !hit.enabled
-            && hit.action == UiAction::ChangeSpeechPage(1)));
-        let last_panel = last
-            .rects
-            .iter()
-            .find(|rect| rect.id == "speech/panel")
-            .unwrap()
-            .rect;
-        assert_eq!(
-            (last_panel.x, last_panel.y, last_panel.w),
-            (panel.x, panel.y, panel.w)
-        );
-        assert!(last_panel.h <= panel.h);
-        assert_eq!(
-            last.text
-                .iter()
-                .find(|text| text.id == "speech/text")
-                .unwrap()
-                .text,
-            *speech_pages(&speech).last().unwrap()
-        );
-        view.change_speech_page(i8::MIN, 300);
-        assert_eq!(view.speech_page, 0);
-        view.change_speech_page(-1, 400);
-        assert_eq!(view.speech_page, 0);
-    }
-
-    #[test]
-    fn settings_leaves_the_entire_caption_and_reaction_column_clear() {
-        for text_scale in [1, 2] {
-            for creature_x in [0, 10_000] {
-                let mut state = WorldState::new(7, "Mop");
-                state.creature.aquarium.position.x = creature_x;
-                let mut view = ViewState {
-                    mode: UiMode::Settings,
-                    text_scale,
-                    ..ViewState::default()
-                };
-                view.show_speech("W".repeat(512), 0);
-                for page in [0, usize::MAX] {
-                    view.speech_page = page;
-                    let scene = plan(&state, &view).0;
-                    let settings = scene
-                        .rects
-                        .iter()
-                        .find(|rect| rect.id == "settings/panel")
-                        .unwrap()
-                        .rect;
-                    let speech = scene
-                        .rects
-                        .iter()
-                        .find(|rect| rect.id == "speech/panel")
-                        .unwrap()
-                        .rect;
-                    assert_eq!(
-                        speech.x, 5,
-                        "Settings reserves the left caption column regardless of creature motion"
-                    );
-                    assert_eq!(speech.w, 140);
-                    assert!(speech.h <= 88);
-                    for text in scene.text.iter().filter(|text| {
-                        text.id.starts_with("speech/") || text.id.starts_with("reaction/")
-                    }) {
-                        assert!(
-                            !rectangles_overlap(text.bounds.unwrap(), settings),
-                            "{}",
-                            text.id
-                        );
-                        if text.id.starts_with("speech/") {
-                            assert!(rect_contains(speech, text.bounds.unwrap()), "{}", text.id);
-                        }
-                    }
-                    for hit in scene.hit_regions.iter().filter(|hit| {
-                        hit.id.starts_with("speech/") || hit.id.starts_with("reaction/")
-                    }) {
-                        assert!(!rectangles_overlap(hit.rect, settings), "{}", hit.id);
-                        assert!(hit.rect.y + hit.rect.h <= 111);
-                        if hit.id.starts_with("speech/") {
-                            assert!(rect_contains(speech, hit.rect), "{}", hit.id);
-                        }
-                    }
-                    assert_eq!(
-                        scene
-                            .hit_regions
-                            .iter()
-                            .filter(|hit| hit.id.starts_with("reaction/"))
-                            .count(),
-                        3
-                    );
-                }
-            }
-        }
     }
 
     #[test]
@@ -6539,7 +6588,6 @@ mod tests {
             UiMode::DataManagement,
             UiMode::ConfirmReset,
             UiMode::FoodChoice,
-            UiMode::FoodDrop(FoodId::Berry),
             UiMode::Context(UiTarget::Creature),
             UiMode::Inspect(UiTarget::Creature),
         ] {
@@ -6554,7 +6602,6 @@ mod tests {
             view.expire(4 * SPEECH_LIFETIME_MS);
             assert_eq!(view.speech, visible);
             assert_eq!(view.speech_layout_text, owned);
-            assert_eq!(view.speech_page, 0);
             assert!(!view.speaking);
             assert!(
                 view.status_message.is_none(),
@@ -6621,45 +6668,37 @@ mod tests {
     }
 
     #[test]
-    fn long_speech_waits_for_reveal_and_final_page_before_expiring() {
-        let speech = "W".repeat(512);
+    fn speech_waits_for_its_reveal_before_expiring() {
+        let speech = "mop found the ball again".to_owned();
         let mut view = ViewState::default();
         view.show_speech(speech.clone(), 0);
-        view.speech = Some("W".to_owned());
+        view.speech = Some("mop".to_owned());
         view.expire(SPEECH_LIFETIME_MS + 1);
-        assert_eq!(view.speech.as_deref(), Some("W"));
-        view.speech = Some(speech);
-        view.expire(2 * SPEECH_LIFETIME_MS + 2);
-        assert!(
-            view.speech.is_some(),
-            "an unread later page must not expire"
-        );
-        view.change_speech_page(i8::MAX, 2 * SPEECH_LIFETIME_MS + 3);
+        assert_eq!(view.speech.as_deref(), Some("mop"));
         let expiry = view.speech_expires_at_ms.unwrap();
+        assert_eq!(
+            expiry,
+            2 * SPEECH_LIFETIME_MS + 1,
+            "reading time restarts while the reveal is incomplete"
+        );
+        view.speech = Some(speech);
         view.expire(expiry - 1);
         assert!(view.speech.is_some());
-        view.focused_region = Some("speech/next".to_owned());
         view.expire(expiry);
         assert!(view.speech.is_none());
         assert!(view.speech_layout_text.is_none());
-        assert_eq!(view.speech_page, 0);
-        assert_eq!(view.focused_region.as_deref(), Some("compose/input"));
-        view.show_speech("A fresh thought".to_owned(), expiry + 1);
-        assert!(!view.has_speech_pages());
-        assert_eq!(view.speech_page, 0);
     }
 
     #[test]
-    fn active_speech_keeps_its_caption_and_expiry_restores_compose_focus() {
+    fn active_speech_keeps_its_caption_and_never_moves_focus() {
         let mut view = ViewState::default();
         view.show_speech("hm. rude giant.".to_owned(), 1_000);
-        view.focused_region = Some("reaction/laugh".to_owned());
+        view.focused_region = Some("compose/input".to_owned());
         view.speaking = true;
 
         view.expire(9_000);
         assert_eq!(view.speech.as_deref(), Some("hm. rude giant."));
         assert_eq!(view.speech_expires_at_ms, Some(9_500));
-        assert_eq!(view.focused_region.as_deref(), Some("reaction/laugh"));
 
         view.speaking = false;
         view.expire(9_500);
@@ -6899,9 +6938,11 @@ mod tests {
             let scene = plan(&state, &view).0;
             assert_eq!(scene.summary.behavior, expected);
             assert_eq!(scene.creature.pose, CreaturePose::Recover);
+            // The accepted offer is acknowledged at once, before any toy contact, and the
+            // acknowledgement is not the toy's delight payoff.
             assert_eq!(
                 scene.creature.expression.as_ref().unwrap().cue,
-                PresentationCueKind::Crumbs
+                PresentationCueKind::PositiveNotice
             );
             assert_eq!(state.creature.aquarium.action, recovery);
             assert_eq!(state, before);
@@ -7508,7 +7549,7 @@ mod tests {
             &state,
             &ViewState {
                 controller_active: true,
-                focused_region: Some("compose/food".to_owned()),
+                focused_region: Some("compose/food-berry".to_owned()),
                 ..ViewState::default()
             },
         )
@@ -7525,11 +7566,13 @@ mod tests {
                 .iter()
                 .all(|text| text.id != "compose/input-hints")
         );
+        // Icon-only rail buttons are named while focused, so a controller player knows
+        // what the berry button does before pressing it.
         assert!(
             controller
                 .text
                 .iter()
-                .any(|text| text.id == "compose/control-feed" && text.text == "Feed")
+                .any(|text| text.id == "ui/hover-label" && text.text == "Feed berry")
         );
     }
 
@@ -7549,7 +7592,8 @@ mod tests {
         for id in [
             "compose/input",
             "compose/microphone",
-            "compose/food",
+            "compose/food-berry",
+            "compose/toy-0",
             "compose/settings",
         ] {
             assert!(
@@ -7742,23 +7786,45 @@ mod tests {
                 assert!(input.keep_tail);
                 assert_eq!(input.text, view.text_buffer);
                 assert!(input.bounds.unwrap().x + input.bounds.unwrap().w < send.x);
-                for action in ["food", "settings"] {
-                    let caption_id = if action == "food" { "feed" } else { action };
-                    let caption = render
-                        .text
-                        .iter()
-                        .find(|t| t.id == format!("compose/control-{caption_id}"));
+                for action in [
+                    "toy-0",
+                    "toy-1",
+                    "toy-2",
+                    "food-berry",
+                    "food-mushroom",
+                    "food-pellet",
+                    "settings",
+                ] {
                     let background = render
                         .rects
                         .iter()
                         .find(|command| command.id == format!("compose/{action}-background"))
                         .expect("action background")
                         .rect;
-                    if let Some(caption) = caption {
-                        assert!(caption.bounds.unwrap().x >= background.x);
-                        assert!(text_right(caption) <= background.x + background.w);
+                    assert!(!rects_overlap(input_box, background), "{action}");
+                    assert!(
+                        !rects_overlap(summary_name.bounds.unwrap(), background),
+                        "{action}"
+                    );
+                }
+                // Every rail hit target is disjoint from the others and names its action.
+                let rail: Vec<_> = render
+                    .hit_regions
+                    .iter()
+                    .filter(|hit| hit.id.starts_with("compose/") && hit.enabled)
+                    .collect();
+                assert!(rail.len() >= 9);
+                for (index, hit) in rail.iter().enumerate() {
+                    assert!(!hit.label.is_empty(), "{}", hit.id);
+                    assert!(hit.rect.y >= COMPOSE_BAR_TOP, "{}", hit.id);
+                    for other in &rail[index + 1..] {
+                        assert!(
+                            !rects_overlap(hit.rect, other.rect),
+                            "{} overlaps {}",
+                            hit.id,
+                            other.id
+                        );
                     }
-                    assert!(!rects_overlap(input_box, background));
                 }
             }
         }
@@ -8120,7 +8186,6 @@ mod tests {
         for mode in [
             UiMode::Context(UiTarget::Creature),
             UiMode::FoodChoice,
-            UiMode::FoodDrop(FoodId::Berry),
             UiMode::ToyChoice,
             UiMode::Settings,
             UiMode::Bindings,
@@ -8685,7 +8750,7 @@ mod tests {
                 .0
                 .text
                 .iter()
-                .any(|t| t.id == "ui/hover-label" && t.text.contains("care and play"))
+                .any(|t| t.id == "ui/hover-label" && t.text == "Pet Mop")
         );
     }
 
@@ -8880,26 +8945,36 @@ mod tests {
     fn modal_hides_world_picking_and_controls_have_explicit_labels() {
         let state = WorldState::new(7, "Mop");
         let scene = plan(&state, &ViewState::default()).0;
-        for id in [
-            "compose/send",
-            "compose/microphone",
-            "compose/food",
-            "compose/settings",
+        for (id, action) in [
+            ("compose/send", None),
+            ("compose/microphone", None),
+            ("compose/settings", None),
+            (
+                "compose/creature",
+                Some(UiAction::OpenContext(UiTarget::Creature)),
+            ),
+            ("compose/toy-0", Some(UiAction::Play(ToyId::Ball))),
+            ("compose/toy-2", Some(UiAction::Play(ToyId::Sock))),
+            (
+                "compose/food-berry",
+                Some(UiAction::SelectFood(FoodId::Berry)),
+            ),
+            (
+                "compose/food-pellet",
+                Some(UiAction::SelectFood(FoodId::Pellet)),
+            ),
         ] {
-            assert!(
-                scene
-                    .hit_regions
-                    .iter()
-                    .any(|hit| hit.id == id && !hit.label.is_empty())
-            );
-        }
-        assert!(
-            scene
-                .text
+            let hit = scene
+                .hit_regions
                 .iter()
-                .any(|text| text.id == "compose/control-feed")
-        );
-        for utility in ["send", "speak", "settings"] {
+                .find(|hit| hit.id == id)
+                .unwrap_or_else(|| panic!("{id}"));
+            assert!(!hit.label.is_empty(), "{id}");
+            if let Some(action) = action {
+                assert_eq!(hit.action, action, "{id}: one click acts");
+            }
+        }
+        for utility in ["send", "speak", "settings", "feed"] {
             assert!(
                 !scene
                     .text
@@ -8933,5 +9008,106 @@ mod tests {
                 .iter()
                 .any(|hit| hit.id == "settings/grid")
         );
+    }
+
+    fn teach(state: &mut WorldState, word: &str, meaning: beastie_core::Meaning) {
+        for at in 0..2 {
+            state.creature.lexicon.hear(word, &[(meaning, 3)], at);
+        }
+    }
+
+    fn coach_text(state: &WorldState, view: &ViewState) -> Option<String> {
+        plan(state, view)
+            .0
+            .text
+            .iter()
+            .find(|text| text.id == "coach/hint")
+            .map(|text| text.text.clone())
+    }
+
+    #[test]
+    fn coaching_hint_leads_from_naming_to_asking_and_then_steps_aside() {
+        let mut state = WorldState::new(4, "Mop");
+        let mut rng = beastie_core::SeededRandom::new(4);
+        state.creature.toy_preferences.insert(ToyId::Ball, 0.8);
+        state.creature.needs.hunger = 0.2;
+        beastie_core::step(
+            &mut state,
+            &[beastie_core::PlayerEvent::Play(ToyId::Ball)],
+            0,
+            &mut rng,
+        );
+        assert_eq!(
+            beastie_core::current_want(&state),
+            Some(beastie_core::Want::NameOf(beastie_core::Meaning::Toy(
+                ToyId::Ball
+            )))
+        );
+        let view = ViewState::default();
+        let naming = coaching_hint(&state, &view).expect("a first lesson is suggested");
+        assert!(naming.contains("what the ball is called"), "{naming}");
+        assert_eq!(coach_text(&state, &view), Some(naming));
+
+        teach(&mut state, "ball", beastie_core::Meaning::Toy(ToyId::Ball));
+        assert_eq!(state.creature.lexicon.learned_count(), 1);
+        assert_eq!(
+            coaching_hint(&state, &view).as_deref(),
+            Some("Mop knows “ball”. Say it to ask for it.")
+        );
+
+        // Typing, or any other surface, hides the hint.
+        let typing = ViewState {
+            text_buffer: "ba".to_owned(),
+            ..ViewState::default()
+        };
+        assert_eq!(coaching_hint(&state, &typing), None);
+        assert_eq!(coach_text(&state, &typing), None);
+        let settings = ViewState {
+            mode: UiMode::Settings,
+            ..ViewState::default()
+        };
+        assert_eq!(coaching_hint(&state, &settings), None);
+
+        for (word, meaning) in [
+            ("bell", beastie_core::Meaning::Toy(ToyId::Bell)),
+            ("sock", beastie_core::Meaning::Toy(ToyId::Sock)),
+            ("berry", beastie_core::Meaning::Food(FoodId::Berry)),
+            ("shroom", beastie_core::Meaning::Food(FoodId::Mushroom)),
+        ] {
+            teach(&mut state, word, meaning);
+        }
+        assert_eq!(state.creature.lexicon.learned_count(), 5);
+        assert!(
+            coaching_hint(&state, &view).is_some(),
+            "five words without a request still invites the first request"
+        );
+        state.creature.development.interactions.requests = 1;
+        assert_eq!(coaching_hint(&state, &view), None);
+        assert_eq!(coach_text(&state, &view), None);
+    }
+
+    #[test]
+    fn want_bubble_is_projected_only_while_the_creature_is_not_speaking() {
+        let mut state = WorldState::new(4, "Mop");
+        state.creature.needs.hunger = 0.8;
+        let want = beastie_core::current_want(&state);
+        assert!(matches!(want, Some(beastie_core::Want::Food(_))));
+        let quiet = plan(&state, &ViewState::default()).0;
+        assert_eq!(quiet.creature.want, want);
+
+        let mut talking = ViewState::default();
+        talking.show_speech("mop hungry".to_owned(), 0);
+        assert_eq!(plan(&state, &talking).0.creature.want, None);
+        let voiced = ViewState {
+            speaking: true,
+            ..ViewState::default()
+        };
+        assert_eq!(plan(&state, &voiced).0.creature.want, None);
+
+        state.creature.needs.hunger = 0.2;
+        state.creature.needs.energy = 0.9;
+        state.creature.needs.comfort = 0.8;
+        state.creature.needs.curiosity = 0.3;
+        assert_eq!(plan(&state, &ViewState::default()).0.creature.want, None);
     }
 }

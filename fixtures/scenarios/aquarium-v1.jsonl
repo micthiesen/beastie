@@ -2,7 +2,9 @@
 {"version":1,"command":"cursor","position":{"x":7600,"y":3200}}
 {"version":1,"command":"drop_food","food":"berry","position":{"x":7200,"y":1800}}
 {"version":1,"command":"tick","milliseconds":1000}
+{"version":1,"command":"talk","text":"berry"}
 {"version":1,"command":"tick","milliseconds":1000}
+{"version":1,"command":"talk","text":"berry!"}
 {"version":1,"command":"tick","milliseconds":1000}
 {"version":1,"command":"tick","milliseconds":1000}
 {"version":1,"command":"tick","milliseconds":1000}

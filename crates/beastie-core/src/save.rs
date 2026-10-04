@@ -248,6 +248,9 @@ fn migrate_pre_travel_ownership(world: &mut WorldState) {
             outcome: crate::ToyInteractionOutcome::Rejected,
             phase: crate::ToyInteractionPhase::Approach,
             relationship: None,
+            recovery_until_ms: 0,
+            rounds_left: 0,
+            contacts: 0,
         });
         world.creature.aquarium.travel_purpose =
             Some(crate::TravelPurpose::RefusalStare { interaction_id });
@@ -392,6 +395,9 @@ impl LegacyCreature {
             routines: Vec::new(),
             favorite_locations: BTreeMap::new(),
             initiated_behavior: None,
+            lexicon: crate::Lexicon::default(),
+            attention: Vec::new(),
+            hidden_until_met: false,
         }
     }
 }

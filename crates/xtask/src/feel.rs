@@ -526,10 +526,12 @@ fn experience_seed(experience: Experience) -> u64 {
     match experience.id {
         "quiet-observation-seed-4201" => 4_201,
         "quiet-observation-seed-4202" => 4_202,
-        // This creature likes all three toys, covering positive direct contact rather than refusal.
-        "direct-toy-contact" | "reduced-effects" => 12,
-        // The first offered food (object 6) is disliked; the second (object 7) is liked.
-        "food-refusal" => 8,
+        // Every fresh creature dislikes one toy. This seed dislikes the bell and likes the sock,
+        // so direct play covers positive contact, a carried sock and one visible refusal.
+        "direct-toy-contact" | "reduced-effects" => 2,
+        // Ranked preferences for this seed: mushroom is disliked (offered first, object 6) and
+        // berry is the favorite (offered second, object 7).
+        "food-refusal" => 4,
         _ => 42,
     }
 }
@@ -2536,7 +2538,7 @@ fn require_success(name: &str, status: ExitStatus) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use beastie_core::{GameEvent, NormalizedPosition};
+    use beastie_core::{GameEvent, NormalizedPosition, ToyOrigin};
     use beastie_session::{CommandEnvelope, SESSION_PROTOCOL_VERSION, SessionCommand};
 
     use super::*;
@@ -2762,7 +2764,7 @@ mod tests {
         assert_eq!(experiences[0].fixture_dialogue_delay_ms, None);
         assert_eq!(experiences[1].fixture_dialogue_delay_ms, Some(800));
         assert!(experiences[1].fake_ai && experiences[1].tts_requested);
-        assert_eq!(experience_seed(experiences[2]), 12);
+        assert_eq!(experience_seed(experiences[2]), 2);
         assert!(!experiences[2].tts_requested);
     }
 
@@ -2774,7 +2776,7 @@ mod tests {
             ["food-refusal", "reduced-effects"]
         );
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        for (case, seed, duration) in [(experiences[0], 8, 48_000), (experiences[1], 12, 59_000)] {
+        for (case, seed, duration) in [(experiences[0], 4, 48_000), (experiences[1], 2, 59_000)] {
             assert_eq!(experience_seed(case), seed);
             assert!(case.initial_save.is_none());
             assert_eq!(
@@ -2864,30 +2866,66 @@ mod tests {
                         "toggle_reduced_shake"
                     ]
                 );
+                let disliked = |toy: ToyId| {
+                    beastie_core::WorldState::new(experience_seed(case), "Mop")
+                        .creature
+                        .toy_preferences
+                        .get(&toy)
+                        .is_some_and(|preference| *preference < -0.35)
+                };
                 for toy in [ToyId::Ball, ToyId::Bell, ToyId::Sock] {
-                    assert_eq!(
-                        events
-                            .iter()
-                            .filter(|event| matches!(
+                    let responses = events
+                        .iter()
+                        .filter(|event| {
+                            matches!(
                                 event,
                                 GameEvent::ToyInteractionResponded { toy: actual, .. }
                                     if *actual == toy
-                            ))
-                            .count(),
-                        1,
-                        "one direct physical response for {toy:?}"
-                    );
+                            )
+                        })
+                        .count();
+                    let rewards = events
+                        .iter()
+                        .filter(|event| {
+                            matches!(
+                                event,
+                                GameEvent::ToyPlayed { toy: actual, origin: ToyOrigin::Player, .. }
+                                    if *actual == toy
+                            )
+                        })
+                        .count();
+                    let refused = events.iter().any(|event| {
+                        matches!(
+                            event,
+                            GameEvent::ToyRejected { toy: actual, .. } if *actual == toy
+                        )
+                    });
+                    if disliked(toy) {
+                        // Refusal is a visible act, never a silent no-op.
+                        assert!(refused, "the disliked {toy:?} is visibly refused");
+                        assert_eq!(rewards, 0, "no reward for the refused {toy:?}");
+                    } else {
+                        // Direct play is a short game of several contact rounds, each answered
+                        // physically; the reward still lands exactly once.
+                        assert!(!refused, "the liked {toy:?} is not refused");
+                        assert!(responses >= 1, "direct physical response for {toy:?}");
+                        assert_eq!(rewards, 1, "one reward for {toy:?}");
+                    }
                 }
-                assert!(
-                    !events
-                        .iter()
-                        .any(|event| matches!(event, GameEvent::ToyRejected { .. }))
+                assert_eq!(
+                    [ToyId::Ball, ToyId::Bell, ToyId::Sock]
+                        .into_iter()
+                        .filter(|toy| disliked(*toy))
+                        .count(),
+                    1,
+                    "a fresh creature dislikes exactly one toy"
                 );
-                assert!(
-                    events
-                        .iter()
-                        .any(|event| matches!(event, GameEvent::TalkAccepted { .. }))
-                );
+                assert!(events.iter().any(|event| matches!(
+                    event,
+                    GameEvent::WordHeard { .. }
+                        | GameEvent::WordLearned { .. }
+                        | GameEvent::Understood { .. }
+                )));
                 assert!(
                     events
                         .iter()

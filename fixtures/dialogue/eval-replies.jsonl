@@ -25,3 +25,14 @@
 {"case_id":"ritual_continuity","reply":{"protocol_version":1,"request_id":125,"say":"again, as always. here.","gesture":"look_player","recalled_memory":null}}
 {"case_id":"aquarium_object_context","reply":{"protocol_version":1,"request_id":126,"say":"watch fern plant.","gesture":"look_player","recalled_memory":null}}
 {"case_id":"relationship_return_motif","reply":{"protocol_version":1,"request_id":127,"say":"you came back.","gesture":"look_player","recalled_memory":null}}
+{"case_id":"speech_fresh_hatch_babble","reply":{"protocol_version":1,"request_id":201,"say":"mrp? prr.","gesture":"look_player","recalled_memory":null}}
+{"case_id":"speech_unknown_word_echo","reply":{"protocol_version":1,"request_id":202,"say":"baw?","gesture":"look_player","recalled_memory":null}}
+{"case_id":"speech_just_learned_word","reply":{"protocol_version":1,"request_id":203,"say":"ball! ball!","gesture":"look_player","recalled_memory":null}}
+{"case_id":"speech_coined_word","reply":{"protocol_version":1,"request_id":204,"say":"zorp? zorp!","gesture":"look_player","recalled_memory":null}}
+{"case_id":"speech_mid_lesson_answer","reply":{"protocol_version":1,"request_id":205,"say":"ball!","gesture":"look_player","recalled_memory":null}}
+{"case_id":"speech_refused_food","reply":{"protocol_version":1,"request_id":206,"say":"no berry. no!","gesture":"look_player","recalled_memory":null}}
+{"case_id":"speech_want_known_food","reply":{"protocol_version":1,"request_id":207,"say":"mop want berry.","gesture":"look_player","recalled_memory":null}}
+{"case_id":"speech_want_without_word","reply":{"protocol_version":1,"request_id":208,"say":"mm? mrp!","gesture":"look_player","recalled_memory":null}}
+{"case_id":"speech_returning_player","reply":{"protocol_version":1,"request_id":209,"say":"hello! mop! prr!","gesture":"look_player","recalled_memory":null}}
+{"case_id":"speech_remark_attention","reply":{"protocol_version":1,"request_id":210,"say":"sock. hm.","gesture":"look_player","recalled_memory":null}}
+{"case_id":"speech_prohibited_input_babble","reply":{"protocol_version":1,"request_id":211,"say":"nnn. mrp.","gesture":"look_player","recalled_memory":null}}

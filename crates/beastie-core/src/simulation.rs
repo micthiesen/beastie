@@ -12,26 +12,34 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU64;
 
-pub const SIMULATION_TICK_MS: u64 = 1_000;
+/// Ten fixed ticks per second keep acknowledgement, steering and arrival responsive. Velocities
+/// remain fixed-point units per second; `tick_step` converts them without rounding drift.
+pub const SIMULATION_TICK_MS: u64 = 100;
 pub const MAX_OFFLINE_MS: u64 = crate::ACTIVE_DAY_MS * 8;
 pub const TALK_COOLDOWN_MS: u64 = 30_000;
-pub const SOCK_RELEASE_SPEED: i32 = 650;
+pub const SOCK_RELEASE_SPEED: i32 = 900;
 // Private life needs room to read as lived time, not a showcase playlist. Arrival begins a
 // state-shaped quiet span that outlasts the authored payoff and leaves genuine observation
 // between bouts.
-const IDLE_BOUT_MIN_MS: u64 = 16_000;
-const IDLE_BOUT_MAX_MS: u64 = 32_000;
+const IDLE_BOUT_MIN_MS: u64 = 3_000;
+const IDLE_BOUT_MAX_MS: u64 = 8_000;
 const AFFECTION_DURATION_MS: u64 = 7_000;
+/// How long a direct toy contact holds before recovery ends: long enough to see a sock tug.
+const TOY_RECOVERY_MS: u64 = 1_200;
 const MAX_SLEEP_MS: u64 = 30_000;
 const INITIATIVE_DURATION_MS: u64 = 45_000;
+const FIRST_MEETING_PEEK_MS: u64 = 2_500;
+const ASK_WITH_WORD_INTERVAL_MS: u64 = 20_000;
+const REMARK_INTERVAL_MS: u64 = 18_000;
+const ASK_WITHOUT_WORD_INTERVAL_MS: u64 = 45_000;
 const ACTIVE_DAY_HOURS: u64 = 24;
 const MAX_VISIT_EVIDENCE: usize = 32;
 const DIRECT_RELATIONSHIP_MOMENT_MS: u64 = 3_000;
 const MAX_RECENT_ACTIVITIES: usize = 32;
-const PRIVATE_NOTICE_MS: u64 = 1_000;
-const PRIVATE_ACT_MS: u64 = 2_000;
-const PRIVATE_RECOVER_MS: u64 = 2_000;
-const PRIVATE_SETTLE_MS: u64 = 7_000;
+const PRIVATE_NOTICE_MS: u64 = 500;
+const PRIVATE_ACT_MS: u64 = 1_600;
+const PRIVATE_RECOVER_MS: u64 = 900;
+const PRIVATE_SETTLE_MS: u64 = 3_500;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
@@ -55,6 +63,10 @@ pub enum PlayerEvent {
     React(Reaction),
     LanguageExposure(LanguageExposure),
     UnderstoodUtterance(UtteranceInterpretation),
+    /// Words addressed to the creature, perceived at once and used for learning.
+    Utterance(String),
+    /// A tap on the glass at a point in the water.
+    Tap(NormalizedPosition),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,6 +210,31 @@ pub enum GameEvent {
         interaction_id: NonZeroU64,
         response: ToyResponse,
     },
+    /// A new creature came out of its cave to meet the player.
+    Emerged,
+    /// The creature named something it is enjoying, in a word the player taught it.
+    Remarked(crate::Meaning),
+    /// A tap on the glass, and whether the creature came to look.
+    TapNoticed {
+        position: NormalizedPosition,
+        approached: bool,
+    },
+    /// Words were heard without any known word to act on. `echo` is a curious repeat attempt.
+    WordHeard {
+        word: Option<String>,
+        echo: Option<String>,
+    },
+    /// The creature learned what a word means from the situations it was heard in.
+    WordLearned {
+        word: String,
+        meaning: crate::Meaning,
+    },
+    /// A known word was understood and answered.
+    Understood {
+        word: String,
+        meaning: crate::Meaning,
+        response: crate::RequestResponse,
+    },
 }
 
 /// Exact simulation-owned body that a deferred utterance must wait for.
@@ -327,12 +364,14 @@ pub fn step(
             interrupt_relationship_beat(state, &mut events);
             interrupt_travel(state, &mut events);
         }
+        let first = events.len();
         apply_player_event(state, event, &mut events);
         events.extend(
             state.creature.memories[before..]
                 .iter()
                 .map(|memory| GameEvent::MemoryCreated(memory.id)),
         );
+        crate::teaching::mark_attention_from_events(state, &events[first..]);
     }
     // Input may have started a stationary phase without advancing a tick.
     clear_stationary_velocity(state);
@@ -341,12 +380,15 @@ pub fn step(
     state.simulation_remainder_ms = accumulated % SIMULATION_TICK_MS;
     for _ in 0..ticks {
         let before = state.creature.memories.len();
+        let first = events.len();
         fixed_tick(state, rng, &mut events);
         events.extend(
             state.creature.memories[before..]
                 .iter()
                 .map(|memory| GameEvent::MemoryCreated(memory.id)),
         );
+        crate::teaching::mark_attention_from_events(state, &events[first..]);
+        maybe_remark(state, first, &mut events);
     }
     events
 }
@@ -465,16 +507,7 @@ fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut
     if state.creature.needs.energy < 0.1
         && state.creature.current_intention != crate::Intention::Sleep
     {
-        interrupt_toy_interaction(state, events);
-        interrupt_relationship_beat(state, events);
-        let previous = state.creature.current_intention;
-        state.creature.current_intention = crate::Intention::Sleep;
-        state.creature.interaction_state.sleep_started_at_ms = Some(state.elapsed_ms);
-        events.push(GameEvent::SleepStarted);
-        events.push(GameEvent::IntentionChanged {
-            from: previous,
-            to: crate::Intention::Sleep,
-        });
+        start_sleep(state, events);
     }
     let sock_just_released = sock_was_carried
         && state
@@ -496,6 +529,20 @@ fn fixed_tick(state: &mut WorldState, _rng: &mut impl RandomSource, events: &mut
     // Keep batched ticks identical to individual steps, including the first tick
     // after a stationary phase has ended.
     clear_stationary_velocity(state);
+}
+
+/// Fall asleep where the creature is, ending any toy or relationship moment first.
+pub(crate) fn start_sleep(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    interrupt_toy_interaction(state, events);
+    interrupt_relationship_beat(state, events);
+    let previous = state.creature.current_intention;
+    state.creature.current_intention = crate::Intention::Sleep;
+    state.creature.interaction_state.sleep_started_at_ms = Some(state.elapsed_ms);
+    events.push(GameEvent::SleepStarted);
+    events.push(GameEvent::IntentionChanged {
+        from: previous,
+        to: crate::Intention::Sleep,
+    });
 }
 
 fn advance_embodied_state(state: &mut WorldState, events: &mut Vec<GameEvent>) {
@@ -520,8 +567,9 @@ fn advance_embodied_state(state: &mut WorldState, events: &mut Vec<GameEvent>) {
             .interaction_state
             .sleep_started_at_ms
             .get_or_insert(state.elapsed_ms);
-        state.creature.needs.energy = (state.creature.needs.energy + 0.08).min(1.0);
-        state.creature.needs.comfort = (state.creature.needs.comfort + 0.01).min(1.0);
+        let seconds = SIMULATION_TICK_MS as f32 / 1_000.0;
+        state.creature.needs.energy = (state.creature.needs.energy + 0.08 * seconds).min(1.0);
+        state.creature.needs.comfort = (state.creature.needs.comfort + 0.01 * seconds).min(1.0);
         if state.creature.needs.energy >= 0.68
             || state.elapsed_ms.saturating_sub(*started_at) >= MAX_SLEEP_MS
         {
@@ -570,32 +618,24 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
         }
         PlayerEvent::Cursor(position) => {
             state.aquarium.cursor = position.map(NormalizedPosition::clamped);
-            state.creature.aquarium.gaze = if position.is_some() {
-                GazeTarget::Cursor
-            } else {
-                GazeTarget::None
-            };
-            if let Some(cursor) = state.aquarium.cursor {
-                if state.creature.relationship.resentment > 0.65 {
-                    state.creature.aquarium.steering = SteeringMode::Flee;
-                    clear_travel_target(state);
-                } else if state.creature.relationship.trust > 0.5
-                    && state.creature.traits.sociability > 0.4
+            // The pointer may catch an unoccupied creature's eye. It never replaces an owned
+            // target's gaze, travel or action, so intent stays readable while the player moves.
+            if creature_is_occupied(state) {
+                return;
+            }
+            let near = state.aquarium.cursor.is_some_and(|cursor| {
+                manhattan_distance(cursor, state.creature.aquarium.position)
+                    <= CURSOR_NOTICE_DISTANCE
+            });
+            if near {
+                state.creature.aquarium.gaze = GazeTarget::Cursor;
+                if state.creature.relationship.resentment > 0.65
+                    && state.creature.aquarium.destination.is_none()
                 {
-                    state.creature.aquarium.steering = SteeringMode::Approach;
-                    let action_id = NonZeroU64::new(allocate_action_id(state))
-                        .expect("action IDs start at one");
-                    set_travel_target(
-                        state,
-                        SemanticDestination::Position(cursor),
-                        crate::TravelPurpose::CursorSocial { action_id },
-                        events,
-                    );
-                } else {
-                    state.creature.aquarium.steering = SteeringMode::Hover;
+                    state.creature.aquarium.steering = SteeringMode::Flee;
                 }
-            } else {
-                clear_travel_target(state);
+            } else if state.creature.aquarium.gaze == GazeTarget::Cursor {
+                state.creature.aquarium.gaze = GazeTarget::None;
             }
         }
         PlayerEvent::Name { target, name } => assign_name(state, *target, name, events),
@@ -708,6 +748,8 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
             events.push(GameEvent::SocialActExpressed(act));
         }
         PlayerEvent::React(reaction) => apply_reaction(state, *reaction),
+        PlayerEvent::Utterance(text) => crate::teaching::hear_utterance(state, text, events),
+        PlayerEvent::Tap(position) => tap_glass(state, position.clamped(), events),
         PlayerEvent::LanguageExposure(exposure) => {
             match exposure {
                 LanguageExposure::Profanity => state.creature.social_habits.profanity += 0.08,
@@ -738,6 +780,68 @@ fn apply_player_event(state: &mut WorldState, event: &PlayerEvent, events: &mut 
             );
         }
     }
+}
+
+/// Every tap gets an answer. An idle creature looks, and a curious one swims over to see; a
+/// busy one only glances so its own intent stays readable.
+fn tap_glass(state: &mut WorldState, position: NormalizedPosition, events: &mut Vec<GameEvent>) {
+    let counters = &mut state.creature.development.interactions;
+    counters.taps = counters.taps.saturating_add(1);
+    let asleep = state.creature.current_intention == Intention::Sleep;
+    let busy = creature_is_occupied(state);
+    let approached = !asleep
+        && !busy
+        && !state.creature.hidden_until_met
+        && state.creature.needs.curiosity + state.creature.traits.boldness * 0.3 > 0.35;
+    if !asleep && !busy {
+        state.aquarium.cursor = Some(position);
+        state.creature.aquarium.gaze = GazeTarget::Cursor;
+    }
+    if approached {
+        // Stop a little short, looking at the spot rather than nosing into it.
+        let head = state.creature.aquarium.position;
+        let toward = NormalizedPosition::new(
+            position.x - (position.x - head.x).signum() * 900,
+            position.y - (position.y - head.y).signum() * 400,
+        )
+        .clamped();
+        let action_id =
+            NonZeroU64::new(allocate_action_id(state)).expect("action IDs start at one");
+        set_travel_target(
+            state,
+            SemanticDestination::Position(toward),
+            crate::TravelPurpose::CursorSocial { action_id },
+            events,
+        );
+        state.creature.needs.curiosity = (state.creature.needs.curiosity - 0.03).max(0.0);
+    }
+    events.push(GameEvent::TapNoticed {
+        position,
+        approached,
+    });
+}
+
+/// Pointer distance, in fixed-point units, within which an idle creature looks at it.
+const CURSOR_NOTICE_DISTANCE: i32 = 3_200;
+
+/// Whether the creature currently owns a target that its gaze and body must keep showing.
+pub(crate) fn creature_is_occupied(state: &WorldState) -> bool {
+    let creature = &state.creature;
+    creature.current_intention == Intention::Sleep
+        || creature.aquarium.action.is_some()
+        || creature.interaction_state.toy_interaction.is_some()
+        || creature.relationship_expression.active.is_some()
+        || creature
+            .private_life
+            .active
+            .as_ref()
+            .is_some_and(|activity| {
+                matches!(
+                    activity.phase,
+                    ActivityPhase::Notice | ActivityPhase::Approach | ActivityPhase::Act
+                )
+            })
+        || creature.aquarium.destination.is_some()
 }
 
 #[must_use]
@@ -791,9 +895,13 @@ pub fn speech_attention(state: &WorldState) -> SpeechAttention {
 }
 
 fn should_interrupt_for_player_event(event: &PlayerEvent) -> bool {
+    // Pointer motion is attention, never a command: it must not cancel accepted actions.
     !matches!(
         event,
-        PlayerEvent::SpeechStarted
+        PlayerEvent::Cursor(_)
+            | PlayerEvent::Tap(_)
+            | PlayerEvent::Utterance(_)
+            | PlayerEvent::SpeechStarted
             | PlayerEvent::React(_)
             | PlayerEvent::LanguageExposure(_)
             | PlayerEvent::UnderstoodUtterance(_)
@@ -906,7 +1014,7 @@ fn record_relationship_expression(
     }
 }
 
-fn allocate_action_id(state: &mut WorldState) -> u64 {
+pub(crate) fn allocate_action_id(state: &mut WorldState) -> u64 {
     let id = state.creature.interaction_state.next_action_id.max(1);
     state.creature.interaction_state.next_action_id = id.saturating_add(1).max(1);
     id
@@ -922,7 +1030,7 @@ fn allocate_toy_interaction_id(state: &mut WorldState) -> NonZeroU64 {
     NonZeroU64::new(raw).expect("toy interaction IDs start at one")
 }
 
-fn set_travel_target(
+pub(crate) fn set_travel_target(
     state: &mut WorldState,
     destination: SemanticDestination,
     purpose: crate::TravelPurpose,
@@ -1089,11 +1197,34 @@ fn advance_private_life(state: &mut WorldState, events: &mut Vec<GameEvent>) {
                     _ => GazeTarget::None,
                 };
             } else {
-                // Open water has a real approach contour but no destination transaction.
-                state.creature.aquarium.steering = SteeringMode::Drift;
+                // Open water is a bubble chase: a visible target high in the tank, so the swim
+                // reads as wanting something rather than floating.
+                let target = bubble_point(state, activity.id);
+                set_travel_target(
+                    state,
+                    SemanticDestination::Position(target),
+                    crate::TravelPurpose::PrivateLife {
+                        activity_id: activity.id,
+                    },
+                    events,
+                );
+                state.creature.aquarium.gaze = GazeTarget::None;
             }
         }
-        ActivityPhase::Approach if activity.kind.destination().is_none() => {
+        // A bubble that drifted out of reach is snapped at from wherever the chase got to.
+        ActivityPhase::Approach
+            if activity.kind.destination().is_none()
+                && state
+                    .elapsed_ms
+                    .saturating_sub(activity.phase_started_at_ms)
+                    >= BUBBLE_CHASE_GIVE_UP_MS =>
+        {
+            if matches!(
+                state.creature.aquarium.travel_purpose,
+                Some(crate::TravelPurpose::PrivateLife { activity_id }) if activity_id == activity.id
+            ) {
+                clear_travel_target(state);
+            }
             activity.phase = ActivityPhase::Act;
             activity.phase_started_at_ms = state.elapsed_ms;
         }
@@ -1111,8 +1242,16 @@ fn advance_private_life(state: &mut WorldState, events: &mut Vec<GameEvent>) {
             }
             push_recent_activity(state, &activity, None);
             state.creature.private_life.active = None;
-            state.creature.aquarium.steering = SteeringMode::Hover;
-            state.creature.current_intention = Intention::Idle;
+            // A newer owner (a toy offer, food, a relationship beat) may have started while
+            // this activity settled; finishing must not take its body or intention away.
+            let newer_owner = state.creature.interaction_state.toy_interaction.is_some()
+                || state.creature.aquarium.action.is_some()
+                || state.creature.relationship_expression.active.is_some()
+                || state.creature.aquarium.destination.is_some();
+            if !newer_owner {
+                state.creature.aquarium.steering = SteeringMode::Hover;
+                state.creature.current_intention = Intention::Idle;
+            }
             schedule_next_idle_bout(state);
             events.push(GameEvent::PrivateLifeCompleted {
                 activity_id: activity.id,
@@ -1129,6 +1268,17 @@ fn advance_private_life(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         from,
         to: activity.phase,
     });
+}
+
+const BUBBLE_CHASE_GIVE_UP_MS: u64 = 4_000;
+
+/// Where an open-water bubble chase heads: somewhere in the upper water, varied per activity.
+#[must_use]
+pub fn bubble_point(state: &WorldState, activity_id: NonZeroU64) -> NormalizedPosition {
+    let key = activity_id.get().wrapping_mul(7);
+    let x = deterministic_unit(state.seed, RandomDomain::Motion, key + 3);
+    let y = deterministic_unit(state.seed, RandomDomain::Motion, key + 5);
+    NormalizedPosition::new(1_500 + (x * 7_000.0) as i32, 1_400 + (y * 2_200.0) as i32)
 }
 
 fn perform_private_life_payoff(
@@ -1182,8 +1332,8 @@ fn respond_to_toy_contact(
             let dy = object.position.y - head.y;
             let distance = dx.abs().max(dy.abs()).max(1);
             object.velocity = NormalizedVelocity {
-                x: dx * 220 / distance,
-                y: dy * 220 / distance,
+                x: dx * BALL_NUDGE_SPEED / distance,
+                y: dy * BALL_NUDGE_SPEED / distance,
             };
             ToyResponse::BallNudged
         }
@@ -1204,6 +1354,36 @@ fn respond_to_toy_contact(
 }
 
 fn finish_toy_recovery(state: &mut WorldState) {
+    let Some(interaction) = state.creature.interaction_state.toy_interaction.as_mut() else {
+        return;
+    };
+    if interaction.phase != crate::ToyInteractionPhase::Recovery
+        || state.elapsed_ms < interaction.recovery_until_ms
+    {
+        return;
+    }
+    if interaction.rounds_left > 0
+        && interaction.outcome == crate::ToyInteractionOutcome::Accepted
+        && interaction.toy != ToyId::Sock
+    {
+        // Another round: chase the toy to wherever the last contact sent it.
+        interaction.rounds_left -= 1;
+        interaction.phase = crate::ToyInteractionPhase::Approach;
+        let toy = interaction.toy;
+        let interaction_id = interaction.id;
+        state.creature.aquarium.destination = Some(SemanticDestination::Toy(toy));
+        state.creature.aquarium.travel_purpose =
+            Some(crate::TravelPurpose::ToyInteraction { interaction_id });
+        state.creature.aquarium.steering = SteeringMode::Approach;
+        state.creature.aquarium.gaze = GazeTarget::Toy(toy);
+        state.creature.current_intention = Intention::Play;
+        return;
+    }
+    end_toy_recovery(state);
+}
+
+/// End a committed toy recovery now, releasing a held sock. A newer offer uses this directly.
+fn end_toy_recovery(state: &mut WorldState) {
     let Some(interaction) = state.creature.interaction_state.toy_interaction.as_ref() else {
         return;
     };
@@ -1281,6 +1461,17 @@ fn resolve_toy_play(
             response,
         });
     }
+    interaction.contacts = interaction.contacts.saturating_add(1);
+    if interaction.contacts > 1 {
+        // A later round of the same game: physical response only, no repeated reward.
+        interaction.phase = crate::ToyInteractionPhase::Recovery;
+        interaction.recovery_until_ms = state.elapsed_ms.saturating_add(toy_round_recovery_ms(
+            interaction.toy,
+            interaction.rounds_left,
+        ));
+        state.creature.interaction_state.toy_interaction = Some(interaction);
+        return;
+    }
     state.creature.needs.curiosity = (state.creature.needs.curiosity - 0.18).max(0.0);
     match interaction.origin {
         crate::ToyOrigin::Player => {
@@ -1322,7 +1513,31 @@ fn resolve_toy_play(
         origin: interaction.origin,
     });
     interaction.phase = crate::ToyInteractionPhase::Recovery;
+    interaction.recovery_until_ms = state.elapsed_ms.saturating_add(toy_round_recovery_ms(
+        interaction.toy,
+        interaction.rounds_left,
+    ));
     state.creature.interaction_state.toy_interaction = Some(interaction);
+}
+
+/// The pause after a contact: short between rounds of a game, longer after the last one. The
+/// sock is towed around for a while before it is let go.
+fn toy_round_recovery_ms(toy: ToyId, rounds_left: u8) -> u64 {
+    match (toy, rounds_left) {
+        (ToyId::Sock, _) => 2_600,
+        (_, 0) => TOY_RECOVERY_MS,
+        _ => 450,
+    }
+}
+
+/// Rounds in a play session after the first contact.
+fn toy_session_rounds(toy: ToyId, origin: crate::ToyOrigin) -> u8 {
+    match (toy, origin) {
+        (ToyId::Ball, crate::ToyOrigin::Player) => 3,
+        (ToyId::Bell, crate::ToyOrigin::Player) => 2,
+        (ToyId::Ball | ToyId::Bell, crate::ToyOrigin::Autonomous) => 1,
+        (ToyId::Sock, _) => 0,
+    }
 }
 
 fn dispatch_travel_arrival(
@@ -1349,6 +1564,7 @@ fn dispatch_travel_arrival(
                 && interaction.phase == crate::ToyInteractionPhase::Approach
             {
                 interaction.phase = crate::ToyInteractionPhase::Recovery;
+                interaction.recovery_until_ms = state.elapsed_ms.saturating_add(TOY_RECOVERY_MS);
             }
         }
         crate::TravelPurpose::Relationship { .. } => {
@@ -1756,10 +1972,11 @@ fn drop_food(
         FoodId::Mushroom => FoodBuoyancy::Float,
         FoodId::Pellet => FoodBuoyancy::Drift,
     };
+    // Units per second: food visibly sinks, rises or drifts while Mop goes for it.
     let velocity = match buoyancy {
-        FoodBuoyancy::Float => NormalizedVelocity { x: 0, y: -20 },
-        FoodBuoyancy::Sink => NormalizedVelocity { x: 0, y: 35 },
-        FoodBuoyancy::Drift => NormalizedVelocity { x: 8, y: 8 },
+        FoodBuoyancy::Float => NormalizedVelocity { x: 0, y: -450 },
+        FoodBuoyancy::Sink => NormalizedVelocity { x: 0, y: 650 },
+        FoodBuoyancy::Drift => NormalizedVelocity { x: 160, y: 160 },
     };
     let position = position.clamped();
     state.aquarium.objects.insert(
@@ -1781,7 +1998,7 @@ fn drop_food(
         action_id,
         phase: ActionPhase::Notice,
         elapsed_ms: 0,
-        phase_duration_ms: 1_000,
+        phase_duration_ms: food_phase_duration_ms(ActionPhase::Notice),
         destination: SemanticDestination::Food(id),
         food_id: Some(id),
         food: Some(food),
@@ -1837,6 +2054,7 @@ fn assign_name(
 }
 
 fn advance_aquarium(state: &mut WorldState, sock_just_released: bool, events: &mut Vec<GameEvent>) {
+    let elapsed = state.elapsed_ms;
     for (id, toy) in &mut state.aquarium.toy_states {
         // Release starts at the held anchor. Its velocity then drives continuous projection
         // and the following tick, rather than jumping a full fall step on the release frame.
@@ -1844,12 +2062,17 @@ fn advance_aquarium(state: &mut WorldState, sock_just_released: bool, events: &m
             continue;
         }
         toy.position = NormalizedPosition::new(
-            toy.position.x.saturating_add(toy.velocity.x),
-            toy.position.y.saturating_add(toy.velocity.y),
+            toy.position
+                .x
+                .saturating_add(tick_step(toy.velocity.x, elapsed)),
+            toy.position
+                .y
+                .saturating_add(tick_step(toy.velocity.y, elapsed)),
         )
         .clamped();
-        toy.velocity.x /= 2;
-        toy.velocity.y /= 2;
+        // Water drag halves a free toy's speed about every second.
+        toy.velocity.x = toy.velocity.x * TOY_DRAG_PER_TICK / 1_000;
+        toy.velocity.y = toy.velocity.y * TOY_DRAG_PER_TICK / 1_000;
     }
     if state.creature.current_intention != Intention::Sleep {
         advance_creature_motion(state, events);
@@ -1875,8 +2098,12 @@ fn advance_aquarium(state: &mut WorldState, sock_just_released: bool, events: &m
             FoodDisposition::Falling | FoodDisposition::Floating
         ) {
             food.position = NormalizedPosition::new(
-                food.position.x.saturating_add(food.velocity.x),
-                food.position.y.saturating_add(food.velocity.y),
+                food.position
+                    .x
+                    .saturating_add(tick_step(food.velocity.x, elapsed)),
+                food.position
+                    .y
+                    .saturating_add(tick_step(food.velocity.y, elapsed)),
             )
             .clamped();
             if food.position.y >= 9_500 && food.buoyancy != FoodBuoyancy::Float {
@@ -1985,6 +2212,7 @@ fn advance_aquarium(state: &mut WorldState, sock_just_released: bool, events: &m
     };
     timeline.phase = next;
     timeline.elapsed_ms = 0;
+    timeline.phase_duration_ms = food_phase_duration_ms(next);
     state.creature.aquarium.action = Some(timeline);
     state.creature.aquarium.steering = match next {
         ActionPhase::Notice | ActionPhase::Brake => SteeringMode::Brake,
@@ -1998,6 +2226,20 @@ fn advance_aquarium(state: &mut WorldState, sock_just_released: bool, events: &m
         from: Some(old),
         to: next,
     });
+}
+
+/// Feeding reads as one quick motion: a glance and turn of about half a second, the swim,
+/// a short sniff, the bite and a satisfied settle.
+const fn food_phase_duration_ms(phase: ActionPhase) -> u64 {
+    match phase {
+        ActionPhase::Notice => 200,
+        ActionPhase::Brake | ActionPhase::Gaze => 100,
+        ActionPhase::Turn => 150,
+        ActionPhase::Approach => 0,
+        ActionPhase::Inspect => 300,
+        ActionPhase::Act => 500,
+        ActionPhase::Recover => 800,
+    }
 }
 
 fn advance_creature_motion(state: &mut WorldState, events: &mut Vec<GameEvent>) {
@@ -2028,13 +2270,25 @@ fn advance_creature_motion(state: &mut WorldState, events: &mut Vec<GameEvent>) 
             // A little backward buoyancy after contact, at the same world speed on both axes.
             // This also lets older overlapping saves leave the toy without a position jump.
             let position = state.creature.aquarium.position;
-            let velocity = NormalizedVelocity {
-                x: (target.x - position.x).clamp(-120, 120),
-                y: (target.y - position.y).clamp(-350, 350),
+            let elapsed = state.elapsed_ms;
+            let velocity = NormalizedVelocity { x: 1_200, y: 3_500 };
+            let step = NormalizedVelocity {
+                x: (target.x - position.x).clamp(
+                    -tick_step(velocity.x, elapsed),
+                    tick_step(velocity.x, elapsed),
+                ),
+                y: (target.y - position.y).clamp(
+                    -tick_step(velocity.y, elapsed),
+                    tick_step(velocity.y, elapsed),
+                ),
             };
             state.creature.aquarium.position =
-                NormalizedPosition::new(position.x + velocity.x, position.y + velocity.y).clamped();
-            state.creature.aquarium.velocity = velocity;
+                NormalizedPosition::new(position.x + step.x, position.y + step.y).clamped();
+            state.creature.aquarium.velocity = NormalizedVelocity {
+                x: step.x * (1_000 / SIMULATION_TICK_MS as i32),
+                y: step.y * (1_000 / SIMULATION_TICK_MS as i32),
+            }
+            .clamped();
         } else {
             drift_with_cause(state);
         }
@@ -2042,8 +2296,24 @@ fn advance_creature_motion(state: &mut WorldState, events: &mut Vec<GameEvent>) 
 }
 
 const ARRIVAL_DISTANCE: i32 = 220;
-const APPROACH_SPEED: i32 = 650;
+/// Cruise speed in fixed-point units per second; the tank is 10,000 units wide.
+const APPROACH_SPEED: i32 = 3_400;
+/// How quickly swimming speed can change, in units per second squared.
+const SWIM_ACCELERATION: i32 = 16_000;
 const FLEE_DISTANCE: i32 = 2_000;
+/// `0.5^(tick / 1s)` in thousandths: free toys lose half their speed each second.
+const TOY_DRAG_PER_TICK: i32 = 933;
+/// A nudged ball travels roughly a fifth of the tank before water drag stops it.
+const BALL_NUDGE_SPEED: i32 = 1_500;
+
+/// Displacement during the tick ending at `elapsed_after_ms` for a per-second velocity.
+/// Differencing whole-second floors keeps slow motion exact instead of rounding it away.
+fn tick_step(velocity: i32, elapsed_after_ms: u64) -> i32 {
+    let after = i64::try_from(elapsed_after_ms).unwrap_or(i64::MAX / 16);
+    let before = after - SIMULATION_TICK_MS as i64;
+    let velocity = i64::from(velocity);
+    ((velocity * after).div_euclid(1_000) - (velocity * before).div_euclid(1_000)) as i32
+}
 
 fn food_arrived_and_braked(state: &WorldState, food_id: Option<u64>) -> bool {
     let Some(id) = food_id else { return false };
@@ -2051,10 +2321,8 @@ fn food_arrived_and_braked(state: &WorldState, food_id: Option<u64>) -> bool {
         return false;
     };
     let position = state.creature.aquarium.position;
-    let distance = manhattan_distance(position, food.position);
-    distance <= ARRIVAL_DISTANCE
-        && state.creature.aquarium.velocity.x.abs() <= ARRIVAL_DISTANCE
-        && state.creature.aquarium.velocity.y.abs() <= ARRIVAL_DISTANCE
+    // Stationary phases clear velocity, so reaching moving food is enough to begin inspecting.
+    manhattan_distance(position, food.position) <= ARRIVAL_DISTANCE
 }
 
 fn steering_target(
@@ -2078,10 +2346,10 @@ fn steering_target(
             NormalizedPosition::new(
                 position
                     .x
-                    .saturating_add((position.x - cursor.x).signum() * APPROACH_SPEED * 2),
+                    .saturating_add((position.x - cursor.x).signum() * FLEE_DISTANCE),
                 position
                     .y
-                    .saturating_add((position.y - cursor.y).signum() * APPROACH_SPEED),
+                    .saturating_add((position.y - cursor.y).signum() * FLEE_DISTANCE / 2),
             )
             .clamped(),
         );
@@ -2427,6 +2695,15 @@ fn toy_rest_target(state: &WorldState, position: NormalizedPosition) -> Option<N
         .map(|(_, target)| target)
 }
 
+/// Where hand-fed food enters the water: a little above and ahead of the creature's face.
+#[must_use]
+pub fn feeding_position(state: &WorldState) -> NormalizedPosition {
+    let head = state.creature.aquarium.position;
+    // Lean toward open water so the creature turns into the tank rather than toward the glass.
+    let inward = if head.x > 5_000 { -700 } else { 700 };
+    NormalizedPosition::new(head.x + inward, head.y - 1_500).clamped()
+}
+
 /// Shared carried-object anchor, including the aquarium boundary at the floor.
 pub fn held_toy_position(head: NormalizedPosition) -> NormalizedPosition {
     // The mouth hold is 0.34 world units below the head, matching the rendered carry pose.
@@ -2447,27 +2724,48 @@ fn release_sock(state: &mut WorldState) {
     }
 }
 
+/// Swim toward `target` with a quick, bounded acceleration and an eased arrival.
+/// Velocity is stored in units per second; the final step snaps exactly onto the target.
 fn steer_toward(state: &mut WorldState, target: NormalizedPosition) {
     let position = state.creature.aquarium.position;
-    let dx = target.x - position.x;
-    let dy = target.y - position.y;
+    let elapsed = state.elapsed_ms;
     let speed = if state.creature.aquarium.steering == SteeringMode::Flee {
-        APPROACH_SPEED.saturating_mul(2)
+        APPROACH_SPEED.saturating_mul(3) / 2
     } else {
         APPROACH_SPEED
     };
-    let movement = NormalizedVelocity {
-        x: dx.clamp(-speed, speed),
-        y: dy.clamp(-speed, speed),
+    let accel = tick_step(SWIM_ACCELERATION, elapsed).max(1);
+    let axis = |delta: i32, current: i32, max: i32| -> (i32, i32) {
+        if delta == 0 {
+            return (0, 0);
+        }
+        // Ease in over the last stretch, but never so slowly that arrival stalls.
+        let desired = delta.signum() * (delta.abs().saturating_mul(5)).clamp(900, max);
+        let velocity = desired.clamp(current - accel, current + accel);
+        // Never overshoot: a step that would pass the target lands on it.
+        let step = tick_step(velocity, elapsed);
+        if step.abs() >= delta.abs() || step == 0 && delta.abs() <= 12 {
+            (delta, velocity)
+        } else {
+            (step, velocity)
+        }
     };
+    let current = state.creature.aquarium.velocity;
+    let (step_x, velocity_x) = axis(target.x - position.x, current.x, speed);
+    // The tank is shallower than it is wide, so vertical travel uses a lower cap.
+    let (step_y, velocity_y) = axis(target.y - position.y, current.y, speed * 3 / 4);
     state.creature.aquarium.position = NormalizedPosition::new(
-        position.x.saturating_add(movement.x),
-        position.y.saturating_add(movement.y),
+        position.x.saturating_add(step_x),
+        position.y.saturating_add(step_y),
     )
     .clamped();
-    state.creature.aquarium.velocity = movement;
-    if movement.x != 0 {
-        state.creature.aquarium.facing = if movement.x < 0 {
+    state.creature.aquarium.velocity = NormalizedVelocity {
+        x: if step_x == 0 { 0 } else { velocity_x },
+        y: if step_y == 0 { 0 } else { velocity_y },
+    }
+    .clamped();
+    if step_x.abs() > 2 {
+        state.creature.aquarium.facing = if step_x < 0 {
             crate::Facing::Left
         } else {
             crate::Facing::Right
@@ -2476,7 +2774,8 @@ fn steer_toward(state: &mut WorldState, target: NormalizedPosition) {
 }
 
 fn drift_with_cause(state: &mut WorldState) {
-    let key = state.elapsed_ms / SIMULATION_TICK_MS;
+    // Drift velocity changes once per second; each tick moves a tenth of it.
+    let key = state.elapsed_ms / 1_000;
     let vigor = if state.creature.needs.energy < 0.25 {
         20
     } else {
@@ -2495,9 +2794,12 @@ fn drift_with_cause(state: &mut WorldState) {
         as i32
         - curiosity / 2;
     let position = state.creature.aquarium.position;
-    let proposed =
-        NormalizedPosition::new(position.x.saturating_add(dx), position.y.saturating_add(dy))
-            .clamped();
+    let elapsed = state.elapsed_ms;
+    let proposed = NormalizedPosition::new(
+        position.x.saturating_add(tick_step(dx, elapsed)),
+        position.y.saturating_add(tick_step(dy, elapsed)),
+    )
+    .clamped();
     if toy_rest_target(state, proposed).is_some() {
         state.creature.aquarium.velocity = NormalizedVelocity::default();
     } else {
@@ -2515,14 +2817,34 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
     {
         return;
     }
-    if state.aquarium.cursor.is_some()
-        && state.creature.relationship.trust > 0.5
-        && state.creature.traits.sociability > 0.4
-    {
-        set_intention(state, Intention::ApproachPlayer, events);
+    if state.creature.aquarium.destination.is_some() {
         return;
     }
-    if state.creature.aquarium.destination.is_some() {
+    if state.creature.hidden_until_met {
+        // Shy at first: it peeks from the cave, then comes to the glass to see who is there,
+        // sooner if the player does anything at all.
+        let counters = state.creature.development.interactions;
+        let met = state.elapsed_ms >= FIRST_MEETING_PEEK_MS
+            || counters.total() > 0
+            || counters.requests > 0
+            || counters.taps > 0;
+        if !met {
+            state.creature.aquarium.steering = SteeringMode::Hover;
+            state.creature.aquarium.velocity = NormalizedVelocity::default();
+            return;
+        }
+        state.creature.hidden_until_met = false;
+        let action_id =
+            NonZeroU64::new(allocate_action_id(state)).expect("action IDs start at one");
+        set_travel_target(
+            state,
+            SemanticDestination::Position(NormalizedPosition::new(5_000, 4_200)),
+            crate::TravelPurpose::CursorSocial { action_id },
+            events,
+        );
+        state.creature.aquarium.gaze = GazeTarget::Player;
+        set_intention(state, Intention::ApproachPlayer, events);
+        events.push(GameEvent::Emerged);
         return;
     }
     if state.elapsed_ms < state.creature.idle_life.settled_until_ms {
@@ -2530,7 +2852,6 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         return;
     }
     let quiet_moment = state.aquarium.player_present
-        && state.aquarium.cursor.is_none()
         && state.creature.initiated_behavior.is_none()
         && state.creature.current_intention == Intention::Idle
         && state.creature.needs.hunger < 0.78
@@ -2578,7 +2899,7 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
         (Some(routine), false)
     } else if let Some(favorite) = favorite.filter(|_| {
         state.creature.current_intention == Intention::Idle
-            && (state.elapsed_ms / SIMULATION_TICK_MS).is_multiple_of(8)
+            && state.elapsed_ms % 8_000 < SIMULATION_TICK_MS
     }) {
         (Some(favorite), true)
     } else if state.creature.needs.curiosity > 0.65 {
@@ -2610,6 +2931,9 @@ fn choose_idle_behavior(state: &mut WorldState, events: &mut Vec<GameEvent>) {
                     outcome: crate::ToyInteractionOutcome::Accepted,
                     phase: crate::ToyInteractionPhase::Approach,
                     relationship: None,
+                    recovery_until_ms: 0,
+                    rounds_left: toy_session_rounds(toy, crate::ToyOrigin::Autonomous),
+                    contacts: 0,
                 });
                 set_travel_target(
                     state,
@@ -2985,7 +3309,7 @@ fn record_routine_visit(state: &mut WorldState, destination: SemanticDestination
     }
 }
 
-fn play_with_toy(
+pub(crate) fn play_with_toy(
     state: &mut WorldState,
     toy: ToyId,
     relationship: Option<crate::ActionRelationshipContext>,
@@ -2995,7 +3319,7 @@ fn play_with_toy(
         return;
     }
     // A new offer replaces the old owner, so finish any committed carry first.
-    finish_toy_recovery(state);
+    end_toy_recovery(state);
     let preference = *state
         .creature
         .toy_preferences
@@ -3014,6 +3338,9 @@ fn play_with_toy(
             outcome: crate::ToyInteractionOutcome::Rejected,
             phase: crate::ToyInteractionPhase::Approach,
             relationship: None,
+            recovery_until_ms: 0,
+            rounds_left: 0,
+            contacts: 0,
         });
         set_travel_target(
             state,
@@ -3038,6 +3365,9 @@ fn play_with_toy(
             outcome: crate::ToyInteractionOutcome::Accepted,
             phase: crate::ToyInteractionPhase::Approach,
             relationship,
+            recovery_until_ms: 0,
+            rounds_left: toy_session_rounds(toy, crate::ToyOrigin::Player),
+            contacts: 0,
         });
         set_travel_target(
             state,
@@ -3108,7 +3438,11 @@ fn toy_key(toy: ToyId) -> u64 {
     }
 }
 
-fn set_intention(state: &mut WorldState, intention: Intention, events: &mut Vec<GameEvent>) {
+pub(crate) fn set_intention(
+    state: &mut WorldState,
+    intention: Intention,
+    events: &mut Vec<GameEvent>,
+) {
     if state.creature.current_intention != intention {
         let from = state.creature.current_intention;
         state.creature.current_intention = intention;
@@ -3172,37 +3506,68 @@ fn resolve_food(
     }
 }
 
-fn maybe_initiate(state: &mut WorldState, events: &mut Vec<GameEvent>) {
-    if state.creature.initiated_behavior.is_some() {
+/// Name a thing it is enjoying, using the player's word for it: the payoff of teaching. Rare
+/// enough to stay a small surprise.
+fn maybe_remark(state: &mut WorldState, first: usize, events: &mut Vec<GameEvent>) {
+    if !state.aquarium.player_present {
         return;
     }
-    let candidate = if state.creature.needs.hunger > 0.82 {
-        Some((InitiativeReason::Hunger, None))
-    } else if state.aquarium.player_present
-        && state.creature.needs.comfort < 0.2
-        && state.creature.traits.sociability > 0.45
-    {
-        Some((
-            InitiativeReason::Loneliness,
-            Some(NonverbalAct::LeanAgainstPlayer),
-        ))
-    } else {
-        None
-    };
-    let Some((reason, nonverbal)) = candidate else {
+    let last = state.creature.conversation.last_remark_ms;
+    if last != 0 && state.elapsed_ms.saturating_sub(last) < REMARK_INTERVAL_MS {
+        return;
+    }
+    let subject = events[first..].iter().find_map(|event| match event {
+        GameEvent::ToyPlayed { toy, .. } | GameEvent::ToyObjectResponded { toy, .. } => {
+            Some(crate::Meaning::Toy(*toy))
+        }
+        GameEvent::FoodConsumed(food) => Some(crate::Meaning::Food(*food)),
+        _ => None,
+    });
+    let Some(meaning) =
+        subject.filter(|meaning| state.creature.lexicon.word_for(*meaning).is_some())
+    else {
         return;
     };
+    state.creature.conversation.last_remark_ms = state.elapsed_ms.max(1);
+    events.push(GameEvent::Remarked(meaning));
+}
+
+/// Ask for what it wants, out loud, at a sociable pace: often enough to be heard, never while
+/// busy, and sooner when it has learned a word for the thing it wants.
+fn maybe_initiate(state: &mut WorldState, events: &mut Vec<GameEvent>) {
+    if state.creature.initiated_behavior.is_some()
+        || !state.aquarium.player_present
+        || creature_is_occupied(state)
+    {
+        return;
+    }
+    let Some(want) = crate::current_want(state) else {
+        return;
+    };
+    let reason = match want {
+        crate::Want::Food(_) => InitiativeReason::Hunger,
+        crate::Want::Company => InitiativeReason::Loneliness,
+        crate::Want::Toy(_) => InitiativeReason::Curiosity,
+        crate::Want::Sleep => InitiativeReason::Ritual,
+        crate::Want::NameOf(_) => return,
+    };
+    let interval = if state.creature.lexicon.word_for(want.meaning()).is_some() {
+        ASK_WITH_WORD_INTERVAL_MS
+    } else {
+        ASK_WITHOUT_WORD_INTERVAL_MS
+    };
+    let last = state.creature.conversation.last_asked_ms;
+    if last != 0 && state.elapsed_ms.saturating_sub(last) < interval {
+        return;
+    }
     state.creature.initiated_behavior = Some(crate::InitiatedBehavior {
         reason,
-        nonverbal,
+        nonverbal: (want == crate::Want::Company).then_some(NonverbalAct::LeanAgainstPlayer),
         requested_at_ms: state.elapsed_ms,
         expires_at_ms: state.elapsed_ms.saturating_add(INITIATIVE_DURATION_MS),
     });
-    if nonverbal.is_some() {
-        events.push(GameEvent::NonverbalRequest(reason));
-    } else {
-        events.push(GameEvent::InitiatedTalk(reason));
-    }
+    state.creature.conversation.last_asked_ms = state.elapsed_ms.max(1);
+    events.push(GameEvent::InitiatedTalk(reason));
 }
 
 fn clear_satisfied_or_expired_initiative(state: &mut WorldState) {
@@ -3227,7 +3592,12 @@ fn clear_satisfied_or_expired_initiative(state: &mut WorldState) {
     }
 }
 
-fn improve_relationship(state: &mut WorldState, bond: f32, trust: f32, resentment_recovery: f32) {
+pub(crate) fn improve_relationship(
+    state: &mut WorldState,
+    bond: f32,
+    trust: f32,
+    resentment_recovery: f32,
+) {
     state.creature.relationship.bond += bond;
     state.creature.relationship.trust += trust;
     state.creature.relationship.resentment -= resentment_recovery;
@@ -3257,7 +3627,7 @@ fn apply_reaction(state: &mut WorldState, reaction: Reaction) {
     );
 }
 
-fn reinforce_act(state: &mut WorldState, act: SocialAct, delta: f32) {
+pub(crate) fn reinforce_act(state: &mut WorldState, act: SocialAct, delta: f32) {
     match act {
         SocialAct::Profanity => state.creature.social_habits.profanity += delta,
         SocialAct::Crudeness => state.creature.social_habits.crudeness += delta,
@@ -3302,23 +3672,17 @@ fn update_development(state: &mut WorldState, events: &mut Vec<GameEvent>) {
             .insert(DevelopmentMilestone::FavoriteFound);
     }
     let interactions = state.creature.development.interactions;
+    // Shared days give memory recall its time words. Language stage itself follows vocabulary
+    // (see teaching), never the calendar.
     if days >= 2 && interactions.total() > 0 {
         learn(state, Concept::Again, events);
-        advance_language(state, LanguageStage::Words, events);
     }
     if days >= 3 && interactions.total() >= 3 {
         learn(state, Concept::Yesterday, events);
-        advance_language(state, LanguageStage::Phrases, events);
     }
 }
 fn learn(state: &mut WorldState, concept: Concept, events: &mut Vec<GameEvent>) {
     if state.creature.known_concepts.insert(concept) {
         events.push(GameEvent::ConceptLearned(concept));
-    }
-}
-fn advance_language(state: &mut WorldState, stage: LanguageStage, events: &mut Vec<GameEvent>) {
-    if stage > state.creature.development.language_stage {
-        state.creature.development.language_stage = stage;
-        events.push(GameEvent::LanguageAdvanced(stage));
     }
 }

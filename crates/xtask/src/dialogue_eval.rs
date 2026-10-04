@@ -11,7 +11,9 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use beastie_core::MemoryId;
-use beastie_protocol::{DialogueReply, DialogueRequest, validate_reply, validate_request};
+use beastie_protocol::{
+    DialogueReply, DialogueRequest, constrained_fallback_reply, validate_reply, validate_request,
+};
 use serde::{Deserialize, Serialize};
 
 const CORPUS_PATH: &str = "evals/dialogue/corpus.json";
@@ -58,7 +60,7 @@ struct EvalCase {
     expect: Expectations,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct Expectations {
     recalled_memory: Option<MemoryId>,
@@ -147,7 +149,48 @@ pub fn verify_fixtures() -> Result<()> {
         "dialogue fixtures: {}/{} cases passed",
         report.summary.passed, report.summary.cases
     );
+    let no_model = score_no_model_voice(&corpus)?;
+    if no_model.summary.passed != no_model.summary.cases {
+        let failed = no_model
+            .cases
+            .iter()
+            .filter(|case| !case.passed)
+            .map(|case| format!("{} ({})", case.id, case.failures.join(", ")))
+            .collect::<Vec<_>>();
+        bail!("no-model voice failed: {}", failed.join("; "));
+    }
+    println!(
+        "no-model voice: {}/{} learned-word cases passed",
+        no_model.summary.passed, no_model.summary.cases
+    );
     Ok(())
+}
+
+/// Scores the deterministic no-model voice on every learned-word case. It is what plays when
+/// inference is absent, so it must meet the same expectations as a model reply.
+fn score_no_model_voice(corpus: &Corpus) -> Result<EvalReport> {
+    let speech = Corpus {
+        version: corpus.version,
+        cases: corpus
+            .cases
+            .iter()
+            .filter(|case| case.request.speech_intent.is_some())
+            .map(|case| EvalCase {
+                id: case.id.clone(),
+                category: case.category.clone(),
+                request: case.request.clone(),
+                expect: case.expect.clone(),
+            })
+            .collect(),
+    };
+    if speech.cases.is_empty() {
+        bail!("dialogue corpus contains no learned-word cases");
+    }
+    score(&speech, "no-model voice", |case| {
+        serde_json::to_string(&constrained_fallback_reply(&case.request))
+            .context("failed to encode no-model reply")
+            .map(|reply| (reply, 0))
+    })
 }
 
 pub fn run(options: EvalOptions) -> Result<()> {
@@ -681,5 +724,35 @@ mod tests {
     fn evaluator_watchdog_covers_both_worker_attempts() {
         assert_eq!(worker_watchdog(None), Duration::from_secs(65));
         assert_eq!(worker_watchdog(Some(10)), Duration::from_millis(5_020));
+    }
+
+    #[test]
+    fn learned_word_cases_fail_lines_with_unlearned_or_generic_words() {
+        let corpus = load_corpus().expect("corpus");
+        let case = |id: &str| {
+            corpus
+                .cases
+                .iter()
+                .find(|case| case.id == id)
+                .expect("case exists")
+        };
+        let reply = |case: &EvalCase, say: &str| {
+            serde_json::json!({
+                "protocol_version": 1,
+                "request_id": case.request.request_id,
+                "say": say,
+                "gesture": "look_player",
+                "recalled_memory": null,
+            })
+            .to_string()
+        };
+        let coined = case("speech_coined_word");
+        let result = score_case(coined, reply(coined, "ball! zorp!"), 0);
+        assert!(!result.protocol_valid, "the coined word replaces the gloss");
+        let hatch = case("speech_fresh_hatch_babble");
+        let result = score_case(hatch, reply(hatch, "hello. don't know."), 0);
+        assert!(!result.passed, "generic filler is not a creature voice");
+        let result = score_case(coined, reply(coined, "zorp!"), 0);
+        assert!(result.passed, "{:?}", result.failures);
     }
 }

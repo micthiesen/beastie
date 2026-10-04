@@ -79,6 +79,7 @@ material was used.
 | `creature/affection.wav` | `e0cf426b84346681ec7b2bc7ef716f6b6a0e4eb570fbcd901b147bc6478eff79` |
 | `creature/annoyed.wav` | `3f7ce97ef33a9e168bb6500016bc80cd07ecd84428484c3cb0e3b0fdadadfa6e` |
 | `creature/curious.wav` | `200dbbeba0bb09ecd73d97a08738e142f6d38849a8e1ebbd3fa29a24438be43a` |
+| `creature/learned.wav` | `128f22ea8eec30cf132421847dfa3e8584b8af62176af8f9bc047bcca0ff6e16` |
 | `creature/mrr.wav` | `da92b76f9684db6e0afa0efa721d7f957d2a738aa82cdb58ef366ae4cc0124a1` |
 | `creature/sad.wav` | `32ffc0531c6673e778e6855bc01652822708dea22710c2295ef92f1565b9f079` |
 | `creature/sleep.wav` | `b76720fac4545a0e45bf3257e10a668ae92fb40f15dbef4c6c2f0e471f9deeea` |
@@ -99,6 +100,11 @@ material was used.
 | `object/sock-rustle.wav` | `73df5576081331ca3528727f5024006df174fed0114b2c35c0dd1a5734bf04e4` |
 | `ui/confirm.wav` | `92a6d1e8504be4a2c38757f4f893235689bc771a5955d0f130685b26ff369c1a` |
 | `ui/select.wav` | `2c57986e0d9988304fd4abb96976db265d084dd33cff24d158b117136dad66aa` |
+
+`creature/learned.wav` was added on 2026-10-04 for the fun rework: a rising three-note bell
+figure (C6, E6, A6) over a short upward chirp, about 0.9 s, peaking near -8.4 dBFS. It plays when
+the creature learns a word. Its generator is retained at `tools/audio/synth_learned.py` and
+reproduces the recorded hash exactly.
 
 ## Validation
 

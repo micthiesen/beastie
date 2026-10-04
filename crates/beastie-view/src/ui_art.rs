@@ -163,8 +163,6 @@ pub(super) fn layout_text(text: &mut [TextCommand], rects: &[RectCommand], hits:
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn controller_name_entry_owns_its_field_and_explicit_submission() {
         let world = beastie_core::WorldState::new(42, "Mop");
@@ -393,32 +391,6 @@ mod tests {
         assert!((2 * header.y + header.h - 2 * close.y - close.h).abs() <= 1);
     }
 
-    #[test]
-    fn drop_food_target_does_not_own_instruction_typography() {
-        let state = beastie_core::WorldState::new(42, "Mop");
-        let scene = crate::plan(
-            &state,
-            &crate::ViewState {
-                mode: crate::UiMode::FoodDrop(beastie_core::FoodId::Berry),
-                ..Default::default()
-            },
-        )
-        .0;
-        let instruction = scene
-            .text
-            .iter()
-            .find(|t| t.id == "mode/drop-food-label")
-            .unwrap();
-        assert_eq!(instruction.role, TextRole::Body);
-        let bounds = instruction.bounds.unwrap();
-        let cancel = scene
-            .hit_regions
-            .iter()
-            .find(|h| h.id == "mode/drop-cancel")
-            .unwrap();
-        assert!(bounds.x >= 55 && bounds.x + bounds.w < cancel.rect.x);
-        assert!(bounds.h as f32 >= instruction.role.size(false) * 1.2);
-    }
     #[test]
     fn settings_pages_have_readable_distinct_control_regions() {
         let state = beastie_core::WorldState::new(42, "Mop");

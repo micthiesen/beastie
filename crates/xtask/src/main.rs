@@ -970,7 +970,7 @@ fn process_commands(
         };
         match result {
             Ok(observation) => {
-                report.grounded_reply |= observation.recalled_memory.is_some();
+                report.grounded_reply |= observation.is_grounded();
                 report.food_consumed |= observation
                     .observation
                     .events
@@ -1060,6 +1060,24 @@ struct PlayOutput {
     speech: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     recalled_memory: Option<MemoryId>,
+}
+
+impl PlayOutput {
+    /// A reply is grounded when it recalls an offered memory or says a word the creature
+    /// learned from the player.
+    fn is_grounded(&self) -> bool {
+        if self.recalled_memory.is_some() {
+            return true;
+        }
+        let (Some(request), Some(speech)) = (&self.observation.dialogue_request, &self.speech)
+        else {
+            return false;
+        };
+        speech
+            .split(|character: char| !(character.is_alphabetic() || character == '\''))
+            .map(str::to_lowercase)
+            .any(|word| request.vocabulary.iter().any(|entry| entry.word == word))
+    }
 }
 
 #[derive(Debug)]
@@ -1192,27 +1210,35 @@ mod tests {
     }
 
     #[test]
-    fn talk_output_is_grounded_in_an_offered_memory() {
+    fn talk_output_uses_a_word_taught_in_the_scenario() {
         let input = include_bytes!("../../../fixtures/scenarios/aquarium-v1.jsonl");
         let mut output = Vec::new();
         let report = process_commands(&input[..], &mut output, 99).expect("scenario should run");
         let lines = String::from_utf8(output).expect("output should be UTF-8");
-        let talk = lines
+        let values = lines
             .lines()
             .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("valid JSON"))
-            .find(|value| value.get("speech").is_some())
-            .expect("scenario should talk");
+            .collect::<Vec<_>>();
 
         assert_eq!(report.rejected, 0);
         assert!(report.grounded_reply);
         assert!(report.food_consumed);
-        let recalled = talk["recalled_memory"].clone();
+        assert!(values.iter().any(|value| {
+            value["events"].as_array().is_some_and(|events| {
+                events.iter().any(|event| {
+                    event["kind"] == "word_learned" && event["value"]["word"] == "berry"
+                })
+            })
+        }));
+        let answer = values
+            .iter()
+            .find(|value| value["dialogue_request"]["speech_intent"]["kind"] == "answer")
+            .expect("the taught word is answered");
         assert!(
-            talk["dialogue_request"]["candidate_memories"]
-                .as_array()
-                .expect("candidate list")
-                .iter()
-                .any(|memory| memory["id"] == recalled)
+            answer["speech"]
+                .as_str()
+                .expect("answer is spoken")
+                .contains("berry")
         );
     }
 

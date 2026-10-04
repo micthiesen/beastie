@@ -5,18 +5,16 @@ use std::collections::BTreeSet;
 #[cfg(test)]
 use beastie_core::SIMULATION_TICK_MS;
 use beastie_core::{
-    DialogueActionOwner, DialogueHandoffState, FoodId, GameEvent, LanguageExposure, MemoryCue,
-    MemoryQuery, Mood, NamingTarget, NonverbalAct, NormalizedPosition, OfflineProgress,
-    PlayerEvent, Reaction, SaveGame, SeededRandom, SpeechAttention, ToyId, ToyOrigin,
-    UtteranceInterpretation, UtteranceReference, WorldState, advance_offline, dialogue_handoff,
-    ground_utterance, speech_attention, step,
+    FoodId, GameEvent, Intention, LanguageExposure, MemoryQuery, Mood, NamingTarget,
+    NormalizedPosition, OfflineProgress, PlayerEvent, Reaction, SaveGame, SeededRandom,
+    SpeechAttention, ToyId, ToyOrigin, WorldState, advance_offline, speech_attention, step,
 };
 use beastie_protocol::{
-    AcousticConfidence, DialogueActionPhase, DialogueContext, DialogueReply, DialogueRequest,
+    AcousticConfidence, DialogueActionPhase, DialogueReply, DialogueRequest,
     DialogueRequestContext, DialogueTopic, FallbackLane, Gesture, RecentTurn,
-    RelationshipDialogueContext, SpeechInputFailure, build_dialogue_request,
-    classify_content_boundary, normalize_dialogue_request, progression_max_words,
-    project_candidate_memory, reply_fingerprint, validate_reply, validate_request,
+    RelationshipDialogueContext, SpeechInputFailure, SpeechIntent, build_dialogue_request,
+    classify_content_boundary, line_word_limit, normalize_dialogue_request, reply_fingerprint,
+    validate_reply, validate_request,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -29,7 +27,6 @@ pub const MAX_ADVANCE_MINUTES: u32 = 45;
 pub const MAX_SCENARIO_ABSENCE_MS: u64 = beastie_core::MAX_OFFLINE_MS;
 const DIALOGUE_HISTORY_VERSION: u32 = 1;
 const MAX_DIALOGUE_HISTORY: usize = 6;
-const DEFERRED_UTTERANCE_MAX_MS: u64 = 45_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandEnvelope {
@@ -60,6 +57,10 @@ pub enum SessionCommand {
         toy: ToyId,
     },
     Comfort,
+    /// A tap on the aquarium glass at a point in the water.
+    Tap {
+        position: NormalizedPosition,
+    },
     Tidy,
     Advance {
         minutes: u32,
@@ -174,13 +175,6 @@ enum SpokenInputState {
     Listening {
         attention: beastie_core::SpeechAttention,
         candidate: Option<SpokenCandidate>,
-    },
-    Deferred {
-        candidate: SpokenCandidate,
-        ready_at_ms: u64,
-        expires_at_ms: u64,
-        owner: Option<DialogueActionOwner>,
-        channel: InputChannel,
     },
 }
 
@@ -384,6 +378,14 @@ impl GameSession {
         }
     }
 
+    /// A fresh game: the creature waits in its cave until it meets the player.
+    #[must_use]
+    pub fn first_meeting(seed: u64, name: impl Into<String>) -> Self {
+        let mut session = Self::new(seed, name);
+        session.world = WorldState::first_meeting(seed, session.world.creature.name.clone());
+        session
+    }
+
     #[must_use]
     pub fn world(&self) -> &WorldState {
         &self.world
@@ -484,14 +486,6 @@ impl GameSession {
         validate_envelope(&envelope)?;
         validate_spoken_input_order(&self.spoken_input, &envelope.command)?;
         self.world.validate().map_err(SessionError::State)?;
-        if matches!(self.spoken_input, SpokenInputState::Deferred { .. })
-            && matches!(
-                &envelope.command,
-                SessionCommand::Talk { .. } | SessionCommand::SpeechStarted
-            )
-        {
-            self.spoken_input = SpokenInputState::Idle;
-        }
         let next_sequence = self.sequence.saturating_add(1);
         let mut events = Vec::new();
         let mut dialogue_request = None;
@@ -518,6 +512,9 @@ impl GameSession {
             SessionCommand::Comfort => {
                 events = self.apply_player_event(PlayerEvent::Comfort);
             }
+            SessionCommand::Tap { position } => {
+                events = self.apply_player_event(PlayerEvent::Tap(position));
+            }
             SessionCommand::Tidy => {
                 events = self.apply_player_event(PlayerEvent::Tidy);
             }
@@ -527,7 +524,6 @@ impl GameSession {
                 }
                 dialogue_request = self.initiated_dialogue_request(&events)?;
                 compact_advance_events(&mut events);
-                self.apply_deferred_speech(&mut dialogue_request, &mut events, &mut spoken_input)?;
             }
             SessionCommand::Resume { elapsed_ms } => {
                 let progress = advance_offline(&mut self.world, elapsed_ms, &mut self.random);
@@ -541,12 +537,10 @@ impl GameSession {
                 }
                 dialogue_request = self.initiated_dialogue_request(&events)?;
                 compact_advance_events(&mut events);
-                self.apply_deferred_speech(&mut dialogue_request, &mut events, &mut spoken_input)?;
             }
             SessionCommand::Tick { milliseconds } => {
                 events = step(&mut self.world, &[], milliseconds, &mut self.random);
                 dialogue_request = self.initiated_dialogue_request(&events)?;
-                self.apply_deferred_speech(&mut dialogue_request, &mut events, &mut spoken_input)?;
             }
             SessionCommand::Talk { text } => {
                 dialogue_request = self.submit_utterance(
@@ -598,19 +592,15 @@ impl GameSession {
                 let candidate = candidate.clone();
                 self.spoken_input = SpokenInputState::Idle;
                 match candidate {
-                    Some(candidate) if candidate.confidence.is_usable() => match attention {
-                        beastie_core::SpeechAttention::Attended
-                        | beastie_core::SpeechAttention::Glanced
-                        | beastie_core::SpeechAttention::Ignored => {
-                            dialogue_request = self.submit_utterance(
-                                candidate,
-                                attention,
-                                InputChannel::Spoken,
-                                &mut events,
-                                &mut spoken_input,
-                            )?;
-                        }
-                    },
+                    Some(candidate) if candidate.confidence.is_usable() => {
+                        dialogue_request = self.submit_utterance(
+                            candidate,
+                            attention,
+                            InputChannel::Spoken,
+                            &mut events,
+                            &mut spoken_input,
+                        )?;
+                    }
                     Some(candidate) => {
                         spoken_input = Some(SpokenInputStatus::AcousticUncertainty {
                             confidence: candidate.confidence,
@@ -680,76 +670,8 @@ impl GameSession {
         step(&mut self.world, &[event], 0, &mut self.random)
     }
 
-    fn apply_talk(
-        &mut self,
-        text: &str,
-        events: &mut Vec<GameEvent>,
-    ) -> Result<Option<DialogueRequest>, SessionError> {
-        let talk_events = self.apply_player_event(PlayerEvent::Talk);
-        let accepted = talk_events
-            .iter()
-            .any(|event| matches!(event, GameEvent::TalkAccepted { .. }));
-        events.extend(talk_events);
-        if accepted && classify_content_boundary(text).is_none() {
-            for exposure in language_exposures(text) {
-                events.extend(self.apply_player_event(PlayerEvent::LanguageExposure(exposure)));
-            }
-        }
-        if !accepted {
-            return Ok(None);
-        }
-
-        let desired_social_act = events.iter().find_map(|event| match event {
-            GameEvent::SocialActExpressed(act) => Some(*act),
-            _ => None,
-        });
-        let grounded = ground_utterance(
-            text,
-            &self.world.creature.name,
-            &self.world.creature.known_concepts,
-        );
-        let interpretation = grounded.interpretation;
-        if classify_content_boundary(text).is_none()
-            && !interpretation.ambiguous
-            && (!interpretation.references.is_empty()
-                || !interpretation.understood_concepts.is_empty())
-        {
-            events.extend(beastie_core::apply_grounded_utterance(
-                &mut self.world,
-                &interpretation,
-            ));
-        }
-        let mut request = build_dialogue_request(
-            &self.world,
-            &memory_query(&interpretation),
-            DialogueRequestContext {
-                request_id: self.next_request_id,
-                mood: mood(&self.world),
-                player_said: text,
-                desired_social_act,
-                max_words: progression_max_words(&self.world),
-                allowed_gestures: BTreeSet::from([
-                    Gesture::None,
-                    Gesture::LookPlayer,
-                    Gesture::LookWindow,
-                    Gesture::Shiver,
-                    Gesture::Sleepy,
-                ]),
-            },
-        );
-        request.interpretation = interpretation.into();
-        normalize_dialogue_request(&mut request);
-        if request.input_rejection.is_none() {
-            request.player_said = grounded.grounded_text;
-        }
-        let request_topic = initiated_topic_for_request(&request);
-        self.ensure_relationship_evidence_offered(&mut request);
-        self.attach_dialogue_context(&mut request, request_topic);
-        validate_request(&request).map_err(SessionError::Dialogue)?;
-        self.next_request_id = self.next_request_id.saturating_add(1);
-        Ok(Some(request))
-    }
-
+    /// Every utterance is heard at once: the simulation learns from it and answers it. The
+    /// creature then speaks only when it has something of its own to say.
     fn submit_utterance(
         &mut self,
         candidate: SpokenCandidate,
@@ -758,7 +680,36 @@ impl GameSession {
         events: &mut Vec<GameEvent>,
         spoken_input: &mut Option<SpokenInputStatus>,
     ) -> Result<Option<DialogueRequest>, SessionError> {
-        if matches!(attention, SpeechAttention::Ignored) {
+        let text = candidate.text;
+        let rejection = classify_content_boundary(&text);
+        if rejection.is_none() {
+            let first = events.len();
+            events.extend(self.apply_player_event(PlayerEvent::Utterance(text.clone())));
+            // Words a sleeping creature never heard cannot shape its habits either.
+            if !events[first..].contains(&GameEvent::TalkIgnored) {
+                for exposure in language_exposures(&text) {
+                    events.extend(self.apply_player_event(PlayerEvent::LanguageExposure(exposure)));
+                }
+            }
+            let heard = &events[first..];
+            let intent = speech_intent_for(&self.world, heard);
+            if matches!(channel, InputChannel::Spoken) {
+                *spoken_input = Some(if intent.is_some() {
+                    SpokenInputStatus::Submitted
+                } else {
+                    SpokenInputStatus::NotEngaged { attention }
+                });
+            }
+            let Some(intent) = intent else {
+                return Ok(None);
+            };
+            // The model sees only what the creature understood, never the full sentence.
+            let understood = understood_words(&self.world, &text);
+            return self.speech_request(intent, &understood, None).map(Some);
+        }
+        // Prohibited words are never learned or repeated. A sleeping creature hears nothing;
+        // an awake one only babbles back.
+        if self.world.creature.current_intention == Intention::Sleep {
             if matches!(channel, InputChannel::Spoken) {
                 *spoken_input = Some(SpokenInputStatus::NotEngaged { attention });
             } else {
@@ -766,140 +717,21 @@ impl GameSession {
             }
             return Ok(None);
         }
-
-        if self.world.mood() == Mood::Resentful {
-            events.push(GameEvent::UtteranceRefused);
-            events.push(GameEvent::NonverbalAct(NonverbalAct::RefuseAndStare));
-            if matches!(channel, InputChannel::Spoken) {
-                *spoken_input = Some(SpokenInputStatus::Refused);
-            }
-            return Ok(None);
-        }
-
-        let waiting_for_cooldown = self.world.elapsed_ms < self.next_talk_ready_at_ms();
-        if matches!(attention, SpeechAttention::Glanced)
-            || (matches!(channel, InputChannel::Spoken) && waiting_for_cooldown)
-        {
-            let handoff = dialogue_handoff(&self.world);
-            let ready_at_ms = self.world.elapsed_ms.max(self.next_talk_ready_at_ms());
-            self.spoken_input = SpokenInputState::Deferred {
-                candidate,
-                ready_at_ms,
-                expires_at_ms: self
-                    .world
-                    .elapsed_ms
-                    .saturating_add(DEFERRED_UTTERANCE_MAX_MS),
-                owner: handoff.owner,
-                channel,
-            };
-            events.push(GameEvent::UtteranceDeferred);
-            if matches!(channel, InputChannel::Spoken) {
-                *spoken_input = Some(SpokenInputStatus::Deferred);
-            }
-            return Ok(None);
-        }
-
-        let request = self.apply_talk(&candidate.text, events)?;
         if matches!(channel, InputChannel::Spoken) {
-            *spoken_input = Some(if request.is_some() {
-                SpokenInputStatus::Submitted
-            } else {
-                SpokenInputStatus::NotEngaged { attention }
-            });
+            *spoken_input = Some(SpokenInputStatus::Submitted);
         }
-        Ok(request)
+        self.speech_request(SpeechIntent::Babble, "", rejection)
+            .map(Some)
     }
 
-    fn next_talk_ready_at_ms(&self) -> u64 {
-        if self
-            .world
-            .creature
-            .conversation
-            .contextual_follow_up_available
-        {
-            self.world.elapsed_ms
-        } else {
-            self.world.creature.conversation.next_talk_at_ms
-        }
-    }
-
-    fn apply_deferred_speech(
+    /// Build a request for the creature to express `intent` in its own learned words.
+    fn speech_request(
         &mut self,
-        dialogue_request: &mut Option<DialogueRequest>,
-        events: &mut Vec<GameEvent>,
-        spoken_input: &mut Option<SpokenInputStatus>,
-    ) -> Result<(), SessionError> {
-        let SpokenInputState::Deferred {
-            candidate,
-            ready_at_ms,
-            expires_at_ms,
-            owner,
-            channel,
-        } = &self.spoken_input
-        else {
-            return Ok(());
-        };
-        if self.world.elapsed_ms >= *expires_at_ms {
-            let channel = *channel;
-            self.spoken_input = SpokenInputState::Idle;
-            if matches!(channel, InputChannel::Spoken) {
-                *spoken_input = Some(SpokenInputStatus::Expired);
-            } else {
-                events.push(GameEvent::TalkIgnored);
-            }
-            return Ok(());
-        }
-        if self.world.elapsed_ms < *ready_at_ms
-            || self.world.elapsed_ms < self.next_talk_ready_at_ms()
-            || dialogue_request.is_some()
-        {
-            return Ok(());
-        }
-        let handoff = dialogue_handoff(&self.world);
-        let current_direct_action = match handoff.owner {
-            Some(DialogueActionOwner::Food(_)) => true,
-            Some(DialogueActionOwner::Toy(_) | DialogueActionOwner::Refusal(_)) => self
-                .world
-                .creature
-                .interaction_state
-                .toy_interaction
-                .as_ref()
-                .is_some_and(|interaction| interaction.origin == ToyOrigin::Player),
-            _ => false,
-        };
-        // Ending the original owner does not finish a newer direct interaction. Its own
-        // contact/recovery boundary still matters, even for cooldown-only deferral. Unrelated
-        // private life may not repeatedly capture words that were already waiting.
-        let boundary_ready = matches!(
-            handoff.state,
-            DialogueHandoffState::Ready | DialogueHandoffState::SafeBoundary
-        ) || (!current_direct_action
-            && (owner.is_none() || handoff.owner != *owner));
-        if !boundary_ready {
-            return Ok(());
-        }
-        let candidate = candidate.clone();
-        let channel = *channel;
-        let attention = match speech_attention(&self.world) {
-            SpeechAttention::Glanced => SpeechAttention::Attended,
-            attention => attention,
-        };
-        self.spoken_input = SpokenInputState::Idle;
-        *dialogue_request =
-            self.submit_utterance(candidate, attention, channel, events, spoken_input)?;
-        Ok(())
-    }
-
-    fn initiated_dialogue_request(
-        &mut self,
-        events: &[GameEvent],
-    ) -> Result<Option<DialogueRequest>, SessionError> {
-        let Some(reason) = events.iter().find_map(|event| match event {
-            GameEvent::InitiatedTalk(reason) => Some(*reason),
-            _ => None,
-        }) else {
-            return Ok(None);
-        };
+        intent: SpeechIntent,
+        player_said: &str,
+        rejection: Option<beastie_protocol::ContentBoundaryViolation>,
+    ) -> Result<DialogueRequest, SessionError> {
+        let vocabulary_size = self.world.creature.lexicon.learned_count();
         let mut request = build_dialogue_request(
             &self.world,
             &MemoryQuery {
@@ -909,9 +741,9 @@ impl GameSession {
             DialogueRequestContext {
                 request_id: self.next_request_id,
                 mood: mood(&self.world),
-                player_said: "",
+                player_said,
                 desired_social_act: None,
-                max_words: progression_max_words(&self.world),
+                max_words: line_word_limit(vocabulary_size),
                 allowed_gestures: BTreeSet::from([
                     Gesture::None,
                     Gesture::LookPlayer,
@@ -921,28 +753,48 @@ impl GameSession {
                 ]),
             },
         );
-        request.context = DialogueContext {
-            recent_turns: vec![RecentTurn {
-                turn_id: self.next_request_id,
-                topic: initiated_topic(reason),
-                action_phase: DialogueActionPhase::Recover,
-                selected_memory: None,
-                selected_belief: None,
-                selected_fact_ids: Vec::new(),
-                fallback_lane: None,
-                motif: None,
-                expression_kind: None,
-                expressed_at_ms: None,
-                reply_fingerprint: None,
-            }],
-            ..DialogueContext::default()
-        };
-        self.ensure_relationship_evidence_offered(&mut request);
-        self.attach_dialogue_context(&mut request, initiated_topic(reason));
+        request.constraints.max_words = line_word_limit(vocabulary_size);
+        request.input_rejection = rejection;
+        if rejection.is_some() {
+            request.player_said.clear();
+        }
+        request.speech_intent = Some(intent);
         normalize_dialogue_request(&mut request);
+        self.attach_dialogue_context(&mut request, DialogueTopic::Greeting);
+        // Learned-word speech is grounded by its intent and vocabulary, not by a relationship
+        // motif; the motif's own wording constraints would contradict the creature's words.
+        request.context.relationship = None;
         validate_request(&request).map_err(SessionError::Dialogue)?;
         self.next_request_id = self.next_request_id.saturating_add(1);
-        Ok(Some(request))
+        Ok(request)
+    }
+
+    fn initiated_dialogue_request(
+        &mut self,
+        events: &[GameEvent],
+    ) -> Result<Option<DialogueRequest>, SessionError> {
+        if let Some(meaning) = events.iter().find_map(|event| match event {
+            GameEvent::Remarked(meaning) => Some(*meaning),
+            _ => None,
+        }) {
+            return self
+                .speech_request(SpeechIntent::Remark { meaning }, "", None)
+                .map(Some);
+        }
+        let Some(reason) = events.iter().find_map(|event| match event {
+            GameEvent::InitiatedTalk(reason) => Some(*reason),
+            _ => None,
+        }) else {
+            return Ok(None);
+        };
+        // The creature asks for what it currently wants; the initiative reason is only a
+        // fallback for wants the simulation does not name.
+        let meaning = beastie_core::current_want(&self.world).map_or_else(
+            || initiative_meaning(&self.world, reason),
+            beastie_core::Want::meaning,
+        );
+        self.speech_request(SpeechIntent::Want { meaning }, "", None)
+            .map(Some)
     }
 
     fn attach_dialogue_context(&mut self, request: &mut DialogueRequest, topic: DialogueTopic) {
@@ -1121,44 +973,6 @@ impl GameSession {
         }
     }
 
-    fn ensure_relationship_evidence_offered(&self, request: &mut DialogueRequest) {
-        let Some(selected) = self.relationship_dialogue_selection() else {
-            return;
-        };
-        for id in selected
-            .evidence
-            .iter()
-            .filter_map(|evidence| match evidence {
-                beastie_core::RelationshipEvidence::Memory { id } => Some(*id),
-                beastie_core::RelationshipEvidence::Belief { .. } => None,
-                beastie_core::RelationshipEvidence::Visit { .. } => None,
-            })
-        {
-            if request
-                .candidate_memories
-                .iter()
-                .any(|memory| memory.id == id)
-            {
-                continue;
-            }
-            let Some(memory) = self
-                .world
-                .creature
-                .memories
-                .iter()
-                .find(|memory| memory.id == id)
-            else {
-                continue;
-            };
-            if request.candidate_memories.len() >= beastie_protocol::MAX_CANDIDATE_MEMORIES {
-                request.candidate_memories.pop();
-            }
-            request
-                .candidate_memories
-                .push(project_candidate_memory(memory, self.world.active_day()));
-        }
-    }
-
     /// Accepts a completed worker turn only while its authoritative relationship beat is current.
     /// The persisted record contains IDs, enums, time, fallback metadata, and a one-way digest,
     /// never player or generated prose.
@@ -1311,24 +1125,6 @@ fn compact_advance_events(events: &mut Vec<GameEvent>) {
     });
 }
 
-fn initiated_topic(reason: beastie_core::InitiativeReason) -> DialogueTopic {
-    match reason {
-        beastie_core::InitiativeReason::Hunger => DialogueTopic::Food,
-        beastie_core::InitiativeReason::Loneliness => DialogueTopic::Greeting,
-        beastie_core::InitiativeReason::Curiosity => DialogueTopic::Other,
-        beastie_core::InitiativeReason::Ritual => DialogueTopic::Ritual,
-        beastie_core::InitiativeReason::Request => DialogueTopic::Other,
-    }
-}
-
-fn initiated_topic_for_request(request: &DialogueRequest) -> DialogueTopic {
-    request
-        .context
-        .recent_turns
-        .last()
-        .map_or(DialogueTopic::Other, |turn| turn.topic)
-}
-
 fn repetition_count(turns: &[RecentTurn], topic: DialogueTopic) -> u8 {
     turns
         .iter()
@@ -1336,6 +1132,77 @@ fn repetition_count(turns: &[RecentTurn], topic: DialogueTopic) -> u8 {
         .take_while(|turn| turn.topic == topic)
         .count()
         .min(8) as u8
+}
+
+/// The words of an utterance the creature has learned, in order.
+fn understood_words(world: &WorldState, text: &str) -> String {
+    beastie_core::content_words(text)
+        .into_iter()
+        .filter(|word| world.creature.lexicon.meaning_of(word).is_some())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// What an unprompted request is about: a favorite food when hungry, otherwise company.
+fn initiative_meaning(
+    world: &WorldState,
+    reason: beastie_core::InitiativeReason,
+) -> beastie_core::Meaning {
+    use beastie_core::{ActWord, InitiativeReason, Meaning};
+    match reason {
+        InitiativeReason::Hunger => [FoodId::Berry, FoodId::Mushroom, FoodId::Pellet]
+            .into_iter()
+            .filter(|food| world.creature.preferences.get(food).copied().unwrap_or(0.0) > 0.0)
+            .map(Meaning::Food)
+            .find(|meaning| world.creature.lexicon.word_for(*meaning).is_some())
+            .unwrap_or(Meaning::Act(ActWord::Eat)),
+        InitiativeReason::Curiosity => Meaning::Act(ActWord::Play),
+        InitiativeReason::Loneliness | InitiativeReason::Ritual | InitiativeReason::Request => {
+            Meaning::Act(ActWord::Come)
+        }
+    }
+}
+
+/// What the creature wants to say after hearing an utterance, from the events it caused.
+fn speech_intent_for(world: &WorldState, heard: &[GameEvent]) -> Option<SpeechIntent> {
+    if let Some((word, meaning)) = heard.iter().find_map(|event| match event {
+        GameEvent::WordLearned { word, meaning } => Some((word.clone(), *meaning)),
+        _ => None,
+    }) {
+        return Some(SpeechIntent::NewWord { word, meaning });
+    }
+    if let Some((word, meaning, response)) = heard.iter().find_map(|event| match event {
+        GameEvent::Understood {
+            word,
+            meaning,
+            response,
+        } => Some((word.clone(), *meaning, *response)),
+        _ => None,
+    }) {
+        return Some(SpeechIntent::Answer {
+            word,
+            meaning,
+            response,
+        });
+    }
+    let echo = heard.iter().find_map(|event| match event {
+        GameEvent::WordHeard { echo, .. } => Some(echo.clone()),
+        _ => None,
+    })?;
+    if let Some(attempt) = echo {
+        return Some(SpeechIntent::Echo { attempt });
+    }
+    // Nothing new to try: name what it is attending to, if it has a word for it.
+    let named = beastie_core::current_salience(world)
+        .into_iter()
+        .filter(|(meaning, _)| world.creature.lexicon.word_for(*meaning).is_some())
+        .max_by_key(|(_, weight)| *weight)
+        .map(|(meaning, _)| meaning);
+    Some(
+        named.map_or(SpeechIntent::Babble, |meaning| SpeechIntent::Remark {
+            meaning,
+        }),
+    )
 }
 
 fn language_exposures(text: &str) -> Vec<LanguageExposure> {
@@ -1414,35 +1281,20 @@ fn validate_spoken_input_order(
         | (SpokenInputState::Listening { .. }, SessionCommand::SpeechCandidate { .. })
         | (SpokenInputState::Listening { .. }, SessionCommand::SpeechEnded)
         | (SpokenInputState::Listening { .. }, SessionCommand::SpeechFailed { .. }) => Ok(()),
-        (SpokenInputState::Deferred { .. }, SessionCommand::SpeechStarted) => Ok(()),
         (SpokenInputState::Listening { .. }, SessionCommand::SpeechStarted) => {
             Err(SessionError::SpeechAlreadyStarted)
         }
         (
-            SpokenInputState::Idle | SpokenInputState::Deferred { .. },
+            SpokenInputState::Idle,
             SessionCommand::SpeechCandidate { .. }
             | SessionCommand::SpeechEnded
             | SessionCommand::SpeechFailed { .. },
         ) => Err(SessionError::SpeechNotStarted),
-        (SpokenInputState::Deferred { .. }, SessionCommand::Talk { .. }) => Ok(()),
         (SpokenInputState::Listening { .. }, SessionCommand::Talk { .. }) => {
             Err(SessionError::UtteranceBusy)
         }
         _ => Ok(()),
     }
-}
-
-fn memory_query(interpretation: &UtteranceInterpretation) -> MemoryQuery {
-    let mut cues = BTreeSet::new();
-    for concept in &interpretation.understood_concepts {
-        cues.insert(MemoryCue::Concept(*concept));
-    }
-    for reference in &interpretation.references {
-        if let UtteranceReference::Food(food) = reference {
-            cues.insert(MemoryCue::Food(*food));
-        }
-    }
-    MemoryQuery { cues, limit: 8 }
 }
 
 fn mood(world: &WorldState) -> &'static str {
@@ -1547,7 +1399,7 @@ mod tests {
                 .iter()
                 .filter(|event| matches!(event, GameEvent::NeedChanged))
                 .count(),
-            900,
+            (15 * 60_000 / SIMULATION_TICK_MS) as usize,
             "reproduction should expose one redundant notification per fixed tick"
         );
 
@@ -1691,21 +1543,27 @@ mod tests {
                 position: NormalizedPosition::new(8_000, 2_000),
             }))
             .expect("drop should apply");
-        original
-            .apply(command(SessionCommand::Tick {
-                milliseconds: 6_000,
-            }))
-            .expect("approach ticks should apply");
-        assert_eq!(
-            original
+        let approaching = |session: &GameSession| {
+            session
                 .world()
                 .creature
                 .aquarium
                 .action
                 .as_ref()
-                .map(|action| action.phase),
-            Some(beastie_core::ActionPhase::Approach)
-        );
+                .map(|action| action.phase)
+                == Some(beastie_core::ActionPhase::Approach)
+        };
+        for _ in 0..200 {
+            if approaching(&original) {
+                break;
+            }
+            original
+                .apply(command(SessionCommand::Tick {
+                    milliseconds: SIMULATION_TICK_MS,
+                }))
+                .expect("approach ticks should apply");
+        }
+        assert!(approaching(&original), "save must land mid-approach");
         let saved_at = original.world().elapsed_ms;
         let encoded = original
             .capture(saved_at)
@@ -1729,8 +1587,11 @@ mod tests {
         assert_eq!(resumed.world(), original.world());
     }
 
+    /// Every request the session emits must pass protocol validation, including while an
+    /// action-bound relationship beat is live. Relationship context used to make learned-word
+    /// requests invalid; learned-word speech no longer carries it.
     #[test]
-    fn dialogue_projects_the_current_action_bound_subject_and_evidence() {
+    fn every_emitted_request_validates_even_with_relationship_evidence() {
         let source = include_str!("../../../fixtures/saves/feel/trusted-berry.json");
         let save = SessionSave::from_json(source).expect("trusted fixture");
         let resumed_at = save.saved_at_ms;
@@ -1743,92 +1604,50 @@ mod tests {
                 position: NormalizedPosition::new(5_000, 3_000),
             }))
             .expect("drop trusted berry");
+        assert!(
+            session.relationship_dialogue_selection().is_some(),
+            "fixture must exercise live relationship evidence"
+        );
 
-        let mut request = build_dialogue_request(
-            session.world(),
-            &MemoryQuery {
-                cues: BTreeSet::from([MemoryCue::Food(FoodId::Berry)]),
-                limit: 8,
+        let mut requests = Vec::new();
+        let script = [
+            SessionCommand::Talk {
+                text: "berry".to_owned(),
             },
-            DialogueRequestContext {
-                request_id: 77,
-                mood: "content",
-                player_said: "berry",
-                desired_social_act: None,
-                max_words: 8,
-                allowed_gestures: BTreeSet::from([Gesture::None]),
+            SessionCommand::Tick {
+                milliseconds: SIMULATION_TICK_MS,
             },
-        );
-        session.ensure_relationship_evidence_offered(&mut request);
-        session.attach_dialogue_context(&mut request, DialogueTopic::Food);
-        let relationship = request
-            .context
-            .relationship
-            .as_ref()
-            .expect("action-bound relationship dialogue context");
-        assert_eq!(
-            relationship.motif,
-            beastie_protocol::RelationshipMotifKey::TrustedFood(FoodId::Berry)
-        );
-        assert_eq!(
-            relationship.subject,
-            beastie_protocol::RelationshipSubject::Food(FoodId::Berry)
-        );
-        assert_eq!(
-            relationship.mode,
-            beastie_protocol::RelationshipExpressionMode::ActionBound
-        );
-        assert!(relationship.evidence.len() >= 2);
-        assert!(validate_request(&request).is_ok());
-    }
-
-    #[test]
-    fn talk_projects_real_berry_memories() {
-        let mut session = GameSession::new(99, "Mrrp");
-        session
-            .apply(command(SessionCommand::Feed {
-                food: FoodId::Berry,
-            }))
-            .expect("feed should apply");
-        for _ in 0..4 {
-            session
-                .apply(command(SessionCommand::Advance { minutes: 15 }))
-                .expect("time should advance");
-            if session
-                .world()
-                .creature
-                .preferences
-                .contains_key(&FoodId::Berry)
-            {
-                break;
+            SessionCommand::Talk {
+                text: "good berry".to_owned(),
+            },
+            SessionCommand::Tick {
+                milliseconds: 4 * SIMULATION_TICK_MS,
+            },
+            SessionCommand::Talk {
+                text: "berry berry".to_owned(),
+            },
+            SessionCommand::Talk {
+                text: "go kill yourself".to_owned(),
+            },
+            SessionCommand::Advance { minutes: 30 },
+            SessionCommand::Talk {
+                text: "hello Mop".to_owned(),
+            },
+        ];
+        for input in script {
+            let observation = session.apply(command(input)).expect("command applies");
+            if let Some(request) = observation.dialogue_request {
+                requests.push(request);
             }
         }
-        assert!(
-            session
-                .world()
-                .creature
-                .preferences
-                .contains_key(&FoodId::Berry)
-        );
-        // This test isolates memory grounding from the separate V2 willingness policy.
-        session.world.creature.relationship.resentment = 0.0;
-        session.world.creature.current_intention = beastie_core::Intention::Idle;
-        session.world.creature.needs.energy = 1.0;
-        let observation = session
-            .apply(command(SessionCommand::Talk {
-                text: "Remember the berry?".to_owned(),
-            }))
-            .expect("talk should apply");
-        let request = observation
-            .dialogue_request
-            .expect("talk should create a request");
-        assert!(!request.candidate_memories.is_empty());
-        assert!(
-            request
-                .candidate_memories
-                .iter()
-                .any(|memory| memory.fact.contains("berry"))
-        );
+        assert!(requests.len() >= 3, "talk must be answered: {requests:?}");
+        for request in &requests {
+            validate_request(request).expect("emitted request validates");
+            assert!(request.speech_intent.is_some());
+            assert!(request.context.relationship.is_none());
+            let reply = beastie_protocol::constrained_fallback_reply(request);
+            validate_reply(request, reply).expect("no-model line validates");
+        }
     }
 
     #[test]
@@ -1844,17 +1663,24 @@ mod tests {
         let mut split = GameSession::new(55, "Tock");
         batched
             .apply(command(SessionCommand::Tick {
-                milliseconds: 1_500,
+                milliseconds: SIMULATION_TICK_MS * 3 / 2,
             }))
             .expect("batched tick");
         split
-            .apply(command(SessionCommand::Tick { milliseconds: 900 }))
+            .apply(command(SessionCommand::Tick {
+                milliseconds: SIMULATION_TICK_MS * 9 / 10,
+            }))
             .expect("first partial tick");
         split
-            .apply(command(SessionCommand::Tick { milliseconds: 600 }))
+            .apply(command(SessionCommand::Tick {
+                milliseconds: SIMULATION_TICK_MS * 6 / 10,
+            }))
             .expect("second partial tick");
         assert_eq!(batched.world(), split.world());
-        assert_eq!(batched.world().simulation_remainder_ms, 500);
+        assert_eq!(
+            batched.world().simulation_remainder_ms,
+            SIMULATION_TICK_MS / 2
+        );
     }
 
     #[test]
@@ -1874,7 +1700,7 @@ mod tests {
         );
         original
             .apply(command(SessionCommand::Tick {
-                milliseconds: 1_500,
+                milliseconds: SIMULATION_TICK_MS * 3 / 2,
             }))
             .expect("tick before save");
 
@@ -1887,7 +1713,10 @@ mod tests {
         let (mut resumed, progress) =
             GameSession::resume_json(&encoded, resumed_at).expect("new process should resume");
         assert_eq!(progress.applied_ms, beastie_core::MAX_OFFLINE_MS);
-        assert_eq!(resumed.world().simulation_remainder_ms, 500);
+        assert_eq!(
+            resumed.world().simulation_remainder_ms,
+            SIMULATION_TICK_MS / 2
+        );
         assert_eq!(
             resumed
                 .world()
@@ -1902,7 +1731,7 @@ mod tests {
         );
         let second_talk = resumed
             .apply(command(SessionCommand::Talk {
-                text: "again".to_owned(),
+                text: "bubbles".to_owned(),
             }))
             .expect("second talk");
         assert_eq!(second_talk.sequence, 3);
@@ -2289,65 +2118,24 @@ mod tests {
     }
 
     #[test]
-    fn ignored_talk_is_silent_and_one_reaction_follow_up_is_emitted() {
+    fn talk_is_always_heard_without_a_cooldown() {
         let mut session = GameSession::new(70, "Sparse");
-        let first = session
-            .apply(command(SessionCommand::Talk {
-                text: "hello".to_owned(),
-            }))
-            .expect("first talk");
-        assert!(first.dialogue_request.is_some());
-        assert!(first.events.iter().any(|event| matches!(
-            event,
-            GameEvent::TalkAccepted {
-                contextual_follow_up: false
-            }
-        )));
-
-        let ignored = session
-            .apply(command(SessionCommand::Talk {
-                text: "again already".to_owned(),
-            }))
-            .expect("ignored talk command");
-        assert_eq!(ignored.dialogue_request, None);
-        assert!(ignored.events.contains(&GameEvent::TalkIgnored));
-
-        session
-            .apply(command(SessionCommand::React {
-                reaction: Reaction::Laugh,
-            }))
-            .expect("reaction");
-        let follow_up = session
-            .apply(command(SessionCommand::Talk {
-                text: "well?".to_owned(),
-            }))
-            .expect("contextual follow-up");
-        assert_eq!(
-            follow_up
+        for (index, text) in ["hello", "hello again", "bubbles", "bubbles!"]
+            .into_iter()
+            .enumerate()
+        {
+            let heard = session
+                .apply(command(SessionCommand::Talk {
+                    text: text.to_owned(),
+                }))
+                .expect("talk applies");
+            assert!(!heard.events.contains(&GameEvent::TalkIgnored));
+            assert!(!heard.events.contains(&GameEvent::UtteranceDeferred));
+            let request = heard
                 .dialogue_request
-                .expect("follow-up request")
-                .request_id,
-            2
-        );
-        assert!(follow_up.events.iter().any(|event| matches!(
-            event,
-            GameEvent::TalkAccepted {
-                contextual_follow_up: true
-            }
-        )));
-
-        session
-            .apply(command(SessionCommand::React {
-                reaction: Reaction::Laugh,
-            }))
-            .expect("second reaction");
-        let exhausted = session
-            .apply(command(SessionCommand::Talk {
-                text: "and again?".to_owned(),
-            }))
-            .expect("exhausted follow-up");
-        assert_eq!(exhausted.dialogue_request, None);
-        assert!(exhausted.events.contains(&GameEvent::TalkIgnored));
+                .unwrap_or_else(|| panic!("{text:?} must be answered at once"));
+            assert_eq!(request.request_id, index as u64 + 1);
+        }
     }
 
     #[test]
@@ -2410,28 +2198,35 @@ mod tests {
     }
 
     #[test]
-    fn motivated_tick_emits_one_typed_initiated_dialogue_request() {
+    fn motivated_tick_emits_one_typed_initiated_want() {
         let mut seed = GameSession::new(222, "Initiator").capture(0);
         seed.world.creature.needs.hunger = 0.9;
+        seed.world.creature.idle_life.settled_until_ms = u64::MAX / 2;
         let (mut session, _) = GameSession::resume(seed, 0).expect("resume mutated fixture");
-        let first = session
-            .apply(command(SessionCommand::Tick {
-                milliseconds: 1_000,
-            }))
-            .expect("motivated tick");
-        let request = first.dialogue_request.expect("initiated request");
+        let mut requests = Vec::new();
+        for _ in 0..30 {
+            let observation = session
+                .apply(command(SessionCommand::Tick {
+                    milliseconds: SIMULATION_TICK_MS,
+                }))
+                .expect("motivated tick");
+            if let Some(request) = observation.dialogue_request {
+                requests.push((request, beastie_core::current_want(session.world())));
+            }
+        }
+        assert_eq!(requests.len(), 1, "initiated wants are rate-limited");
+        let (request, want) = &requests[0];
         assert!(request.player_said.is_empty());
+        let want = want.expect("a hungry idle creature wants something");
         assert_eq!(
-            request.context.recent_turns[0].topic,
-            beastie_protocol::DialogueTopic::Food
+            request.speech_intent,
+            Some(SpeechIntent::Want {
+                meaning: want.meaning()
+            })
         );
-        validate_request(&request).expect("initiated request validates");
-        let second = session
-            .apply(command(SessionCommand::Tick {
-                milliseconds: 1_000,
-            }))
-            .expect("quiet follow-up tick");
-        assert!(second.dialogue_request.is_none());
+        validate_request(request).expect("initiated request validates");
+        let reply = beastie_protocol::constrained_fallback_reply(request);
+        validate_reply(request, reply).expect("wordless want line validates");
     }
 
     #[test]
@@ -2463,31 +2258,6 @@ mod tests {
     }
 
     #[test]
-    fn ignored_talk_cannot_farm_language_exposure_during_cooldown() {
-        let mut session = GameSession::new(76, "Selective Hearing");
-        session
-            .apply(command(SessionCommand::Talk {
-                text: "hello".to_owned(),
-            }))
-            .expect("first talk");
-        let before = session.world().creature.social_habits;
-        let ignored = session
-            .apply(command(SessionCommand::Talk {
-                text: "fuck that shitty nice package".to_owned(),
-            }))
-            .expect("cooldown talk");
-
-        assert!(ignored.events.contains(&GameEvent::TalkIgnored));
-        assert!(
-            !ignored
-                .events
-                .iter()
-                .any(|event| matches!(event, GameEvent::LanguageExposureRegistered(_)))
-        );
-        assert_eq!(session.world().creature.social_habits, before);
-    }
-
-    #[test]
     fn prohibited_talk_input_is_normalized_before_request_serialization() {
         let mut session = GameSession::new(72, "Boundary");
         let observation = session
@@ -2501,9 +2271,86 @@ mod tests {
             request.input_rejection,
             Some(beastie_protocol::ContentBoundaryViolation::SelfHarmEncouragement)
         );
+        assert_eq!(request.speech_intent, Some(SpeechIntent::Babble));
         let serialized = serde_json::to_string(&request).expect("serialize request");
-        assert!(!serialized.contains("go kill yourself"));
+        assert!(!serialized.contains("kill"));
         assert!(session.world().creature.memories.is_empty());
+        assert!(session.world().creature.lexicon.words.is_empty());
+        let reply = beastie_protocol::constrained_fallback_reply(&request);
+        assert!(!reply.say.contains("kill"));
+        validate_reply(&request, reply).expect("babble validates");
+
+        // Repeating it never builds evidence for the prohibited words.
+        for _ in 0..3 {
+            session
+                .apply(command(SessionCommand::Talk {
+                    text: "go kill yourself".to_owned(),
+                }))
+                .expect("repeat");
+        }
+        assert!(session.world().creature.lexicon.words.is_empty());
+        let saved = session.capture(0).to_json().expect("save");
+        assert!(!saved.contains("kill"));
+    }
+
+    #[test]
+    fn a_word_said_twice_during_play_is_learned_and_said_back() {
+        let mut session = GameSession::new(12, "Mop");
+        session
+            .world
+            .creature
+            .toy_preferences
+            .insert(ToyId::Ball, 0.8);
+        session
+            .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
+            .expect("play");
+        let first = session
+            .apply(command(SessionCommand::Talk {
+                text: "ball".to_owned(),
+            }))
+            .expect("first ball");
+        assert!(
+            !first
+                .events
+                .iter()
+                .any(|event| matches!(event, GameEvent::WordLearned { .. })),
+            "one mention is never a lesson"
+        );
+        session
+            .apply(command(SessionCommand::Tick {
+                milliseconds: SIMULATION_TICK_MS,
+            }))
+            .expect("tick");
+        let second = session
+            .apply(command(SessionCommand::Talk {
+                text: "ball".to_owned(),
+            }))
+            .expect("second ball");
+        assert!(second.events.contains(&GameEvent::WordLearned {
+            word: "ball".to_owned(),
+            meaning: beastie_protocol::Meaning::Toy(ToyId::Ball),
+        }));
+        let request = second.dialogue_request.expect("a new word is said back");
+        validate_request(&request).expect("request validates");
+        assert_eq!(
+            request.speech_intent,
+            Some(SpeechIntent::NewWord {
+                word: "ball".to_owned(),
+                meaning: beastie_protocol::Meaning::Toy(ToyId::Ball),
+            })
+        );
+        assert!(request.vocabulary.iter().any(|entry| entry.word == "ball"));
+        let reply = beastie_protocol::constrained_fallback_reply(&request);
+        assert!(reply.say.starts_with("ball"), "{:?}", reply.say);
+        validate_reply(&request, reply).expect("no-model new-word line validates");
+
+        // The learned word is saved and resumes exactly.
+        let json = session
+            .capture(session.world().elapsed_ms)
+            .to_json()
+            .unwrap();
+        let (resumed, _) = GameSession::resume_json(&json, session.world().elapsed_ms).unwrap();
+        assert_eq!(resumed.world(), session.world());
     }
 
     #[test]
@@ -2621,13 +2468,12 @@ mod tests {
             .expect("speech ends");
 
         assert!(ended.dialogue_request.is_none());
-        assert!(ended.events.is_empty());
-        assert_eq!(
+        assert_eq!(ended.events, vec![GameEvent::TalkIgnored]);
+        assert!(matches!(
             ended.spoken_input,
-            Some(SpokenInputStatus::NotEngaged {
-                attention: beastie_core::SpeechAttention::Ignored
-            })
-        );
+            Some(SpokenInputStatus::NotEngaged { .. })
+        ));
+        assert!(session.world().creature.lexicon.words.is_empty());
     }
 
     #[test]
@@ -2644,652 +2490,30 @@ mod tests {
         assert_eq!(ignored.events, vec![GameEvent::TalkIgnored]);
         assert!(ignored.dialogue_request.is_none());
         assert_eq!(session.world, before);
-    }
+        assert!(session.world.creature.lexicon.words.is_empty());
 
-    #[test]
-    fn occupied_glance_waits_for_the_exact_toy_boundary_without_interrupting() {
-        let mut session = GameSession::new(532, "Busy");
-        // Give the interaction a real approach without depending on new-save toy spacing.
-        session.world.creature.aquarium.position = NormalizedPosition::new(1_000, 1_000);
-        session.world.creature.traits.sociability = 1.0;
-        session.world.creature.relationship.bond = 1.0;
-        session.world.creature.relationship.resentment = 0.0;
-        session
-            .world
-            .creature
-            .toy_preferences
-            .insert(ToyId::Ball, 0.8);
-        let receipt = session
-            .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
-            .expect("accepted toy establishes an exact owner");
-        let interaction_id = receipt
-            .events
-            .iter()
-            .find_map(|event| match event {
-                GameEvent::ToyPlayAccepted { interaction_id, .. } => Some(*interaction_id),
-                _ => None,
-            })
-            .expect("accepted toy identity");
-        session
-            .apply(command(SessionCommand::SpeechStarted))
-            .expect("occupied creature glances");
-        session
-            .apply(command(SessionCommand::SpeechCandidate {
-                text: "remember the berry".to_owned(),
-                confidence: AcousticConfidence::new(900).expect("valid confidence"),
+        // Prohibited words get the same sleep: no babble, no learning.
+        let prohibited = session
+            .apply(command(SessionCommand::Talk {
+                text: "go kill yourself".to_owned(),
             }))
-            .expect("recognition completes");
-        let ended = session
-            .apply(command(SessionCommand::SpeechEnded))
-            .expect("speech ends");
-        assert_eq!(ended.spoken_input, Some(SpokenInputStatus::Deferred));
-        assert!(ended.events.contains(&GameEvent::UtteranceDeferred));
-        assert!(ended.dialogue_request.is_none());
-
-        let mut contacts = 0;
-        let mut approach_ticks = 0;
-        let mut submitted = None;
-        for _ in 0..20 {
-            let observation = session
-                .apply(command(SessionCommand::Tick {
-                    milliseconds: SIMULATION_TICK_MS,
-                }))
-                .expect("activity progresses toward its semantic boundary");
-            contacts += observation
-                .events
-                .iter()
-                .filter(|event| matches!(event,
-                    GameEvent::ToyContacted { interaction_id: id, toy: ToyId::Ball, origin: ToyOrigin::Player }
-                        if *id == interaction_id
-                )).count();
-            assert!(!observation.events.iter().any(|event| matches!(event,
-                GameEvent::ToyInteractionInterrupted { interaction_id: id, .. } if *id == interaction_id
-            )));
-            if contacts == 0 {
-                approach_ticks += 1;
-                assert!(
-                    observation.dialogue_request.is_none(),
-                    "language must wait for its exact toy contact"
-                );
-                assert!(matches!(
-                    &session.spoken_input,
-                    SpokenInputState::Deferred { owner: Some(DialogueActionOwner::Toy(id)), .. }
-                        if *id == interaction_id
-                ));
-                let handoff = dialogue_handoff(session.world());
-                assert_eq!(
-                    handoff.owner,
-                    Some(DialogueActionOwner::Toy(interaction_id))
-                );
-                assert_eq!(handoff.state, DialogueHandoffState::WaitingForContact);
-            }
-            if observation.dialogue_request.is_some() {
-                submitted = Some(observation);
-                break;
-            }
-        }
-        let ready = submitted.expect("deferred response becomes ready after toy contact");
-        assert!(approach_ticks > 0, "exercise deferral during real travel");
-        assert_eq!(contacts, 1);
-        assert_eq!(ready.spoken_input, Some(SpokenInputStatus::Submitted));
+            .expect("sleeping creature ignores prohibited language");
+        assert_eq!(prohibited.events, vec![GameEvent::TalkIgnored]);
+        assert!(prohibited.dialogue_request.is_none());
+        assert_eq!(session.world, before);
     }
 
     #[test]
-    fn deferred_language_preserves_each_committed_physical_toy_response() {
-        for channel in [InputChannel::Typed, InputChannel::Spoken] {
-            for (toy, response) in [
-                (ToyId::Ball, beastie_core::ToyResponse::BallNudged),
-                (ToyId::Bell, beastie_core::ToyResponse::BellStruck),
-                (ToyId::Sock, beastie_core::ToyResponse::SockTugged),
-            ] {
-                let mut session = GameSession::new(532, "Patient");
-                session.world.creature.aquarium.position = NormalizedPosition::new(1_000, 1_000);
-                session.world.creature.traits.sociability = 1.0;
-                session.world.creature.relationship.bond = 1.0;
-                session.world.creature.relationship.resentment = 0.0;
-                session.world.creature.toy_preferences.insert(toy, 0.8);
-                let receipt = session
-                    .apply(command(SessionCommand::Play { toy }))
-                    .unwrap();
-                let interaction_id = receipt
-                    .events
-                    .iter()
-                    .find_map(|event| match event {
-                        GameEvent::ToyPlayAccepted { interaction_id, .. } => Some(*interaction_id),
-                        _ => None,
-                    })
-                    .unwrap();
-                let queued = match channel {
-                    InputChannel::Typed => session
-                        .apply(command(SessionCommand::Talk {
-                            text: "remember the berry".to_owned(),
-                        }))
-                        .unwrap(),
-                    InputChannel::Spoken => {
-                        session
-                            .apply(command(SessionCommand::SpeechStarted))
-                            .unwrap();
-                        session
-                            .apply(command(SessionCommand::SpeechCandidate {
-                                text: "remember the berry".to_owned(),
-                                confidence: AcousticConfidence::new(900).unwrap(),
-                            }))
-                            .unwrap();
-                        session.apply(command(SessionCommand::SpeechEnded)).unwrap()
-                    }
-                };
-                assert!(queued.events.contains(&GameEvent::UtteranceDeferred));
-                assert!(queued.dialogue_request.is_none());
-                let expected = GameEvent::ToyInteractionResponded {
-                    toy,
-                    interaction_id,
-                    response,
-                };
-                let mut responses = 0;
-                let mut submitted = false;
-                for _ in 0..25 {
-                    let observation = session
-                        .apply(command(SessionCommand::Tick {
-                            milliseconds: SIMULATION_TICK_MS,
-                        }))
-                        .unwrap();
-                    responses += observation
-                        .events
-                        .iter()
-                        .filter(|event| **event == expected)
-                        .count();
-                    assert!(!observation.events.iter().any(|event| matches!(event,
-                        GameEvent::ToyInteractionInterrupted { interaction_id: id, .. } if *id == interaction_id
-                    )));
-                    if observation.dialogue_request.is_some() {
-                        assert!(observation.events.contains(&GameEvent::ToyContacted {
-                            toy,
-                            interaction_id,
-                            origin: ToyOrigin::Player,
-                        }));
-                        assert_eq!(responses, 1);
-                        submitted = true;
-                        break;
-                    }
-                    assert_eq!(
-                        responses, 0,
-                        "language must submit at its exact safe contact"
-                    );
-                }
-                assert!(submitted, "{channel:?} must finish waiting for {toy:?}");
-                let object = &session.world.aquarium.toy_states[&toy];
-                assert_eq!(object.last_response, response);
-                assert_eq!(object.last_contact_activity, Some(interaction_id));
-                let recovery = session
-                    .world
-                    .creature
-                    .interaction_state
-                    .toy_interaction
-                    .as_ref()
-                    .unwrap();
-                assert_eq!(recovery.id, interaction_id);
-                assert_eq!(recovery.phase, beastie_core::ToyInteractionPhase::Recovery);
-                match toy {
-                    ToyId::Ball => {
-                        assert_ne!(object.velocity, beastie_core::NormalizedVelocity::default())
-                    }
-                    ToyId::Bell => assert!(!object.carried),
-                    ToyId::Sock => {
-                        assert!(
-                            object.carried,
-                            "deferred Talk cannot erase the committed hold"
-                        );
-                        assert_eq!(
-                            object.position,
-                            beastie_core::held_toy_position(
-                                session.world.creature.aquarium.position
-                            )
-                        );
-                    }
-                }
-                let held_position = object.position;
-                let next = session
-                    .apply(command(SessionCommand::Tick {
-                        milliseconds: SIMULATION_TICK_MS,
-                    }))
-                    .unwrap();
-                assert!(!next.events.contains(&expected));
-                if toy == ToyId::Sock {
-                    let released = &session.world.aquarium.toy_states[&toy];
-                    assert!(!released.carried);
-                    assert_eq!(released.position, held_position);
-                    assert_eq!(
-                        released.velocity,
-                        beastie_core::NormalizedVelocity {
-                            x: 0,
-                            y: beastie_core::SOCK_RELEASE_SPEED,
-                        }
-                    );
-                }
-            }
-        }
-    }
-
-    fn waiting_language(channel: InputChannel, behind_toy: bool) -> GameSession {
-        let mut session = GameSession::new(532, "Patient");
-        // Keep the pre-pass habitat that exposed the owner race, independent of new-save art.
-        for (toy, x) in [
-            (ToyId::Ball, 5000),
-            (ToyId::Bell, 6500),
-            (ToyId::Sock, 8000),
-        ] {
-            let legacy_position = NormalizedPosition::new(x, 8900);
-            session
-                .world
-                .aquarium
-                .toy_states
-                .get_mut(&toy)
-                .unwrap()
-                .position = legacy_position;
-            for object in session.world.aquarium.objects.values_mut() {
-                if let beastie_core::WorldObject::Toy {
-                    toy: candidate,
-                    position,
-                } = object
-                    && *candidate == toy
-                {
-                    *position = legacy_position;
-                }
-            }
-        }
-        session.world.creature.traits.sociability = 1.0;
-        session.world.creature.relationship.bond = 1.0;
-        session.world.creature.relationship.resentment = 0.0;
-        session
-            .world
-            .creature
-            .toy_preferences
-            .insert(ToyId::Ball, 0.8);
-        if behind_toy {
-            session
-                .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
-                .unwrap();
-        } else {
-            session.world.creature.conversation.next_talk_at_ms = SIMULATION_TICK_MS;
-        }
-        let text = "remember the berry".to_owned();
-        let queued = match channel {
-            InputChannel::Typed => session
-                .apply(command(SessionCommand::Talk { text }))
-                .unwrap(),
-            InputChannel::Spoken => {
-                session
-                    .apply(command(SessionCommand::SpeechStarted))
-                    .unwrap();
-                session
-                    .apply(command(SessionCommand::SpeechCandidate {
-                        text,
-                        confidence: AcousticConfidence::new(900).unwrap(),
-                    }))
-                    .unwrap();
-                session.apply(command(SessionCommand::SpeechEnded)).unwrap()
-            }
-        };
-        assert!(queued.events.contains(&GameEvent::UtteranceDeferred));
-        assert!(queued.dialogue_request.is_none());
-        session
-    }
-
-    #[test]
-    fn deferred_language_waits_for_replacement_play_refusal_and_food() {
-        for channel in [InputChannel::Typed, InputChannel::Spoken] {
-            for replacement in 0..3 {
-                let mut session = waiting_language(channel, true);
-                session
-                    .world
-                    .creature
-                    .toy_preferences
-                    .insert(ToyId::Bell, if replacement == 1 { -1.0 } else { 0.8 });
-                let command_to_replace = if replacement == 2 {
-                    SessionCommand::DropFood {
-                        food: FoodId::Berry,
-                        position: NormalizedPosition::new(7200, 1800),
-                    }
-                } else {
-                    SessionCommand::Play { toy: ToyId::Bell }
-                };
-                let receipt = session.apply(command(command_to_replace)).unwrap();
-                let replacement_owner = dialogue_handoff(&session.world).owner;
-                assert!(replacement_owner.is_some());
-                let body_before = session.world.creature.aquarium.clone();
-                let interaction_before = session
-                    .world
-                    .creature
-                    .interaction_state
-                    .toy_interaction
-                    .clone();
-                let early = session
-                    .apply(command(SessionCommand::Tick { milliseconds: 0 }))
-                    .unwrap();
-                assert!(
-                    early.dialogue_request.is_none(),
-                    "replacement {replacement} must keep its body"
-                );
-                assert_eq!(session.world.creature.aquarium, body_before);
-                assert_eq!(
-                    session.world.creature.interaction_state.toy_interaction,
-                    interaction_before
-                );
-                assert_eq!(dialogue_handoff(&session.world).owner, replacement_owner);
-
-                // The body survives persistence; the private waiting words deliberately do not.
-                let save = session.capture(0).to_json().unwrap();
-                let (resumed, _) = GameSession::resume_json(&save, 0).unwrap();
-                assert_eq!(dialogue_handoff(&resumed.world).owner, replacement_owner);
-                assert_eq!(
-                    resumed.world.creature.aquarium.destination,
-                    body_before.destination
-                );
-                assert!(matches!(resumed.spoken_input, SpokenInputState::Idle));
-
-                let mut events = receipt.events;
-                let mut delivered = false;
-                for _ in 0..60 {
-                    let next = session
-                        .apply(command(SessionCommand::Tick {
-                            milliseconds: SIMULATION_TICK_MS,
-                        }))
-                        .unwrap();
-                    events.extend(next.events);
-                    if next.dialogue_request.is_some() {
-                        delivered = true;
-                        break;
-                    }
-                }
-                assert!(
-                    delivered,
-                    "replacement {replacement} must eventually release words"
-                );
-                assert!(!events.iter().any(|event| matches!(
-                    event,
-                    GameEvent::ToyInteractionInterrupted {
-                        toy: ToyId::Bell,
-                        ..
-                    }
-                )));
-                match replacement {
-                    0 => assert_eq!(
-                        events
-                            .iter()
-                            .filter(|event| matches!(
-                                event,
-                                GameEvent::ToyPlayed {
-                                    toy: ToyId::Bell,
-                                    ..
-                                }
-                            ))
-                            .count(),
-                        1
-                    ),
-                    1 => {
-                        assert_eq!(
-                            events
-                                .iter()
-                                .filter(|event| matches!(
-                                    event,
-                                    GameEvent::ToyRejected {
-                                        toy: ToyId::Bell,
-                                        ..
-                                    }
-                                ))
-                                .count(),
-                            1
-                        );
-                        assert!(!events.iter().any(|event| matches!(
-                            event,
-                            GameEvent::ToyPlayed { .. } | GameEvent::ToyContacted { .. }
-                        )));
-                        assert!(
-                            session
-                                .world
-                                .creature
-                                .interaction_state
-                                .last_resolved_toy_interaction
-                                .is_none()
-                        );
-                    }
-                    _ => assert_eq!(
-                        events
-                            .iter()
-                            .filter(|event| matches!(event, GameEvent::FoodConsumed(FoodId::Berry)))
-                            .count(),
-                        1
-                    ),
-                }
-                assert_eq!(session.world.creature.development.interactions.talks, 1);
-            }
-        }
-    }
-
-    #[test]
-    fn cooldown_only_speech_also_respects_new_direct_play() {
-        let mut session = waiting_language(InputChannel::Spoken, false);
-        session
-            .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
-            .unwrap();
-        let owner = dialogue_handoff(&session.world).owner;
-        let early = session
-            .apply(command(SessionCommand::Tick {
-                milliseconds: SIMULATION_TICK_MS,
-            }))
-            .unwrap();
-        assert!(early.dialogue_request.is_none());
-        assert_eq!(dialogue_handoff(&session.world).owner, owner);
-        assert!(matches!(
-            session.spoken_input,
-            SpokenInputState::Deferred { .. }
-        ));
-    }
-
-    #[test]
-    fn completed_owner_does_not_let_unrelated_private_life_capture_waiting_words() {
-        let mut session = waiting_language(InputChannel::Typed, true);
-        // Advance the body independently, as when a single session tick crosses both the
-        // original toy's recovery and the start of a new private activity.
-        for _ in 0..30 {
-            step(
-                &mut session.world,
-                &[],
-                SIMULATION_TICK_MS,
-                &mut session.random,
-            );
-            if matches!(
-                dialogue_handoff(&session.world).owner,
-                Some(DialogueActionOwner::PrivateLife(_))
-            ) {
-                break;
-            }
-        }
-        let handoff = dialogue_handoff(&session.world);
-        assert!(matches!(
-            handoff.owner,
-            Some(DialogueActionOwner::PrivateLife(_))
-        ));
-        assert_eq!(handoff.state, DialogueHandoffState::WaitingForContact);
-        let released = session
-            .apply(command(SessionCommand::Tick { milliseconds: 0 }))
-            .unwrap();
-        assert!(released.dialogue_request.is_some());
-        assert!(matches!(session.spoken_input, SpokenInputState::Idle));
-    }
-
-    #[test]
-    fn autonomous_toy_interest_does_not_capture_cooldown_only_words() {
-        let mut session = waiting_language(InputChannel::Spoken, false);
-        session
-            .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
-            .unwrap();
-        // Autonomous toy interactions are also valid canonical owners (including in saves),
-        // but carry no newer player action that should take precedence over waiting language.
-        session
-            .world
-            .creature
-            .interaction_state
-            .toy_interaction
-            .as_mut()
-            .unwrap()
-            .origin = ToyOrigin::Autonomous;
-        let released = session
-            .apply(command(SessionCommand::Tick {
-                milliseconds: SIMULATION_TICK_MS,
-            }))
-            .unwrap();
-        assert!(released.dialogue_request.is_some());
-        assert_eq!(released.spoken_input, Some(SpokenInputStatus::Submitted));
-    }
-
-    #[test]
-    fn repeated_direct_replacement_keeps_original_language_expiry_and_care_immediate() {
-        for channel in [InputChannel::Typed, InputChannel::Spoken] {
-            let mut session = waiting_language(channel, true);
-            session
-                .world
-                .creature
-                .toy_preferences
-                .insert(ToyId::Bell, -1.0);
-            // Start near the existing deadline so repeated replacements can be exercised
-            // before this distant refusal finishes its approach.
-            if let SpokenInputState::Deferred { expires_at_ms, .. } = &session.spoken_input {
-                session.world.elapsed_ms = expires_at_ms - 2 * SIMULATION_TICK_MS;
-            }
-            let mut expired = false;
-            for _ in 0..DEFERRED_UTTERANCE_MAX_MS / SIMULATION_TICK_MS {
-                let care = session.apply(command(SessionCommand::Comfort)).unwrap();
-                assert!(care.events.contains(&GameEvent::Comforted));
-                // A new refusal replaces comfort immediately, even while old words wait.
-                let rejection = session
-                    .apply(command(SessionCommand::Play { toy: ToyId::Bell }))
-                    .unwrap();
-                assert!(
-                    rejection
-                        .events
-                        .iter()
-                        .any(|event| matches!(event, GameEvent::ToyRejected { .. }))
-                );
-                let owner = dialogue_handoff(&session.world).owner;
-                let next = session
-                    .apply(command(SessionCommand::Tick {
-                        milliseconds: SIMULATION_TICK_MS,
-                    }))
-                    .unwrap();
-                assert!(next.dialogue_request.is_none());
-                assert_eq!(dialogue_handoff(&session.world).owner, owner);
-                if matches!(session.spoken_input, SpokenInputState::Idle) {
-                    expired = true;
-                    match channel {
-                        InputChannel::Typed => {
-                            assert!(next.events.contains(&GameEvent::TalkIgnored))
-                        }
-                        InputChannel::Spoken => {
-                            assert_eq!(next.spoken_input, Some(SpokenInputStatus::Expired))
-                        }
-                    }
-                    break;
-                }
-            }
-            assert!(expired);
-            assert_eq!(session.world.creature.development.interactions.talks, 0);
-        }
-    }
-
-    #[test]
-    fn deferred_utterance_rechecks_sleep_and_resentment_before_release() {
-        fn deferred_session(seed: u64) -> GameSession {
-            let mut session = GameSession::new(seed, "Busy");
-            session.world.creature.current_intention = beastie_core::Intention::Play;
-            session.world.creature.traits.sociability = 1.0;
-            session.world.creature.relationship.bond = 1.0;
-            session
-                .apply(command(SessionCommand::Talk {
-                    text: "remember the berry".to_owned(),
-                }))
-                .expect("occupied creature defers");
-            assert!(matches!(
-                session.spoken_input,
-                SpokenInputState::Deferred { .. }
-            ));
-            session
-        }
-
-        let mut sleeping = deferred_session(5_321);
-        sleeping.world.creature.current_intention = beastie_core::Intention::Sleep;
-        sleeping.world.creature.needs.energy = 0.05;
-        let ignored = sleeping
-            .apply(command(SessionCommand::Tick {
-                milliseconds: SIMULATION_TICK_MS.saturating_mul(2),
-            }))
-            .expect("sleeping release is handled");
-        assert!(ignored.dialogue_request.is_none());
-        assert!(ignored.events.contains(&GameEvent::TalkIgnored));
-        assert!(matches!(sleeping.spoken_input, SpokenInputState::Idle));
-
-        let mut resentful = deferred_session(5_322);
-        resentful.world.creature.relationship.resentment = 0.9;
-        let refused = resentful
-            .apply(command(SessionCommand::Tick {
-                milliseconds: SIMULATION_TICK_MS.saturating_mul(2),
-            }))
-            .expect("resentful release is handled");
-        assert!(refused.dialogue_request.is_none());
-        assert!(refused.events.contains(&GameEvent::UtteranceRefused));
-        assert!(matches!(resentful.spoken_input, SpokenInputState::Idle));
-    }
-
-    #[test]
-    fn deferred_utterance_expires_honestly_instead_of_seizing_the_body() {
-        let mut session = GameSession::new(5_323, "Patient");
-        session.spoken_input = SpokenInputState::Deferred {
-            candidate: SpokenCandidate {
-                text: "remember the berry".to_owned(),
-                confidence: AcousticConfidence::new(900).expect("valid confidence"),
-            },
-            ready_at_ms: session
-                .world
-                .elapsed_ms
-                .saturating_add(DEFERRED_UTTERANCE_MAX_MS + SIMULATION_TICK_MS),
-            expires_at_ms: session
-                .world
-                .elapsed_ms
-                .saturating_add(DEFERRED_UTTERANCE_MAX_MS),
-            owner: None,
-            channel: InputChannel::Spoken,
-        };
-
-        session.world.elapsed_ms = session
-            .world
-            .elapsed_ms
-            .saturating_add(DEFERRED_UTTERANCE_MAX_MS);
-        let mut dialogue_request = None;
-        let mut events = Vec::new();
-        let mut status = None;
-        session
-            .apply_deferred_speech(&mut dialogue_request, &mut events, &mut status)
-            .expect("bounded deferred utterance expires");
-
-        assert_eq!(status, Some(SpokenInputStatus::Expired));
-        assert!(dialogue_request.is_none());
-        assert!(events.is_empty());
-        assert!(matches!(session.spoken_input, SpokenInputState::Idle));
-    }
-
-    #[test]
-    fn unknown_language_is_removed_before_typed_or_spoken_prompt_grounding() {
+    fn spoken_and_typed_unknown_words_meet_the_same_curious_creature() {
         let text = "Muck bring the red gizmo from beside the bed";
         let mut typed = GameSession::new(533, "Muck");
         let mut spoken = typed.clone();
 
-        let typed_request = typed
+        let typed_heard = typed
             .apply(command(SessionCommand::Talk {
                 text: text.to_owned(),
             }))
-            .expect("typed utterance")
-            .dialogue_request
-            .expect("idle creature attends");
+            .expect("typed utterance");
         spoken
             .apply(command(SessionCommand::SpeechStarted))
             .expect("speech starts");
@@ -3299,53 +2523,41 @@ mod tests {
                 confidence: AcousticConfidence::new(900).expect("confidence"),
             }))
             .expect("candidate");
-        let spoken_request = spoken
+        let spoken_heard = spoken
             .apply(command(SessionCommand::SpeechEnded))
-            .expect("speech ends")
-            .dialogue_request
-            .expect("idle creature attends");
+            .expect("speech ends");
 
-        assert_eq!(typed_request, spoken_request);
-        assert_eq!(typed_request.player_said, "muck");
-        assert!(!typed_request.player_said.contains("gizmo"));
-        assert!(!typed_request.player_said.contains("beside"));
-        assert!(typed_request.interpretation.unknown_words >= 5);
-        assert!(typed_request.candidate_memories.is_empty());
+        assert_eq!(typed_heard.dialogue_request, spoken_heard.dialogue_request);
+        assert_eq!(
+            typed.world().creature.lexicon,
+            spoken.world().creature.lexicon
+        );
+        let request = typed_heard.dialogue_request.expect("idle creature attends");
+        // One hearing is never a lesson: nothing is learned, the creature tries a word back.
+        assert!(request.vocabulary.is_empty());
+        assert!(matches!(
+            request.speech_intent,
+            Some(SpeechIntent::Echo { .. })
+        ));
+        assert!(request.candidate_memories.is_empty());
+        let reply = beastie_protocol::constrained_fallback_reply(&request);
+        validate_reply(&request, reply).expect("echo line validates");
     }
 
     #[test]
-    fn resentment_is_a_legible_refusal_for_typed_and_spoken_without_mutation() {
+    fn resentful_creature_still_hears_and_answers_the_same_for_typed_and_spoken() {
         let mut typed = GameSession::new(534, "Grudge");
         typed.world.creature.relationship.resentment = 0.9;
         typed.world.creature.current_intention = beastie_core::Intention::Play;
-        let before = typed.world.clone();
-        let refused = typed
+        let mut spoken = typed.clone();
+        let typed_heard = typed
             .apply(command(SessionCommand::Talk {
                 text: "fuck that toy".to_owned(),
             }))
-            .expect("typed refusal");
-        assert!(refused.events.contains(&GameEvent::UtteranceRefused));
-        assert!(
-            refused
-                .events
-                .contains(&GameEvent::NonverbalAct(NonverbalAct::RefuseAndStare))
-        );
-        assert!(refused.dialogue_request.is_none());
-        assert_eq!(
-            typed.world.creature.current_intention,
-            before.creature.current_intention
-        );
-        assert_eq!(
-            typed.world.creature.conversation,
-            before.creature.conversation
-        );
-        assert_eq!(
-            typed.world.creature.social_habits,
-            before.creature.social_habits
-        );
+            .expect("typed talk");
+        assert!(!typed_heard.events.contains(&GameEvent::UtteranceRefused));
+        assert!(!typed_heard.events.contains(&GameEvent::TalkIgnored));
 
-        let mut spoken = GameSession::new(534, "Grudge");
-        spoken.world = before;
         spoken
             .apply(command(SessionCommand::SpeechStarted))
             .expect("resentful creature visibly hears");
@@ -3355,139 +2567,14 @@ mod tests {
                 confidence: AcousticConfidence::new(900).expect("confidence"),
             }))
             .expect("candidate");
-        let refused = spoken
+        let spoken_heard = spoken
             .apply(command(SessionCommand::SpeechEnded))
-            .expect("spoken refusal");
-        assert_eq!(refused.spoken_input, Some(SpokenInputStatus::Refused));
-        assert!(refused.events.contains(&GameEvent::UtteranceRefused));
-        assert_eq!(
-            spoken.world.creature.conversation,
-            typed.world.creature.conversation
-        );
+            .expect("spoken talk");
+        assert_eq!(spoken_heard.dialogue_request, typed_heard.dialogue_request);
+        assert_eq!(spoken.world.creature.lexicon, typed.world.creature.lexicon);
         assert_eq!(
             spoken.world.creature.social_habits,
             typed.world.creature.social_habits
-        );
-    }
-
-    #[test]
-    fn newer_utterance_supersedes_deferred_text_without_cooldown_or_habit_mutation() {
-        let mut session = GameSession::new(535, "Busy");
-        session.world.creature.current_intention = beastie_core::Intention::Play;
-        session.world.creature.traits.sociability = 1.0;
-        session.world.creature.relationship.bond = 1.0;
-        session
-            .apply(command(SessionCommand::Talk {
-                text: "play toy".to_owned(),
-            }))
-            .expect("first utterance is deferred");
-        let world_before_overlap = session.world.clone();
-
-        let replacement = session
-            .apply(command(SessionCommand::Talk {
-                text: "fuck shit".to_owned(),
-            }))
-            .expect("newer utterance replaces the deferred candidate");
-        assert!(replacement.dialogue_request.is_none());
-        assert_eq!(session.world, world_before_overlap);
-        assert!(matches!(
-            &session.spoken_input,
-            SpokenInputState::Deferred { candidate, .. } if candidate.text == "fuck shit"
-        ));
-    }
-
-    #[test]
-    fn recognized_speech_waits_out_cooldown_instead_of_being_lost() {
-        let mut session = GameSession::new(5351, "Patient");
-        session.world.creature.conversation.next_talk_at_ms = SIMULATION_TICK_MS.saturating_mul(2);
-        session
-            .apply(command(SessionCommand::SpeechStarted))
-            .expect("speech starts");
-        session
-            .apply(command(SessionCommand::SpeechCandidate {
-                text: "remember food".to_owned(),
-                confidence: AcousticConfidence::new(900).expect("confidence"),
-            }))
-            .expect("candidate");
-        let before = session.world.creature.conversation;
-        let ended = session
-            .apply(command(SessionCommand::SpeechEnded))
-            .expect("recognized speech is held");
-        assert_eq!(ended.spoken_input, Some(SpokenInputStatus::Deferred));
-        assert_eq!(session.world.creature.conversation, before);
-        assert_eq!(session.world.creature.development.interactions.talks, 0);
-
-        let early = session
-            .apply(command(SessionCommand::Tick {
-                milliseconds: SIMULATION_TICK_MS,
-            }))
-            .expect("first cooldown tick");
-        assert!(early.dialogue_request.is_none());
-        let ready = session
-            .apply(command(SessionCommand::Tick {
-                milliseconds: SIMULATION_TICK_MS,
-            }))
-            .expect("cooldown expires");
-        assert!(ready.dialogue_request.is_some());
-        assert_eq!(ready.spoken_input, Some(SpokenInputStatus::Submitted));
-    }
-
-    #[test]
-    fn deferred_transcript_is_episode_transient_and_fixed_tick_deterministic() {
-        let mut first = GameSession::new(536, "Delay");
-        first.world.creature.traits.sociability = 1.0;
-        first.world.creature.relationship.bond = 1.0;
-        first
-            .world
-            .creature
-            .toy_preferences
-            .insert(ToyId::Ball, 0.8);
-        first
-            .apply(command(SessionCommand::Play { toy: ToyId::Ball }))
-            .expect("accepted toy establishes an exact deferred owner");
-        let mut second = first.clone();
-        for session in [&mut first, &mut second] {
-            session
-                .apply(command(SessionCommand::SpeechStarted))
-                .expect("speech starts");
-            session
-                .apply(command(SessionCommand::SpeechCandidate {
-                    text: "private gizmo toy".to_owned(),
-                    confidence: AcousticConfidence::new(900).expect("confidence"),
-                }))
-                .expect("candidate");
-            let ended = session
-                .apply(command(SessionCommand::SpeechEnded))
-                .expect("speech is deferred");
-            assert_eq!(ended.spoken_input, Some(SpokenInputStatus::Deferred));
-        }
-
-        let save = first.capture(0).to_json().expect("save");
-        assert!(!save.contains("private gizmo toy"));
-        let (resumed, _) = GameSession::resume_json(&save, 0).expect("resume");
-        assert!(matches!(resumed.spoken_input, SpokenInputState::Idle));
-
-        let mut submitted = false;
-        for _ in 0..20 {
-            let next_a = first
-                .apply(command(SessionCommand::Tick {
-                    milliseconds: SIMULATION_TICK_MS,
-                }))
-                .expect("first deterministic tick");
-            let next_b = second
-                .apply(command(SessionCommand::Tick {
-                    milliseconds: SIMULATION_TICK_MS,
-                }))
-                .expect("matching deterministic tick");
-            assert_eq!(next_a, next_b);
-            if next_a.dialogue_request.is_some() {
-                submitted = true;
-                break;
-            }
-        }
-        assert!(
-            submitted,
-            "the exact toy boundary eventually releases dialogue"
         );
     }
 

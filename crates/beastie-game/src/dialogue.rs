@@ -745,6 +745,8 @@ mod tests {
                 max_words: 3,
                 allowed_gestures: BTreeSet::from([Gesture::None]),
             },
+            vocabulary: Vec::new(),
+            speech_intent: None,
         }
     }
 

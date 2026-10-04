@@ -29,6 +29,7 @@ const SOCK_RUSTLE: &str = "object/sock-rustle";
 const CREATURE_AFFECTION: &str = "creature/affection";
 const CREATURE_WAKE: &str = "creature/wake";
 const CREATURE_CURIOUS: &str = "creature/curious";
+const CREATURE_LEARNED: &str = "creature/learned";
 
 const SOUND_IDS: &[&str] = &[
     UI_SELECT,
@@ -52,6 +53,7 @@ const SOUND_IDS: &[&str] = &[
     CREATURE_AFFECTION,
     "creature/surprise",
     "creature/curious",
+    CREATURE_LEARNED,
     "creature/sad",
     CREATURE_WAKE,
 ];
@@ -570,7 +572,8 @@ const fn role_for_cue(cue: AudioCue) -> MixRole {
         | AudioCue::Sleep
         | AudioCue::Affection
         | AudioCue::Wake
-        | AudioCue::Curious => MixRole::Creature,
+        | AudioCue::Curious
+        | AudioCue::WordLearned => MixRole::Creature,
         _ => MixRole::Physical,
     }
 }
@@ -724,6 +727,7 @@ pub const fn sound_for_cue(cue: AudioCue) -> Option<&'static str> {
         AudioCue::SockRustle => Some(SOCK_RUSTLE),
         AudioCue::Affection => Some(CREATURE_AFFECTION),
         AudioCue::Curious => Some(CREATURE_CURIOUS),
+        AudioCue::WordLearned => Some(CREATURE_LEARNED),
         AudioCue::Mrr => Some(CREATURE_MRR),
         AudioCue::Annoyed => Some(CREATURE_ANNOYED),
         AudioCue::Sleep => Some(CREATURE_SLEEP),

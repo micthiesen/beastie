@@ -23,7 +23,14 @@ impl LlamaCppBackend {
     }
 
     fn attempt(&self, request: &DialogueRequest) -> Result<DialogueReply, BackendError> {
-        let prompt = structured_prompt(request).map_err(|_| BackendError::MalformedReply)?;
+        let speech = crate::speech::speech_prompt(request);
+        let prompt = match &speech {
+            Some(prompt) => prompt.clone(),
+            None => structured_prompt(request).map_err(|_| BackendError::MalformedReply)?,
+        };
+        let seed = request.request_id.to_string();
+        let temperature = crate::speech::SPEECH_TEMPERATURE.to_string();
+        let predict = crate::speech::SPEECH_MAX_TOKENS.to_string();
         let threads = bounded_llama_threads(self.config.threads).to_string();
         let mut command = Command::new(&self.config.executable);
         command
@@ -51,6 +58,18 @@ impl LlamaCppBackend {
                 "--no-conversation",
             ])
             .args(["--threads", &threads, "--threads-batch", &threads])
+            .args(if speech.is_some() {
+                vec![
+                    "--temp",
+                    &temperature,
+                    "--seed",
+                    &seed,
+                    "--n-predict",
+                    &predict,
+                ]
+            } else {
+                Vec::new()
+            })
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -62,6 +81,9 @@ impl LlamaCppBackend {
             .map_err(BackendError::Start)?;
         let output = collect_bounded(child, self.config.timeout, self.config.max_output_bytes)?;
         let text = String::from_utf8(output).map_err(|_| BackendError::Utf8)?;
+        if speech.is_some() {
+            return crate::speech::parse_speech_line(request, &text);
+        }
         let reply = parse_single_reply(request, &text)?;
         validate_model_safety(request, &reply)?;
         validate_model_grounding(request, &reply)?;

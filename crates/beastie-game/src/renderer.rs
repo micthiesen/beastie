@@ -1811,6 +1811,163 @@ fn sync_label_meshes(ui: &mut UiSystem<'_, '_>, clips: &[Vec<TextBox>]) {
     }
 }
 
+/// Lay out a row-major pixel pattern of cubes centered on `center`. Characters map to colors;
+/// spaces are empty.
+fn pixel_pattern(
+    shape: &mut EffectShape,
+    center: Vec3,
+    rows: &[&str],
+    pixel: f32,
+    color: impl Fn(u8) -> Option<[u8; 3]>,
+) {
+    let height = rows.len() as f32;
+    let width = rows.iter().map(|row| row.len()).max().unwrap_or(0) as f32;
+    for (row, line) in rows.iter().enumerate() {
+        for (column, byte) in line.bytes().enumerate() {
+            if let Some(rgb) = color(byte) {
+                shape.cuboid(
+                    center
+                        + Vec3::new(
+                            (column as f32 - (width - 1.0) / 2.0) * pixel,
+                            ((height - 1.0) / 2.0 - row as f32) * pixel,
+                            0.0,
+                        ),
+                    Vec3::new(pixel, pixel, pixel * 0.6),
+                    rgb,
+                );
+            }
+        }
+    }
+}
+
+/// A thought bubble above the head holding a pictogram of what the creature wants.
+fn want_bubble(
+    shape: &mut EffectShape,
+    head: Vec3,
+    want: beastie_core::Want,
+    time: f32,
+    reduced_motion: bool,
+) {
+    use beastie_core::{FoodId, Meaning, ToyId, Want};
+    let bob = if reduced_motion {
+        0.0
+    } else {
+        (time * 2.2).sin() * 0.035
+    };
+    let pixel = 0.05;
+    let center = head + Vec3::new(0.62, 1.05 + bob, 0.55);
+    // The cloud: a cream fill with a soft teal rim, then two trailing puffs toward the head.
+    const CLOUD: &[&str] = &[
+        "   ooooooo   ",
+        " oocccccccoo ",
+        "occcccccccco",
+        "occcccccccco",
+        "occcccccccco",
+        "occcccccccco",
+        "occcccccccco",
+        " oocccccccoo ",
+        "   ooooooo   ",
+    ];
+    let cream = [246, 238, 214];
+    let rim = [123, 168, 166];
+    pixel_pattern(shape, center, CLOUD, pixel, |byte| match byte {
+        b'o' => Some(rim),
+        b'c' => Some(cream),
+        _ => None,
+    });
+    for (offset, size) in [
+        (Vec3::new(-0.3, -0.33, 0.0), 2.0),
+        (Vec3::new(-0.45, -0.47, 0.0), 1.2),
+    ] {
+        shape.cuboid(
+            center + offset,
+            Vec3::new(pixel * size, pixel * size, pixel * 0.6),
+            cream,
+        );
+    }
+    let glyph_center = center + Vec3::new(0.0, 0.0, 0.03);
+    let (meaning, curious) = match want {
+        Want::NameOf(meaning) => (Some(meaning), true),
+        Want::Food(Some(food)) => (Some(Meaning::Food(food)), false),
+        Want::Toy(toy) => (Some(Meaning::Toy(toy)), false),
+        _ => (None, false),
+    };
+    let icon_center = if curious {
+        glyph_center + Vec3::new(-0.08, 0.0, 0.0)
+    } else {
+        glyph_center
+    };
+    let draw = |shape: &mut EffectShape, rows: &[&str], palette: &[(u8, [u8; 3])]| {
+        pixel_pattern(shape, icon_center, rows, pixel * 0.85, |byte| {
+            palette
+                .iter()
+                .find(|(key, _)| *key == byte)
+                .map(|(_, rgb)| *rgb)
+        });
+    };
+    match (meaning, want) {
+        (Some(Meaning::Toy(ToyId::Ball)), _) => draw(
+            shape,
+            &[" rrt ", "rrttt", "ccccc", "ttrrr", " ttr "],
+            &[
+                (b'r', [222, 112, 96]),
+                (b't', [104, 178, 164]),
+                (b'c', [238, 214, 160]),
+            ],
+        ),
+        (Some(Meaning::Toy(ToyId::Bell)), _) => draw(
+            shape,
+            &["  g  ", " ggg ", " ggg ", "ggggg", "  d  "],
+            &[(b'g', [214, 168, 70]), (b'd', [150, 110, 40])],
+        ),
+        (Some(Meaning::Toy(ToyId::Sock)), _) => draw(
+            shape,
+            &[" ww  ", " ll  ", " ll  ", " lll ", "  ll "],
+            &[(b'w', [236, 228, 220]), (b'l', [158, 140, 190])],
+        ),
+        (Some(Meaning::Food(FoodId::Berry)), _) => draw(
+            shape,
+            &["  g  ", " rrr ", "rrrrr", "rrrrr", " rrr "],
+            &[(b'g', [96, 160, 90]), (b'r', [204, 64, 84])],
+        ),
+        (Some(Meaning::Food(FoodId::Mushroom)), _) => draw(
+            shape,
+            &[" ttt ", "ttttt", "  s  ", "  s  ", " sss "],
+            &[(b't', [200, 132, 100]), (b's', [236, 222, 196])],
+        ),
+        (Some(Meaning::Food(FoodId::Pellet)), _) => draw(
+            shape,
+            &["     ", " bbb ", " bbb ", " bbb ", "     "],
+            &[(b'b', [150, 112, 70])],
+        ),
+        (_, Want::Company) => draw(
+            shape,
+            &["hh hh", "hhhhh", "hhhhh", " hhh ", "  h  "],
+            &[(b'h', [233, 130, 117])],
+        ),
+        (_, Want::Sleep) => draw(
+            shape,
+            &["zzzz ", "  z  ", " z   ", "zzzz ", "     "],
+            &[(b'z', [110, 132, 170])],
+        ),
+        // Hungry without a favorite yet: crumbs.
+        _ => draw(
+            shape,
+            &["     ", " b b ", "  b  ", " b b ", "     "],
+            &[(b'b', [180, 130, 80])],
+        ),
+    }
+    if curious {
+        pixel_pattern(
+            shape,
+            glyph_center + Vec3::new(0.17, 0.0, 0.0),
+            &["xx ", "  x", " x ", "   ", " x "],
+            pixel * 0.85,
+            |byte| (byte == b'x').then_some([70, 96, 120]),
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Independent Bevy resources and read-only object poses.
 fn sync_effects(
     mut commands: Commands,
@@ -1827,6 +1984,20 @@ fn sync_effects(
         .as_ref()
         .map(|timing| timing.cpu_span("sync_effects"));
     let mut shape = EffectShape::default();
+    if let Some(want) = frame.plan.creature.want {
+        let time = frame
+            .plan
+            .elapsed_ms
+            .saturating_add(frame.plan.simulation_remainder_ms) as f32
+            / 1000.0;
+        want_bubble(
+            &mut shape,
+            motion.position(&frame.plan),
+            want,
+            time,
+            frame.plan.reduced_motion,
+        );
+    }
     for effect in &frame.plan.effects {
         let elapsed = effect
             .elapsed_ms
@@ -1945,6 +2116,107 @@ fn sync_effects(
                         color,
                     );
                 }
+            }
+            PresentationCueKind::Ripple => {
+                // Two pale rings spreading from the tap point on the glass.
+                let spread = if frame.plan.reduced_motion {
+                    0.5
+                } else {
+                    elapsed / 0.9
+                };
+                for ring in 0..2 {
+                    let progress = (spread - ring as f32 * 0.25).clamp(0.0, 1.0);
+                    if progress <= 0.0 || progress >= 1.0 {
+                        continue;
+                    }
+                    let radius = 0.12 + progress * 0.55;
+                    for index in 0..12 {
+                        let angle = index as f32 * std::f32::consts::TAU / 12.0;
+                        shape.cuboid(
+                            position + Vec3::new(angle.cos() * radius, angle.sin() * radius, 1.0),
+                            Vec3::splat(0.035 * (1.0 - progress) + 0.012),
+                            [196, 226, 222],
+                        );
+                    }
+                }
+            }
+            PresentationCueKind::Curious => {
+                // A pixel question mark that bobs up beside the head.
+                let rise = if frame.plan.reduced_motion {
+                    0.0
+                } else {
+                    travel.min(0.4) * 0.25
+                };
+                let center = position + Vec3::new(0.55, 0.95 + rise, 0.7);
+                for (row, line) in [" xxx ", "x   x", "   x ", "  x  ", "     ", "  x  "]
+                    .iter()
+                    .enumerate()
+                {
+                    for (column, byte) in line.bytes().enumerate() {
+                        if byte == b'x' {
+                            shape.cuboid(
+                                center
+                                    + Vec3::new(
+                                        (column as f32 - 2.0) * 0.05,
+                                        -(row as f32) * 0.05,
+                                        0.0,
+                                    ),
+                                Vec3::splat(0.048),
+                                [240, 226, 168],
+                            );
+                        }
+                    }
+                }
+            }
+            PresentationCueKind::WordLearned => {
+                // A celebration that reads from across the room: two rings of sparks burst
+                // outward, then a bright star pops above the head.
+                let burst = if frame.plan.reduced_motion {
+                    0.55
+                } else {
+                    (elapsed * 1.4).min(1.0)
+                };
+                let sparks = if frame.plan.reduced_flashes { 6 } else { 14 };
+                for ring in 0..2 {
+                    let reach = 0.7 + burst * (1.1 + ring as f32 * 0.5);
+                    let fade = (1.2 - burst - ring as f32 * 0.15).max(0.0);
+                    if fade <= 0.0 {
+                        continue;
+                    }
+                    for index in 0..sparks {
+                        let angle = index as f32 * std::f32::consts::TAU / sparks as f32
+                            + ring as f32 * 0.22;
+                        let size = 0.085 * fade;
+                        shape.cuboid(
+                            position
+                                + Vec3::new(
+                                    angle.cos() * reach,
+                                    0.2 + angle.sin() * reach * 0.75,
+                                    0.75,
+                                ),
+                            Vec3::splat(size.max(0.03)),
+                            if (index + ring) % 2 == 0 {
+                                [255, 222, 120]
+                            } else {
+                                [255, 250, 226]
+                            },
+                        );
+                    }
+                }
+                let pop = if frame.plan.reduced_motion {
+                    1.0
+                } else {
+                    (elapsed * 5.0).min(1.0) * (1.0 + (elapsed * 8.0).sin().abs() * 0.12)
+                };
+                pixel_pattern(
+                    &mut shape,
+                    position + Vec3::new(0.0, 1.2 + travel * 0.1, 0.75),
+                    &[
+                        "   y   ", "  yyy  ", "yyyyyyy", " yyyyy ", "  yyy  ", " yy yy ", " y   y ",
+                    ],
+                    0.07 * pop,
+                    |byte| (byte == b'y').then_some([255, 214, 92]),
+                );
             }
             PresentationCueKind::Sleep
             | PresentationCueKind::CaveShelter
@@ -4168,7 +4440,6 @@ mod ui_layout_tests {
             UiMode::Context(UiTarget::Creature),
             UiMode::Inspect(UiTarget::Creature),
             UiMode::FoodChoice,
-            UiMode::FoodDrop(beastie_core::FoodId::Berry),
             UiMode::ToyChoice,
             UiMode::OnScreenKeyboard,
             UiMode::Settings,
@@ -4238,7 +4509,9 @@ mod ui_layout_tests {
     }
 
     #[test]
-    fn dock_summary_fits_complete_mood_and_activity_at_both_text_sizes() {
+    fn dock_summary_stays_in_its_slot_and_its_label_carries_the_complete_status() {
+        // The rail is narrow now that toys and foods are one-click buttons, so a long status
+        // may be shortened there; the creature button's hover label always carries all of it.
         let world = beastie_core::WorldState::new(3, "Mop");
         let lettering = crate::glyphs::Lettering::default();
         for scale in [1, 2] {
@@ -4259,6 +4532,17 @@ mod ui_layout_tests {
                 text.text,
                 format!("{} · {}", scene.summary.mood_label, scene.summary.behavior)
             );
+            let hovered = beastie_view::plan(
+                &world,
+                &beastie_view::ViewState {
+                    text_scale: scale,
+                    hovered_region: Some("compose/creature".to_owned()),
+                    ..default()
+                },
+            )
+            .0;
+            assert!(hovered.text.iter().any(|label| label.id == "ui/hover-label"
+                && label.text == format!("Mop is {}. Click to look closer.", text.text)));
             let bounds = text_content_bounds(text, &scene);
             let bounds = crate::glyphs::Bounds {
                 x: bounds.x,
@@ -4329,8 +4613,28 @@ mod ui_layout_tests {
                 ] {
                     let value = format!("{mood} · {behavior}");
                     let lines = lettering.layout_lines(&value, bounds, text.role.size(scale >= 2));
-                    assert!(lines.len() <= 2);
-                    assert_eq!(lines.join(" "), value, "scale {scale}");
+                    assert!(!lines.is_empty() && lines.len() <= 2, "scale {scale}");
+                    let shown: String = lines.join(" ").trim_end_matches('…').to_owned();
+                    assert!(
+                        value.starts_with(shown.trim_end()),
+                        "{shown} is a prefix of {value}"
+                    );
+                    let hover = format!("Mop is {value}. Click to look closer.");
+                    let size = beastie_view::TextRole::Secondary.size(scale >= 2);
+                    let typography = beastie_view::typography::typography();
+                    let width = (typography.width(&hover, size).ceil() + 12.0).clamp(32.0, 220.0);
+                    let height = typography.height(&hover, width - 12.0, size).ceil();
+                    let hover_lines = lettering.layout_lines(
+                        &hover,
+                        crate::glyphs::Bounds {
+                            x: 0.0,
+                            y: 0.0,
+                            w: width - 12.0,
+                            h: height,
+                        },
+                        size,
+                    );
+                    assert_eq!(hover_lines.join(" "), hover, "scale {scale}");
                 }
             }
         }
@@ -4439,103 +4743,97 @@ mod ui_layout_tests {
     }
 
     #[test]
-    fn compact_caption_clears_the_authored_head_in_the_standard_center_composition() {
-        // Neutral head bounds use the actual authored voxel radius and half-cell
-        // extent, rather than the broad interaction exclusion used for toy cards.
-        // Animated turns and face readability remain native-review acceptance.
-        let half_width = crate::creature::authored_head_half_extents().x * UNITS;
+    fn speech_bubble_never_covers_the_authored_head() {
+        // Head bounds use the actual authored voxel radii projected through the tank camera's
+        // pitch, rather than the view's planning box. Animated turns remain native review.
+        let half = crate::creature::authored_head_half_extents();
+        let pitch = Quat::from_rotation_x(CAMERA_PITCH).inverse();
+        let half_width = half.x * UNITS;
+        let half_height =
+            (half.y * CAMERA_PITCH.cos().abs() + half.z * CAMERA_PITCH.sin().abs()) * UNITS;
         for scale in [1, 2] {
-            for x in [4_950, 5_000, 5_189] {
-                let mut world = beastie_core::WorldState::new(3, "Mop");
-                world.creature.aquarium.position.x = x;
-                let mut view = beastie_view::ViewState {
-                    text_scale: scale,
-                    ..default()
-                };
-                view.show_speech("W".repeat(beastie_protocol::MAX_DIALOGUE_REPLY_BYTES), 0);
-                let scene = beastie_view::plan(&world, &view).0;
-                let head_x = crate::creature::head_position(&scene).x * UNITS + LOGICAL_WIDTH * 0.5;
-                for part in scene.rects.iter().filter(|part| {
-                    !part.outline && (part.id == "speech/panel" || part.id.starts_with("reaction/"))
-                }) {
-                    assert!(
-                        (part.rect.x + part.rect.w) as f32 <= head_x - half_width
-                            || part.rect.x as f32 >= head_x + half_width,
-                        "{} covers the central authored head at x{head_x}",
-                        part.id
-                    );
+            for x in [0, 1_500, 4_950, 5_000, 5_189, 8_500, 10_000] {
+                for y in [0, 3_000, 6_000, 10_000] {
+                    for speech in [
+                        "hm.".to_owned(),
+                        "ball? mop wants the red ball now".to_owned(),
+                        "W".repeat(beastie_protocol::MAX_DIALOGUE_REPLY_BYTES),
+                    ] {
+                        let mut world = beastie_core::WorldState::new(3, "Mop");
+                        world.creature.aquarium.position =
+                            beastie_core::NormalizedPosition::new(x, y);
+                        let mut view = beastie_view::ViewState {
+                            text_scale: scale,
+                            ..default()
+                        };
+                        view.show_speech(speech.clone(), 0);
+                        let scene = beastie_view::plan(&world, &view).0;
+                        let head = pitch * crate::creature::head_position(&scene);
+                        let head_x = head.x * UNITS + LOGICAL_WIDTH * 0.5;
+                        let head_y = LOGICAL_HEIGHT * 0.5 - head.y * UNITS;
+                        for part in scene
+                            .rects
+                            .iter()
+                            .filter(|part| !part.outline && part.id.starts_with("speech/"))
+                        {
+                            let clear_x = (part.rect.x + part.rect.w) as f32 <= head_x - half_width
+                                || part.rect.x as f32 >= head_x + half_width;
+                            let clear_y = (part.rect.y + part.rect.h) as f32
+                                <= head_y - half_height
+                                || part.rect.y as f32 >= head_y + half_height;
+                            assert!(
+                                clear_x || clear_y,
+                                "{} covers the authored head at ({head_x}, {head_y}) scale {scale}",
+                                part.id
+                            );
+                        }
+                    }
                 }
             }
         }
     }
 
     #[test]
-    fn compact_caption_pages_and_reaction_labels_fit_the_authored_font() {
+    fn speech_bubble_text_fits_the_authored_font() {
         let world = beastie_core::WorldState::new(3, "Mop");
         let lettering = crate::glyphs::Lettering::default();
         for scale in [1, 2] {
             for speech in [
-                "W".repeat(beastie_protocol::MAX_DIALOGUE_REPLY_BYTES),
-                "A quiet thought beside the water. ".repeat(12),
-                "café e\u{301} 🌿, the bell and the quiet water. ".repeat(8),
-                "👩‍👩‍👧‍👦 ".repeat(16),
+                "mop likes ball".to_owned(),
+                "ball? mop wants the red ball now, please".to_owned(),
+                "café e\u{301} 🌿 bell".to_owned(),
+                "👩‍👩‍👧‍👦 👩‍👩‍👧‍👦 sock".to_owned(),
             ] {
                 let mut view = beastie_view::ViewState {
                     text_scale: scale,
                     ..default()
                 };
                 view.show_speech(speech.clone(), 0);
-                let mut restored = String::new();
-                loop {
-                    let scene = beastie_view::plan(&world, &view).0;
-                    let caption = scene
-                        .text
-                        .iter()
-                        .find(|text| text.id == "speech/text")
-                        .unwrap();
-                    restored.push_str(&caption.text);
-                    for text in scene
-                        .text
-                        .iter()
-                        .filter(|text| text.id == "speech/text" || text.id.starts_with("reaction/"))
-                    {
-                        let bounds = text_content_bounds(text, &scene);
-                        let lines = lettering.layout_lines(
-                            &text.text,
-                            crate::glyphs::Bounds {
-                                x: bounds.x,
-                                y: bounds.y,
-                                w: bounds.w,
-                                h: bounds.h,
-                            },
-                            text.role.size(scale >= 2),
-                        );
-                        let expected: String =
-                            text.text.chars().filter(|c| !c.is_whitespace()).collect();
-                        let actual: String = lines
-                            .concat()
-                            .chars()
-                            .filter(|c| !c.is_whitespace())
-                            .collect();
-                        assert_eq!(
-                            actual, expected,
-                            "{} page {} scale {scale}",
-                            text.id, view.speech_page
-                        );
-                    }
-                    if !scene
-                        .hit_regions
-                        .iter()
-                        .any(|hit| hit.id == "speech/next" && hit.enabled)
-                    {
-                        break;
-                    }
-                    view.change_speech_page(1, 0);
-                }
-                assert_eq!(
-                    restored, speech,
-                    "pagination must preserve the complete utterance"
+                let scene = beastie_view::plan(&world, &view).0;
+                let caption = scene
+                    .text
+                    .iter()
+                    .find(|text| text.id == "speech/text")
+                    .unwrap();
+                let bounds = text_content_bounds(caption, &scene);
+                let lines = lettering.layout_lines(
+                    &caption.text,
+                    crate::glyphs::Bounds {
+                        x: bounds.x,
+                        y: bounds.y,
+                        w: bounds.w,
+                        h: bounds.h,
+                    },
+                    caption.role.size(scale >= 2),
                 );
+                // Short lines show whole: nothing is dropped or ellipsized.
+                let expected: String = speech.chars().filter(|c| !c.is_whitespace()).collect();
+                let actual: String = lines
+                    .concat()
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                assert_eq!(actual, expected, "{speech} scale {scale}");
             }
         }
     }
@@ -4636,7 +4934,6 @@ mod ui_layout_tests {
                 beastie_view::UiMode::Bindings,
                 beastie_view::UiMode::Rebinding(beastie_view::BindableAction::PushToTalk),
                 beastie_view::UiMode::FoodChoice,
-                beastie_view::UiMode::FoodDrop(beastie_core::FoodId::Mushroom),
                 beastie_view::UiMode::ToyChoice,
                 beastie_view::UiMode::Context(beastie_view::UiTarget::Creature),
                 beastie_view::UiMode::Context(beastie_view::UiTarget::Toy(

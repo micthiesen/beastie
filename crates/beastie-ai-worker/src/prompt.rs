@@ -1,6 +1,7 @@
 use beastie_protocol::{
     BeliefKind, DialogueObjectContext, DialogueObjectKind, DialogueRequest, DialogueTopic,
-    classify_content_boundary, normalize_dialogue_request,
+    SpeechIntent, allowed_glue, classify_content_boundary, compose_line, creature_sounds,
+    normalize_dialogue_request,
 };
 
 pub(crate) fn structured_prompt(request: &DialogueRequest) -> Result<String, serde_json::Error> {
@@ -39,6 +40,42 @@ pub(crate) fn structured_prompt(request: &DialogueRequest) -> Result<String, ser
          {scaffold}",
         plan.directive
     ))
+}
+
+/// The directive for a learned-word turn: what to express and the only words allowed.
+fn speech_directive(request: &DialogueRequest, intent: &SpeechIntent) -> String {
+    let purpose = match intent {
+        SpeechIntent::NewWord { word, meaning } => format!(
+            "You just learned the word \"{word}\" ({}). Say it proudly.",
+            meaning.gloss()
+        ),
+        SpeechIntent::Echo { attempt } => {
+            format!("You heard a word you do not know yet. Try to repeat it as \"{attempt}\".")
+        }
+        SpeechIntent::Answer {
+            word,
+            meaning,
+            response,
+        } => format!(
+            "The player said \"{word}\" ({}). Your response is {response:?}; express that.",
+            meaning.gloss()
+        ),
+        SpeechIntent::Want { meaning } => format!("Ask for {}.", meaning.gloss()),
+        SpeechIntent::Remark { meaning } => format!("Name {} in your own words.", meaning.gloss()),
+        SpeechIntent::Babble => "Babble back with creature sounds only.".to_owned(),
+    };
+    let mut allowed = request
+        .vocabulary
+        .iter()
+        .map(|entry| entry.word.as_str())
+        .collect::<Vec<_>>();
+    allowed.extend(allowed_glue(request.vocabulary.len()));
+    allowed.extend(creature_sounds());
+    format!(
+        "{purpose} Use ONLY these words: {}. Any other word is forbidden. Example line: \"{}\"",
+        allowed.join(", "),
+        compose_line(request)
+    )
 }
 
 struct TurnPlan {
@@ -82,6 +119,13 @@ fn explicit_memory_request(
 }
 
 fn turn_plan(request: &DialogueRequest) -> Result<TurnPlan, serde_json::Error> {
+    if let Some(intent) = &request.speech_intent {
+        return Ok(TurnPlan {
+            directive: speech_directive(request, intent),
+            recalled_memory: None,
+            recalled_belief: None,
+        });
+    }
     if let Some(rejection) = request.input_rejection {
         return Ok(TurnPlan {
             directive: format!(
@@ -269,6 +313,11 @@ fn relationship_subject_label(subject: beastie_protocol::RelationshipSubject) ->
 }
 
 pub(crate) fn required_output_terms(request: &DialogueRequest) -> Option<Vec<String>> {
+    // Learned-word speech is held to its vocabulary by `validate_reply`; motif or style terms
+    // the creature has not learned would make every model line invalid.
+    if request.speech_intent.is_some() {
+        return None;
+    }
     if let Some(relationship) = &request.context.relationship {
         let terms: &[&str] = match relationship.motif {
             beastie_protocol::RelationshipMotifKey::SharedToy(_) => &["toy", "play", "remember"],
@@ -690,5 +739,23 @@ mod tests {
         belief.interpretation = aquarium.interpretation;
         assert!(!belief.candidate_beliefs.is_empty());
         assert!(planned_belief(&belief).is_none());
+    }
+
+    #[test]
+    fn learned_word_prompt_lists_only_permitted_words_and_drops_motif_terms() {
+        let mut request = request();
+        request.vocabulary = vec![beastie_protocol::VocabularyWord {
+            word: "zorp".to_owned(),
+            meaning: beastie_protocol::Meaning::Toy(beastie_protocol::ToyId::Ball),
+        }];
+        request.speech_intent = Some(SpeechIntent::NewWord {
+            word: "zorp".to_owned(),
+            meaning: beastie_protocol::Meaning::Toy(beastie_protocol::ToyId::Ball),
+        });
+        let prompt = structured_prompt(&request).expect("request should serialize");
+        let directive = &prompt[prompt.find("THIS TURN").expect("directive")..];
+        assert!(directive.contains("Use ONLY these words: zorp, mrp"));
+        assert!(directive.contains("\"recalled_memory\":null"));
+        assert_eq!(required_output_terms(&request), None);
     }
 }

@@ -4,7 +4,6 @@
 //! clipping belong to the renderer. Cached results affect work, never layout.
 use std::{
     collections::VecDeque,
-    ops::Range,
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -40,14 +39,12 @@ pub struct ShapedRun {
 enum Operation {
     Width { size: u32 },
     Lines { width: u32, size: u32 },
-    Pages { width: u32, size: u32, lines: usize },
 }
 
 #[derive(Clone)]
 enum Layout {
     Width(f32),
     Lines(Arc<Vec<String>>),
-    Pages(Arc<Vec<Range<usize>>>),
 }
 
 impl Layout {
@@ -61,11 +58,6 @@ impl Layout {
                     + size_of::<Vec<String>>()
                     + lines.capacity() * size_of::<String>()
                     + lines.iter().map(String::capacity).sum::<usize>()
-            }
-            Self::Pages(pages) => {
-                2 * size_of::<usize>()
-                    + size_of::<Vec<Range<usize>>>()
-                    + pages.capacity() * size_of::<Range<usize>>()
             }
         }
     }
@@ -407,89 +399,6 @@ impl Typography {
         }
         format!("…{}", &line[start..])
     }
-
-    /// Lossless byte ranges whose exact wrapping fits the requested line budget.
-    /// Breaks prefer whitespace, retain it on the preceding page, and never split
-    /// a grapheme. Whole-utterance results are reused throughout progressive reveal.
-    #[must_use]
-    pub fn pages(
-        &self,
-        text: &str,
-        width: f32,
-        size: f32,
-        max_lines: usize,
-    ) -> Arc<Vec<Range<usize>>> {
-        let Layout::Pages(pages) = self.cached(
-            text,
-            Operation::Pages {
-                width: width.to_bits(),
-                size: size.to_bits(),
-                lines: max_lines,
-            },
-            || {
-                Layout::Pages(Arc::new(self.pages_uncached(
-                    text,
-                    width,
-                    size,
-                    max_lines.max(1),
-                )))
-            },
-        ) else {
-            unreachable!("page cache key always stores pages")
-        };
-        pages
-    }
-
-    fn pages_uncached(
-        &self,
-        text: &str,
-        width: f32,
-        size: f32,
-        max_lines: usize,
-    ) -> Vec<Range<usize>> {
-        let mut pages = Vec::new();
-        let mut start = 0;
-        while start < text.len() {
-            let remaining = &text[start..];
-            let boundaries: Vec<_> = std::iter::once(0)
-                .chain(
-                    remaining
-                        .grapheme_indices(true)
-                        .map(|(index, grapheme)| index + grapheme.len()),
-                )
-                .collect();
-            let mut low = 1;
-            let mut high = boundaries.len() - 1;
-            while low < high {
-                let middle = (low + high).div_ceil(2);
-                if self
-                    .lines_uncached(&remaining[..boundaries[middle]], width, size)
-                    .len()
-                    <= max_lines
-                {
-                    low = middle;
-                } else {
-                    high = middle - 1;
-                }
-            }
-            let mut end = boundaries[low];
-            if end < remaining.len()
-                && let Some((index, whitespace)) = remaining[..end]
-                    .grapheme_indices(true)
-                    .rev()
-                    .find(|(_, grapheme)| grapheme.chars().all(char::is_whitespace))
-                && !remaining[..index].trim().is_empty()
-            {
-                end = index + whitespace.len();
-            }
-            pages.push(start..start + end);
-            start += end;
-        }
-        if pages.is_empty() {
-            pages.push(0..0);
-        }
-        pages
-    }
 }
 
 #[cfg(test)]
@@ -548,57 +457,14 @@ mod tests {
     }
 
     #[test]
-    fn measured_pages_are_lossless_and_end_at_complete_graphemes() {
+    fn repeated_measurement_reuses_results_without_shaping() {
         let typography = Typography::default();
-        for text in [
-            "W".repeat(512),
-            "A quiet thought.  Another thought.\n\n🌿 e\u{301} ".repeat(12),
-            "👩‍👩‍👧‍👦 ".repeat(100),
-            "one\n".repeat(80),
-        ] {
-            let pages = typography.pages(&text, 122.0, 7.8, 5);
-            let mut restored = String::new();
-            let boundaries: Vec<_> = text
-                .grapheme_indices(true)
-                .map(|(index, _)| index)
-                .chain([text.len()])
-                .collect();
-            for range in pages.iter() {
-                assert!(boundaries.contains(&range.start) && boundaries.contains(&range.end));
-                let page = &text[range.clone()];
-                restored.push_str(page);
-                assert!(typography.lines(page, 122.0, 7.8).len() <= 5);
-                for size in [6.0, 7.8] {
-                    let measured = typography.lines(page, 122.0, size);
-                    let rendered = typography.layout_lines(
-                        page,
-                        122.0,
-                        typography.height(page, 122.0, size).ceil(),
-                        size,
-                    );
-                    assert_eq!(&rendered, measured.as_ref());
-                    assert!(rendered.iter().all(|line| !line.ends_with('…')));
-                }
-            }
-            assert_eq!(restored, text);
-        }
-        let empty = typography.pages("", 122.0, 7.8, 5);
-        assert_eq!(empty.len(), 1);
-        assert_eq!(empty[0], 0..0);
-    }
-
-    #[test]
-    fn repeated_measurement_and_paging_reuse_results_without_shaping() {
-        let typography = Typography::default();
-        let text = "A quiet thought beside the plant 🌿 and its scientist 👩‍🔬. ".repeat(10);
-        let pages = typography.pages(&text, 122.0, 7.8, 5);
-        let page = &text[pages[0].clone()];
+        let page = "A quiet thought beside the plant 🌿 and its scientist 👩‍🔬.";
         let lines = typography.lines(page, 122.0, 7.8);
         let height = typography.height(page, 122.0, 7.8);
         let width = typography.width("mushroom", 6.24);
         let calls = typography.shape_calls.load(Ordering::Relaxed);
         for _ in 0..100 {
-            assert!(Arc::ptr_eq(&pages, &typography.pages(&text, 122.0, 7.8, 5)));
             assert!(Arc::ptr_eq(&lines, &typography.lines(page, 122.0, 7.8)));
             assert_eq!(typography.height(page, 122.0, 7.8), height);
             assert_eq!(typography.width("mushroom", 6.24), width);

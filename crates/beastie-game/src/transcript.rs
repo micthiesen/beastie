@@ -136,6 +136,8 @@ mod tests {
                 max_words: 4,
                 allowed_gestures: BTreeSet::from([Gesture::None]),
             },
+            vocabulary: Vec::new(),
+            speech_intent: None,
         };
         let reply = constrained_fallback_reply(&request);
         request.player_said = "must never be persisted".to_owned();

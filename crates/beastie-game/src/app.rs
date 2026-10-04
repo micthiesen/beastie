@@ -318,7 +318,12 @@ impl Game {
                     false,
                 )
             } else if args.new_game {
-                (GameSession::new(42, "Mop"), None, false, true)
+                (
+                    GameSession::first_meeting(fresh_seed(), "Mop"),
+                    None,
+                    false,
+                    true,
+                )
             } else {
                 load_session(&save_store)
             };
@@ -990,7 +995,14 @@ impl Game {
             self.settings.subtitles,
             text_speed,
         );
-        if turn.fallback {
+        // Without a local model the creature speaks through its own composed lines by design;
+        // only a model that is present but failing deserves a technical notice.
+        let designed_voice = turn.request.speech_intent.is_some()
+            && matches!(
+                turn.fallback_reason,
+                None | Some(beastie_protocol::DialogueFallbackReason::WorkerUnavailable)
+            );
+        if turn.fallback && !designed_voice {
             self.view.show_status(
                 "Local AI unavailable".to_owned(),
                 self.session.world().elapsed_ms,
@@ -1111,7 +1123,6 @@ impl Game {
                 | UiAction::OpenFoodChoice
                 | UiAction::OpenToyChoice
                 | UiAction::SelectFood(_)
-                | UiAction::DropFood(_)
                 | UiAction::Play(_)
                 | UiAction::Comfort
                 | UiAction::Inspect
@@ -1167,15 +1178,17 @@ impl Game {
                 self.reset_focus();
             }
             UiAction::SelectFood(food) => {
-                self.view.mode = UiMode::FoodDrop(food);
-                self.view.focused_region = None;
-            }
-            UiAction::DropFood(food) => {
-                let position = self
-                    .cursor_world
-                    .unwrap_or_else(|| NormalizedPosition::new(5_000, 2_500));
+                // Food lands just in front of the creature's face so feeding pays off in about
+                // a second, from either the rail or the controller food strip.
+                let position = beastie_core::feeding_position(self.session.world());
                 self.apply_command(SessionCommand::DropFood { food, position }, true)?;
                 self.close_menu();
+            }
+            UiAction::TapWater => {
+                // Only the pointer can tap a point in the water; it supplies the position.
+                if let Some(position) = self.cursor_world {
+                    self.apply_command(SessionCommand::Tap { position }, true)?;
+                }
             }
             UiAction::Play(toy) => {
                 self.apply_command(play_command(toy), true)?;
@@ -1205,10 +1218,6 @@ impl Game {
                 } else {
                     focus_text_input(&mut self.view);
                 }
-            }
-            UiAction::React(reaction) => {
-                self.apply_command(SessionCommand::React { reaction }, true)?;
-                self.close_menu();
             }
             UiAction::TypeCharacter(character) => {
                 append_view_text(
@@ -1339,10 +1348,8 @@ impl Game {
                 }
                 self.persist_settings()?;
             }
-            UiAction::ChangeSpeechPage(delta) => {
-                self.view
-                    .change_speech_page(delta, self.session.world().elapsed_ms);
-            }
+            // Speech bubbles are no longer paged; older scenario scripts may still ask.
+            UiAction::ChangeSpeechPage(_) => {}
             UiAction::CycleTextSpeed => {
                 self.settings.text_speed = cycle_text_speed(self.settings.text_speed);
                 self.view.text_speed = text_speed_value(self.settings.text_speed);
@@ -1518,7 +1525,7 @@ impl Game {
         self.supersede_dialogue_turn()?;
         match self.save_store.reset() {
             Ok(preserved) => {
-                self.session = GameSession::new(42, "Mop");
+                self.session = GameSession::first_meeting(fresh_seed(), "Mop");
                 self.save_enabled = true;
                 self.reset_world_presentation();
                 self.view.show_status(
@@ -1904,8 +1911,7 @@ impl Game {
                 )?;
             }
         }
-        if self.audio.speech_active() && self.view.speech.is_some() && !self.view.has_speech_pages()
-        {
+        if self.audio.speech_active() && self.view.speech.is_some() {
             self.view.speech_expires_at_ms = Some(
                 self.session
                     .world()
@@ -2048,10 +2054,9 @@ impl Game {
         if let Some(action) = action {
             if action == UiAction::PushToTalk {
                 self.apply_ui_action(action, false)?;
-            } else if let UiAction::DropFood(food) = action {
+            } else if action == UiAction::TapWater {
                 if let Some(position) = world {
-                    self.cursor_world = Some(position);
-                    self.apply_confirmed_ui_action(UiAction::DropFood(food), false)?;
+                    self.apply_command(SessionCommand::Tap { position }, true)?;
                 }
             } else {
                 self.apply_confirmed_ui_action(action, false)?;
@@ -2374,10 +2379,26 @@ fn present_startup_notice(view: &mut ViewState, notice: StartupNotice, now_ms: u
     }
 }
 
+/// Each new creature is its own: the shell injects a wall-clock seed, and the simulation stays
+/// deterministic from there.
+fn fresh_seed() -> u64 {
+    let mut seed = unix_time_ms() ^ (u64::from(std::process::id()) << 32);
+    seed ^= seed >> 33;
+    seed = seed.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    seed ^ (seed >> 33)
+}
+
 fn load_session(store: &SaveStore) -> (GameSession, Option<StartupNotice>, bool, bool) {
     let loaded = match store.load_recoverable() {
         Ok(Some(loaded)) => loaded,
-        Ok(None) => return (GameSession::new(42, "Mop"), None, false, true),
+        Ok(None) => {
+            return (
+                GameSession::first_meeting(fresh_seed(), "Mop"),
+                None,
+                false,
+                true,
+            );
+        }
         Err(_) => {
             return (
                 GameSession::new(42, "Mop"),
@@ -2488,16 +2509,9 @@ fn revealed_text(full_text: &str, elapsed_ms: u64, speed: TextSpeed) -> (String,
 }
 
 fn focus_after_dialogue(view: &mut ViewState) {
-    // A background reply does not own navigation or a dialog's editing focus.
+    // A reply never takes the keyboard: the player can always keep talking.
     if view.mode == UiMode::Compose {
-        view.focused_region = Some(
-            if view.speech.is_some() {
-                "reaction/laugh"
-            } else {
-                "compose/input"
-            }
-            .to_owned(),
-        );
+        view.focused_region = Some("compose/input".to_owned());
     }
 }
 
@@ -3700,7 +3714,7 @@ mod tests {
             UiAction::Inspect,
             UiAction::Comfort,
             UiAction::Talk,
-            UiAction::React(Reaction::Laugh),
+            UiAction::TapWater,
         ];
         assert_eq!(mappings.len(), 7);
     }
@@ -3921,21 +3935,24 @@ mod tests {
     }
 
     #[test]
-    fn reply_focus_stays_visible_without_subtitles_and_preserves_other_pages() {
+    fn reply_never_steals_keyboard_focus_and_preserves_other_pages() {
         let owner = DialogueOwner {
             generation: 1,
             request_id: 7,
         };
         let mut view = ViewState::default();
-        show_dialogue_caption(&mut view, owner, "hello", 42, false, TextSpeed::Instant);
-        super::focus_after_dialogue(&mut view);
-        assert_eq!(
-            crate::input::focused_text_field(&view),
-            Some(crate::input::TextField::Message)
-        );
-        show_dialogue_caption(&mut view, owner, "hello", 43, true, TextSpeed::Instant);
-        super::focus_after_dialogue(&mut view);
-        assert_eq!(view.focused_region.as_deref(), Some("reaction/laugh"));
+        for (at, subtitles) in [(42, false), (43, true)] {
+            view.text_buffer = "ball".to_owned();
+            show_dialogue_caption(&mut view, owner, "hello", at, subtitles, TextSpeed::Instant);
+            super::focus_after_dialogue(&mut view);
+            // The player can keep typing through a visible reply without a click.
+            assert_eq!(view.focused_region.as_deref(), Some("compose/input"));
+            assert_eq!(
+                crate::input::focused_text_field(&view),
+                Some(crate::input::TextField::Message)
+            );
+            assert_eq!(view.text_buffer, "ball");
+        }
 
         for (mode, focus) in [
             (UiMode::Settings, "settings/subtitles"),
@@ -4044,15 +4061,20 @@ mod tests {
         let (mut audio, mut source) = crate::audio::test_speech_playback(owner, 1_000);
         let mut session = beastie_session::GameSession::new(42, "Mop");
         let fixed_tick_ms = session.world().elapsed_ms;
+        let mut frame_ms = 0;
         for (milliseconds, expected_phase) in [(20, 2), (60, 0), (50, 1), (50, 2)] {
             session
                 .apply(beastie_session::CommandEnvelope {
                     version: SESSION_PROTOCOL_VERSION,
                     command: SessionCommand::Tick { milliseconds },
                 })
-                .expect("advance frame within one simulation tick");
+                .expect("advance one presentation frame");
             source.by_ref().take(milliseconds as usize).for_each(drop);
-            assert_eq!(session.world().elapsed_ms, fixed_tick_ms);
+            frame_ms += milliseconds;
+            if frame_ms < beastie_core::SIMULATION_TICK_MS {
+                // The mouth moves on audio time even before the simulation steps.
+                assert_eq!(session.world().elapsed_ms, fixed_tick_ms);
+            }
             assert_eq!(
                 animation.phase(dialogue, Some(owner), &audio),
                 expected_phase

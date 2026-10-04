@@ -217,6 +217,22 @@ pub(super) fn expression(cue: PresentationCueKind) -> Option<Acting> {
             nod: 0.09,
             ..CURIOUS
         },
+        PresentationCueKind::Curious => Acting {
+            eye_open: 1.08,
+            brow: 0.28,
+            tilt: 0.22,
+            nod: 0.04,
+            ..CURIOUS
+        },
+        PresentationCueKind::WordLearned => Acting {
+            eye_open: 0.9,
+            smile: 0.12,
+            mouth: 0.62,
+            mouth_width: 1.18,
+            fin: 0.45,
+            nod: 0.16,
+            ..CONTENT
+        },
         PresentationCueKind::Sleep => SLEEP,
         PresentationCueKind::Crumbs => Acting {
             mouth: 0.3,

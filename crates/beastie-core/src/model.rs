@@ -116,6 +116,12 @@ pub struct InteractionCounters {
     pub comforts: u32,
     pub returns: u32,
     pub talks: u32,
+    /// Known words the creature has answered.
+    #[serde(default)]
+    pub requests: u32,
+    /// Taps on the glass.
+    #[serde(default)]
+    pub taps: u32,
 }
 
 impl InteractionCounters {
@@ -279,6 +285,15 @@ pub struct ConversationState {
     pub next_talk_at_ms: u64,
     pub contextual_follow_up_available: bool,
     pub contextual_follow_up_used: bool,
+    /// A playful refusal is never repeated for the very next request.
+    #[serde(default)]
+    pub refused_last_request: bool,
+    /// When the creature last asked for something on its own.
+    #[serde(default)]
+    pub last_asked_ms: u64,
+    /// When the creature last named something unprompted.
+    #[serde(default)]
+    pub last_remark_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -404,7 +419,8 @@ pub struct NormalizedVelocity {
 }
 
 impl NormalizedVelocity {
-    pub const MAX_COMPONENT: i32 = 2_000;
+    /// Velocities are fixed-point units per second.
+    pub const MAX_COMPONENT: i32 = 8_000;
 
     #[must_use]
     pub fn clamped(self) -> Self {
@@ -726,6 +742,15 @@ pub struct ToyInteraction {
     pub phase: ToyInteractionPhase,
     #[serde(default)]
     pub relationship: Option<ActionRelationshipContext>,
+    /// When the post-contact recovery (a held sock, a satisfied pause) ends.
+    #[serde(default)]
+    pub recovery_until_ms: u64,
+    /// Further chase rounds in this play session: a direct offer is a little game, not one tap.
+    #[serde(default)]
+    pub rounds_left: u8,
+    /// Contacts made so far; history and reward are recorded on the first one only.
+    #[serde(default)]
+    pub contacts: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1336,6 +1361,15 @@ pub struct Creature {
     pub favorite_locations: BTreeMap<SemanticDestination, u32>,
     #[serde(default)]
     pub initiated_behavior: Option<InitiatedBehavior>,
+    /// Words heard from the player and the evidence for what they mean.
+    #[serde(default)]
+    pub lexicon: crate::Lexicon,
+    /// Short-lived shared focus: what a word heard right now would most plausibly refer to.
+    #[serde(default)]
+    pub attention: Vec<crate::FocusMark>,
+    /// A brand-new creature waits shyly in its cave until it has met the player.
+    #[serde(default)]
+    pub hidden_until_met: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1388,7 +1422,36 @@ pub struct WorldState {
     pub absence_days: u32,
 }
 
+/// A new creature has a clear favorite, something it is fine with, and something it dislikes,
+/// so preferences are discovered rather than averaged away. Jitter keeps creatures distinct.
+fn ranked_preferences<T: Ord + Copy>(seed: u64, items: [(T, u64); 3]) -> BTreeMap<T, f32> {
+    let mut ranked = items.map(|(item, key)| {
+        (
+            crate::deterministic_unit(seed, crate::RandomDomain::Preferences, 1_000 + key),
+            crate::deterministic_unit(seed, crate::RandomDomain::Preferences, 2_000 + key),
+            item,
+        )
+    });
+    ranked.sort_by(|left, right| right.0.total_cmp(&left.0));
+    ranked
+        .into_iter()
+        .zip([0.75_f32, 0.25, -0.6])
+        .map(|((_, jitter, item), base)| (item, base + (jitter - 0.5) * 0.16))
+        .collect()
+}
+
 impl WorldState {
+    /// A new creature for a player who has never met it: it starts tucked in its cave mouth
+    /// and comes out to meet them.
+    #[must_use]
+    pub fn first_meeting(seed: u64, name: impl Into<String>) -> Self {
+        let mut world = Self::new(seed, name);
+        world.creature.hidden_until_met = true;
+        world.creature.aquarium.position = NormalizedPosition::new(1_700, 8_100);
+        world.creature.aquarium.facing = Facing::Right;
+        world
+    }
+
     #[must_use]
     pub fn new(seed: u64, name: impl Into<String>) -> Self {
         let mut genome = SeededRandom::new(seed ^ 0xa076_1d64_78bd_642f);
@@ -1430,8 +1493,18 @@ impl WorldState {
                     respect: 0.1,
                     resentment: 0.02,
                 },
-                preferences: BTreeMap::new(),
-                toy_preferences: BTreeMap::new(),
+                preferences: ranked_preferences(
+                    seed,
+                    [
+                        (FoodId::Berry, 11),
+                        (FoodId::Mushroom, 12),
+                        (FoodId::Pellet, 13),
+                    ],
+                ),
+                toy_preferences: ranked_preferences(
+                    seed,
+                    [(ToyId::Ball, 21), (ToyId::Bell, 22), (ToyId::Sock, 23)],
+                ),
                 known_concepts: BTreeSet::from([
                     Concept::SelfIdentity,
                     Concept::You,
@@ -1462,6 +1535,9 @@ impl WorldState {
                 routines: Vec::new(),
                 favorite_locations: BTreeMap::new(),
                 initiated_behavior: None,
+                lexicon: crate::Lexicon::default(),
+                attention: Vec::new(),
+                hidden_until_met: false,
             },
             aquarium: AquariumState::default(),
             random_domains: BTreeMap::new(),
@@ -1812,14 +1888,10 @@ impl WorldState {
             return Err(StateValidationError::Belief);
         }
         let development = &self.creature.development;
+        // Language stage follows learned vocabulary and never regresses, so earlier saves may
+        // legitimately be ahead of their current word count.
         if development.active_days_reached == 0
             || u64::from(development.active_days_reached) > self.active_day()
-            || (development.language_stage >= LanguageStage::Words
-                && (development.active_days_reached < 2
-                    || !self.creature.known_concepts.contains(&Concept::Again)))
-            || (development.language_stage >= LanguageStage::Phrases
-                && (development.active_days_reached < 3
-                    || !self.creature.known_concepts.contains(&Concept::Yesterday)))
         {
             return Err(StateValidationError::Development);
         }
@@ -1905,7 +1977,13 @@ impl WorldState {
                         .is_none_or(|activity| {
                             activity.id != activity_id
                                 || activity.phase != ActivityPhase::Approach
-                                || activity.kind.destination() != Some(destination)
+                                || match activity.kind.destination() {
+                                    Some(expected) => expected != destination,
+                                    // An open-water chase targets a point in the water.
+                                    None => {
+                                        !matches!(destination, SemanticDestination::Position(_))
+                                    }
+                                }
                         }),
                     TravelPurpose::Initiative {
                         requested_at_ms, ..

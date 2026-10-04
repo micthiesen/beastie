@@ -255,3 +255,64 @@ Checkpoints, not optional scope. Order may change if evidence suggests it.
   The owner's verdict after playing is the final judge; their feedback reopens the pass.
 - This document records the final design rather than the proposal, and `docs/STATE.md` describes
   the result honestly.
+
+## Implementation record
+
+Living notes. Decisions here supersede the proposal text above where they differ.
+
+### Responsiveness (done, first pass)
+
+- Simulation ticks at 100 ms. Velocities are fixed-point units per second; `tick_step` converts
+  them per tick without rounding drift. Swimming accelerates (16,000 u/s²) to 3,400 u/s with an
+  eased arrival that snaps onto targets.
+- Pointer motion never interrupts anything and never starts travel. It only draws an idle
+  creature's gaze when near, and a resentful creature may flee.
+- Food phases total about half a second before the swim; feeding pays off ~1.5 s after a click.
+- Accepted toy play perks up at once (`PositiveNotice`). A direct offer is a play *session*: the
+  ball is chased for three more rounds, the bell struck twice more, the sock towed for 2.6 s.
+  History and reward are recorded on the first contact only.
+- Pet = click Mop. Play = click a toy (in the tank or rail). Feed = click a food on the rail; it
+  drops just above Mop's head. Clicking empty water taps the glass: an idle Mop looks, a curious
+  one swims over, with a ripple and a bubble sound. World targets stay live under shallow menus,
+  and empty water dismisses them. The name in the rail opens Inspect and Rename.
+- A reply never takes keyboard focus away from the message field (it used to move focus to a
+  reaction chip, so typing after Mop spoke silently did nothing).
+
+### Teaching (done, first pass)
+
+- `lexicon.rs`: words gather evidence from salient meanings (`teaching.rs` focus marks from
+  events plus live state). A word needs two hearings, at least 4 evidence, and a 1.5x lead.
+  Mutual exclusivity discounts meanings that already have a word. Player-coined words work like
+  any other. Language stage follows vocabulary size (3 words: Words, 8: Phrases).
+- Every utterance is heard immediately. Unknown words get a curious head tilt, a "?" and a soft
+  echo attempt ("ball" -> "baw?"). Learning plays a sparkle burst and a dedicated chime
+  (`creature/learned`, `tools/audio/synth_learned.py`). Known words are requests: toys, food,
+  come, play, sleep, praise and scolding. Disliked food and stubbornness produce visible refusals.
+- A sleeping creature does not hear words.
+
+### Voice (done, first pass)
+
+- Requests carry `vocabulary` and a `speech_intent`; the creature can only say learned words,
+  creature sounds and stage glue. `compose_line` is the complete no-model voice. The worker asks a
+  local model for the line only and holds it to the same words; see
+  `evals/dialogue/speech/log.md` (31/32 train, 15/15 validation on Qwen3.5 0.8B).
+- The "Local AI unavailable" banner no longer appears for the designed no-model voice.
+- Speech is a compact bubble at Mop's head. Laugh/Disapprove/Comfort chips are gone; praise and
+  scolding are taught as words.
+
+### Intent and opening (done, first pass)
+
+- `wants.rs`: hunger, a favorite toy, company, sleep, or wanting the name of the thing it is
+  playing with. Shown as a thought bubble with a voxel pictogram (with "?" for a name). Mop asks
+  out loud for wants every 20 s when it has the word, 45 s otherwise, never while busy.
+- Idle bouts are 3-8 s; private activities are shorter.
+- New saves get a wall-clock seed, a ranked favorite/fine/disliked toy and food, and a first
+  meeting: Mop waits at the cave mouth and comes to the glass after 2.5 s or the first input.
+- State-driven coaching hints guide the first lessons and vanish once done.
+
+### Open work
+
+- Remove the legacy intent-free dialogue path (relationship-lane prompts, `authored_fallback_phrase`,
+  legacy corpus cases) now that every request carries a speech intent.
+- Native feel capture with live pointer input, blind readability check, and the ten-minute fun
+  scorecard runs.

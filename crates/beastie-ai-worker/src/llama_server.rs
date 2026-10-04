@@ -96,6 +96,60 @@ impl LlamaServerBackend {
         Ok(reply)
     }
 
+    /// One short learned-word line. The model writes only the words; the worker owns the reply.
+    fn speech_attempt(
+        &mut self,
+        request: &DialogueRequest,
+        prompt: &str,
+        salt: u64,
+    ) -> Result<DialogueReply, BackendError> {
+        self.ensure_server()?;
+        let body = serde_json::to_vec(&json!({
+            "messages": [{ "role": "user", "content": prompt }],
+            "temperature": crate::speech::SPEECH_TEMPERATURE,
+            "top_p": 0.95,
+            "top_k": 40,
+            "min_p": 0.05,
+            "seed": request.request_id.wrapping_mul(31).wrapping_add(salt),
+            "max_tokens": crate::speech::SPEECH_MAX_TOKENS,
+            "stop": ["\n"],
+            "stream": false,
+            "reasoning_effort": "none",
+            "chat_template_kwargs": { "enable_thinking": false },
+        }))
+        .map_err(|_| BackendError::MalformedReply)?;
+        let address = self
+            .server
+            .as_ref()
+            .map(|server| server.address)
+            .ok_or(BackendError::ExitFailure)?;
+        let response = http_request(
+            address,
+            "POST",
+            "/v1/chat/completions",
+            Some(&body),
+            &self.api_key,
+            self.config.timeout,
+            self.config.max_output_bytes,
+        )?;
+        if response.status != 200 {
+            return Err(BackendError::ExitFailure);
+        }
+        let response: ChatResponse =
+            serde_json::from_slice(&response.body).map_err(|_| BackendError::MalformedReply)?;
+        let [choice] = response.choices.as_slice() else {
+            return Err(BackendError::MalformedReply);
+        };
+        // Opt-in evaluation diagnostic (evals/dialogue/speech): one raw sample per stderr line.
+        if std::env::var_os("BEASTIE_DEBUG_MODEL").is_some() {
+            eprintln!(
+                "DEBUG speech raw {}: {:?}",
+                request.request_id, choice.message.content
+            );
+        }
+        crate::speech::parse_speech_line(request, &choice.message.content)
+    }
+
     fn ensure_server(&mut self) -> Result<(), BackendError> {
         if let Some(server) = self.server.as_mut() {
             if server
@@ -235,6 +289,22 @@ fn server_prompt(request: &DialogueRequest) -> Result<String, BackendError> {
 
 impl DialogueBackend for LlamaServerBackend {
     fn generate(&mut self, request: &DialogueRequest) -> Result<DialogueReply, BackendError> {
+        if let Some(prompt) = crate::speech::speech_prompt(request) {
+            // A rejected line is just an unlucky sample: draw again on the warm server. Only a
+            // transport failure restarts it.
+            let mut last = Err(BackendError::InvalidReply);
+            for salt in 0..crate::speech::SPEECH_ATTEMPTS {
+                last = self.speech_attempt(request, &prompt, salt);
+                match &last {
+                    Ok(_) => return last,
+                    Err(BackendError::InvalidReply | BackendError::MalformedReply) => {}
+                    Err(_) => {
+                        self.stop_server();
+                    }
+                }
+            }
+            return last;
+        }
         let first = self.attempt(request);
         if first.is_ok() {
             return first;

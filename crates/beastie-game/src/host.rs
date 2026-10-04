@@ -312,7 +312,6 @@ fn pointer(
         .and_then(|p| crate::renderer::pick(&frame.plan, camera, transform, p, &motion, &scenery));
     let cursor_icon = match hit.as_ref().map(|hit| hit.cursor) {
         Some(beastie_view::CursorKind::Pointer) => bevy::window::SystemCursorIcon::Pointer,
-        Some(beastie_view::CursorKind::FoodDrop) => bevy::window::SystemCursorIcon::Crosshair,
         _ => bevy::window::SystemCursorIcon::Default,
     };
     commands

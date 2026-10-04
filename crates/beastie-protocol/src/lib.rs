@@ -1,5 +1,7 @@
 //! Versioned JSONL protocol between the game and the untrusted AI worker.
 
+mod speech;
+
 use std::collections::BTreeSet;
 
 use beastie_core::{
@@ -16,6 +18,11 @@ pub use beastie_core::{
 pub use beastie_core::{
     RelationshipBeatPhase, RelationshipEvidence, RelationshipExpressionKind,
     RelationshipExpressionMode, RelationshipMotif, RelationshipMotifKey, RelationshipSubject,
+};
+pub use speech::{
+    ActWord, Meaning, RequestResponse, SpeechIntent, VocabularyWord, allowed_glue, compose_line,
+    creature_sounds, is_creature_sound, line_word_limit, uses_only_known_words, vocabulary,
+    world_vocabulary,
 };
 
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -589,7 +596,16 @@ pub struct DialogueRequest {
     pub interpretation: DialogueInterpretation,
     pub player_said: String,
     pub constraints: DialogueConstraints,
+    /// Words the creature has learned. Replies may use only these, its sounds and stage glue.
+    #[serde(default)]
+    pub vocabulary: Vec<VocabularyWord>,
+    /// Why the creature speaks now, as decided by the simulation.
+    #[serde(default)]
+    pub speech_intent: Option<SpeechIntent>,
 }
+
+/// Bound on vocabulary entries sent to the worker.
+pub const MAX_VOCABULARY_WORDS: usize = 96;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -939,6 +955,10 @@ pub enum ValidationError {
     RelationshipShape,
     #[error("reply prohibition exceeds its bounded shape")]
     ReplyProhibition,
+    #[error("vocabulary exceeds its bounded shape")]
+    Vocabulary,
+    #[error("reply uses words the creature has not learned")]
+    UnknownWord,
 }
 
 pub fn validate_request(request: &DialogueRequest) -> Result<(), ValidationError> {
@@ -1024,6 +1044,15 @@ pub fn validate_request(request: &DialogueRequest) -> Result<(), ValidationError
     }
     if let Some(violation) = classify_content_boundary(&request.player_said) {
         return Err(ValidationError::ContentBoundary(violation));
+    }
+    if request.vocabulary.len() > MAX_VOCABULARY_WORDS
+        || request.vocabulary.iter().any(|entry| {
+            entry.word.is_empty()
+                || entry.word.chars().count() > 14
+                || !entry.word.chars().all(|c| c.is_alphabetic() || c == '\'')
+        })
+    {
+        return Err(ValidationError::Vocabulary);
     }
     Ok(())
 }
@@ -1212,6 +1241,8 @@ pub fn build_dialogue_request(
             max_words: context.max_words.min(progression_max_words(world)),
             allowed_gestures: context.allowed_gestures,
         },
+        vocabulary: world_vocabulary(world),
+        speech_intent: None,
     };
     normalize_dialogue_request(&mut request);
     request
@@ -1452,6 +1483,9 @@ pub fn validate_reply(
     }
     if let Some(violation) = classify_content_boundary(&reply.say) {
         return Err(ValidationError::ContentBoundary(violation));
+    }
+    if request.speech_intent.is_some() && !uses_only_known_words(request, &reply.say) {
+        return Err(ValidationError::UnknownWord);
     }
     Ok(reply)
 }
@@ -1745,12 +1779,17 @@ fn belief_is_grounded(proposition: BeliefKind, say: &str) -> bool {
 
 #[must_use]
 pub fn constrained_fallback_reply(request: &DialogueRequest) -> DialogueReply {
-    let phrase = authored_fallback_phrase(request);
-    let say = phrase
-        .split_whitespace()
-        .take(request.constraints.max_words)
-        .collect::<Vec<_>>()
-        .join(" ");
+    // A request with a speech intent is answered in the creature's own learned words. Older
+    // intent-free requests keep their authored lines.
+    let say = if request.speech_intent.is_some() {
+        compose_line(request)
+    } else {
+        authored_fallback_phrase(request)
+            .split_whitespace()
+            .take(request.constraints.max_words)
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
     DialogueReply {
         protocol_version: PROTOCOL_VERSION,
         request_id: request.request_id,
@@ -2016,6 +2055,8 @@ mod tests {
                 max_words: 6,
                 allowed_gestures: BTreeSet::from([Gesture::None, Gesture::LookPlayer]),
             },
+            vocabulary: Vec::new(),
+            speech_intent: None,
         }
     }
 
