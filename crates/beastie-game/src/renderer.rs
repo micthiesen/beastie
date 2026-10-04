@@ -2521,10 +2521,34 @@ pub fn pointer_world(
     if !(-6.6..=6.6).contains(&point.x) || !(-1.15..=3.4).contains(&point.y) {
         return None;
     }
-    Some(NormalizedPosition::new(
+    Some(world_point_position(point))
+}
+
+/// Like [`pointer_world`], but clamped into the tank, for clicks on scenery that sits below or
+/// beside the swimming band (the cave mouth, low plants).
+pub fn pointer_world_clamped(
+    camera: &Camera,
+    transform: &GlobalTransform,
+    cursor: Vec2,
+) -> Option<NormalizedPosition> {
+    let ray = camera.viewport_to_world(transform, cursor).ok()?;
+    let distance = -ray.origin.z / ray.direction.z;
+    if !distance.is_finite() || distance < 0.0 {
+        return None;
+    }
+    let point = ray.get_point(distance);
+    Some(world_point_position(Vec3::new(
+        point.x.clamp(-6.6, 6.6),
+        point.y.clamp(-1.15, 3.4),
+        point.z,
+    )))
+}
+
+fn world_point_position(point: Vec3) -> NormalizedPosition {
+    NormalizedPosition::new(
         ((point.x + 6.6) * 10_000.0 / 13.2).round() as i32,
         ((3.4 - point.y) * 10_000.0 / 4.55).round() as i32,
-    ))
+    )
 }
 
 /// Hollow scenery and articulated toy silhouettes use exact presented geometry. Each
@@ -2720,8 +2744,13 @@ pub fn pick(
     let ray = camera.viewport_to_world(transform, cursor).ok()?;
     let mut selected: Option<(f32, UiTarget)> = None;
     let mut consider = |target: UiTarget, distance: Option<f32>| {
+        // Mop wins over scenery it overlaps: a click on Mop inside the cave arch or among the
+        // plants is meant for Mop.
+        let scenery = matches!(target, UiTarget::Cave | UiTarget::Plant(_));
         if let Some(distance) = distance
-            && selected.is_none_or(|(near, _)| distance < near)
+            && selected.is_none_or(|(near, current)| {
+                !(scenery && current == UiTarget::Creature) && distance < near
+            })
         {
             selected = Some((distance, target));
         }
@@ -2774,14 +2803,21 @@ pub fn pick(
             ),
         );
     }
-    let target = selected
-        .map(|(_, target)| target)
-        .or_else(|| pointer_world(camera, transform, cursor).map(|_| UiTarget::OpenWater))?;
-    plan.hit_regions
-        .iter()
-        .rev()
-        .find(|hit| hit.enabled && hit.shape == HitShape::World(target))
-        .cloned()
+    // Sand and the side walls are still the tank: anywhere above the rail taps the glass.
+    let target = selected.map(|(_, target)| target).or_else(|| {
+        (y < beastie_view::AQUARIUM_BOTTOM as f32)
+            .then(|| pointer_world_clamped(camera, transform, cursor).map(|_| UiTarget::OpenWater))
+            .flatten()
+    })?;
+    let region = |target: UiTarget| {
+        plan.hit_regions
+            .iter()
+            .rev()
+            .find(|hit| hit.enabled && hit.shape == HitShape::World(target))
+            .cloned()
+    };
+    // Decorative scenery without its own action is still glass: never a dead click.
+    region(target).or_else(|| region(UiTarget::OpenWater))
 }
 fn ray_transformed_ellipsoid(
     origin: Vec3,

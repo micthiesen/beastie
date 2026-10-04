@@ -317,9 +317,18 @@ fn pointer(
     commands
         .entity(window_entity)
         .insert(bevy::window::CursorIcon::System(cursor_icon));
+    let on_world_object = hit
+        .as_ref()
+        .is_some_and(|hit| matches!(hit.shape, beastie_view::HitShape::World(_)));
     let world = cursor
         .filter(|_| logical.is_some_and(|(_, y)| y < beastie_view::COMPOSE_BAR_TOP))
-        .and_then(|p| crate::renderer::pointer_world(camera, transform, p));
+        .and_then(|p| {
+            crate::renderer::pointer_world(camera, transform, p).or_else(|| {
+                on_world_object
+                    .then(|| crate::renderer::pointer_world_clamped(camera, transform, p))
+                    .flatten()
+            })
+        });
     let result = game.pointer_moved(logical, world, hit.as_ref());
     handle(result, &mut game);
     if buttons.just_pressed(MouseButton::Left) {

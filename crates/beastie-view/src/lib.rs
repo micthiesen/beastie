@@ -1919,9 +1919,12 @@ fn world_hit_regions(state: &WorldState, view: &ViewState) -> Vec<HitRegion> {
         hits.push(HitRegion {
             id: hit_id.clone(),
             target: Some(target),
+            // Every world click gets a creature reaction: toys are offered, and pointing at the
+            // cave, a plant or food taps the glass there so Mop looks or swims over.
             action: match target {
                 UiTarget::Toy(toy) => UiAction::Play(toy),
-                _ => UiAction::OpenContext(target),
+                _ if menu_open => UiAction::OpenContext(target),
+                _ => UiAction::TapWater,
             },
             rect: Rect {
                 x: x - 10,
