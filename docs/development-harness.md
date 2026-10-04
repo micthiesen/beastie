@@ -219,3 +219,16 @@ for broad mode coverage and actual OS events for final picking/entry evidence; d
 old button coordinate without checking its current hit region. The 28-state craft fixture remains
 valid. See [feel-review-tabletop.md](feel-review-tabletop.md) for final UI, failure and actual-input
 evidence, including clicking the bell's newly visible loop.
+
+## Build directory hygiene
+
+Cargo never deletes superseded artifacts, and a bloated `target/` slows every
+build. On 2026-10-04 `target/` held 170 GiB in 849K files; after `cargo clean` a
+full workspace build took 66 s and an incremental rebuild after touching
+`beastie-core` took 2 s. `cargo xtask verify` now measures the Cargo profile
+directories first and, above 40 GiB (`BEASTIE_TARGET_LIMIT_GIB`), runs
+`cargo sweep --time 7` to drop artifacts unused for a week. Evidence written
+under `target/` by `feel` and other tools is never measured or removed.
+`cargo-sweep` is in the dotfiles Brewfile; without it, verify prints how to
+recover. The dev profile keeps line tables only for workspace crates and no
+debug info for dependencies; `dev-perf` keeps dependency symbols for profilers.

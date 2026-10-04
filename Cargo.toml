@@ -28,6 +28,14 @@ serde_json = "1"
 thiserror = "2"
 toml = "1"
 
+# Line tables keep panics and profilers readable while cutting debug-info
+# size, link time and disk use; dependencies carry no debug info.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 codegen-units = 1
 lto = true
@@ -43,6 +51,10 @@ overflow-checks = true
 incremental = true
 codegen-units = 16
 lto = false
+
+# Profilers need dependency symbols; keep them in this profile only.
+[profile.dev-perf.package."*"]
+debug = 1
 
 # Objective-C per-message validation is a development-only dependency cost.
 # Disable this crate's debug checks only for interactive profiling; application

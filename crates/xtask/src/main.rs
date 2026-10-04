@@ -26,6 +26,7 @@ mod feel_audio;
 mod packaging;
 mod store_assets;
 mod stt_eval;
+mod target_hygiene;
 
 const BERRY_GRUDGE_SCENARIO: &str = "fixtures/scenarios/berry-grudge.jsonl";
 const SPOKEN_INPUT_SCENARIO: &str = "fixtures/scenarios/spoken-input-foundation.jsonl";
@@ -578,6 +579,7 @@ fn package(options: PackageCommandOptions<'_>) -> Result<()> {
 }
 
 fn verify() -> Result<()> {
+    target_hygiene::maintain(Path::new("."))?;
     run("cargo", &["fmt", "--all", "--", "--check"])?;
     run(
         "cargo",
