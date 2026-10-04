@@ -160,6 +160,22 @@ pub(crate) fn parse_speech_line(
     if !uses_only_known_words(request, &line) {
         return Err(BackendError::InvalidReply);
     }
+    // The line must not contradict what the creature did: agreeing is never "no", and a refusal
+    // says no once the creature has the word for it.
+    let said_no = line
+        .split(|c: char| !c.is_alphabetic())
+        .any(|word| word == "no" || (word.starts_with("nn") && word.chars().all(|c| c == 'n')));
+    match request.speech_intent.as_ref() {
+        Some(SpeechIntent::Answer {
+            response: RequestResponse::Comply | RequestResponse::Delight,
+            ..
+        }) if said_no => return Err(BackendError::InvalidReply),
+        Some(SpeechIntent::Answer {
+            response: RequestResponse::Refuse,
+            ..
+        }) if !said_no => return Err(BackendError::InvalidReply),
+        _ => {}
+    }
     // A line about something the creature has a word for must actually use that word.
     if let Some(target) = request
         .speech_intent
@@ -215,6 +231,21 @@ mod tests {
         assert!(parse_speech_line(&new_word, "ball? ball!").is_ok());
         assert!(parse_speech_line(&new_word, "mrp!").is_err());
         assert!(parse_speech_line(&new_word, "ball is round").is_err());
+    }
+
+    #[test]
+    fn answers_never_contradict_the_creatures_choice() {
+        let answer = |response| {
+            request(SpeechIntent::Answer {
+                word: "ball".to_owned(),
+                meaning: Meaning::Toy(ToyId::Ball),
+                response,
+            })
+        };
+        assert!(parse_speech_line(&answer(RequestResponse::Comply), "no ball!").is_err());
+        assert!(parse_speech_line(&answer(RequestResponse::Comply), "ball! ball!").is_ok());
+        assert!(parse_speech_line(&answer(RequestResponse::Refuse), "ball!").is_err());
+        assert!(parse_speech_line(&answer(RequestResponse::Refuse), "nnn... ball.").is_ok());
     }
 
     #[test]

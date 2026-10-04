@@ -3567,11 +3567,28 @@ fn maybe_remark(state: &mut WorldState, first: usize, events: &mut Vec<GameEvent
         GameEvent::FoodConsumed(food) => Some(crate::Meaning::Food(*food)),
         _ => None,
     });
-    let Some(meaning) =
-        subject.filter(|meaning| state.creature.lexicon.word_for(*meaning).is_some())
-    else {
+    let Some((meaning, word)) = subject.and_then(|meaning| {
+        state
+            .creature
+            .lexicon
+            .word_for(meaning)
+            .map(|word| (meaning, word.to_owned()))
+    }) else {
         return;
     };
+    // Novelty wears off: each time it has named a thing, the next naming of that thing waits
+    // longer, so a fresh word is said with delight and an old one only now and then.
+    let spoken = state
+        .creature
+        .lexicon
+        .words
+        .get(&word)
+        .map_or(0, |knowledge| knowledge.spoken);
+    let wait = REMARK_INTERVAL_MS.saturating_mul(1 + u64::from(spoken.min(6)));
+    if last != 0 && state.elapsed_ms.saturating_sub(last) < wait {
+        return;
+    }
+    state.creature.lexicon.note_spoken(&word);
     state.creature.conversation.last_remark_ms = state.elapsed_ms.max(1);
     events.push(GameEvent::Remarked(meaning));
 }

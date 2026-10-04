@@ -187,6 +187,9 @@ pub struct Game {
     save_enabled: bool,
     scenario: Option<ScenarioRunner>,
     feel: Option<FeelRecorder>,
+    /// Opt-in development trace (`BEASTIE_EVENT_LOG=<path>`): timestamped simulation events and
+    /// spoken lines from live play, for playtest timing. Never enabled by default.
+    event_log: Option<std::path::PathBuf>,
     capture: Option<CaptureState>,
     smoke_frames: Option<u8>,
     finished_frames: u8,
@@ -411,6 +414,7 @@ impl Game {
             )),
             dialogue_generation: 1,
             active_dialogue_owner: None,
+            event_log: std::env::var_os("BEASTIE_EVENT_LOG").map(std::path::PathBuf::from),
             delayed_dialogue: DelayedCompletion::new(
                 args.feel_dialogue_delay_ms.unwrap_or_default(),
             ),
@@ -611,6 +615,7 @@ impl Game {
                 command,
             })
             .map_err(session_error)?;
+        self.trace_events(&observation.events);
         let audio = self
             .view
             .observe_events(&observation.events, self.session.world().elapsed_ms);
@@ -625,8 +630,9 @@ impl Game {
             self.spoken_turn_pending =
                 apply_spoken_input_status(&mut self.view, status, now_ms, resting_microphone_state);
         } else if observation.events.contains(&GameEvent::TalkIgnored) {
+            let name = self.session.world().creature.name.clone();
             self.view
-                .show_status("Not interested right now.".to_owned(), now_ms, 4_000);
+                .show_status(format!("{name} is asleep. Words can wait."), now_ms, 3_000);
         }
         if let Some(request) = observation.dialogue_request
             && let Some(owner) = self
@@ -643,6 +649,37 @@ impl Game {
             self.persist()?;
         }
         Ok(())
+    }
+
+    fn trace_events(&self, events: &[GameEvent]) {
+        if self.event_log.is_none() {
+            return;
+        }
+        let events = events
+            .iter()
+            .filter(|event| !matches!(event, GameEvent::NeedChanged))
+            .collect::<Vec<_>>();
+        if events.is_empty() {
+            return;
+        }
+        self.trace_line(&serde_json::json!({ "events": events }));
+    }
+
+    fn trace_line(&self, value: &serde_json::Value) {
+        use std::io::Write as _;
+        let Some(path) = &self.event_log else {
+            return;
+        };
+        let mut record = value.clone();
+        record["wall_ms"] = serde_json::json!(unix_time_ms());
+        record["sim_ms"] = serde_json::json!(self.session.world().elapsed_ms);
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(file, "{record}");
+        }
     }
 
     fn persist(&mut self) -> GameResult {
@@ -987,6 +1024,13 @@ impl Game {
                 .map_err(feel_error)?;
             }
         }
+        self.trace_line(&serde_json::json!({
+            "say": turn.reply.say,
+            "intent": turn.request.speech_intent,
+            "fallback": turn.fallback,
+            "latency_ms": turn.latency_ms,
+            "fallback_reason": turn.fallback_reason,
+        }));
         self.speech_reveal = show_dialogue_caption(
             &mut self.view,
             turn.owner,

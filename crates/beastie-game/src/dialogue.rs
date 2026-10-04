@@ -541,14 +541,14 @@ fn run_manager(
                     let fingerprint = reply_fingerprint(&first.say);
                     // A creature repeating its few words is character, not a stuck chatbot.
                     let duplicate = request.speech_intent.is_none()
-                        && request
+                        && (request
                             .context
                             .avoid_reply_fingerprints
                             .iter()
                             .any(|known| known == &fingerprint)
-                        || recent_fingerprints
-                            .iter()
-                            .any(|known| known == &fingerprint);
+                            || recent_fingerprints
+                                .iter()
+                                .any(|known| known == &fingerprint));
                     if duplicate {
                         retry_count = 1;
                         duplicate_suppressed = true;
@@ -1023,6 +1023,33 @@ mod tests {
         assert_eq!(turn.owner, next_owner);
         manager.shutdown();
         let _ = std::fs::remove_file(marker);
+    }
+
+    #[test]
+    fn learned_word_speech_may_repeat_itself() {
+        let worker = compile_worker("duplicate");
+        let config = WorkerConfig::new(
+            worker,
+            vec![OsString::from("duplicate")],
+            Duration::from_secs(5),
+        );
+        let mut manager = DialogueManager::new(Some(config));
+        for id in 1..=2 {
+            let mut speech = request();
+            speech.request_id = id;
+            speech.speech_intent = Some(beastie_protocol::SpeechIntent::Babble);
+            assert!(manager.request(speech));
+            let turn = loop {
+                if let Ok(turn) = manager.try_recv_turn() {
+                    break turn;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            assert!(
+                !turn.duplicate_suppressed,
+                "repetition is character for creature speech"
+            );
+        }
     }
 
     #[test]

@@ -55,8 +55,9 @@ pub(crate) fn mark_attention_from_events(state: &mut WorldState, events: &[GameE
     };
     for event in events {
         match event {
+            // What the player points at (offers, drops) is the strongest teaching context.
             GameEvent::FoodDropped { food, .. } => {
-                mark(Meaning::Food(*food), 3, FOCUS_LONG_MS);
+                mark(Meaning::Food(*food), 4, FOCUS_LONG_MS);
                 mark(Meaning::Act(ActWord::Eat), 1, FOCUS_LONG_MS);
             }
             GameEvent::FoodConsumed(food) => {
@@ -68,8 +69,16 @@ pub(crate) fn mark_attention_from_events(state: &mut WorldState, events: &[GameE
                 mark(Meaning::Food(*food), 3, FOCUS_SHORT_MS);
                 mark(Meaning::Scold, 2, FOCUS_SHORT_MS);
             }
+            GameEvent::ToyPlayAccepted {
+                toy,
+                origin: crate::ToyOrigin::Player,
+                ..
+            } => {
+                mark(Meaning::Toy(*toy), 4, FOCUS_LONG_MS);
+                mark(Meaning::Act(ActWord::Play), 1, FOCUS_LONG_MS);
+            }
             GameEvent::ToyPlayAccepted { toy, .. } | GameEvent::ToyContacted { toy, .. } => {
-                mark(Meaning::Toy(*toy), 3, FOCUS_LONG_MS);
+                mark(Meaning::Toy(*toy), 2, FOCUS_LONG_MS);
                 mark(Meaning::Act(ActWord::Play), 1, FOCUS_LONG_MS);
             }
             GameEvent::ToyPlayed { toy, .. } => {
@@ -79,10 +88,11 @@ pub(crate) fn mark_attention_from_events(state: &mut WorldState, events: &[GameE
             }
             GameEvent::ToyObjectResponded { toy, .. } => {
                 mark(Meaning::Toy(*toy), 2, FOCUS_SHORT_MS);
-                mark(Meaning::Act(ActWord::Play), 2, FOCUS_SHORT_MS);
+                mark(Meaning::Act(ActWord::Play), 1, FOCUS_SHORT_MS);
             }
             GameEvent::ToyRejected { toy, .. } => {
-                mark(Meaning::Toy(*toy), 2, FOCUS_SHORT_MS);
+                // Refused or not, the player pointed at this toy.
+                mark(Meaning::Toy(*toy), 4, FOCUS_LONG_MS);
                 mark(Meaning::Scold, 1, FOCUS_SHORT_MS);
             }
             GameEvent::Comforted => {
@@ -99,8 +109,8 @@ pub(crate) fn mark_attention_from_events(state: &mut WorldState, events: &[GameE
                 kind: PrivateLifeKind::ToyPlay(toy),
                 ..
             } => {
-                mark(Meaning::Toy(*toy), 2, FOCUS_LONG_MS);
-                mark(Meaning::Act(ActWord::Play), 1, FOCUS_LONG_MS);
+                mark(Meaning::Toy(*toy), 1, FOCUS_SHORT_MS);
+                mark(Meaning::Act(ActWord::Play), 1, FOCUS_SHORT_MS);
             }
             GameEvent::Understood {
                 response: RequestResponse::Comply,
@@ -136,7 +146,7 @@ pub fn current_salience(state: &WorldState) -> Vec<Salience> {
         && let PrivateLifeKind::ToyPlay(toy) = activity.kind
         && matches!(activity.phase, ActivityPhase::Approach | ActivityPhase::Act)
     {
-        add(&mut salient, Meaning::Toy(toy), 2);
+        add(&mut salient, Meaning::Toy(toy), 1);
     }
     if let Some(food) = creature
         .aquarium
@@ -722,6 +732,32 @@ mod tests {
         }
         assert!(remarks >= 1, "names the ball it was taught");
         assert!(remarks <= 2, "remarks are rate limited");
+    }
+
+    #[test]
+    fn a_refused_toy_is_still_named_by_the_players_pointing() {
+        let mut world = WorldState::new(7, "Mop");
+        let mut rng = SeededRandom::new(7);
+        world.creature.toy_preferences.insert(ToyId::Ball, -0.6);
+        world.creature.toy_preferences.insert(ToyId::Sock, 0.8);
+        step(&mut world, &[PlayerEvent::Play(ToyId::Ball)], 0, &mut rng);
+        say(&mut world, &mut rng, "ball");
+        // Meanwhile it wanders off to its own favorite.
+        mark_focus(
+            &mut world.creature.attention,
+            FocusMark {
+                meaning: Meaning::Toy(ToyId::Sock),
+                weight: 1,
+                until_ms: world.elapsed_ms + 6_000,
+            },
+            world.elapsed_ms,
+        );
+        run_until(&mut world, &mut rng, 2_500, |_, _| false);
+        let events = say(&mut world, &mut rng, "ball");
+        assert!(events.contains(&GameEvent::WordLearned {
+            word: "ball".to_owned(),
+            meaning: Meaning::Toy(ToyId::Ball),
+        }));
     }
 
     #[test]

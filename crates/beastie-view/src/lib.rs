@@ -4972,6 +4972,8 @@ fn cue_for_event(event: &GameEvent) -> Option<(SemanticOwner, PresentationCueKin
         }
         GameEvent::TalkAccepted { .. } => Some((ordinary, PresentationCueKind::Notice, 700)),
         GameEvent::WordHeard { .. } => Some((ordinary, PresentationCueKind::Curious, 1_400)),
+        // Asleep, it does not hear words, but it stirs: the player still sees the talk land.
+        GameEvent::TalkIgnored => Some((ordinary, PresentationCueKind::Sleep, 900)),
         GameEvent::Emerged => Some((direct, PresentationCueKind::Curious, 1_600)),
         GameEvent::TapNoticed { approached, .. } => Some((
             ordinary,
@@ -5534,6 +5536,44 @@ fn action_label(action: UiAction) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_player_input_is_acknowledged_in_the_same_frame() {
+        use beastie_core::{FoodId, NormalizedPosition, PlayerEvent, SeededRandom, ToyId, step};
+        let inputs = [
+            PlayerEvent::Comfort,
+            PlayerEvent::Play(ToyId::Ball),
+            PlayerEvent::Play(ToyId::Bell),
+            PlayerEvent::Play(ToyId::Sock),
+            PlayerEvent::DropFood {
+                food: FoodId::Berry,
+                position: NormalizedPosition::new(5_000, 3_000),
+            },
+            PlayerEvent::Tap(NormalizedPosition::new(8_000, 2_000)),
+            PlayerEvent::Utterance("zorp".to_owned()),
+        ];
+        for seed in [1_u64, 2, 3, 4] {
+            for input in &inputs {
+                let mut world = WorldState::new(seed, "Mop");
+                let mut rng = SeededRandom::new(seed);
+                let events = step(&mut world, std::slice::from_ref(input), 0, &mut rng);
+                assert!(
+                    events.iter().any(|event| cue_for_event(event).is_some()),
+                    "seed {seed}: {input:?} produced no visible cue: {events:?}"
+                );
+            }
+            let mut asleep = WorldState::new(seed, "Mop");
+            let mut rng = SeededRandom::new(seed);
+            asleep.creature.current_intention = beastie_core::Intention::Sleep;
+            let events = step(
+                &mut asleep,
+                &[PlayerEvent::Utterance("hello".to_owned())],
+                0,
+                &mut rng,
+            );
+            assert!(events.iter().any(|event| cue_for_event(event).is_some()));
+        }
+    }
+
     use super::*;
     use beastie_core::{
         ActionRelationshipContext, ActionTimeline, ActivityPurpose, ActivitySelectionEvidence,

@@ -10,6 +10,7 @@ Each change is one coherent cause; train is for diagnosis, validation for accept
 | v1 | Echo intents answered with the simulation's exact attempt; "know" added to glue | 23/32 | — | The composer itself said "mop know ball!" with an unallowed word. |
 | v2 | Vocabulary listed as bare words; situations phrased with the creature's own word | 26/32 | — | Gloss leakage gone. Remaining misses omit the target word. Retries reused the same seed. |
 | v3 | Retries reseed on the warm server (3 samples); prompt and parser require the target word | 31/32 | 15/15 | Only miss: a stage-one refusal that never says "no" (no glue word available yet), covered by the composer. |
+| v4 | Answers may not contradict the creature's choice (no "no" when complying, a no when refusing) | 31/32 | 15/15 | Found in native play: the model once said "no sock!" for a complied request. Composer variation now uses splitmix64 and six remark templates. |
 
 Accepted: v3. 24 distinct model lines on train; the model copies the composer's example about a
 third of the time, so variety comes mostly from the model's own short variations. Latency stays

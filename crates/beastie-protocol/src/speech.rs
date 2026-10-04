@@ -86,14 +86,18 @@ fn word_for(vocabulary: &[VocabularyWord], meaning: Meaning) -> Option<&str> {
         .map(|entry| entry.word.as_str())
 }
 
-/// A small, stable variation index for one request.
+/// A small, stable variation index for one request (splitmix64 over id, salt and name).
 fn variant(request: &DialogueRequest, salt: u64, choices: usize) -> usize {
-    let mut hash = request.request_id.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ salt;
+    let mut hash = request
+        .request_id
+        .wrapping_add(salt.wrapping_mul(0x9e37_79b9_7f4a_7c15));
     for byte in request.creature_name.bytes() {
-        hash = hash.rotate_left(5) ^ u64::from(byte);
+        hash = hash.rotate_left(7) ^ u64::from(byte);
     }
-    hash = hash.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    (hash >> 33) as usize % choices.max(1)
+    hash = (hash ^ (hash >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    hash = (hash ^ (hash >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    hash ^= hash >> 31;
+    (hash % choices.max(1) as u64) as usize
 }
 
 fn sound(request: &DialogueRequest, salt: u64) -> &'static str {
@@ -130,12 +134,19 @@ pub fn compose_line(request: &DialogueRequest) -> String {
             Some(word) => format!("{word}? {word}!"),
             None => format!("{}? {}!", sound(request, 4), sound(request, 5)),
         },
-        Some(SpeechIntent::Remark { meaning }) => match (word_for(words, *meaning), me) {
-            (Some(word), Some(me)) if stage >= 3 && variant(request, 17, 2) == 0 => {
-                format!("{me}... {word}.")
+        Some(SpeechIntent::Remark { meaning }) => match word_for(words, *meaning) {
+            Some(word) => {
+                let me = me.unwrap_or("me");
+                match (stage >= 3, variant(request, 17, 6)) {
+                    (true, 0) => format!("{me}... {word}."),
+                    (true, 1) => format!("{word}! {me} {word}!"),
+                    (true, 2) => format!("{}. {word} {word}.", sound(request, 20)),
+                    (_, 3) => format!("{word}? {}.", sound(request, 21)),
+                    (_, 4) => format!("{word}~ {word}~"),
+                    _ => format!("{word}. {}.", sound(request, 18)),
+                }
             }
-            (Some(word), _) => format!("{word}. {}.", sound(request, 18)),
-            (None, _) => format!("{}?", sound(request, 19)),
+            None => format!("{}?", sound(request, 19)),
         },
         Some(SpeechIntent::Babble) | None => match variant(request, 6, 3) {
             0 => format!("{}?", sound(request, 7)),
