@@ -5,7 +5,11 @@
 //! 2026-10-04 `target/debug` held 80 GiB, and a sibling project's stale objects
 //! had pushed an ordinary rebuild from about 16 s to over six minutes. `verify`
 //! measures the Cargo profile directories (those holding `.fingerprint`) and,
-//! above the limit, removes artifacts unused for a week with `cargo sweep`.
+//! above the limit, removes the oldest artifacts with `cargo sweep --maxsize`
+//! until half the limit remains, so recent builds stay warm. `cargo sweep`
+//! leaves incremental state alone, which grew to 39 GiB in 1,555 per-crate
+//! directories in one day, so the oldest of those are pruned the same way;
+//! rustc rebuilds missing incremental state.
 //! Evidence written under `target/` by other tools is never measured or touched.
 
 use std::{
@@ -18,7 +22,6 @@ use anyhow::{Context, Result};
 /// Above this many GiB of Cargo artifacts, `verify` sweeps stale ones.
 const DEFAULT_LIMIT_GIB: u64 = 40;
 const LIMIT_VARIABLE: &str = "BEASTIE_TARGET_LIMIT_GIB";
-const STALE_DAYS: &str = "7";
 const GIB: u64 = 1 << 30;
 
 /// Measure Cargo artifacts and sweep stale ones when they exceed the limit.
@@ -34,26 +37,56 @@ pub fn maintain(workspace: &Path) -> Result<()> {
         return Ok(());
     }
     println!(
-        "target hygiene: {} of Cargo artifacts exceeds {limit} GiB; removing artifacts unused for {STALE_DAYS} days",
-        gib(before)
+        "target hygiene: {} of Cargo artifacts exceeds {limit} GiB; removing the oldest down to {} GiB",
+        gib(before),
+        limit / 2
     );
     let swept = Command::new("cargo")
-        .args(["sweep", "--time", STALE_DAYS])
+        .args(["sweep", "--maxsize", &format!("{}GB", limit / 2)])
         .current_dir(workspace)
         .status();
-    match swept {
-        Ok(status) if status.success() => {
-            let after = artifact_bytes(&target)?;
-            println!("target hygiene: {} -> {}", gib(before), gib(after));
-            if after > limit * GIB {
-                println!(
-                    "target hygiene: still above {limit} GiB after sweeping; run `cargo clean` when convenient"
-                );
-            }
+    let goal = limit / 2 * GIB;
+    if !matches!(swept, Ok(status) if status.success()) {
+        println!(
+            "target hygiene: `cargo sweep` is unavailable (install cargo-sweep, listed in the dotfiles Brewfile) or failed; pruning incremental state only"
+        );
+    }
+    prune_incremental(&target, goal)?;
+    let after = artifact_bytes(&target)?;
+    println!("target hygiene: {} -> {}", gib(before), gib(after));
+    if after > limit * GIB {
+        println!("target hygiene: still above {limit} GiB; run `cargo clean` when convenient");
+    }
+    Ok(())
+}
+
+/// Remove the least recently changed per-crate incremental directories until
+/// the artifacts fit `goal` bytes.
+fn prune_incremental(target: &Path, goal: u64) -> Result<()> {
+    let mut total = artifact_bytes(target)?;
+    let mut sessions = Vec::new();
+    for profile in profile_directories(target)? {
+        let Ok(entries) = std::fs::read_dir(profile.join("incremental")) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let modified = entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            sessions.push((modified, path));
         }
-        _ => println!(
-            "target hygiene: `cargo sweep` is unavailable (install cargo-sweep, listed in the dotfiles Brewfile) or failed; run `cargo clean` to restore build speed"
-        ),
+    }
+    sessions.sort();
+    for (_, path) in sessions {
+        if total <= goal {
+            break;
+        }
+        let bytes = tree_bytes(&path)?;
+        std::fs::remove_dir_all(&path)
+            .with_context(|| format!("failed to remove {}", path.display()))?;
+        total = total.saturating_sub(bytes);
     }
     Ok(())
 }
@@ -139,6 +172,32 @@ mod tests {
         std::fs::write(target.path().join("feel/run/capture.png"), vec![0; 4000])?;
         assert_eq!(artifact_bytes(target.path())?, 1500);
         assert_eq!(artifact_bytes(&target.path().join("missing"))?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn the_oldest_incremental_state_is_pruned_first() -> std::io::Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "{}-prune-{}",
+            env!("CARGO_PKG_NAME"),
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let target = Scratch(root);
+        let incremental = target.path().join("debug/incremental");
+        std::fs::create_dir_all(target.path().join("debug/.fingerprint"))?;
+        let now = std::time::SystemTime::now();
+        for (name, age) in [("old-1", 60), ("new-2", 0)] {
+            let session = incremental.join(name);
+            std::fs::create_dir_all(&session)?;
+            std::fs::write(session.join("query-cache.bin"), vec![0; 1000])?;
+            std::fs::File::open(&session)?
+                .set_modified(now - std::time::Duration::from_secs(age))?;
+        }
+        assert!(prune_incremental(target.path(), 1500).is_ok());
+        assert!(!incremental.join("old-1").exists());
+        assert!(incremental.join("new-2").exists());
+        assert_eq!(artifact_bytes(target.path()).ok(), Some(1000));
         Ok(())
     }
 
